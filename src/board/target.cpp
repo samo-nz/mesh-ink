@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <epdiy.h>
+#include <esp_heap_caps.h>
 #include "target.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
@@ -79,6 +80,14 @@ static void show_companion_notice() {
         epd_poweroff();
         T5_TRACE("notice: framebuffer unavailable; panel power off\n");
     }
+    // EPDiy 2.0 has no high-level teardown API. Its one-time buffers are
+    // no longer needed after the panel update; reclaim PSRAM and DRAM for BLE.
+    heap_caps_free(display.front_fb);
+    heap_caps_free(display.back_fb);
+    heap_caps_free(display.difference_fb);
+    free(display.dirty_lines);
+    heap_caps_free(display.dirty_columns);
+    T5_TRACE("notice: framebuffers reclaimed\n");
     // LCD data lines overlap the SX1262 SPI pins: release every display
     // peripheral before upstream MeshCore calls radio_init().
     epd_deinit();
