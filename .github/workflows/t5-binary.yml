@@ -32,11 +32,20 @@ jobs:
       - name: Verify binary
         run: |
           test -s .pio/build/t5-companion/firmware.bin
+          test -s .pio/build/t5-companion/bootloader.bin
+          test -s .pio/build/t5-companion/partitions.bin
+          test -s ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin
           cp .pio/build/t5-companion/firmware.bin t5-pro-companion-alpha.bin
-          sha256sum t5-pro-companion-alpha.bin > t5-pro-companion-alpha.sha256
+          cp .pio/build/t5-companion/bootloader.bin bootloader.bin
+          cp .pio/build/t5-companion/partitions.bin partitions.bin
+          cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin boot_app0.bin
+          sha256sum t5-pro-companion-alpha.bin bootloader.bin partitions.bin boot_app0.bin > t5-pro-companion-alpha.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: t5-pro-companion-alpha
           path: |
             t5-pro-companion-alpha.bin
             t5-pro-companion-alpha.sha256
+            bootloader.bin
+            partitions.bin
+            boot_app0.bin
