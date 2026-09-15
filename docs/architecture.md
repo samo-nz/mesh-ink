@@ -1,0 +1,9 @@
+# Firmware boundaries
+
+`lib/MeshCore` is upstream code and is never patched. `src/board` will own ESP32-S3 pins, SX1262, e-paper, GT911, power, RTC and GPS. `src/app` will adapt MeshCore contacts, channels and events to device-local state and serialized storage. `src/ui` will render e-paper screens and consume app snapshots/events without calling the radio or storage synchronously. `src/transport` will expose the upstream companion protocol over BLE only in Bluetooth mode. `src/power` will manage the BOOT-held standby and mode transitions.
+
+Persist the mode independently from BLE settings; choose it before allocating UI, BLE or refresh task stacks. The handheld mode's UI must not inherit the old PaperUI screen files. It follows the Android companion navigation: conversations and channels lead to message detail/compose; contacts lead to identity and node detail; settings provide radio presets, identity, GPS, display and standby. Keep touch input sampling independent of e-paper waveform refresh, retain complete GT911 point frames until consumed, and coalesce panel refreshes.
+
+Measure free internal DRAM and largest contiguous allocation before and after MeshCore/BLE/UI startup. Record active UI, standby, BLE connected/advertising, GPS active/inactive and LoRa receive current on actual hardware. Keep BLE and LVGL/display allocations mutually exclusive until measurements show they can coexist without connection or input stalls. No power-saving change may silently disable LoRa reception in a mode intended to receive messages.
+
+Milestones: (1) repeatable build gate; (2) board/radio/identity/BLE companion with 917.375 MHz preset; (3) touch/e-paper local model with conversation/channel/contact navigation; (4) async compose/history/settings and measured standby. Only milestones (2) onward are candidates for user flashing.
