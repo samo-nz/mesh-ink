@@ -25,6 +25,43 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 static MicroNMEALocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 
+// BQ27220 on the T5 shared I2C bus. Read-only standard commands: voltage
+// 0x08 (mV) and state-of-charge 0x2C (%). No calibration or gauge writes.
+static constexpr uint8_t BQ27220_ADDR = 0x55;
+static bool gauge_word(uint8_t command, uint16_t& result) {
+    Wire.beginTransmission(BQ27220_ADDR);
+    Wire.write(command);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom(BQ27220_ADDR, static_cast<uint8_t>(2)) != 2) return false;
+    const uint8_t lo = Wire.read();
+    const uint8_t hi = Wire.read();
+    result = static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
+    return true;
+}
+
+uint16_t T5Board::getBattMilliVolts() {
+    // MeshCore may ask repeatedly while composing device responses. Avoid
+    // repetitive I2C traffic and keep the last valid voltage on read errors.
+    static uint16_t cached_mv = 0;
+    static uint32_t sampled_at = 0;
+    const uint32_t now = millis();
+    if (sampled_at != 0 && now - sampled_at < 30000) return cached_mv;
+    sampled_at = now == 0 ? 1 : now;
+
+    uint16_t voltage = 0;
+    if (gauge_word(0x08, voltage) && voltage >= 2500 && voltage <= 5000) {
+        cached_mv = voltage;
+        uint16_t soc = 0;
+        if (gauge_word(0x2C, soc) && soc <= 100)
+            T5_TRACE("battery: BQ27220 voltage=%u mV SOC=%u%%\n", cached_mv, soc);
+        else
+            T5_TRACE("battery: BQ27220 voltage=%u mV; SOC unavailable\n", cached_mv);
+    } else {
+        T5_TRACE("battery: BQ27220 read failed or voltage invalid, cached=%u mV\n", cached_mv);
+    }
+    return cached_mv;
+}
+
 // A tiny fixed glyph set avoids loading a font, a graphics task, or a UI
 // framework into the companion-only image. Each row is a five-bit bitmap.
 struct Glyph { char letter; uint8_t rows[7]; };
@@ -71,6 +108,9 @@ static void show_companion_notice() {
         notice_text("BT COMPANION MODE", 63, 410, 4, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
         epd_poweron();
+        T5_TRACE("notice: full panel clear start\n");
+        epd_clear();
+        T5_TRACE("notice: full panel clear complete\n");
         T5_TRACE("notice: refresh start\n");
         const EpdDrawError result = epd_hl_update_screen(
             &display, MODE_GL16, static_cast<int>(epd_ambient_temperature()));
@@ -103,6 +143,7 @@ void T5Board::begin() {
     T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
     ESP32Board::begin();
     T5_TRACE("board: MeshCore I2C ready\n");
+    getBattMilliVolts();
     T5_TRACE("board: disabling touch and frontlight\n");
     pinMode(9, OUTPUT);
     digitalWrite(9, LOW);  // GT911 disabled in companion mode

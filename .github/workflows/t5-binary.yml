@@ -1,5 +1,8 @@
 name: T5 Pro BLE companion alpha
 
+env:
+  T5_FIRMWARE_VERSION: 0.0.1
+
 on:
   push:
     branches: [main]
@@ -29,58 +32,33 @@ jobs:
           restore-keys: t5-pio-${{ runner.os }}-
       - run: python -m pip install platformio
       - run: python -m platformio run -e t5-companion
-      - run: python -m platformio run -e t5-diagnostic
       - name: Verify binary
         run: |
           test -s .pio/build/t5-companion/firmware.bin
-          test -s .pio/build/t5-diagnostic/firmware.bin
           test -s .pio/build/t5-companion/bootloader.bin
           test -s .pio/build/t5-companion/partitions.bin
           test -s ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin
-          cp .pio/build/t5-companion/firmware.bin t5-pro-companion-alpha.bin
-          cp .pio/build/t5-diagnostic/firmware.bin t5-pro-boot-diagnostic.bin
-          cp .pio/build/t5-diagnostic/bootloader.bin t5-pro-boot-bootloader.bin
-          cp .pio/build/t5-diagnostic/partitions.bin t5-pro-boot-partitions.bin
+          cp .pio/build/t5-companion/firmware.bin "t5-pro-companion-${T5_FIRMWARE_VERSION}.bin"
           cp .pio/build/t5-companion/bootloader.bin bootloader.bin
           cp .pio/build/t5-companion/partitions.bin partitions.bin
           cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin boot_app0.bin
-          sha256sum t5-pro-companion-alpha.bin bootloader.bin partitions.bin boot_app0.bin > t5-pro-companion-alpha.sha256
-          sha256sum t5-pro-boot-diagnostic.bin t5-pro-boot-bootloader.bin t5-pro-boot-partitions.bin boot_app0.bin > t5-pro-boot-diagnostic.sha256
+          sha256sum "t5-pro-companion-${T5_FIRMWARE_VERSION}.bin" bootloader.bin partitions.bin boot_app0.bin > "t5-pro-companion-${T5_FIRMWARE_VERSION}.sha256"
       - name: Merge images with 16MB flash header
         run: |
           python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
             --flash_mode keep --flash_freq 80m --flash_size 16MB \
-            -o t5-pro-boot-diagnostic-complete.bin \
-            0x0 t5-pro-boot-bootloader.bin \
-            0x8000 t5-pro-boot-partitions.bin \
-            0xe000 boot_app0.bin \
-            0x10000 t5-pro-boot-diagnostic.bin
-          python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
-            --flash_mode keep --flash_freq 80m --flash_size 16MB \
-            -o t5-pro-companion-alpha-complete.bin \
+            -o "t5-pro-companion-${T5_FIRMWARE_VERSION}-complete.bin" \
             0x0 bootloader.bin \
             0x8000 partitions.bin \
             0xe000 boot_app0.bin \
-            0x10000 t5-pro-companion-alpha.bin
-          test -s t5-pro-boot-diagnostic-complete.bin
-          test -s t5-pro-companion-alpha-complete.bin
+            0x10000 "t5-pro-companion-${T5_FIRMWARE_VERSION}.bin"
+          test -s "t5-pro-companion-${T5_FIRMWARE_VERSION}-complete.bin"
       - uses: actions/upload-artifact@v4
         with:
-          name: t5-pro-companion-alpha
+          name: t5-pro-companion-${{ env.T5_FIRMWARE_VERSION }}
           path: |
-            t5-pro-companion-alpha.bin
-            t5-pro-companion-alpha.sha256
+            t5-pro-companion-*.bin
+            t5-pro-companion-*.sha256
             bootloader.bin
             partitions.bin
             boot_app0.bin
-            t5-pro-companion-alpha-complete.bin
-      - uses: actions/upload-artifact@v4
-        with:
-          name: t5-pro-boot-diagnostic
-          path: |
-            t5-pro-boot-diagnostic.bin
-            t5-pro-boot-bootloader.bin
-            t5-pro-boot-partitions.bin
-            boot_app0.bin
-            t5-pro-boot-diagnostic.sha256
-            t5-pro-boot-diagnostic-complete.bin
