@@ -95,6 +95,8 @@ uint16_t T5Board::getBattMilliVolts() {
 // framework into the companion-only image. Each row is a five-bit bitmap.
 struct Glyph { char letter; uint8_t rows[7]; };
 static constexpr Glyph notice_glyphs[] = {
+    {'0',{14,17,19,21,25,17,14}}, {'3',{30,1,1,14,1,1,30}},
+    {'.',{0,0,0,0,0,6,6}},
     {'A',{14,17,17,31,17,17,17}}, {'B',{30,17,17,30,17,17,30}},
     {'C',{14,17,16,16,16,17,14}}, {'D',{30,17,17,17,17,17,30}},
     {'E',{31,16,16,30,16,16,31}}, {'H',{17,17,17,31,17,17,17}},
@@ -135,6 +137,7 @@ static void show_companion_notice() {
         epd_hl_set_all_white(&display);
         notice_text("MESHCORE", 90, 290, 7, fb);
         notice_text("BT COMPANION MODE", 63, 410, 4, fb);
+        notice_text("0.0.3", 225, 900, 3, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
         epd_poweron();
         T5_TRACE("notice: full panel clear start\n");
@@ -167,8 +170,12 @@ void T5Board::begin() {
     // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board
     // calls Wire.begin() on this same bus, so initialize MeshCore only after
     // epd_deinit() releases EPDiy's driver and interrupts.
-    T5_TRACE("board: begin; display notice before MeshCore I2C\n");
+    pinMode(11, OUTPUT);
+    digitalWrite(11, HIGH);
+    T5_TRACE("board: begin; frontlight on; display notice before MeshCore I2C\n");
     show_companion_notice();
+    digitalWrite(11, LOW);
+    T5_TRACE("board: display rendered; frontlight off; handing control to MeshCore\n");
     T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
     ESP32Board::begin();
     T5_TRACE("board: MeshCore I2C ready\n");
@@ -176,8 +183,7 @@ void T5Board::begin() {
     T5_TRACE("board: disabling touch and frontlight\n");
     pinMode(9, OUTPUT);
     digitalWrite(9, LOW);  // GT911 disabled in companion mode
-    pinMode(11, OUTPUT);
-    digitalWrite(11, LOW); // frontlight disabled
+    digitalWrite(11, LOW); // frontlight remains disabled in companion mode
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
     T5_TRACE("board: GPS UART ready; internal heap=%u\n", ESP.getFreeHeap());
@@ -196,21 +202,45 @@ bool radio_init() {
     // upstream sensors.begin() owns the UART, without changing radio state.
     if (ready) {
         bool found = false;
+        auto hex_value = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return -1;
+        };
         for (const uint32_t baud : {9600UL, 38400UL}) {
             Serial1.updateBaudRate(baud);
-            bool sentence = false;
+            char sentence[100] = {};
+            size_t sentence_len = 0;
             const uint32_t started = millis();
-            while (millis() - started < 1600) {
+            while (millis() - started < 2500) {
                 while (Serial1.available()) {
                     const int c = Serial1.read();
-                    if (c == '$') sentence = true;
-                    if (sentence && c == '\n') { found = true; break; }
-                    if (c < 0 || c > 127) sentence = false;
+                    if (c == '$') {
+                        sentence[0] = '$';
+                        sentence_len = 1;
+                    } else if (sentence_len && c >= 32 && c <= 126 && sentence_len < sizeof(sentence) - 1) {
+                        sentence[sentence_len++] = static_cast<char>(c);
+                    } else if (sentence_len && (c == '\r' || c == '\n')) {
+                        sentence[sentence_len] = 0;
+                        char* star = strchr(sentence, '*');
+                        if (star && star[1] && star[2] && sentence_len >= 9 &&
+                            sentence[1] == 'G' && hex_value(star[1]) >= 0 && hex_value(star[2]) >= 0) {
+                            uint8_t checksum = 0;
+                            for (char* p = sentence + 1; p < star; ++p) checksum ^= static_cast<uint8_t>(*p);
+                            const uint8_t expected = static_cast<uint8_t>((hex_value(star[1]) << 4) | hex_value(star[2]));
+                            found = checksum == expected;
+                        }
+                        sentence_len = 0;
+                    } else if (c != '\r' && c != '\n') {
+                        sentence_len = 0;
+                    }
+                    if (found) break;
                 }
                 if (found) break;
                 delay(5);
             }
-            T5_TRACE("gps: probe %lu baud NMEA=%d\n", baud, found);
+            T5_TRACE("gps: probe %lu baud valid-NMEA=%d\n", baud, found);
             if (found) { detected_gps_baud = baud; break; }
         }
         if (!found) Serial1.updateBaudRate(9600);

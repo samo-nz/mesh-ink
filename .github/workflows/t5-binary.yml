@@ -1,7 +1,7 @@
 name: T5 Pro BLE companion alpha
 
 env:
-  T5_FIRMWARE_VERSION: 0.0.2
+  T5_FIRMWARE_VERSION: 0.0.3
 
 on:
   push:
