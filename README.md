@@ -12,4 +12,10 @@ Run `git submodule update --init --recursive`, then `pio run -e t5-companion`. C
 
 The Actions ZIP also contains `t5-pro-companion-0.0.1-complete.bin` with the correct **16 MB flash header**, plus the matching bootloader, partition table and Arduino OTA initializer. A first installation can flash the complete image at `0x0`. An app-only upload of `t5-pro-companion-0.0.1.bin` at `0x10000` assumes this partition layout and corrected bootloader are already installed. Replacing a partition table may make old contacts/messages inaccessible; keep a backup if needed. Monitor serial at 115200 baud and capture `[T5]` lines through MeshCore BLE startup.
 
-The companion alpha has not yet been verified on hardware. The display refresh, LoRa pin handoff, BLE app compatibility, GPS wiring, and battery draw all need device tests. The handheld native UI and persisted mode selection are still future work. Its current BLE pairing PIN is `123456` for initial debugging and should be changed before regular use.
+Companion mode is now a hardware-verified milestone and remains available as
+the `t5-companion` target. The `t5-ui-onboarding` target begins milestone 0.1.0
+with Bluetooth disabled: a MeshCore-style welcome screen, region presets,
+device-name entry and touch OSK. Keeping these as separate targets during UI
+bring-up prevents experimental display/input work from destabilizing the
+working companion build. They will later be joined behind the persisted boot
+mode described above, selected before BLE or UI resources are allocated.
