@@ -39,10 +39,13 @@ jobs:
           test -s ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin
           cp .pio/build/t5-companion/firmware.bin t5-pro-companion-alpha.bin
           cp .pio/build/t5-diagnostic/firmware.bin t5-pro-boot-diagnostic.bin
+          cp .pio/build/t5-diagnostic/bootloader.bin t5-pro-boot-bootloader.bin
+          cp .pio/build/t5-diagnostic/partitions.bin t5-pro-boot-partitions.bin
           cp .pio/build/t5-companion/bootloader.bin bootloader.bin
           cp .pio/build/t5-companion/partitions.bin partitions.bin
           cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin boot_app0.bin
           sha256sum t5-pro-companion-alpha.bin bootloader.bin partitions.bin boot_app0.bin > t5-pro-companion-alpha.sha256
+          sha256sum t5-pro-boot-diagnostic.bin t5-pro-boot-bootloader.bin t5-pro-boot-partitions.bin boot_app0.bin > t5-pro-boot-diagnostic.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: t5-pro-companion-alpha
@@ -55,4 +58,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: t5-pro-boot-diagnostic
-          path: t5-pro-boot-diagnostic.bin
+          path: |
+            t5-pro-boot-diagnostic.bin
+            t5-pro-boot-bootloader.bin
+            t5-pro-boot-partitions.bin
+            boot_app0.bin
+            t5-pro-boot-diagnostic.sha256
