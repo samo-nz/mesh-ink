@@ -22,7 +22,36 @@ CustomSX1262Wrapper radio_driver(radio, board);
 
 static ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
-static MicroNMEALocationProvider gps(Serial1, &rtc_clock);
+static uint32_t detected_gps_baud = 9600;
+class T5GPS : public MicroNMEALocationProvider {
+public:
+    T5GPS() : MicroNMEALocationProvider(Serial1, &rtc_clock) {}
+    void begin() override {
+        Serial1.updateBaudRate(detected_gps_baud);
+        MicroNMEALocationProvider::begin();
+        T5_TRACE("gps: enabled by MeshCore sensor setting\n");
+    }
+    void stop() override {
+        MicroNMEALocationProvider::stop();
+        T5_TRACE("gps: disabled by MeshCore sensor setting\n");
+    }
+    void loop() override {
+#if T5_DIAGNOSTICS
+        const int pending = Serial1.available();
+#endif
+        MicroNMEALocationProvider::loop();
+#if T5_DIAGNOSTICS
+        static uint32_t last_report = 0;
+        if (millis() - last_report >= 15000) {
+            last_report = millis();
+            T5_TRACE("gps: baud=%u incoming=%d fix=%d satellites=%ld lat=%ld lon=%ld\n",
+                     Serial1.baudRate(), pending, isValid(), satellitesCount(),
+                     getLatitude(), getLongitude());
+        }
+#endif
+    }
+};
+static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
 
 // BQ27220 on the T5 shared I2C bus. Read-only standard commands: voltage
@@ -161,6 +190,32 @@ bool radio_init() {
     T5_TRACE("radio: SX1262 init on SPI pins 14/21/13\n");
     const bool ready = radio.std_init(&radio_spi);
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
+    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
+    // ensures power is available before probing GPS. T5 boards carry either
+    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
+    // upstream sensors.begin() owns the UART, without changing radio state.
+    if (ready) {
+        bool found = false;
+        for (const uint32_t baud : {9600UL, 38400UL}) {
+            Serial1.updateBaudRate(baud);
+            bool sentence = false;
+            const uint32_t started = millis();
+            while (millis() - started < 1600) {
+                while (Serial1.available()) {
+                    const int c = Serial1.read();
+                    if (c == '$') sentence = true;
+                    if (sentence && c == '\n') { found = true; break; }
+                    if (c < 0 || c > 127) sentence = false;
+                }
+                if (found) break;
+                delay(5);
+            }
+            T5_TRACE("gps: probe %lu baud NMEA=%d\n", baud, found);
+            if (found) { detected_gps_baud = baud; break; }
+        }
+        if (!found) Serial1.updateBaudRate(9600);
+        T5_TRACE("gps: selected baud=%u; MeshCore owns position and settings\n", Serial1.baudRate());
+    }
     return ready;
 }
 
