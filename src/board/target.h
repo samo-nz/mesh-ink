@@ -8,6 +8,7 @@
 class T5Board : public ESP32Board {
 public:
     void begin();
+    uint16_t getBattMilliVolts() override;
     const char* getManufacturerName() const override { return "LILYGO T5 E-Paper S3 Pro"; }
 };
 
