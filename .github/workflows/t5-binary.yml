@@ -29,13 +29,16 @@ jobs:
           restore-keys: t5-pio-${{ runner.os }}-
       - run: python -m pip install platformio
       - run: python -m platformio run -e t5-companion
+      - run: python -m platformio run -e t5-diagnostic
       - name: Verify binary
         run: |
           test -s .pio/build/t5-companion/firmware.bin
+          test -s .pio/build/t5-diagnostic/firmware.bin
           test -s .pio/build/t5-companion/bootloader.bin
           test -s .pio/build/t5-companion/partitions.bin
           test -s ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin
           cp .pio/build/t5-companion/firmware.bin t5-pro-companion-alpha.bin
+          cp .pio/build/t5-diagnostic/firmware.bin t5-pro-boot-diagnostic.bin
           cp .pio/build/t5-companion/bootloader.bin bootloader.bin
           cp .pio/build/t5-companion/partitions.bin partitions.bin
           cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin boot_app0.bin
@@ -49,3 +52,7 @@ jobs:
             bootloader.bin
             partitions.bin
             boot_app0.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t5-pro-boot-diagnostic
+          path: t5-pro-boot-diagnostic.bin
