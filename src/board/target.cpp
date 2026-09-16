@@ -95,9 +95,14 @@ static void show_companion_notice() {
 }
 
 void T5Board::begin() {
-    ESP32Board::begin();
-    T5_TRACE("board: begin; display notice follows\n");
+    // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board
+    // calls Wire.begin() on this same bus, so initialize MeshCore only after
+    // epd_deinit() releases EPDiy's driver and interrupts.
+    T5_TRACE("board: begin; display notice before MeshCore I2C\n");
     show_companion_notice();
+    T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
+    ESP32Board::begin();
+    T5_TRACE("board: MeshCore I2C ready\n");
     T5_TRACE("board: disabling touch and frontlight\n");
     pinMode(9, OUTPUT);
     digitalWrite(9, LOW);  // GT911 disabled in companion mode
