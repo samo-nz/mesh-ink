@@ -23,16 +23,80 @@ CustomSX1262Wrapper radio_driver(radio, board);
 static ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 static uint32_t detected_gps_baud = 9600;
-class T5GPS : public MicroNMEALocationProvider {
+static bool gps_baud_locked = false;
+
+// Observes the same bytes MicroNMEA consumes, allowing baud detection without
+// stealing data from MeshCore's parser.
+class NMEAProbeStream : public Stream {
+    HardwareSerial& serial;
+    bool collecting = false;
+    bool after_star = false;
+    bool talker_g = false;
+    bool sentence_valid = false;
+    uint8_t checksum = 0;
+    uint8_t expected = 0;
+    uint8_t checksum_digits = 0;
+    uint8_t payload_chars = 0;
+
+    static int hexValue(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return -1;
+    }
+    void observe(char c) {
+        if (c == '$') {
+            collecting = true;
+            after_star = false;
+            talker_g = false;
+            checksum = expected = checksum_digits = payload_chars = 0;
+            return;
+        }
+        if (!collecting) return;
+        if (!after_star) {
+            if (c == '*') { after_star = true; return; }
+            if (c == '\r' || c == '\n' || c < 32 || c > 126) { collecting = false; return; }
+            if (payload_chars++ == 0) talker_g = (c == 'G');
+            checksum ^= static_cast<uint8_t>(c);
+            return;
+        }
+        const int nibble = hexValue(c);
+        if (nibble < 0 || checksum_digits >= 2) { collecting = false; return; }
+        expected = static_cast<uint8_t>((expected << 4) | nibble);
+        if (++checksum_digits == 2) {
+            sentence_valid = talker_g && checksum == expected;
+            collecting = false;
+        }
+    }
+
 public:
-    T5GPS() : MicroNMEALocationProvider(Serial1, &rtc_clock) {}
+    explicit NMEAProbeStream(HardwareSerial& source) : serial(source) {}
+    using Print::write;
+    int available() override { return serial.available(); }
+    int read() override { const int c = serial.read(); if (c >= 0) observe(static_cast<char>(c)); return c; }
+    int peek() override { return serial.peek(); }
+    void flush() override { serial.flush(); }
+    size_t write(uint8_t value) override { return serial.write(value); }
+    void clearValidation() { sentence_valid = collecting = after_star = talker_g = false; checksum = expected = checksum_digits = payload_chars = 0; }
+    bool hasValidSentence() const { return sentence_valid; }
+};
+
+static NMEAProbeStream gps_stream(Serial1);
+class T5GPS : public MicroNMEALocationProvider {
+    bool active = false;
+    uint32_t next_baud_retry = 0;
+public:
+    T5GPS() : MicroNMEALocationProvider(gps_stream, &rtc_clock) {}
     void begin() override {
         Serial1.updateBaudRate(detected_gps_baud);
         MicroNMEALocationProvider::begin();
+        active = true;
+        next_baud_retry = millis() + 6000;
         T5_TRACE("gps: enabled by MeshCore sensor setting\n");
     }
     void stop() override {
         MicroNMEALocationProvider::stop();
+        active = false;
         T5_TRACE("gps: disabled by MeshCore sensor setting\n");
     }
     void loop() override {
@@ -40,6 +104,18 @@ public:
         const int pending = Serial1.available();
 #endif
         MicroNMEALocationProvider::loop();
+        if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
+            gps_baud_locked = true;
+            detected_gps_baud = Serial1.baudRate();
+            T5_TRACE("gps: background probe locked %u baud with valid NMEA\n", detected_gps_baud);
+        } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
+            detected_gps_baud = Serial1.baudRate() == 9600 ? 38400 : 9600;
+            Serial1.updateBaudRate(detected_gps_baud);
+            gps_stream.clearValidation();
+            MicroNMEALocationProvider::syncTime();
+            next_baud_retry = millis() + 6000;
+            T5_TRACE("gps: background probe trying %u baud\n", detected_gps_baud);
+        }
 #if T5_DIAGNOSTICS
         static uint32_t last_report = 0;
         if (millis() - last_report >= 15000) {
@@ -96,6 +172,7 @@ uint16_t T5Board::getBattMilliVolts() {
 struct Glyph { char letter; uint8_t rows[7]; };
 static constexpr Glyph notice_glyphs[] = {
     {'0',{14,17,19,21,25,17,14}}, {'3',{30,1,1,14,1,1,30}},
+    {'4',{2,6,10,18,31,2,2}},
     {'.',{0,0,0,0,0,6,6}},
     {'A',{14,17,17,31,17,17,17}}, {'B',{30,17,17,30,17,17,30}},
     {'C',{14,17,16,16,16,17,14}}, {'D',{30,17,17,17,17,17,30}},
@@ -137,7 +214,7 @@ static void show_companion_notice() {
         epd_hl_set_all_white(&display);
         notice_text("MESHCORE", 90, 290, 7, fb);
         notice_text("BT COMPANION MODE", 63, 410, 4, fb);
-        notice_text("0.0.3", 225, 900, 3, fb);
+        notice_text("0.0.4", 225, 900, 3, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
         epd_poweron();
         T5_TRACE("notice: full panel clear start\n");
@@ -184,6 +261,9 @@ void T5Board::begin() {
     pinMode(9, OUTPUT);
     digitalWrite(9, LOW);  // GT911 disabled in companion mode
     digitalWrite(11, LOW); // frontlight remains disabled in companion mode
+    // MeshCore's historical macro names are counterintuitive here:
+    // HardwareSerial::setPins() takes (RX, TX), so these values must be
+    // PIN_GPS_TX=44 (MCU RX) and PIN_GPS_RX=43 (MCU TX).
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
     T5_TRACE("board: GPS UART ready; internal heap=%u\n", ESP.getFreeHeap());
@@ -202,49 +282,28 @@ bool radio_init() {
     // upstream sensors.begin() owns the UART, without changing radio state.
     if (ready) {
         bool found = false;
-        auto hex_value = [](char c) -> int {
-            if (c >= '0' && c <= '9') return c - '0';
-            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-            return -1;
-        };
-        for (const uint32_t baud : {9600UL, 38400UL}) {
-            Serial1.updateBaudRate(baud);
-            char sentence[100] = {};
-            size_t sentence_len = 0;
-            const uint32_t started = millis();
-            while (millis() - started < 2500) {
-                while (Serial1.available()) {
-                    const int c = Serial1.read();
-                    if (c == '$') {
-                        sentence[0] = '$';
-                        sentence_len = 1;
-                    } else if (sentence_len && c >= 32 && c <= 126 && sentence_len < sizeof(sentence) - 1) {
-                        sentence[sentence_len++] = static_cast<char>(c);
-                    } else if (sentence_len && (c == '\r' || c == '\n')) {
-                        sentence[sentence_len] = 0;
-                        char* star = strchr(sentence, '*');
-                        if (star && star[1] && star[2] && sentence_len >= 9 &&
-                            sentence[1] == 'G' && hex_value(star[1]) >= 0 && hex_value(star[2]) >= 0) {
-                            uint8_t checksum = 0;
-                            for (char* p = sentence + 1; p < star; ++p) checksum ^= static_cast<uint8_t>(*p);
-                            const uint8_t expected = static_cast<uint8_t>((hex_value(star[1]) << 4) | hex_value(star[2]));
-                            found = checksum == expected;
-                        }
-                        sentence_len = 0;
-                    } else if (c != '\r' && c != '\n') {
-                        sentence_len = 0;
-                    }
-                    if (found) break;
+        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
+            for (const uint32_t baud : {9600UL, 38400UL}) {
+                Serial1.updateBaudRate(baud);
+                gps_stream.clearValidation();
+                const uint32_t started = millis();
+                while (millis() - started < 1800) {
+                    while (gps_stream.available()) gps_stream.read();
+                    if (gps_stream.hasValidSentence()) { found = true; break; }
+                    delay(5);
                 }
-                if (found) break;
-                delay(5);
+                T5_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n", pass + 1, baud, found);
+                if (found) { detected_gps_baud = baud; gps_baud_locked = true; break; }
             }
-            T5_TRACE("gps: probe %lu baud valid-NMEA=%d\n", baud, found);
-            if (found) { detected_gps_baud = baud; break; }
         }
-        if (!found) Serial1.updateBaudRate(9600);
-        T5_TRACE("gps: selected baud=%u; MeshCore owns position and settings\n", Serial1.baudRate());
+        if (!found) {
+            detected_gps_baud = 9600;
+            Serial1.updateBaudRate(detected_gps_baud);
+            gps_stream.clearValidation();
+            T5_TRACE("gps: startup probe inconclusive; background retry enabled\n");
+        }
+        T5_TRACE("gps: selected baud=%u locked=%d; MeshCore owns position and settings\n",
+                 Serial1.baudRate(), gps_baud_locked);
     }
     return ready;
 }
