@@ -1,3 +1,4 @@
+# Builds the single-file quick-update image for each firmware milestone.
 name: T5 Pro unified firmware alpha
 
 env:
