@@ -8,12 +8,14 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <esp32-hal-cpu.h>
+#include <esp_sleep.h>
+#include <SPIFFS.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.8.0"
+#define T5_FIRMWARE_VERSION "0.9.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -137,7 +139,7 @@ static bool alert_flash_active=false;
 static uint8_t alert_flash_phase=0;
 static uint32_t alert_flash_deadline=0;
 enum class Screen : uint8_t {
-    Welcome, Presets, CompanionConfirm,
+    Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Messages, Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Discovery, More, AdvertMenu,
     Settings, RadioSettings, GpsSettings, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
@@ -308,6 +310,8 @@ static void show_toast(const char* message) {
     toast_visible=true;toast_until=millis()+1500;
 }
 
+static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines);
+
 static void draw_welcome() {
     epd_hl_set_all_white(&display);
     draw_status_bar();
@@ -357,6 +361,16 @@ static void draw_companion_confirm() {
     box(290,500,220,72,true);text("START",338,524,3,0xFF,true);
 }
 
+static void draw_shutdown_confirm() {
+    epd_hl_set_all_white(&display);
+    draw_status_bar();
+    centred("SHUT DOWN",120,5,0,true);
+    draw_wrapped("This disconnects the battery using the BQ25896 power controller.",42,230,34,2,0,true,4);
+    draw_wrapped("Press PWR to start again. Connect USB if the PWR button does not restore power.",42,380,34,2,0,true,5);
+    box(30,650,220,72);text("CANCEL",74,674,3,0,true);
+    box(290,650,220,72,true);text("SHUT DOWN",311,674,3,0xFF,true);
+}
+
 static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
     const char* cursor=value;
     for(int row=0;row<max_lines&&*cursor;++row){
@@ -370,7 +384,12 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
 
 static void draw_bottom_nav(int selected) {
     static const char* labels[]={"MESSAGES","CONTACTS","CHANNELS","MORE"};
-    for(int i=0;i<4;++i){box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);}
+    for(int i=0;i<4;++i){
+        box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;
+        text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);
+        const bool unread=(i==0&&status_unread)||(i==2&&status_channel_unread);
+        if(unread)epd_fill_rect({i*135+118,908,11,11},color,fb);
+    }
 }
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
@@ -385,7 +404,7 @@ static void draw_list_entry(const UiListEntry& item,int y) {
     text(item.title,28,y+16,3,0,true);
     text(item.time,528-(int)strlen(item.time)*12-16,y+20,2,0,true);
     draw_wrapped(item.subtitle,28,y+60,36,2,0,false,2);
-    if(item.unread){box(462,y+88,48,38,true);char n[6];snprintf(n,sizeof(n),"%u",item.unread);text(n,486-(int)strlen(n)*6,y+97,2,0xFF,true);}
+    if(item.unread){epd_fill_rect({482,y+94,20,20},0,fb);}
 }
 
 static void draw_contacts() {
@@ -522,8 +541,11 @@ static void draw_display_settings() {
     box(12,358,516,160);text("BRIGHTNESS",28,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
     epd_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;epd_fill_rect({knob-12,449,24,35},0,fb);text("-",28,452,3,0,true);text("+",492,452,3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
-    if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,76,true);centred("NIGHT SCHEDULE",700,3,0xFF,true);}
-    draw_wrapped("Hold BOOT for two seconds to enter or leave standby.",24,790,39,2,0,true,3);
+    const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?758:674;
+    if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
+    box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
+    centred("SHORT BOOT: CLEAN DISPLAY",856,2,0,true);
+    centred("HOLD BOOT: STANDBY",882,2,0,true);
 }
 
 static void draw_standby(){
@@ -555,7 +577,7 @@ static void draw_about() {
 static void draw_screen() {
     if(standby_active){draw_standby();return;}
     switch(screen){
-        case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;
+        case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Messages:draw_messages();break;case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::Timezone:draw_timezone();break;
@@ -574,12 +596,72 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     Serial.printf("[T5-UI] refresh=%d name='%s' preset=%s cpu=%luMHz\n",err,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
+static void full_display_clean(const char* reason) {
+    if(standby_active)return;
+    Serial.printf("[T5-EPD] full refresh requested by %s\n",reason);
+    set_cpu_target(240,"full-display-clean",false);
+    epd_poweron();
+    epd_clear();
+    epd_poweroff();
+    Serial.println("[T5-EPD] full clean complete");
+    draw_screen();
+    refresh(MODE_GL16,false);
+    Serial.println("[T5-EPD] full UI redraw complete");
+}
+
 static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
     uint8_t address[2] = {(uint8_t)(reg>>8),(uint8_t)reg};
     return i2c_master_write_read_device(I2C_NUM_0,GT911_ADDR,address,2,data,len,pdMS_TO_TICKS(20)) == ESP_OK;
 }
 static bool i2c_read8(uint8_t device,uint8_t reg,uint8_t* data,size_t len) {
     return i2c_master_write_read_device(I2C_NUM_0,device,&reg,1,data,len,pdMS_TO_TICKS(20))==ESP_OK;
+}
+static bool i2c_write8(uint8_t device,uint8_t reg,uint8_t value) {
+    const uint8_t data[2]={reg,value};
+    return i2c_master_write_to_device(I2C_NUM_0,device,data,sizeof(data),pdMS_TO_TICKS(50))==ESP_OK;
+}
+
+static void set_touch_power(bool enabled);
+
+static void deep_sleep_shutdown(const char* reason) {
+    Serial.printf("[T5-SHUTDOWN] entering deep-sleep fallback reason=%s wake=BOOT/GPIO0\n",reason);
+    Serial.flush();
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0,0);
+    delay(50);
+    esp_deep_sleep_start();
+}
+
+static void request_hardware_shutdown() {
+    Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
+    keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
+    epd_hl_set_all_white(&display);
+    centred("POWERED OFF",300,6,0,true);
+    centred("PRESS PWR TO START",390,3,0,true);
+    centred(UI_VERSION,900,2,0,true);
+    refresh(MODE_GL16,false);
+    frontlight_deadline=0;frontlight_drive(false);
+    set_touch_power(false);
+    local_mesh_prepare_shutdown();
+    SPIFFS.end();
+    Serial.println("[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
+
+    constexpr uint8_t REG09=0x09;
+    constexpr uint8_t BATFET_DIS=1u<<5;
+    constexpr uint8_t BATFET_DLY=1u<<3;
+    constexpr uint8_t BATFET_RST_EN=1u<<2;
+    uint8_t address=0,reg09=0;
+    for(const uint8_t candidate:{(uint8_t)0x6B,(uint8_t)0x6A}) {
+        if(i2c_read8(candidate,REG09,&reg09,1)){address=candidate;break;}
+    }
+    if(!address){Serial.println("[T5-SHUTDOWN] ERROR: BQ25896 not detected at 0x6B or 0x6A");deep_sleep_shutdown("PMIC_NOT_FOUND");return;}
+    Serial.printf("[T5-SHUTDOWN] PMIC detected address=0x%02X REG09 before=0x%02X\n",address,reg09);
+    const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
+    Serial.printf("[T5-SHUTDOWN] preserving wake reset; REG09 request=0x%02X BATFET_DIS=1\n",requested);
+    Serial.flush();
+    if(!i2c_write8(address,REG09,requested)){Serial.println("[T5-SHUTDOWN] ERROR: REG09 write failed");deep_sleep_shutdown("PMIC_WRITE_FAILED");return;}
+    delay(750);
+    Serial.println("[T5-SHUTDOWN] PMIC command returned; USB/VBUS is probably present, using deep sleep until power is removed");
+    deep_sleep_shutdown("VBUS_STILL_POWERED");
 }
 static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
 static bool update_status_hardware() {
@@ -653,18 +735,18 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 }
 
 static bool handle_app_tap(int16_t x,int16_t y) {
-    if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm)return false;
+    if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Messages);return true;}
     if(screen==Screen::ContactChat&&hit(x,y,430,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;open_screen(Screen::ContactDetails);return true;}
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Messages:tab==1?Screen::Contacts:tab==2?Screen::Channels:Screen::More);return true;}
     switch(screen){
         case Screen::Messages:
-            if(ui_data)for(size_t i=0;i<ui_data->conversation_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_conversation(i)){status_unread=0;persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
+            if(ui_data)for(size_t i=0;i<ui_data->conversation_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_conversation(i)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
         case Screen::Contacts:
-            if(ui_data)for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_contact=i;if(ui_data->open_contact(i)){status_unread=0;persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
+            if(ui_data)for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_contact=i;if(ui_data->open_contact(i)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
         case Screen::Channels:
-            if(ui_data)for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_channel=i;if(ui_data->open_channel(i)){status_channel_unread=0;persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}break;
+            if(ui_data)for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_channel=i;if(ui_data->open_channel(i)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}break;
         case Screen::ContactChat:
             if(!keyboard_visible&&hit(x,y,12,818,160,62)){chat_page++;draw_screen();refresh(MODE_GL16);return true;}
             if(!keyboard_visible&&hit(x,y,368,818,160,62)&&chat_page>0){chat_page--;draw_screen();refresh(MODE_GL16);return true;}
@@ -719,7 +801,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,238,516,112)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();Serial.printf("[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,538,516,112)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MODE_DU);return true;}
-            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,674,492,76)){open_screen(Screen::NightSchedule);return true;}break;
+            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,674,492,70)){open_screen(Screen::NightSchedule);return true;}
+            if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?758:674,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
         case Screen::NightSchedule:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::DisplaySettings);return true;}
             if(hit(x,y,24,150,492,112)){night_edit_field=0;draw_screen();refresh(MODE_DU);return true;}
@@ -751,6 +834,11 @@ static void handle_tap(int16_t x,int16_t y) {
     if(screen==Screen::CompanionConfirm){
         if(hit(x,y,30,500,220,72)){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
         if(hit(x,y,290,500,220,72)){Serial.println("[T5-UI] companion mode confirmed");request_companion_mode();return;}
+        return;
+    }
+    if(screen==Screen::ShutdownConfirm){
+        if(hit(x,y,30,650,220,72)){open_screen(Screen::DisplaySettings);return;}
+        if(hit(x,y,290,650,220,72)){request_hardware_shutdown();return;}
         return;
     }
     if(hit(x,y,30,180,480,64)){replace_name_on_type=true;keyboard_visible=true;Serial.println("[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MODE_DU);return;}
@@ -802,7 +890,7 @@ static void service_boot_button(){
     static uint32_t pressed_at=0;static bool handled=false;const bool pressed=digitalRead(BOOT_BUTTON)==LOW;
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
-    if(!pressed){pressed_at=0;handled=false;}
+    if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&!standby_active&&duration>=40)full_display_clean("SHORT_BOOT");pressed_at=0;handled=false;}
 }
 
 void ui_setup() {
