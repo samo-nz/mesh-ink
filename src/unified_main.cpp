@@ -30,15 +30,12 @@ static void companion_exit_button() {
     static uint32_t pressed_at = 0;
     const bool pressed = digitalRead(BOOT_BUTTON) == LOW;
     if (pressed && pressed_at == 0) pressed_at = millis();
-    if (!pressed && pressed_at != 0) {
-        const uint32_t held = millis() - pressed_at;
-        pressed_at = 0;
-        if (held >= 2000) {
-            Serial.println("[T5-BOOT] companion exit requested; returning to local UI");
-            delay(100);
-            ESP.restart();
-        }
+    if (pressed && pressed_at != 0 && millis() - pressed_at >= 2000) {
+        Serial.println("[T5-BOOT] companion exit requested; returning to local UI now");
+        delay(100);
+        ESP.restart();
     }
+    if (!pressed) pressed_at = 0;
 }
 
 void setup() {
