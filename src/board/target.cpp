@@ -290,6 +290,16 @@ void T5Board::begin() {
     T5_TRACE("board: GPS UART ready; internal heap=%u\n", ESP.getFreeHeap());
 }
 
+void T5Board::beginLocal() {
+    // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
+    // I2C driver here would abort; only perform MeshCore's remaining board work.
+    startup_reason = BD_STARTUP_NORMAL;
+    getBattMilliVolts();
+    Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
+    Serial1.begin(9600);
+    T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
+}
+
 bool radio_init() {
     T5_TRACE("radio: begin clock and RTC\n");
     fallback_clock.begin();

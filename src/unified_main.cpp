@@ -45,7 +45,7 @@ void setup() {
     Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
                   companion_mode ? "BT companion" : "local UI");
     if (companion_mode) companion_setup();
-    else ui_setup();
+    else { ui_setup(); local_mesh_setup(); }
 }
 
 void loop() {
@@ -53,6 +53,7 @@ void loop() {
         companion_loop();
         companion_exit_button();
     } else {
+        local_mesh_loop();
         ui_loop();
     }
 }

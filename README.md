@@ -44,7 +44,14 @@ Release 0.2.1 replaces status labels with compact GPS, direct-message, channel
 and battery icons, enlarges the status typography, centres the clock, and adds
 a reusable 1.5-second high-contrast toast overlay for action confirmations.
 
-Milestone 0.3.0 is a complete, navigable local-UI inspection prototype based on
+Milestone 0.4.0 starts the live upstream MeshCore runtime in local UI mode with
+Bluetooth disabled. Contacts, channels, message reception/transmission, GPS
+state, identity, radio values and app-derived contact/privacy settings now use
+MeshCore data and preferences. The 0.3.0 navigable inspection UI remains the
+presentation layer, with larger conversation text. The adapter code stays
+outside the MeshCore submodule so upstream updates remain straightforward.
+
+Milestone 0.3.0 was the complete, navigable local-UI inspection prototype based on
 the open-source MeshCore companion application's information architecture. It
 adds contacts, direct and channel conversations, contact details, channels,
 discovery, settings, radio, GPS, display/power and about screens with realistic
