@@ -20,6 +20,7 @@ uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();
 void local_mesh_cycle_gps_interval();
 void local_mesh_toggle_gps_advert_location();
+uint32_t local_mesh_current_time();
 const char* local_mesh_node_name();
 const char* local_mesh_radio_summary();
 const char* local_mesh_privacy_value(uint8_t item);
