@@ -104,12 +104,14 @@ public:
         }
         AdvertPath heard[MAX_UI_ADVERTS]{};const int heard_count=t5_mesh().getRecentlyHeard(heard,MAX_UI_ADVERTS);
         for(int i=0;i<heard_count&&advert_count_<MAX_UI_ADVERTS;++i){if(!heard[i].recv_timestamp||!heard[i].name[0])continue;auto& item=adverts_[advert_count_++];memset(&item,0,sizeof(item));bind(item);
-            strncpy(item.title,heard[i].name,sizeof(item.title)-1);snprintf(item.subtitle,sizeof(item.subtitle),"RECEIVED ADVERT  %u HOP%s",heard[i].path_len,heard[i].path_len==1?"":"S");format_time(heard[i].recv_timestamp,item.time);memcpy(item.key,heard[i].pubkey_prefix,7);
+            const uint8_t hops=heard[i].path_len&63;
+            strncpy(item.title,heard[i].name,sizeof(item.title)-1);snprintf(item.subtitle,sizeof(item.subtitle),hops?"RECEIVED ADVERT  %u HOP%s":"RECEIVED ADVERT  ZERO HOP",hops,hops==1?"":"S");format_time(heard[i].recv_timestamp,item.time);memcpy(item.key,heard[i].pubkey_prefix,7);
+            Serial.printf("[T5-MESH] advert '%s' path=0x%02x hops=%u\n",item.title,heard[i].path_len,hops);
         }
-        rebuild_active();ui_status_set_unread(0);ui_status_set_channel_unread(0);
+        rebuild_active();
     }
-    void received_direct(const uint8_t* key,uint32_t timestamp,const char* text){store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);refresh(true);}
-    void received_channel(uint8_t channel,uint32_t timestamp,const char* text){store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);refresh(true);}
+    void received_direct(const uint8_t* key,uint32_t timestamp,const char* text){store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);refresh(true);ui_notify_message_received(false);}
+    void received_channel(uint8_t channel,uint32_t timestamp,const char* text){store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);refresh(true);ui_notify_message_received(true);}
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){auto* m=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return m->sequence;}
     size_t conversation_count()const override{return conversation_count_;}const UiListEntry& conversation(size_t i)const override{return conversations_[i].entry;}
     bool open_conversation(size_t i)override{return i<conversation_count_&&activate(conversations_[i],false);}
@@ -131,7 +133,14 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if((frame[0]==8||frame[0]==17)&&len>8){uint32_t timestamp=0;memcpy(&timestamp,&frame[4],4);memcpy(message,&frame[8],min(sizeof(message)-1,len-8));provider.received_channel(frame[1],timestamp,message);Serial.printf("[T5-MESH] channel %u message received\n",frame[1]);}
 }
 void local_mesh_runtime_begin(){provider.begin();}
-void local_mesh_loop(){t5_mesh().loop();provider.refresh();sensors.loop();rtc_clock.tick();ui_status_set_gps(local_mesh_gps_enabled(),local_mesh_gps_fix());}
+void local_mesh_loop(){
+    t5_mesh().loop();provider.refresh();sensors.loop();rtc_clock.tick();
+    auto* location=sensors.getLocationProvider();const bool enabled=local_mesh_gps_enabled();const bool fix=location&&location->isValid();
+    const int sats=location?(int)location->satellitesCount():0;const long lat=location?location->getLatitude():0;const long lon=location?location->getLongitude():0;
+    const uint32_t stamp=(fix&&location)?(uint32_t)location->getTimestamp():0;
+    ui_status_set_gps(enabled,fix,sats,lat,lon,stamp);
+    static bool was_waiting=true;if(location){const bool waiting=location->waitingTimeSync();if(was_waiting&&!waiting)Serial.printf("[T5-RTC] synchronized from GPS UTC=%lu\n",(unsigned long)location->getTimestamp());was_waiting=waiting;}
+}
 bool local_mesh_send_active(const char* text){
     if(!text||!text[0])return false;const uint32_t now=time(nullptr);
     if(provider.active_is_channel()){ChannelDetails channel{};if(!provider.active_channel(channel))return false;const bool ok=t5_mesh().sendGroupMessage(now,channel.channel,t5_mesh().getNodeName(),text,strlen(text));if(ok)provider.sent(text,now,0);Serial.printf("[T5-MESH] channel send result=%d\n",ok);return ok;}
@@ -143,6 +152,10 @@ bool local_mesh_send_advert(bool flood){if(!flood)return t5_mesh().advert();cons
 void local_mesh_apply_name(const char* name){auto* p=t5_mesh().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;t5_mesh().savePrefs();}
 void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_enabled=enabled?1:0;t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();}
 bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
+uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval;}
+bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
+void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=t5_mesh().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();}
+void local_mesh_toggle_gps_advert_location(){auto* p=t5_mesh().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;t5_mesh().savePrefs();}
 const char* local_mesh_node_name(){return t5_mesh().getNodeName();}
 const char* local_mesh_radio_summary(){auto* p=t5_mesh().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f SF%u BW%.1f CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
 const char* local_mesh_privacy_value(uint8_t item){auto* p=t5_mesh().getNodePrefs();switch(item){case 0:return p->autoadd_config?"ENABLED":"DISABLED";case 1:snprintf(setting_value,sizeof(setting_value),"%u HOPS",p->autoadd_max_hops);return setting_value;case 2:return p->advert_loc_policy?"SHARE":"HIDDEN";case 3:return p->telemetry_mode_base?"ALLOW":"DENY";case 4:return p->telemetry_mode_loc?"ALLOW":"DENY";default:return p->isRepeatEn()?"ENABLED":"DISABLED";}}
