@@ -7,12 +7,13 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <esp32-hal-cpu.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.7.0"
+#define T5_FIRMWARE_VERSION "0.8.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -124,6 +125,7 @@ static bool frontlight_lit=false;
 static uint32_t frontlight_deadline=0;
 static uint8_t night_edit_field=0;
 static QueueHandle_t touch_queue=nullptr;
+static TaskHandle_t touch_task_handle=nullptr;
 static bool text_refresh_pending=false;
 static uint32_t text_refresh_after=0;
 static bool touch_enabled=true;
@@ -172,6 +174,12 @@ static void frontlight_service(){if(alert_flash_active)return;if(frontlight_mode
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 struct QueuedTap{int16_t x;int16_t y;int16_t dy;};
+
+static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
+    const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
+    if(verbose||!accepted||actual!=mhz)Serial.printf("[T5-POWER] cpu target=%lu actual=%lu MHz apb=%lu MHz reason=%s result=%s\n",(unsigned long)mhz,(unsigned long)actual,(unsigned long)(getApbFrequency()/1000000),reason,(accepted&&actual==mhz)?"OK":"FAILED");
+    return accepted&&actual==mhz;
+}
 
 struct Preset { const char* title; const char* detail; };
 static constexpr Preset PRESETS[] = {
@@ -558,10 +566,12 @@ static void draw_screen() {
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
+    set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
     epd_poweroff();
-    Serial.printf("[T5-UI] refresh=%d name='%s' preset=%s\n",err,node_name,PRESETS[selected_preset].title);
+    set_cpu_target(standby_active?80:160,"display-complete",false);
+    Serial.printf("[T5-UI] refresh=%d name='%s' preset=%s cpu=%luMHz\n",err,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
 static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
@@ -608,7 +618,7 @@ static bool touch_point(int16_t& x, int16_t& y) {
 
 static void touch_sampler_task(void*){
     bool held=false;int16_t start_y=0,last_x=0,last_y=0;
-    for(;;){if(!touch_enabled){held=false;vTaskDelay(pdMS_TO_TICKS(50));continue;}int16_t x=0,y=0;const bool pressed=touch_point(x,y);if(pressed){last_x=x;last_y=y;if(!held){held=true;start_y=y;frontlight_event();}}
+    for(;;){if(!touch_enabled){held=false;Serial.println("[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);Serial.println("[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;const bool pressed=touch_point(x,y);if(pressed){last_x=x;last_y=y;if(!held){held=true;start_y=y;frontlight_event();}}
         else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_y-start_y)};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
         vTaskDelay(pdMS_TO_TICKS(8));}
 }
@@ -766,18 +776,18 @@ static void handle_tap(int16_t x,int16_t y) {
 
 static void set_touch_power(bool enabled){
     touch_enabled=false;delay(20);was_pressed=false;
-    if(enabled){pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);clear_touch();touch_enabled=true;Serial.println("[T5-STANDBY] touch controller enabled");}
+    if(enabled){pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);clear_touch();touch_enabled=true;if(touch_task_handle)xTaskNotifyGive(touch_task_handle);Serial.println("[T5-STANDBY] touch controller enabled");}
     else{pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);Serial.println("[T5-STANDBY] touch controller disabled");}
 }
 
 static void enter_standby(const char* reason){
     if(standby_active)return;standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
-    Serial.printf("[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();refresh(MODE_GL16,false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);
+    Serial.printf("[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();refresh(MODE_GL16,false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
     if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();alert_flash_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
-    Serial.println("[T5-STANDBY] leaving; restoring local UI");draw_screen();refresh(MODE_GL16,true);
+    set_cpu_target(160,"wake");Serial.println("[T5-STANDBY] leaving; restoring local UI");draw_screen();refresh(MODE_GL16,true);
 }
 
 static void start_message_flash(){alert_flash_active=true;alert_flash_phase=0;alert_flash_deadline=millis();}
@@ -823,10 +833,10 @@ void ui_setup() {
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
     draw_screen();refresh(MODE_GL16);
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
-    if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,nullptr,0)==pdPASS)Serial.println("[T5-TOUCH] sampler running; interval=8ms queue depth=32");
+    if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)Serial.println("[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     Serial.printf("[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
-    last_user_activity=millis();Serial.println("[T5-UI] touch ready; waiting for input");
+    set_cpu_target(160,"ui-ready");last_user_activity=millis();Serial.println("[T5-UI] touch ready; waiting for input");
 }
 
 void ui_loop() {
@@ -857,8 +867,12 @@ void ui_loop() {
     }
     frontlight_service();
     service_message_flash();
+    static uint32_t power_report_at=0,loop_count=0;loop_count++;
+    if(millis()-power_report_at>=60000){const uint32_t elapsed=max((uint32_t)1,millis()-power_report_at);Serial.printf("[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
     delay(12);
 }
+
+bool ui_is_standby(){return standby_active;}
 
 void ui_status_set_unread(uint16_t count) {
     if(status_unread!=count){status_unread=count;status_dirty=true;}
