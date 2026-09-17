@@ -15,7 +15,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.2"
+#define T5_FIRMWARE_VERSION "0.9.3"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -132,6 +132,7 @@ static bool text_refresh_pending=false;
 static uint32_t text_refresh_after=0;
 static bool touch_enabled=true;
 static bool standby_active=false;
+static bool hardware_failure=false;
 static uint8_t standby_timeout_index=1;
 static uint32_t last_user_activity=0;
 static bool status_wake_light=false;
@@ -947,6 +948,10 @@ void ui_setup() {
 }
 
 void ui_loop() {
+    if(hardware_failure){
+        static uint32_t report_at=0;if(millis()-report_at>=60000){report_at=millis();Serial.println("[T5-ERROR] radio unavailable; startup halted; press RST to retry");}
+        delay(100);return;
+    }
     service_boot_button();
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
     if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
@@ -980,6 +985,19 @@ void ui_loop() {
 }
 
 bool ui_is_standby(){return standby_active;}
+
+void ui_show_radio_failure(){
+    hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
+    epd_hl_set_all_white(&display);
+    centred("RADIO STARTUP",190,5,0,true);
+    centred("FAILED",255,6,0,true);
+    centred("SX1262 NOT DETECTED",390,4,0,true);
+    centred("PRESS RST TO RETRY",500,4,0,true);
+    centred(UI_VERSION,900,2,0,true);
+    refresh(MODE_GL16,false);
+    frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
+    Serial.println("[T5-ERROR] persistent radio failure screen displayed; UI and touch stopped");
+}
 
 void ui_status_set_unread(uint16_t count) {
     if(status_unread!=count){status_unread=count;status_dirty=true;}
