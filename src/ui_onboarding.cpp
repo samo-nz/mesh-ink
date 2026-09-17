@@ -4,9 +4,10 @@
 #include <driver/i2c.h>
 #include <esp_heap_caps.h>
 #include "ui_onboarding.h"
+#include "ui_data.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.2.1"
+#define T5_FIRMWARE_VERSION "0.3.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -91,9 +92,21 @@ static bool status_dirty = false;
 static bool toast_visible = false;
 static uint32_t toast_until = 0;
 static char toast_message[32] = {};
+static bool setup_complete = false;
+static bool toast_opens_main = false;
+static bool keyboard_message_mode = false;
+static char compose_text[49] = {};
+static MockUiDataProvider mock_data;
+static UiDataProvider* ui_data = &mock_data;
 static int16_t cached_touch_x = 0, cached_touch_y = 0;
-enum class Screen : uint8_t { Welcome, Presets, CompanionConfirm };
+enum class Screen : uint8_t {
+    Welcome, Presets, CompanionConfirm,
+    Contacts, ContactChat, ContactDetails,
+    Channels, ChannelChat, Discovery,
+    Settings, RadioSettings, GpsSettings, DisplaySettings, About
+};
 static Screen screen = Screen::Welcome;
+static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static constexpr uint8_t PRESETS_PER_PAGE = 5;
 
@@ -160,7 +173,7 @@ static void draw_keyboard() {
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char label[2]={rows[r][i],0};key(label,starts[r]+i*52,ys[r],49);}
     key(keyboard_upper?"Aa":"aA",12,828,76);
     key(keyboard_symbols?"ABC":"SYM",460,828,68);
-    key("DEL",12,898,150);key("HIDE",170,898,150);key("SAVE",328,898,200);
+    key("DEL",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_message_mode?"SEND":"SAVE",426,898,102);
 }
 
 static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
@@ -271,10 +284,131 @@ static void draw_companion_confirm() {
     box(290,500,220,72,true);text("START",338,524,3,0xFF,true);
 }
 
+static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
+    const char* cursor=value;
+    for(int row=0;row<max_lines&&*cursor;++row){
+        while(*cursor==' ')++cursor;
+        int remaining=strlen(cursor),take=min(chars_per_line,remaining);
+        if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}
+        char line_text[64]={};memcpy(line_text,cursor,min(take,63));
+        text(line_text,x,y+row*(7*scale+8),scale,color,bold);cursor+=take;
+    }
+}
+
+static void draw_bottom_nav(int selected) {
+    static const char* labels[]={"CONTACT","CHANNEL","DISCOVER","SETTINGS"};
+    for(int i=0;i<4;++i){box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);}
+}
+
+static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
+    epd_hl_set_all_white(&display);draw_status_bar();
+    if(back)text("< BACK",16,70,2,0,true);
+    centred(title,64,4,0,true);
+    if(action)text(action,540-(int)strlen(action)*12-16,70,2,0,true);
+}
+
+static void draw_list_entry(const UiListEntry& item,int y) {
+    box(12,y,516,142);
+    text(item.title,28,y+16,3,0,true);
+    text(item.time,528-(int)strlen(item.time)*12-16,y+20,2,0,true);
+    draw_wrapped(item.subtitle,28,y+60,36,2,0,false,2);
+    if(item.unread){box(462,y+88,48,38,true);char n[6];snprintf(n,sizeof(n),"%u",item.unread);text(n,486-(int)strlen(n)*6,y+97,2,0xFF,true);}
+}
+
+static void draw_contacts() {
+    draw_app_header("CONTACTS");
+    for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)draw_list_entry(ui_data->contact(i),120+i*150);
+    draw_bottom_nav(0);
+}
+
+static void draw_channels() {
+    draw_app_header("CHANNELS");
+    for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)draw_list_entry(ui_data->channel(i),120+i*150);
+    draw_bottom_nav(1);
+}
+
+static void draw_message_bubble(const UiMessage& message,int y) {
+    const int x=message.outgoing?82:12,w=446;box(x,y,w,116,message.outgoing);
+    draw_wrapped(message.text,x+16,y+14,32,2,message.outgoing?0xFF:0,false,3);
+    text(message.time,x+w-(int)strlen(message.time)*12-12,y+88,2,message.outgoing?0xFF:0,true);
+}
+
+static void draw_chat(bool channel) {
+    draw_app_header(channel?"# GENERAL":"ALICE",true,channel?nullptr:"INFO");
+    const size_t count=channel?ui_data->channel_message_count():ui_data->direct_message_count();
+    for(size_t i=0;i<count&&i<3;++i)draw_message_bubble(channel?ui_data->channel_message(i):ui_data->direct_message(i),130+i*132);
+    box(12,540,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,560,2,0,false);
+    if(keyboard_visible&&keyboard_message_mode)draw_keyboard();
+    else {box(360,820,168,62,true);text("COMPOSE",381,841,3,0xFF,true);}
+}
+
+static void draw_contact_details() {
+    draw_app_header("CONTACT",true);
+    centred("ALICE",132,5,0,true);centred("CHAT NODE",184,2,0,true);
+    text("LAST SEEN",24,250,2,0,true);text("JUST NOW",280,250,2);
+    text("SIGNAL",24,304,2,0,true);text("SNR 8.5  RSSI -91",280,304,2);
+    text("ROUTE",24,358,2,0,true);text("DIRECT",280,358,2);
+    text("LOCATION",24,412,2,0,true);text("42.72 S  170.96 E",280,412,2);
+    text("PUBLIC KEY",24,466,2,0,true);text("8A71...C42E",280,466,2);
+    box(24,560,492,70);centred("START CONVERSATION",584,3,0,true);
+    box(24,660,492,70);centred("DELETE CONTACT",684,3,0,true);
+}
+
+static void draw_discovery() {
+    draw_app_header("DISCOVERED");
+    static constexpr UiListEntry nodes[]={
+        {"ARTHURS PASS", "CHAT NODE  2 MIN AGO", "",0},{"REPEATER 12", "REPEATER  SNR 6.2", "",0},
+        {"FIELD SENSOR", "SENSOR  TEMPERATURE 14 C", "",0},{"ROOM WEST", "ROOM SERVER  1 HOUR AGO", "",0}};
+    for(int i=0;i<4;++i)draw_list_entry(nodes[i],120+i*150);
+    draw_bottom_nav(2);
+}
+
+static void settings_row(const char* title,const char* subtitle,int y) {
+    box(12,y,516,112);text(title,28,y+14,3,0,true);text(subtitle,28,y+58,2);text(">",494,y+42,3,0,true);
+}
+
+static void draw_settings() {
+    draw_app_header("SETTINGS");
+    settings_row("NODE AND IDENTITY",node_name,118);settings_row("RADIO","PRESET AND TRANSMIT SETTINGS",238);
+    settings_row("GPS","POSITION AND ADVERT OPTIONS",358);settings_row("DISPLAY AND POWER","FRONTLIGHT AND STANDBY",478);
+    settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",598);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",718);
+    draw_bottom_nav(3);
+}
+
+static void draw_radio_settings() {
+    draw_app_header("RADIO",true);settings_row("REGION PRESET",PRESETS[selected_preset].title,140);
+    settings_row("FREQUENCY","917.375 MHZ",270);settings_row("MODEM","SF7  BW62.5  CR5",400);
+    settings_row("TRANSMIT POWER","22 DBM",530);settings_row("ADVERT INTERVAL","ZERO HOP  60 MIN",660);
+}
+
+static void draw_gps_settings() {
+    draw_app_header("GPS",true);settings_row("GPS POWER",status_gps_enabled?"ENABLED":"DISABLED",160);
+    settings_row("FIX STATUS",status_gps_fix?"POSITION FIXED":"NO FIX",300);settings_row("POSITION ADVERT","EVERY 30 MINUTES",440);
+    box(24,600,492,70);centred(status_gps_fix?"CLEAR TEST FIX":"SIMULATE GPS FIX",624,3,0,true);
+}
+
+static void draw_display_settings() {
+    draw_app_header("DISPLAY",true);settings_row("FRONTLIGHT","ON",160);settings_row("BRIGHTNESS","100 PERCENT",300);
+    settings_row("STANDBY","LONG PRESS BOOT",440);settings_row("FULL REFRESH","EVERY 10 UPDATES",580);
+}
+
+static void draw_about() {
+    draw_app_header("ABOUT",true);centred("MESHCORE T5 PAPER",150,4,0,true);centred(UI_VERSION,210,3,0,true);
+    text("HARDWARE",24,300,2,0,true);text("LILYGO T5 PRO",250,300,2);
+    text("MODE",24,354,2,0,true);text("LOCAL UI PROTOTYPE",250,354,2);
+    text("DATA",24,408,2,0,true);text("MOCK PROVIDER",250,408,2);
+    text("RADIO",24,462,2,0,true);text("NOT STARTED",250,462,2);
+    draw_wrapped("This inspection build demonstrates navigation and layout. MeshCore integration follows after approval.",24,550,38,2,0,false,4);
+}
+
 static void draw_screen() {
-    if(screen==Screen::Welcome)draw_welcome();
-    else if(screen==Screen::Presets)draw_presets();
-    else draw_companion_confirm();
+    switch(screen){
+        case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;
+        case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
+        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Discovery:draw_discovery();break;
+        case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;
+        case Screen::DisplaySettings:draw_display_settings();break;case Screen::About:draw_about();break;
+    }
     draw_toast();
 }
 
@@ -330,17 +464,84 @@ static bool touch_point(int16_t& x, int16_t& y) {
 
 static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_'; }
 static void append(char c) {
+    if(keyboard_message_mode){size_t n=strlen(compose_text);if(n<48){compose_text[n]=c;compose_text[n+1]=0;}return;}
     if(!legal_name_character(c)){Serial.printf("[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
     size_t n=strlen(node_name); if (n<20) { node_name[n]=c; node_name[n+1]=0; saved=false; }
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
+
+static void open_screen(Screen next) { keyboard_visible=false;keyboard_message_mode=false;screen=next;draw_screen();refresh(MODE_GL16); }
+
+static bool handle_message_keyboard(int16_t x,int16_t y) {
+    if(!keyboard_visible||!keyboard_message_mode)return false;
+    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);draw_screen();refresh(MODE_DU);return true;}
+    const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
+    const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
+    const int starts[]={15,41,93};const int ys[]={688,758,828};
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,12,898,100,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,120,898,190,62)){append(' ');draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+    if(hit(x,y,426,898,102,62)){if(compose_text[0]){compose_text[0]=0;keyboard_visible=false;show_toast("MESSAGE QUEUED");draw_screen();refresh(MODE_DU);}return true;}
+    return true;
+}
+
+static bool handle_app_tap(int16_t x,int16_t y) {
+    if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm)return false;
+    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
+    if(y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Discovery:Screen::Settings);return true;}
+    switch(screen){
+        case Screen::Contacts:
+            for(int i=0;i<4;++i)if(hit(x,y,12,120+i*150,516,142)){open_screen(Screen::ContactChat);return true;}break;
+        case Screen::Channels:
+            for(int i=0;i<3;++i)if(hit(x,y,12,120+i*150,516,142)){open_screen(Screen::ChannelChat);return true;}break;
+        case Screen::ContactChat:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Contacts);return true;}
+            if(hit(x,y,430,48,110,70)){open_screen(Screen::ContactDetails);return true;}
+            if(hit(x,y,12,540,516,62)||hit(x,y,360,820,168,62)){keyboard_message_mode=true;keyboard_visible=true;draw_screen();refresh(MODE_GL16);return true;}break;
+        case Screen::ChannelChat:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Channels);return true;}
+            if(hit(x,y,12,540,516,62)||hit(x,y,360,820,168,62)){keyboard_message_mode=true;keyboard_visible=true;draw_screen();refresh(MODE_GL16);return true;}break;
+        case Screen::ContactDetails:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::ContactChat);return true;}
+            if(hit(x,y,24,560,492,70)){open_screen(Screen::ContactChat);return true;}
+            if(hit(x,y,24,660,492,70)){show_toast("DEMO ONLY");draw_screen();refresh(MODE_DU);return true;}break;
+        case Screen::Discovery:
+            for(int i=0;i<4;++i)if(hit(x,y,12,120+i*150,516,142)){show_toast("CONTACT ADDED");draw_screen();refresh(MODE_DU);return true;}break;
+        case Screen::Settings:
+            if(hit(x,y,12,118,516,112)){keyboard_message_mode=false;keyboard_visible=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,12,238,516,112)){open_screen(Screen::RadioSettings);return true;}
+            if(hit(x,y,12,358,516,112)){open_screen(Screen::GpsSettings);return true;}
+            if(hit(x,y,12,478,516,112)){open_screen(Screen::DisplaySettings);return true;}
+            if(hit(x,y,12,598,516,112)){open_screen(Screen::CompanionConfirm);return true;}
+            if(hit(x,y,12,718,516,112)){open_screen(Screen::About);return true;}break;
+        case Screen::RadioSettings:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit(x,y,12,140,516,112)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return true;}
+            show_toast("DEMO SETTING");draw_screen();refresh(MODE_DU);return true;
+        case Screen::GpsSettings:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit(x,y,12,160,516,112)){status_gps_enabled=!status_gps_enabled;if(!status_gps_enabled)status_gps_fix=false;show_toast(status_gps_enabled?"GPS ENABLED":"GPS DISABLED");draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,24,600,492,70)){status_gps_enabled=true;status_gps_fix=!status_gps_fix;show_toast(status_gps_fix?"GPS FIX ACQUIRED":"GPS FIX CLEARED");draw_screen();refresh(MODE_DU);return true;}break;
+        case Screen::DisplaySettings:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}show_toast("DEMO SETTING");draw_screen();refresh(MODE_DU);return true;
+        case Screen::About:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
+        default:break;
+    }
+    return true;
+}
+
 static void handle_tap(int16_t x,int16_t y) {
     Serial.printf("[T5-UI] tap x=%d y=%d\n",x,y);
+    if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
-        if(y>=48&&y<132){screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return;}
+        if(y>=48&&y<132){screen=preset_return_screen;draw_screen();refresh(MODE_GL16);return;}
         for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,12,132+row*128,516,112)){
-            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;show_toast("PRESET SELECTED");draw_screen();refresh(MODE_GL16);}return;
+            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=preset_return_screen;show_toast("PRESET SELECTED");draw_screen();refresh(MODE_GL16);}return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
         if(hit(x,y,24,800,180,62)&&preset_page>0){preset_page--;draw_screen();refresh(MODE_GL16);return;}
@@ -348,12 +549,12 @@ static void handle_tap(int16_t x,int16_t y) {
         return;
     }
     if(screen==Screen::CompanionConfirm){
-        if(hit(x,y,30,500,220,72)){screen=Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
+        if(hit(x,y,30,500,220,72)){screen=setup_complete?Screen::Settings:Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
         if(hit(x,y,290,500,220,72)){Serial.println("[T5-UI] companion mode confirmed");request_companion_mode();return;}
         return;
     }
     if(hit(x,y,30,180,480,64)){replace_name_on_type=true;keyboard_visible=true;Serial.println("[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,24,292,492,88)){screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
+    if(hit(x,y,24,292,492,88)){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
     if(!keyboard_visible){if(hit(x,y,30,840,480,64)){keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return;}
     const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);draw_screen();refresh(MODE_DU);return;}
@@ -363,11 +564,12 @@ static void handle_tap(int16_t x,int16_t y) {
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,12,898,150,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,170,898,150,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
-    if(hit(x,y,328,898,200,62)){
-        prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);prefs.end();
-        saved=true;show_toast("SETTINGS SAVED");draw_screen();refresh(MODE_DU);
+    if(hit(x,y,12,898,100,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,120,898,190,62)){return;}
+    if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
+    if(hit(x,y,426,898,102,62)){
+        prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);prefs.putBool("complete",true);prefs.end();
+        saved=true;setup_complete=true;toast_opens_main=true;show_toast("SETTINGS SAVED");draw_screen();refresh(MODE_DU);
     }
 }
 
@@ -379,13 +581,14 @@ void ui_setup() {
     epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);epd_set_lcd_pixel_clock_MHz(17);
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
     display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=epd_hl_get_framebuffer(&display);
-    prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);prefs.end();
+    prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);prefs.end();
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
     if(saved_name.length()){
         size_t out=0;
         for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else Serial.printf("[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
         node_name[out]=0;
     }
+    if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;status_unread=3;status_channel_unread=4;}
     update_status_hardware();
     epd_hl_set_all_white(&display);centred("MESHCORE",290,7,0,true);centred(UI_VERSION,900,2);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
@@ -411,7 +614,11 @@ void ui_loop() {
         if(update_status_hardware())status_dirty=true;
     }
     if(status_dirty&&!held){status_dirty=false;draw_screen();refresh(MODE_DU);}
-    if(toast_visible&&(int32_t)(millis()-toast_until)>=0&&!held){toast_visible=false;draw_screen();refresh(MODE_DU);}
+    if(toast_visible&&(int32_t)(millis()-toast_until)>=0&&!held){
+        toast_visible=false;
+        if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=3;status_channel_unread=4;}
+        draw_screen();refresh(MODE_DU);
+    }
     delay(12);
 }
 
