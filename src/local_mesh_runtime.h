@@ -26,3 +26,6 @@ const char* local_mesh_radio_summary();
 const char* local_mesh_privacy_value(uint8_t item);
 void local_mesh_toggle_privacy(uint8_t item);
 void local_mesh_cycle_path_hash();
+void local_mesh_prepare_shutdown();
+uint16_t local_mesh_direct_unread_total();
+uint16_t local_mesh_channel_unread_total();
