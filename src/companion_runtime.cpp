@@ -3,6 +3,7 @@
 #include <SPIFFS.h>
 #include <helpers/MultiSerialInterface.h>
 #include <helpers/esp32/SerialBLEInterface.h>
+#include "../lib/MeshCore/examples/companion_radio/DataStore.cpp"
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.cpp"
 #include "companion_runtime.h"
 
