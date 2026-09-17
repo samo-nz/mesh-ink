@@ -23,5 +23,8 @@ mode described above, selected before BLE or UI resources are allocated.
 Starting with 0.1.1, `t5-unified` is the product test target. Local UI is the
 default. Its menu can set a one-shot flag and restart into the verified Bluetooth
 companion application; that flag is consumed at boot, so the next restart returns
-to local UI. In companion mode only, holding BOOT for two seconds and releasing it
-returns to local UI. Both paths display the same centrally defined firmware version.
+to local UI. In companion mode only, holding BOOT for two seconds immediately
+restarts into local UI; releasing the button is not required. In UI mode the
+frontlight remains steadily on and is independent of e-paper refreshes until a
+user-selectable frontlight policy is added.
+Both paths display the same centrally defined firmware version.

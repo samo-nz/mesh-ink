@@ -6,7 +6,7 @@
 #include "ui_onboarding.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.1.1"
+#define T5_FIRMWARE_VERSION "0.1.2"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -117,10 +117,10 @@ static void draw_welcome() {
     box(30,180,480,64);
     text(node_name, 48,199,3);
     text("RADIO PRESET", 30, 268, 2, 0, true);
-    box(30,296,480,82);
-    text(PRESETS[selected_preset].title,48,310,2,0,true);
-    text(PRESETS[selected_preset].detail,48,342,1);
-    text(">",480,322,2,0,true);
+    box(24,292,492,88);
+    text(PRESETS[selected_preset].title,38,303,3,0,true);
+    text(PRESETS[selected_preset].detail,38,344,2);
+    text(">",486,319,3,0,true);
     box(30,402,480,52);
     centred("BLUETOOTH COMPANION MODE",418,2,0,true);
     centred("ENTER A NAME", 478, 2, 0, true);
@@ -134,7 +134,7 @@ static void draw_welcome() {
     for(int i=0;name_symbols[i];++i){char label[2]={name_symbols[i],0};key(label,12+i*43,755,41);}
     key("DEL",30,830,180); key("SAVE",220,830,290);
     centred(saved ? "SETTINGS SAVED" : "BLUETOOTH OFF", 905, 2, 0, true);
-    centred(UI_VERSION, 945, 1);
+    centred(UI_VERSION, 938, 2);
 }
 
 static void draw_presets() {
@@ -144,16 +144,16 @@ static void draw_presets() {
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
-        const int y=145+row*126; box(24,y,492,106,index==selected_preset);
+        const int y=132+row*128; box(12,y,516,112,index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
-        text(PRESETS[index].title,42,y+17,2,color,true);
-        text(PRESETS[index].detail,42,y+57,1,color);
+        text(PRESETS[index].title,28,y+12,3,color,true);
+        text(PRESETS[index].detail,28,y+60,2,color,true);
     }
     box(24,800,180,62,preset_page==0);text("PREV",75,821,2,preset_page==0?0xFF:0,true);
     const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
     box(336,800,180,62,preset_page+1>=page_count);text("NEXT",385,821,2,preset_page+1>=page_count?0xFF:0,true);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
-    centred(page_text,890,2,0,true);centred(UI_VERSION,935,1);
+    centred(page_text,890,2,0,true);centred(UI_VERSION,928,2,0,true);
 }
 
 static void draw_companion_confirm() {
@@ -172,11 +172,9 @@ static void draw_screen() {
 }
 
 static void refresh(EpdDrawMode mode) {
-    digitalWrite(FRONTLIGHT,HIGH);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
     epd_poweroff();
-    digitalWrite(FRONTLIGHT,LOW);
     Serial.printf("[T5-UI] refresh=%d name='%s' preset=%s\n",err,node_name,PRESETS[selected_preset].title);
 }
 
@@ -211,7 +209,7 @@ static void handle_tap(int16_t x,int16_t y) {
     Serial.printf("[T5-UI] tap x=%d y=%d\n",x,y);
     if(screen==Screen::Presets) {
         if(y<125){screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return;}
-        for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,24,145+row*126,492,106)){
+        for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,12,132+row*128,516,112)){
             const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);}return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
@@ -225,7 +223,7 @@ static void handle_tap(int16_t x,int16_t y) {
         return;
     }
     if(hit(x,y,30,180,480,64)){replace_name_on_type=true;Serial.println("[T5-UI] name selected; next character replaces current name");return;}
-    if(hit(x,y,30,296,480,82)){screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
+    if(hit(x,y,24,292,492,88)){screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
     const char* rows[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"}; const int starts[]={15,41,93}; const int ys[]={525,600,675};
     for(int r=0;r<3;++r) for(int i=0;rows[r][i];++i)
