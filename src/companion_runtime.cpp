@@ -82,7 +82,8 @@ void local_mesh_setup() {
 #if ENV_INCLUDE_GPS == 1
     the_mesh.applyGpsPrefs();
 #endif
-    ui_use_data_provider(local_mesh_provider());
     local_mesh_runtime_begin();
+    ui_use_data_provider(local_mesh_provider());
+    ui_mesh_ready();
     Serial.printf("[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
 }
