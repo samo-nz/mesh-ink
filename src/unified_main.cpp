@@ -53,7 +53,7 @@ void loop() {
         companion_loop();
         companion_exit_button();
     } else {
-        local_mesh_loop();
+        if(local_mesh_is_running())local_mesh_loop();
         ui_loop();
     }
 }

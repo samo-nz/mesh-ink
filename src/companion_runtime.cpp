@@ -39,6 +39,7 @@ public:
 };
 
 static LocalSerial local_interface;
+static bool local_runtime_ready=false;
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
@@ -75,7 +76,12 @@ void companion_loop() {
 void local_mesh_setup() {
     Serial.println("[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     board.beginLocal();
-    if (!radio_init()) { Serial.println("[T5-MESH] fatal: SX1262 initialization failed"); return; }
+    bool radio_ready=false;
+    for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt){
+        radio_ready=radio_init();
+        if(!radio_ready){Serial.printf("[T5-MESH] SX1262 initialization attempt %u/3 failed; retrying\n",attempt);delay(500);}
+    }
+    if (!radio_ready) { Serial.println("[T5-MESH] ERROR: SX1262 unavailable; UI remains running without MeshCore to prevent reboot loop"); return; }
     fast_rng.begin(radio_driver.getRngSeed());
     SPIFFS.begin(true); store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
     sensors.begin();
@@ -85,5 +91,7 @@ void local_mesh_setup() {
     local_mesh_runtime_begin();
     ui_use_data_provider(local_mesh_provider());
     ui_mesh_ready();
+    local_runtime_ready=true;
     Serial.printf("[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
 }
+bool local_mesh_is_running(){return local_runtime_ready;}
