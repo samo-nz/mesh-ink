@@ -24,7 +24,7 @@ static constexpr gpio_num_t FRONTLIGHT = GPIO_NUM_11;
 struct Glyph { char c; uint8_t r[7]; };
 static constexpr Glyph FONT[] = {
  {' ',{0,0,0,0,0,0,0}},{'-',{0,0,0,31,0,0,0}},{'.',{0,0,0,0,0,6,6}},
- {'<',{1,2,4,8,4,2,1}},{'>',{16,8,4,2,4,8,16}},
+ {'<',{1,2,4,8,4,2,1}},{'>',{16,8,4,2,4,8,16}},{'_',{0,0,0,0,0,0,31}},
  {'0',{14,17,19,21,25,17,14}},{'1',{4,12,4,4,4,4,14}},{'2',{14,17,1,2,4,8,31}},
  {'3',{30,1,1,14,1,1,30}},{'4',{2,6,10,18,31,2,2}},{'5',{31,16,16,30,1,1,30}},
  {'6',{14,16,16,30,17,17,14}},{'7',{31,1,2,4,8,8,8}},{'8',{14,17,17,14,17,17,14}},
@@ -55,7 +55,8 @@ static bool replace_name_on_type = false;
 static int16_t cached_touch_x = 0, cached_touch_y = 0;
 enum class Screen : uint8_t { Welcome, Presets, CompanionConfirm };
 static Screen screen = Screen::Welcome;
-static uint8_t preset_scroll = 15;
+static uint8_t preset_page = 3;
+static constexpr uint8_t PRESETS_PER_PAGE = 5;
 
 struct Preset { const char* title; const char* detail; };
 static constexpr Preset PRESETS[] = {
@@ -129,7 +130,8 @@ static void draw_welcome() {
     for (int r=0;r<3;++r) for (int i=0;rows[r][i];++i) {
         char label[2] = {rows[r][i],0}; key(label,starts[r]+i*52,ys[r],49);
     }
-    for(int i=0;i<10;++i){char label[2]={(char)('0'+i),0};key(label,15+i*52,755,49);}
+    const char* name_symbols="0123456789-_";
+    for(int i=0;name_symbols[i];++i){char label[2]={name_symbols[i],0};key(label,12+i*43,755,41);}
     key("DEL",30,830,180); key("SAVE",220,830,290);
     centred(saved ? "SETTINGS SAVED" : "BLUETOOTH OFF", 905, 2, 0, true);
     centred(UI_VERSION, 945, 1);
@@ -137,17 +139,21 @@ static void draw_welcome() {
 
 static void draw_presets() {
     epd_hl_set_all_white(&display);
-    text("< BACK",24,38,2,0,true);
-    centred("RADIO PRESETS",92,4,0,true);
-    centred("SWIPE TO SCROLL",140,2);
-    for (int row=0; row<5; ++row) {
-        const int index=preset_scroll+row; if(index>=PRESET_COUNT) break;
-        const int y=190+row*132; box(24,y,492,112,index==selected_preset);
+    text("< BACK",24,24,2,0,true);
+    centred("RADIO PRESETS",72,4,0,true);
+    const int first=preset_page*PRESETS_PER_PAGE;
+    for (int row=0; row<PRESETS_PER_PAGE; ++row) {
+        const int index=first+row; if(index>=PRESET_COUNT) break;
+        const int y=145+row*126; box(24,y,492,106,index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
-        text(PRESETS[index].title,42,y+20,2,color,true);
-        text(PRESETS[index].detail,42,y+61,1,color);
+        text(PRESETS[index].title,42,y+17,2,color,true);
+        text(PRESETS[index].detail,42,y+57,1,color);
     }
-    centred("SELECT A PRESET",880,2,0,true); centred(UI_VERSION,920,1);
+    box(24,800,180,62,preset_page==0);text("PREV",75,821,2,preset_page==0?0xFF:0,true);
+    const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
+    box(336,800,180,62,preset_page+1>=page_count);text("NEXT",385,821,2,preset_page+1>=page_count?0xFF:0,true);
+    char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
+    centred(page_text,890,2,0,true);centred(UI_VERSION,935,1);
 }
 
 static void draw_companion_confirm() {
@@ -194,7 +200,7 @@ static bool touch_point(int16_t& x, int16_t& y) {
     clear_touch(); was_pressed=true; return true;
 }
 
-static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='0'&&c<='9'); }
+static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-'||c=='_'; }
 static void append(char c) {
     if(!legal_name_character(c)){Serial.printf("[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
@@ -204,10 +210,13 @@ static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&
 static void handle_tap(int16_t x,int16_t y) {
     Serial.printf("[T5-UI] tap x=%d y=%d\n",x,y);
     if(screen==Screen::Presets) {
-        if(y<165){screen=Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
-        for(int row=0;row<5;++row) if(hit(x,y,24,190+row*132,492,112)){
-            const int index=preset_scroll+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;draw_screen();refresh(MODE_DU);}return;
+        if(y<125){screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return;}
+        for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,24,145+row*126,492,106)){
+            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);}return;
         }
+        const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
+        if(hit(x,y,24,800,180,62)&&preset_page>0){preset_page--;draw_screen();refresh(MODE_GL16);return;}
+        if(hit(x,y,336,800,180,62)&&preset_page+1<page_count){preset_page++;draw_screen();refresh(MODE_GL16);return;}
         return;
     }
     if(screen==Screen::CompanionConfirm){
@@ -216,12 +225,13 @@ static void handle_tap(int16_t x,int16_t y) {
         return;
     }
     if(hit(x,y,30,180,480,64)){replace_name_on_type=true;Serial.println("[T5-UI] name selected; next character replaces current name");return;}
-    if(hit(x,y,30,296,480,82)){screen=Screen::Presets;preset_scroll=selected_preset>2?selected_preset-2:0;if(preset_scroll>PRESET_COUNT-5)preset_scroll=PRESET_COUNT-5;draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,30,296,480,82)){screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
     const char* rows[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"}; const int starts[]={15,41,93}; const int ys[]={525,600,675};
     for(int r=0;r<3;++r) for(int i=0;rows[r][i];++i)
         if(hit(x,y,starts[r]+i*52,ys[r],49,56)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return;}
-    for(int i=0;i<10;++i)if(hit(x,y,15+i*52,755,49,56)){append((char)('0'+i));draw_screen();refresh(MODE_DU);return;}
+    const char* name_symbols="0123456789-_";
+    for(int i=0;name_symbols[i];++i)if(hit(x,y,12+i*43,755,41,56)){append(name_symbols[i]);draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,30,830,180,56)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,220,830,290,56)){
         prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);prefs.end();
@@ -257,8 +267,9 @@ void ui_loop() {
     if(!pressed&&held){
         held=false;const int dy=last_y-start_y;
         if(screen==Screen::Presets&&abs(dy)>60){
-            int next=(int)preset_scroll+(dy<0?3:-3);if(next<0)next=0;if(next>PRESET_COUNT-5)next=PRESET_COUNT-5;
-            preset_scroll=(uint8_t)next;Serial.printf("[T5-UI] preset scroll=%u\n",preset_scroll);draw_screen();refresh(MODE_DU);
+            const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
+            int next=(int)preset_page+(dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
+            preset_page=(uint8_t)next;Serial.printf("[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(last_x,last_y);
     }
     delay(12);
