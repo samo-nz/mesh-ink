@@ -81,7 +81,7 @@ void local_mesh_setup() {
         radio_ready=radio_init();
         if(!radio_ready){Serial.printf("[T5-MESH] SX1262 initialization attempt %u/3 failed; retrying\n",attempt);delay(500);}
     }
-    if (!radio_ready) { Serial.println("[T5-MESH] ERROR: SX1262 unavailable; UI remains running without MeshCore to prevent reboot loop"); return; }
+    if (!radio_ready) { Serial.println("[T5-MESH] ERROR: SX1262 unavailable; stopping on hardware failure screen");ui_show_radio_failure();return; }
     fast_rng.begin(radio_driver.getRngSeed());
     SPIFFS.begin(true); store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
     sensors.begin();

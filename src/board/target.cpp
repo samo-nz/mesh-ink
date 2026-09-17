@@ -2,11 +2,12 @@
 #include <SPI.h>
 #include <epdiy.h>
 #include <esp_heap_caps.h>
+#include <driver/i2c.h>
 #include "target.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.2"
+#define T5_FIRMWARE_VERSION "0.9.3"
 #endif
 
 #if T5_DIAGNOSTICS
@@ -16,6 +17,38 @@
 #endif
 
 T5Board board;
+
+static constexpr uint8_t PCA9535_ADDR=0x20;
+static bool pca_read(uint8_t reg,uint8_t& value){
+    return i2c_master_write_read_device(I2C_NUM_0,PCA9535_ADDR,&reg,1,&value,1,pdMS_TO_TICKS(50))==ESP_OK;
+}
+static bool pca_write(uint8_t reg,uint8_t value){
+    const uint8_t data[2]={reg,value};
+    return i2c_master_write_to_device(I2C_NUM_0,PCA9535_ADDR,data,sizeof(data),pdMS_TO_TICKS(50))==ESP_OK;
+}
+
+bool T5Board::enableRadioGpsRail(){
+    // LilyGO maps LORA_EN (shared LoRa/GPS 3V3 rail) to PCA9535 port 0 bit 0.
+    // Preserve every display-owned bit: update only IO0_0 while the panel is idle.
+    constexpr uint8_t OUTPUT_PORT0=0x02,CONFIG_PORT0=0x06,LORA_EN=0x01;
+    uint8_t output=0,config=0;
+    if(!pca_read(OUTPUT_PORT0,output)||!pca_read(CONFIG_PORT0,config)){
+        T5_TRACE("power rail: PCA9535 read failed\n");return false;
+    }
+    const uint8_t requested_output=(uint8_t)(output|LORA_EN);
+    const uint8_t requested_config=(uint8_t)(config&~LORA_EN);
+    // Set the output latch first so the rail cannot glitch low when direction changes.
+    if(!pca_write(OUTPUT_PORT0,requested_output)||!pca_write(CONFIG_PORT0,requested_config)){
+        T5_TRACE("power rail: PCA9535 write failed output=0x%02X config=0x%02X\n",requested_output,requested_config);return false;
+    }
+    uint8_t verified_output=0,verified_config=0;
+    const bool verified=pca_read(OUTPUT_PORT0,verified_output)&&pca_read(CONFIG_PORT0,verified_config)&&
+        (verified_output&LORA_EN)&&!(verified_config&LORA_EN);
+    T5_TRACE("power rail: PCA9535 output0 0x%02X->0x%02X config0 0x%02X->0x%02X verify=%s\n",
+        output,verified_output,config,verified_config,verified?"OK":"FAILED");
+    if(verified)delay(150);
+    return verified;
+}
 
 // Board mapping only. The upstream wrapper controls radio parameters and
 // transmit/receive/power state through MeshCore.
@@ -277,6 +310,7 @@ void T5Board::begin() {
     T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
     ESP32Board::begin();
     T5_TRACE("board: MeshCore I2C ready\n");
+    enableRadioGpsRail();
     getBattMilliVolts();
     T5_TRACE("board: disabling touch and frontlight\n");
     pinMode(9, OUTPUT);
@@ -294,6 +328,7 @@ void T5Board::beginLocal() {
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
+    enableRadioGpsRail();
     getBattMilliVolts();
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
