@@ -10,3 +10,4 @@ void ui_status_set_gps(bool enabled, bool has_fix, int satellites, long latitude
 void ui_notify_message_received(bool channel);
 void ui_mesh_ready();
 void ui_use_data_provider(UiDataProvider* provider);
+bool ui_is_standby();
