@@ -16,41 +16,24 @@ static SerialBLEInterface bluetooth_interface;
 static DataStore store(SPIFFS, rtc_clock);
 static StdRNG fast_rng;
 static SimpleMeshTables tables;
-void local_mesh_on_direct(const ContactInfo&, uint32_t, const char*);
-void local_mesh_on_channel(const mesh::GroupChannel&, uint32_t, const char*);
-static bool local_ui_runtime = false;
-
-class T5Mesh final : public MyMesh {
-public:
-    using MyMesh::MyMesh;
-protected:
-    void onMessageRecv(const ContactInfo& from, mesh::Packet* packet, uint32_t timestamp, const char* text) override {
-        if(local_ui_runtime)local_mesh_on_direct(from,timestamp,text);else MyMesh::onMessageRecv(from,packet,timestamp,text);
-    }
-    void onSignedMessageRecv(const ContactInfo& from, mesh::Packet* packet, uint32_t timestamp, const uint8_t* prefix, const char* text) override {
-        if(local_ui_runtime)local_mesh_on_direct(from,timestamp,text);else MyMesh::onSignedMessageRecv(from,packet,timestamp,prefix,text);
-    }
-    void onChannelMessageRecv(const mesh::GroupChannel& channel, mesh::Packet* packet, uint32_t timestamp, const char* text) override {
-        if(local_ui_runtime)local_mesh_on_channel(channel,timestamp,text);else MyMesh::onChannelMessageRecv(channel,packet,timestamp,text);
-    }
-};
+void local_mesh_on_frame(const uint8_t*, size_t);
 
 class LocalSerial final : public BaseSerialInterface {
     bool enabled=false;
+    uint8_t pending=0;
 public:
     void enable() override { enabled=true; } void disable() override { enabled=false; }
-    bool isEnabled() const override { return enabled; } bool isConnected() const override { return false; }
+    bool isEnabled() const override { return enabled; } bool isConnected() const override { return true; }
     bool isWriteBusy() const override { return false; }
-    size_t writeFrame(const uint8_t[],size_t len) override { return len; }
-    size_t checkRecvFrame(uint8_t[]) override { return 0; }
+    size_t writeFrame(const uint8_t* frame,size_t len) override { if(len==1&&frame[0]==0x83){if(pending<255)pending++;}else local_mesh_on_frame(frame,len);return len; }
+    size_t checkRecvFrame(uint8_t* frame) override { if(!pending)return 0;pending--;frame[0]=10;return 1; }
 };
 
 static LocalSerial local_interface;
-static T5Mesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 
 void companion_setup() {
-    local_ui_runtime = false;
     Serial.println("[T5-BOOT] starting upstream MeshCore companion runtime");
     board.begin();
     if (!radio_init()) {
@@ -80,7 +63,6 @@ void companion_loop() {
 }
 
 void local_mesh_setup() {
-    local_ui_runtime = true;
     Serial.println("[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     board.beginLocal();
     if (!radio_init()) { Serial.println("[T5-MESH] fatal: SX1262 initialization failed"); return; }
