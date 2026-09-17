@@ -6,7 +6,7 @@
 #include "ui_onboarding.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.2.0"
+#define T5_FIRMWARE_VERSION "0.2.1"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -81,12 +81,16 @@ static bool keyboard_visible = true;
 static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
 static uint16_t status_unread = 0;
+static uint16_t status_channel_unread = 0;
 static bool status_gps_enabled = false;
 static bool status_gps_fix = false;
 static int16_t status_battery = -1;
 static int8_t status_hour = -1;
 static int8_t status_minute = -1;
 static bool status_dirty = false;
+static bool toast_visible = false;
+static uint32_t toast_until = 0;
+static char toast_message[32] = {};
 static int16_t cached_touch_x = 0, cached_touch_y = 0;
 enum class Screen : uint8_t { Welcome, Presets, CompanionConfirm };
 static Screen screen = Screen::Welcome;
@@ -159,20 +163,63 @@ static void draw_keyboard() {
     key("DEL",12,898,150);key("HIDE",170,898,150);key("SAVE",328,898,200);
 }
 
+static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
+    int dx=abs(x1-x0),sx=x0<x1?1:-1,dy=-abs(y1-y0),sy=y0<y1?1:-1,err=dx+dy;
+    while(true){epd_draw_pixel(x0,y0,color,fb);if(x0==x1&&y0==y1)break;const int e2=2*err;if(e2>=dy){err+=dy;x0+=sx;}if(e2<=dx){err+=dx;y0+=sy;}}
+}
+
+static void draw_target_icon(int x,int y,bool disabled) {
+    epd_draw_rect({x+5,y+5,20,20},0,fb);epd_draw_rect({x+9,y+9,12,12},0,fb);
+    epd_fill_rect({x+13,y+13,4,4},0,fb);line(x,y+15,x+29,y+15);line(x+15,y,x+15,y+29);
+    if(disabled){for(int d=-1;d<=1;++d)line(x+2,y+2+d,x+28,y+28+d);}
+}
+
+static void draw_search_icon(int x,int y) {
+    epd_draw_rect({x+3,y+3,19,19},0,fb);epd_draw_rect({x+7,y+7,11,11},0,fb);
+    for(int d=-1;d<=1;++d)line(x+20,y+20+d,x+29,y+29+d);
+}
+
+static void draw_envelope_icon(int x,int y) {
+    epd_draw_rect({x,y+5,30,21},0,fb);line(x+1,y+6,x+15,y+17);line(x+29,y+6,x+15,y+17);
+}
+
+static void draw_battery_icon(int x,int y) {
+    epd_draw_rect({x,y+6,31,18},0,fb);epd_fill_rect({x+31,y+11,4,8},0,fb);
+    if(status_battery>0){const int fill=(status_battery*27)/100;epd_fill_rect({x+2,y+8,fill,14},0,fb);}
+}
+
 static void draw_status_bar() {
     epd_fill_rect({0,0,540,48},0xFF,fb);
     epd_draw_rect({0,0,540,48},0,fb);
-    char unread[12];snprintf(unread,sizeof(unread),"M %u",status_unread);
-    text(unread,10,14,2,0,true);
-    text(status_gps_enabled?(status_gps_fix?"GPS *":"GPS --"):"GPS OFF",78,14,2,0,true);
+    if(!status_gps_enabled)draw_target_icon(6,9,true);
+    else if(status_gps_fix)draw_target_icon(6,9,false);
+    else draw_search_icon(6,9);
+    int left=46;
+    if(status_unread){draw_envelope_icon(left,9);left+=36;char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,13,3,0,true);left+=(int)strlen(count)*18+12;}
+    if(status_channel_unread){text("#",left,13,3,0,true);left+=22;char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,13,3,0,true);}
     char clock_text[8];
     if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
     else snprintf(clock_text,sizeof(clock_text),"--:--");
-    text(clock_text,350,14,2,0,true);
+    centred(clock_text,13,3,0,true);
     char battery[8];
     if(status_battery>=0)snprintf(battery,sizeof(battery),"%d%%",status_battery);
     else snprintf(battery,sizeof(battery),"--%%");
-    text(battery,530-(int)strlen(battery)*12,14,2,0,true);
+    const int battery_x=530-(int)strlen(battery)*18;
+    draw_battery_icon(battery_x-43,8);
+    text(battery,battery_x,13,3,0,true);
+}
+
+static void draw_toast() {
+    if(!toast_visible)return;
+    const int scale=3,w=max(300,(int)strlen(toast_message)*6*scale+48),h=72,x=(540-w)/2,y=640,r=12;
+    epd_fill_rect({x+r,y,w-2*r,h},0,fb);epd_fill_rect({x,y+r,w,h-2*r},0,fb);
+    epd_fill_rect({x+5,y+5,w-10,h-10},0,fb);
+    text(toast_message,x+(w-(int)strlen(toast_message)*6*scale)/2,y+25,scale,0xFF,true);
+}
+
+static void show_toast(const char* message) {
+    strncpy(toast_message,message,sizeof(toast_message)-1);toast_message[sizeof(toast_message)-1]=0;
+    toast_visible=true;toast_until=millis()+1500;
 }
 
 static void draw_welcome() {
@@ -228,6 +275,7 @@ static void draw_screen() {
     if(screen==Screen::Welcome)draw_welcome();
     else if(screen==Screen::Presets)draw_presets();
     else draw_companion_confirm();
+    draw_toast();
 }
 
 static void refresh(EpdDrawMode mode) {
@@ -259,8 +307,8 @@ static bool update_status_hardware() {
         if(soc<=100)status_battery=(int16_t)soc;
     }
     const bool changed=old_hour!=status_hour||old_minute!=status_minute||old_battery!=status_battery;
-    if(changed)Serial.printf("[T5-UI] status clock=%02d:%02d battery=%d%% unread=%u gps=%s\n",
-        status_hour,status_minute,status_battery,status_unread,
+    if(changed)Serial.printf("[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
+        status_hour,status_minute,status_battery,status_unread,status_channel_unread,
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
     return changed;
 }
@@ -292,7 +340,7 @@ static void handle_tap(int16_t x,int16_t y) {
     if(screen==Screen::Presets) {
         if(y>=48&&y<132){screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return;}
         for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,12,132+row*128,516,112)){
-            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);}return;
+            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;show_toast("PRESET SELECTED");draw_screen();refresh(MODE_GL16);}return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
         if(hit(x,y,24,800,180,62)&&preset_page>0){preset_page--;draw_screen();refresh(MODE_GL16);return;}
@@ -319,7 +367,7 @@ static void handle_tap(int16_t x,int16_t y) {
     if(hit(x,y,170,898,150,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,328,898,200,62)){
         prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);prefs.end();
-        saved=true;draw_screen();refresh(MODE_GL16);
+        saved=true;show_toast("SETTINGS SAVED");draw_screen();refresh(MODE_DU);
     }
 }
 
@@ -363,11 +411,16 @@ void ui_loop() {
         if(update_status_hardware())status_dirty=true;
     }
     if(status_dirty&&!held){status_dirty=false;draw_screen();refresh(MODE_DU);}
+    if(toast_visible&&(int32_t)(millis()-toast_until)>=0&&!held){toast_visible=false;draw_screen();refresh(MODE_DU);}
     delay(12);
 }
 
 void ui_status_set_unread(uint16_t count) {
     if(status_unread!=count){status_unread=count;status_dirty=true;}
+}
+
+void ui_status_set_channel_unread(uint16_t count) {
+    if(status_channel_unread!=count){status_channel_unread=count;status_dirty=true;}
 }
 
 void ui_status_set_gps(bool enabled,bool has_fix) {

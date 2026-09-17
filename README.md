@@ -39,3 +39,7 @@ Milestone 0.2.0 introduces the persistent local-UI status bar. It reads the
 onboard RTC and BQ27220 fuel gauge, reserves live unread-message and GPS state
 slots, and remains present on every post-boot screen. The reusable keyboard is
 anchored flush to the display bottom with larger key labels.
+
+Release 0.2.1 replaces status labels with compact GPS, direct-message, channel
+and battery icons, enlarges the status typography, centres the clock, and adds
+a reusable 1.5-second high-contrast toast overlay for action confirmations.
