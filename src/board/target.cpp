@@ -5,6 +5,10 @@
 #include "target.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
+#ifndef T5_FIRMWARE_VERSION
+#define T5_FIRMWARE_VERSION "0.0.4"
+#endif
+
 #if T5_DIAGNOSTICS
 #define T5_TRACE(...) Serial.printf("[T5] " __VA_ARGS__)
 #else
@@ -171,7 +175,8 @@ uint16_t T5Board::getBattMilliVolts() {
 // framework into the companion-only image. Each row is a five-bit bitmap.
 struct Glyph { char letter; uint8_t rows[7]; };
 static constexpr Glyph notice_glyphs[] = {
-    {'0',{14,17,19,21,25,17,14}}, {'3',{30,1,1,14,1,1,30}},
+    {'0',{14,17,19,21,25,17,14}}, {'1',{4,12,4,4,4,4,14}},
+    {'3',{30,1,1,14,1,1,30}},
     {'4',{2,6,10,18,31,2,2}},
     {'.',{0,0,0,0,0,6,6}},
     {'A',{14,17,17,31,17,17,17}}, {'B',{30,17,17,30,17,17,30}},
@@ -214,7 +219,7 @@ static void show_companion_notice() {
         epd_hl_set_all_white(&display);
         notice_text("MESHCORE", 90, 290, 7, fb);
         notice_text("BT COMPANION MODE", 63, 410, 4, fb);
-        notice_text("0.0.4", 225, 900, 3, fb);
+        notice_text(T5_FIRMWARE_VERSION, 225, 900, 3, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
         epd_poweron();
         T5_TRACE("notice: full panel clear start\n");

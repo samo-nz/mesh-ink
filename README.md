@@ -19,3 +19,9 @@ device-name entry and touch OSK. Keeping these as separate targets during UI
 bring-up prevents experimental display/input work from destabilizing the
 working companion build. They will later be joined behind the persisted boot
 mode described above, selected before BLE or UI resources are allocated.
+
+Starting with 0.1.1, `t5-unified` is the product test target. Local UI is the
+default. Its menu can set a one-shot flag and restart into the verified Bluetooth
+companion application; that flag is consumed at boot, so the next restart returns
+to local UI. In companion mode only, holding BOOT for two seconds and releasing it
+returns to local UI. Both paths display the same centrally defined firmware version.
