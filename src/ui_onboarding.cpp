@@ -15,7 +15,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.1"
+#define T5_FIRMWARE_VERSION "0.9.2"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -365,8 +365,11 @@ static void draw_shutdown_confirm() {
     epd_hl_set_all_white(&display);
     draw_status_bar();
     centred("SHUT DOWN",120,5,0,true);
-    draw_wrapped("This disconnects the battery using the BQ25896 power controller.",42,230,34,2,0,true,4);
-    draw_wrapped("Press PWR to start again. Connect USB if the PWR button does not restore power.",42,380,34,2,0,true,5);
+    centred("FULL BATTERY POWER CUT",245,3,0,true);
+    centred("THE DEVICE WILL STOP",305,3,0,true);
+    centred("RECEIVING MESSAGES",350,3,0,true);
+    centred("PRESS PWR TO START AGAIN",445,3,0,true);
+    centred("ON USB: HOLD BOOT TO WAKE",500,3,0,true);
     box(30,650,220,72);text("CANCEL",74,674,3,0,true);
     box(290,650,220,72,true);text("SHUT DOWN",311,674,3,0xFF,true);
 }
@@ -647,8 +650,11 @@ static void request_hardware_shutdown() {
     Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     epd_hl_set_all_white(&display);
-    centred("POWERED OFF",300,6,0,true);
-    centred("PRESS PWR TO START",390,3,0,true);
+    centred("POWERED OFF",250,6,0,true);
+    centred("PRESS PWR BUTTON",370,4,0,true);
+    centred("TO POWER ON",425,4,0,true);
+    centred("IF STILL POWERED BY USB",560,3,0,true);
+    centred("HOLD BOOT TO WAKE",610,3,0,true);
     centred(UI_VERSION,900,2,0,true);
     refresh(MODE_GL16,false);
     frontlight_deadline=0;frontlight_drive(false);

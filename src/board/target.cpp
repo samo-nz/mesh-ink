@@ -6,7 +6,7 @@
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.1"
+#define T5_FIRMWARE_VERSION "0.9.2"
 #endif
 
 #if T5_DIAGNOSTICS
