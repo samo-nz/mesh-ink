@@ -6,7 +6,7 @@
 #include "ui_onboarding.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.1.3"
+#define T5_FIRMWARE_VERSION "0.2.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -80,6 +80,13 @@ static bool replace_name_on_type = false;
 static bool keyboard_visible = true;
 static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
+static uint16_t status_unread = 0;
+static bool status_gps_enabled = false;
+static bool status_gps_fix = false;
+static int16_t status_battery = -1;
+static int8_t status_hour = -1;
+static int8_t status_minute = -1;
+static bool status_dirty = false;
 static int16_t cached_touch_x = 0, cached_touch_y = 0;
 enum class Screen : uint8_t { Welcome, Presets, CompanionConfirm };
 static Screen screen = Screen::Welcome;
@@ -133,28 +140,46 @@ static void box(int x, int y, int w, int h, bool selected=false) {
 }
 
 static void key(const char* label, int x, int y, int w) {
-    box(x,y,w,56);
-    text(label, x+(w-(int)strlen(label)*12)/2, y+18, 2, 0, true);
+    box(x,y,w,62);
+    int scale=((int)strlen(label)*18+8<=w)?3:2;
+    text(label,x+(w-(int)strlen(label)*6*scale)/2,y+(62-7*scale)/2,scale,0,true);
 }
 
 static void draw_keyboard() {
     const char* numbers="1234567890";
-    for(int i=0;numbers[i];++i){char label[2]={numbers[i],0};key(label,15+i*52,500,49);}
+    for(int i=0;numbers[i];++i){char label[2]={numbers[i],0};key(label,15+i*52,618,49);}
     const char* letter_rows_upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
     const char* letter_rows_lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbol_rows[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};
     const char** rows=keyboard_symbols?symbol_rows:(keyboard_upper?letter_rows_upper:letter_rows_lower);
-    const int starts[]={15,41,93};const int ys[]={570,640,710};
+    const int starts[]={15,41,93};const int ys[]={688,758,828};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char label[2]={rows[r][i],0};key(label,starts[r]+i*52,ys[r],49);}
-    key(keyboard_upper?"SHIFT":"shift",12,710,76);
-    key(keyboard_symbols?"ABC":"SYM",460,710,68);
-    key("DEL",12,780,150);key("HIDE",170,780,150);key("SAVE",328,780,200);
+    key(keyboard_upper?"Aa":"aA",12,828,76);
+    key(keyboard_symbols?"ABC":"SYM",460,828,68);
+    key("DEL",12,898,150);key("HIDE",170,898,150);key("SAVE",328,898,200);
+}
+
+static void draw_status_bar() {
+    epd_fill_rect({0,0,540,48},0xFF,fb);
+    epd_draw_rect({0,0,540,48},0,fb);
+    char unread[12];snprintf(unread,sizeof(unread),"M %u",status_unread);
+    text(unread,10,14,2,0,true);
+    text(status_gps_enabled?(status_gps_fix?"GPS *":"GPS --"):"GPS OFF",78,14,2,0,true);
+    char clock_text[8];
+    if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
+    else snprintf(clock_text,sizeof(clock_text),"--:--");
+    text(clock_text,350,14,2,0,true);
+    char battery[8];
+    if(status_battery>=0)snprintf(battery,sizeof(battery),"%d%%",status_battery);
+    else snprintf(battery,sizeof(battery),"--%%");
+    text(battery,530-(int)strlen(battery)*12,14,2,0,true);
 }
 
 static void draw_welcome() {
     epd_hl_set_all_white(&display);
-    centred("MESHCORE", 42, 6, 0, true);
-    centred("SET UP YOUR T5", 104, 3, 0, true);
+    draw_status_bar();
+    centred("MESHCORE", 62, 6, 0, true);
+    centred("SET UP YOUR T5", 116, 3, 0, true);
     text("YOUR NAME", 30, 154, 2, 0, true);
     box(30,180,480,64);
     text(node_name, 48,199,3);
@@ -165,15 +190,16 @@ static void draw_welcome() {
     text(">",486,319,3,0,true);
     box(30,402,480,52);
     centred("BLUETOOTH COMPANION MODE",418,2,0,true);
-    if(keyboard_visible){centred("ENTER A NAME",470,2,0,true);draw_keyboard();}
-    else {box(30,500,480,64);centred("SHOW KEYBOARD",521,3,0,true);}
-    if(saved)centred("SETTINGS SAVED",880,2,0,true);
+    if(keyboard_visible){centred("ENTER A NAME",586,2,0,true);draw_keyboard();}
+    else {box(30,840,480,64);centred("SHOW KEYBOARD",861,3,0,true);}
+    if(saved&&!keyboard_visible)centred("SETTINGS SAVED",760,2,0,true);
 }
 
 static void draw_presets() {
     epd_hl_set_all_white(&display);
-    text("< BACK",24,24,2,0,true);
-    centred("RADIO PRESETS",72,4,0,true);
+    draw_status_bar();
+    text("< BACK",24,62,2,0,true);
+    centred("RADIO PRESETS",92,4,0,true);
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
@@ -191,6 +217,7 @@ static void draw_presets() {
 
 static void draw_companion_confirm() {
     epd_hl_set_all_white(&display);
+    draw_status_bar();
     centred("BLUETOOTH",120,5,0,true);centred("COMPANION MODE",180,4,0,true);
     centred("THE LOCAL UI WILL CLOSE",300,2);centred("UNTIL THE DEVICE RESTARTS",335,2);
     box(30,500,220,72);text("CANCEL",74,524,3,0,true);
@@ -213,6 +240,29 @@ static void refresh(EpdDrawMode mode) {
 static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
     uint8_t address[2] = {(uint8_t)(reg>>8),(uint8_t)reg};
     return i2c_master_write_read_device(I2C_NUM_0,GT911_ADDR,address,2,data,len,pdMS_TO_TICKS(20)) == ESP_OK;
+}
+static bool i2c_read8(uint8_t device,uint8_t reg,uint8_t* data,size_t len) {
+    return i2c_master_write_read_device(I2C_NUM_0,device,&reg,1,data,len,pdMS_TO_TICKS(20))==ESP_OK;
+}
+static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
+static bool update_status_hardware() {
+    const int8_t old_hour=status_hour,old_minute=status_minute;
+    const int16_t old_battery=status_battery;
+    uint8_t rtc[3]={};
+    if(i2c_read8(0x51,0x02,rtc,sizeof(rtc))){
+        const uint8_t hour=from_bcd(rtc[2]&0x3F),minute=from_bcd(rtc[1]&0x7F);
+        if(hour<24&&minute<60){status_hour=hour;status_minute=minute;}
+    }
+    uint8_t gauge[2]={};
+    if(i2c_read8(0x55,0x2C,gauge,sizeof(gauge))){
+        const uint16_t soc=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
+        if(soc<=100)status_battery=(int16_t)soc;
+    }
+    const bool changed=old_hour!=status_hour||old_minute!=status_minute||old_battery!=status_battery;
+    if(changed)Serial.printf("[T5-UI] status clock=%02d:%02d battery=%d%% unread=%u gps=%s\n",
+        status_hour,status_minute,status_battery,status_unread,
+        status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
+    return changed;
 }
 static void clear_touch() {
     uint8_t data[3] = {0x81,0x4E,0};
@@ -240,7 +290,7 @@ static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&
 static void handle_tap(int16_t x,int16_t y) {
     Serial.printf("[T5-UI] tap x=%d y=%d\n",x,y);
     if(screen==Screen::Presets) {
-        if(y<125){screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return;}
+        if(y>=48&&y<132){screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return;}
         for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,12,132+row*128,516,112)){
             const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);}return;
         }
@@ -257,17 +307,17 @@ static void handle_tap(int16_t x,int16_t y) {
     if(hit(x,y,30,180,480,64)){replace_name_on_type=true;keyboard_visible=true;Serial.println("[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,24,292,492,88)){screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
-    if(!keyboard_visible){if(hit(x,y,30,500,480,64)){keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return;}
-    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,500,49,56)){append(numbers[i]);draw_screen();refresh(MODE_DU);return;}
+    if(!keyboard_visible){if(hit(x,y,30,840,480,64)){keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return;}
+    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);draw_screen();refresh(MODE_DU);return;}
     const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
-    const int starts[]={15,41,93};const int ys[]={570,640,710};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,56)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,12,710,76,56)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,460,710,68,56)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,12,780,150,56)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,170,780,150,56)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
-    if(hit(x,y,328,780,200,56)){
+    const int starts[]={15,41,93};const int ys[]={688,758,828};
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,12,898,150,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,170,898,150,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
+    if(hit(x,y,328,898,200,62)){
         prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);prefs.end();
         saved=true;draw_screen();refresh(MODE_GL16);
     }
@@ -288,6 +338,7 @@ void ui_setup() {
         for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else Serial.printf("[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
         node_name[out]=0;
     }
+    update_status_hardware();
     epd_hl_set_all_white(&display);centred("MESHCORE",290,7,0,true);centred(UI_VERSION,900,2);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
     draw_screen();refresh(MODE_GL16);
@@ -306,5 +357,21 @@ void ui_loop() {
             preset_page=(uint8_t)next;Serial.printf("[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(last_x,last_y);
     }
+    static uint32_t last_status_poll=0;
+    if(millis()-last_status_poll>=15000){
+        last_status_poll=millis();
+        if(update_status_hardware())status_dirty=true;
+    }
+    if(status_dirty&&!held){status_dirty=false;draw_screen();refresh(MODE_DU);}
     delay(12);
+}
+
+void ui_status_set_unread(uint16_t count) {
+    if(status_unread!=count){status_unread=count;status_dirty=true;}
+}
+
+void ui_status_set_gps(bool enabled,bool has_fix) {
+    if(status_gps_enabled!=enabled||status_gps_fix!=has_fix){
+        status_gps_enabled=enabled;status_gps_fix=has_fix;status_dirty=true;
+    }
 }
