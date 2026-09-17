@@ -4,12 +4,15 @@
 #include <driver/i2c.h>
 #include <esp_heap_caps.h>
 #include <time.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.5.1"
+#define T5_FIRMWARE_VERSION "0.6.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -23,6 +26,7 @@ static constexpr uint8_t GT911_ADDR = 0x5D;
 static constexpr gpio_num_t TOUCH_RST = GPIO_NUM_9;
 static constexpr gpio_num_t TOUCH_INT = GPIO_NUM_3;
 static constexpr gpio_num_t FRONTLIGHT = GPIO_NUM_11;
+static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL=6;
 
 struct Glyph { char c; uint8_t r[7]; };
 static constexpr Glyph FONT[] = {
@@ -109,11 +113,23 @@ static int16_t cached_touch_x = 0, cached_touch_y = 0;
 static uint8_t chat_page = 0;
 static uint8_t timezone_index = 0;
 static bool mesh_is_ready = false;
+enum class FrontlightMode:uint8_t{On=0,NightTimer=1,Off=2};
+static FrontlightMode frontlight_mode=FrontlightMode::On;
+static uint8_t frontlight_timeout_index=2;
+static uint8_t frontlight_brightness=60;
+static uint16_t night_start_minutes=20*60;
+static uint16_t night_end_minutes=7*60;
+static bool frontlight_lit=false;
+static uint32_t frontlight_deadline=0;
+static uint8_t night_edit_field=0;
+static QueueHandle_t touch_queue=nullptr;
+static bool text_refresh_pending=false;
+static uint32_t text_refresh_after=0;
 enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm,
     Messages, Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Discovery, More, AdvertMenu,
-    Settings, RadioSettings, GpsSettings, Timezone, PrivacySettings, DisplaySettings, About
+    Settings, RadioSettings, GpsSettings, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
 };
 static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
@@ -133,6 +149,18 @@ static constexpr TimezoneChoice TIMEZONES[] = {
 static constexpr uint8_t TIMEZONE_COUNT=sizeof(TIMEZONES)/sizeof(TIMEZONES[0]);
 
 static void apply_timezone(){setenv("TZ",TIMEZONES[timezone_index].rule,1);tzset();Serial.printf("[T5-TIME] display timezone=%s\n",TIMEZONES[timezone_index].label);}
+
+static constexpr uint32_t FRONTLIGHT_TIMEOUTS[]={5000,10000,15000,30000,0};
+static const char* frontlight_mode_name(){return frontlight_mode==FrontlightMode::On?"ON":frontlight_mode==FrontlightMode::NightTimer?"NIGHT TIMER":"OFF";}
+static const char* frontlight_timeout_name(){static const char* names[]={"5 SECONDS","10 SECONDS","15 SECONDS","30 SECONDS","ALWAYS ON"};return names[min((uint8_t)4,frontlight_timeout_index)];}
+static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(status_hour*60+status_minute);return night_start_minutes<=night_end_minutes?(now>=night_start_minutes&&now<night_end_minutes):(now>=night_start_minutes||now<night_end_minutes);}
+static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
+static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();const uint8_t duty=frontlight_lit?(uint8_t)max(1,(frontlight_brightness*255)/100):0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);}
+static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
+static void frontlight_service(){if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);Serial.println("[T5-LIGHT] timeout; frontlight off");}}
+static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
+
+struct QueuedTap{int16_t x;int16_t y;int16_t dy;};
 
 struct Preset { const char* title; const char* detail; };
 static constexpr Preset PRESETS[] = {
@@ -469,8 +497,21 @@ static void draw_privacy_settings() {
 
 static void draw_display_settings() {
     draw_app_header("DISPLAY & POWER",true);
-    settings_row("FRONTLIGHT","ALWAYS ON IN UI MODE",160);settings_row("FULL REFRESH","EVERY 10 UPDATES",290);
-    settings_row("STANDBY","LONG PRESS BOOT",420);
+    settings_row("MODE",frontlight_mode_name(),130);settings_row("TIMEOUT",frontlight_timeout_name(),258);
+    box(12,386,516,172);text("BRIGHTNESS",28,402,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,402,3,0,true);
+    epd_fill_rect({62,482,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;epd_fill_rect({knob-12,467,24,35},0,fb);text("-",28,470,3,0,true);text("+",492,470,3,0,true);
+    if(frontlight_mode==FrontlightMode::NightTimer){box(24,600,492,76,true);centred("NIGHT SCHEDULE",626,3,0xFF,true);}
+    draw_wrapped("The light wakes for screen updates and touch, then follows the selected timeout.",24,730,39,2,0,true,4);
+}
+
+static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
+static void draw_night_schedule(){
+    draw_app_header("NIGHT SCHEDULE",true);char start[8],end[8];format_minutes(night_start_minutes,start);format_minutes(night_end_minutes,end);
+    box(24,150,492,112,night_edit_field==0);text("START",42,166,3,night_edit_field==0?0xFF:0,true);text(start,360,166,3,night_edit_field==0?0xFF:0,true);
+    box(24,286,492,112,night_edit_field==1);text("END",42,302,3,night_edit_field==1?0xFF:0,true);text(end,360,302,3,night_edit_field==1?0xFF:0,true);
+    box(24,460,220,76);text("-30 MIN",62,486,3,0,true);box(296,460,220,76);text("+30 MIN",334,486,3,0,true);
+    box(24,600,492,76,true);centred("SAVE SCHEDULE",626,3,0xFF,true);
+    draw_wrapped("The selected timezone from GPS settings is used automatically.",24,740,39,2,0,true,3);
 }
 
 static void draw_about() {
@@ -488,12 +529,13 @@ static void draw_screen() {
         case Screen::Messages:draw_messages();break;case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::Timezone:draw_timezone();break;
-        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::About:draw_about();break;
+        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::About:draw_about();break;
     }
     draw_toast();
 }
 
 static void refresh(EpdDrawMode mode) {
+    frontlight_event();
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
     epd_poweroff();
@@ -540,6 +582,13 @@ static bool touch_point(int16_t& x, int16_t& y) {
     clear_touch(); was_pressed=true; return true;
 }
 
+static void touch_sampler_task(void*){
+    bool held=false;int16_t start_y=0,last_x=0,last_y=0;
+    for(;;){int16_t x=0,y=0;const bool pressed=touch_point(x,y);if(pressed){last_x=x;last_y=y;if(!held){held=true;start_y=y;frontlight_event();}}
+        else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_y-start_y)};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
+        vTaskDelay(pdMS_TO_TICKS(12));}
+}
+
 static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_'; }
 static void append(char c) {
     if(keyboard_message_mode){size_t n=strlen(compose_text);if(n<48){compose_text[n]=c;compose_text[n+1]=0;}return;}
@@ -551,18 +600,19 @@ static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&
 
 static void open_screen(Screen next) { keyboard_visible=false;keyboard_message_mode=false;screen=next;draw_screen();refresh(MODE_GL16); }
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
+static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=millis()+140;}
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
-    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);draw_screen();refresh(MODE_DU);return true;}
+    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);queue_text_refresh();return true;}
     const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
     const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return true;}
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
     if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return true;}
     if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,12,898,100,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,120,898,190,62)){append(' ');draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,12,898,100,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;queue_text_refresh();return true;}
+    if(hit(x,y,120,898,190,62)){append(' ');queue_text_refresh();return true;}
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=local_mesh_send_active(compose_text);if(ok){compose_text[0]=0;keyboard_visible=false;}draw_screen();refresh(MODE_DU);}return true;}
     return true;
@@ -630,7 +680,18 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             for(uint8_t i=0;i<6;++i)if(hit(x,y,12,130+i*118,516,112)){local_mesh_toggle_privacy(i);show_toast("SETTING SAVED");draw_screen();refresh(MODE_DU);return true;}return true;
         case Screen::DisplaySettings:
-            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit(x,y,12,130,516,112)){frontlight_mode=(FrontlightMode)(((uint8_t)frontlight_mode+1)%3);save_frontlight_settings();if(frontlight_mode==FrontlightMode::Off)frontlight_drive(false);else frontlight_event();show_toast(frontlight_mode_name());draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,12,258,516,112)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,40,440,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();Serial.printf("[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
+            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,600,492,76)){open_screen(Screen::NightSchedule);return true;}break;
+        case Screen::NightSchedule:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::DisplaySettings);return true;}
+            if(hit(x,y,24,150,492,112)){night_edit_field=0;draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,24,286,492,112)){night_edit_field=1;draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,24,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,296,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,24,600,492,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MODE_DU);return true;}break;
         case Screen::About:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         default:break;
@@ -660,14 +721,14 @@ static void handle_tap(int16_t x,int16_t y) {
     if(hit(x,y,24,292,492,88)){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
     if(!keyboard_visible){if(hit(x,y,30,840,480,64)){keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return;}
-    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);draw_screen();refresh(MODE_DU);return;}
+    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);queue_text_refresh();return;}
     const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
     const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);draw_screen();refresh(MODE_DU);return;}
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return;}
     if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,12,898,100,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,12,898,100,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return;}
     if(hit(x,y,120,898,190,62)){return;}
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,426,898,102,62)){
@@ -681,11 +742,16 @@ void ui_setup() {
     Serial.begin(115200); delay(200);
     Serial.printf("[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
     pinMode(FRONTLIGHT,OUTPUT);digitalWrite(FRONTLIGHT,HIGH);
+    ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);
     pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
     epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);epd_set_lcd_pixel_clock_MHz(17);
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
     display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=epd_hl_get_framebuffer(&display);
-    prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);prefs.end();
+    prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
+    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",60);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);prefs.end();
+    if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
+    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=60;
+    if(night_start_minutes>=1440)night_start_minutes=20*60;if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
     if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;apply_timezone();
     if(saved_name.length()){
@@ -698,32 +764,35 @@ void ui_setup() {
     epd_hl_set_all_white(&display);centred("MESHCORE",290,7,0,true);centred(UI_VERSION,900,2);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
     draw_screen();refresh(MODE_GL16);
+    touch_queue=xQueueCreate(24,sizeof(QueuedTap));
+    if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,nullptr,0)==pdPASS)Serial.println("[T5-TOUCH] sampler running; queue depth=24");
+    else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
+    Serial.printf("[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
     Serial.println("[T5-UI] touch ready; waiting for input");
 }
 
 void ui_loop() {
-    static bool held=false;static int16_t start_x=0,start_y=0,last_x=0,last_y=0;
-    int16_t x=0,y=0;const bool pressed=touch_point(x,y);
-    if(pressed){if(!held){held=true;start_x=last_x=x;start_y=last_y=y;}else{last_x=x;last_y=y;}}
-    if(!pressed&&held){
-        held=false;const int dy=last_y-start_y;
-        if(screen==Screen::Presets&&abs(dy)>60){
+    QueuedTap tap{};
+    while(touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
+        if(screen==Screen::Presets&&abs(tap.dy)>60){
             const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-            int next=(int)preset_page+(dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
+            int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;Serial.printf("[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
-        }else handle_tap(last_x,last_y);
+        }else handle_tap(tap.x,tap.y);
     }
+    if(text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0){text_refresh_pending=false;draw_screen();refresh(MODE_DU);}
     static uint32_t last_status_poll=0;
     if(millis()-last_status_poll>=15000){
         last_status_poll=millis();
         if(update_status_hardware())status_dirty=true;
     }
-    if(status_dirty&&!held){status_dirty=false;draw_screen();refresh(MODE_DU);}
-    if(toast_visible&&(int32_t)(millis()-toast_until)>=0&&!held){
+    if(status_dirty){status_dirty=false;draw_screen();refresh(MODE_DU);}
+    if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
         toast_visible=false;
         if(toast_opens_main){toast_opens_main=false;screen=Screen::Messages;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MODE_DU);
     }
+    frontlight_service();
     delay(12);
 }
 

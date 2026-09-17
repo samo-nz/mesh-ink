@@ -1,7 +1,7 @@
 name: T5 Pro unified firmware alpha
 
 env:
-  T5_FIRMWARE_VERSION: 0.5.1
+  T5_FIRMWARE_VERSION: 0.6.0
 
 on:
   push:
