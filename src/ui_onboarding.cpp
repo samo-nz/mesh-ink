@@ -8,7 +8,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.4.0"
+#define T5_FIRMWARE_VERSION "0.5.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -97,16 +97,15 @@ static bool setup_complete = false;
 static bool toast_opens_main = false;
 static bool keyboard_message_mode = false;
 static char compose_text[49] = {};
-static MockUiDataProvider mock_data;
-static UiDataProvider* ui_data = &mock_data;
+static UiDataProvider* ui_data = nullptr;
 static size_t selected_contact = 0;
 static size_t selected_channel = 0;
 static int16_t cached_touch_x = 0, cached_touch_y = 0;
 enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm,
-    Contacts, ContactChat, ContactDetails,
-    Channels, ChannelChat, Discovery,
-    Settings, RadioSettings, GpsSettings, DisplaySettings, About
+    Messages, Contacts, ContactChat, ContactDetails,
+    Channels, ChannelChat, Discovery, More, AdvertMenu,
+    Settings, RadioSettings, GpsSettings, PrivacySettings, DisplaySettings, About
 };
 static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
@@ -299,7 +298,7 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
 }
 
 static void draw_bottom_nav(int selected) {
-    static const char* labels[]={"CONTACT","CHANNEL","DISCOVER","SETTINGS"};
+    static const char* labels[]={"MESSAGES","CONTACTS","CHANNELS","MORE"};
     for(int i=0;i<4;++i){box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);}
 }
 
@@ -320,27 +319,40 @@ static void draw_list_entry(const UiListEntry& item,int y) {
 
 static void draw_contacts() {
     draw_app_header("CONTACTS");
-    for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)draw_list_entry(ui_data->contact(i),120+i*150);
+    if(!ui_data||!ui_data->contact_count())centred("NO SAVED CONTACTS",300,3,0,true);
+    else for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)draw_list_entry(ui_data->contact(i),120+i*150);
+    draw_bottom_nav(1);
+}
+
+static void draw_messages() {
+    draw_app_header("MESSAGES");
+    if(!ui_data||!ui_data->conversation_count()){centred("NO CONVERSATIONS",300,3,0,true);centred("START FROM CONTACTS",350,2);}
+    else for(size_t i=0;i<ui_data->conversation_count()&&i<5;++i)draw_list_entry(ui_data->conversation(i),120+i*150);
     draw_bottom_nav(0);
 }
 
 static void draw_channels() {
     draw_app_header("CHANNELS");
-    for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)draw_list_entry(ui_data->channel(i),120+i*150);
-    draw_bottom_nav(1);
+    if(!ui_data||!ui_data->channel_count())centred("NO CONFIGURED CHANNELS",300,3,0,true);
+    else for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)draw_list_entry(ui_data->channel(i),120+i*150);
+    draw_bottom_nav(2);
 }
 
 static void draw_message_bubble(const UiMessage& message,int y) {
     const int x=message.outgoing?82:12,w=446;box(x,y,w,142,message.outgoing);
-    draw_wrapped(message.text,x+16,y+12,23,3,message.outgoing?0xFF:0,false,3);
-    text(message.time,x+w-(int)strlen(message.time)*12-12,y+114,2,message.outgoing?0xFF:0,true);
+    draw_wrapped(message.text,x+16,y+12,23,3,message.outgoing?0xFF:0,true,3);
+    char footer[26];const char* state="";
+    if(message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;default:break;}}
+    snprintf(footer,sizeof(footer),"%s%s%s",message.time,state[0]?"  ":"",state);
+    text(footer,x+w-(int)strlen(footer)*12-12,y+114,2,message.outgoing?0xFF:0,true);
 }
 
 static void draw_chat(bool channel) {
-    draw_app_header(channel?"# GENERAL":"ALICE",true,channel?nullptr:"INFO");
-    const size_t count=channel?ui_data->channel_message_count():ui_data->direct_message_count();
+    draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
+    const size_t count=ui_data?ui_data->active_message_count():0;
     const size_t shown=min((size_t)3,count),first=count-shown;
-    for(size_t i=0;i<shown;++i)draw_message_bubble(channel?ui_data->channel_message(first+i):ui_data->direct_message(first+i),126+i*150);
+    if(!count)centred("NO MESSAGES YET",300,3,0,true);
+    else for(size_t i=0;i<shown;++i)draw_message_bubble(ui_data->active_message(first+i),126+i*150);
     box(12,580,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,600,2,0,false);
     if(keyboard_visible&&keyboard_message_mode)draw_keyboard();
     else {box(360,820,168,62,true);text("COMPOSE",381,841,3,0xFF,true);}
@@ -358,13 +370,25 @@ static void draw_contact_details() {
     box(24,660,492,70);centred("DELETE CONTACT",684,3,0,true);
 }
 
+static void settings_row(const char* title,const char* subtitle,int y);
+
 static void draw_discovery() {
-    draw_app_header("DISCOVERED");
-    static constexpr UiListEntry nodes[]={
-        {"ARTHURS PASS", "CHAT NODE  2 MIN AGO", "",0},{"REPEATER 12", "REPEATER  SNR 6.2", "",0},
-        {"FIELD SENSOR", "SENSOR  TEMPERATURE 14 C", "",0},{"ROOM WEST", "ROOM SERVER  1 HOUR AGO", "",0}};
-    for(int i=0;i<4;++i)draw_list_entry(nodes[i],120+i*150);
-    draw_bottom_nav(2);
+    draw_app_header("DISCOVERED",true);
+    if(!ui_data||!ui_data->advert_count()){centred("NO ADVERTS HEARD",300,3,0,true);centred("SEND AN ADVERT OR WAIT",350,2);}
+    else for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)draw_list_entry(ui_data->advert(i),120+i*150);
+}
+
+static void draw_more() {
+    draw_app_header("MORE");
+    settings_row("DISCOVERED ADVERTS","RECENT NODES HEARD",130);settings_row("ADVERTISE","ZERO HOP OR FLOOD",260);
+    settings_row("SETTINGS","DEVICE AND RADIO",390);settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",520);
+    draw_bottom_nav(3);
+}
+
+static void draw_advert_menu() {
+    draw_app_header("ADVERTISE",true);
+    settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
+    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",24,500,39,2,0,true,4);
 }
 
 static void settings_row(const char* title,const char* subtitle,int y) {
@@ -372,11 +396,10 @@ static void settings_row(const char* title,const char* subtitle,int y) {
 }
 
 static void draw_settings() {
-    draw_app_header("SETTINGS");
+    draw_app_header("SETTINGS",true);
     settings_row("NODE AND IDENTITY",local_mesh_node_name(),118);settings_row("RADIO",local_mesh_radio_summary(),238);
     settings_row("LOCATION AND GPS","POSITION, INTERVAL, ADVERT",358);settings_row("CONTACTS AND PRIVACY","AUTO ADD AND TELEMETRY",478);
-    settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",598);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",718);
-    draw_bottom_nav(3);
+    settings_row("DISPLAY AND POWER","FRONTLIGHT, REFRESH, STANDBY",598);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",718);
 }
 
 static void draw_radio_settings() {
@@ -391,30 +414,35 @@ static void draw_gps_settings() {
     box(24,600,492,70);centred(status_gps_fix?"CLEAR TEST FIX":"SIMULATE GPS FIX",624,3,0,true);
 }
 
-static void draw_display_settings() {
+static void draw_privacy_settings() {
     draw_app_header("CONTACTS & PRIVACY",true);
     settings_row("AUTO ADD CONTACTS",local_mesh_privacy_value(0),130);settings_row("AUTO ADD MAX HOPS",local_mesh_privacy_value(1),248);
     settings_row("ADVERTISE LOCATION",local_mesh_privacy_value(2),366);settings_row("BASE TELEMETRY",local_mesh_privacy_value(3),484);
     settings_row("LOCATION TELEMETRY",local_mesh_privacy_value(4),602);settings_row("PACKET REPEATING",local_mesh_privacy_value(5),720);
-    settings_row("STANDBY","LONG PRESS BOOT",440);settings_row("FULL REFRESH","EVERY 10 UPDATES",580);
+}
+
+static void draw_display_settings() {
+    draw_app_header("DISPLAY & POWER",true);
+    settings_row("FRONTLIGHT","ALWAYS ON IN UI MODE",160);settings_row("FULL REFRESH","EVERY 10 UPDATES",290);
+    settings_row("STANDBY","LONG PRESS BOOT",420);
 }
 
 static void draw_about() {
     draw_app_header("ABOUT",true);centred("MESHCORE T5 PAPER",150,4,0,true);centred(UI_VERSION,210,3,0,true);
     text("HARDWARE",24,300,2,0,true);text("LILYGO T5 PRO",250,300,2);
-    text("MODE",24,354,2,0,true);text("LOCAL UI PROTOTYPE",250,354,2);
-    text("DATA",24,408,2,0,true);text("MOCK PROVIDER",250,408,2);
-    text("RADIO",24,462,2,0,true);text("NOT STARTED",250,462,2);
-    draw_wrapped("This inspection build demonstrates navigation and layout. MeshCore integration follows after approval.",24,550,38,2,0,false,4);
+    text("MODE",24,354,2,0,true);text("LOCAL UI",250,354,2);
+    text("DATA",24,408,2,0,true);text("MESHCORE LIVE",250,408,2);
+    text("STORE",24,462,2,0,true);text("96 MESSAGE RING",250,462,2);
+    draw_wrapped("Oldest messages are removed automatically when fixed storage reaches capacity.",24,550,38,2,0,true,4);
 }
 
 static void draw_screen() {
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;
-        case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
-        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Discovery:draw_discovery();break;
+        case Screen::Messages:draw_messages();break;case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
+        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;
-        case Screen::DisplaySettings:draw_display_settings();break;case Screen::About:draw_about();break;
+        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::About:draw_about();break;
     }
     draw_toast();
 }
@@ -492,19 +520,21 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(hit(x,y,12,898,100,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;draw_screen();refresh(MODE_DU);return true;}
     if(hit(x,y,120,898,190,62)){append(' ');draw_screen();refresh(MODE_DU);return true;}
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-    if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=screen==Screen::ChannelChat?local_mesh_send_channel(selected_channel,compose_text):local_mesh_send_direct(selected_contact,compose_text);compose_text[0]=0;keyboard_visible=false;show_toast(ok?"MESSAGE QUEUED":"SEND FAILED");draw_screen();refresh(MODE_DU);}return true;}
+    if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=local_mesh_send_active(compose_text);if(ok){compose_text[0]=0;keyboard_visible=false;}draw_screen();refresh(MODE_DU);}return true;}
     return true;
 }
 
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
-    if(y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Discovery:Screen::Settings);return true;}
+    if(y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Messages:tab==1?Screen::Contacts:tab==2?Screen::Channels:Screen::More);return true;}
     switch(screen){
+        case Screen::Messages:
+            if(ui_data)for(size_t i=0;i<ui_data->conversation_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_conversation(i))open_screen(Screen::ContactChat);return true;}break;
         case Screen::Contacts:
-            for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_contact=i;open_screen(Screen::ContactChat);return true;}break;
+            if(ui_data)for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_contact=i;if(ui_data->open_contact(i))open_screen(Screen::ContactChat);return true;}break;
         case Screen::Channels:
-            for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_channel=i;open_screen(Screen::ChannelChat);return true;}break;
+            if(ui_data)for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_channel=i;if(ui_data->open_channel(i))open_screen(Screen::ChannelChat);return true;}break;
         case Screen::ContactChat:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Contacts);return true;}
             if(hit(x,y,430,48,110,70)){open_screen(Screen::ContactDetails);return true;}
@@ -517,13 +547,23 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,24,560,492,70)){open_screen(Screen::ContactChat);return true;}
             if(hit(x,y,24,660,492,70)){show_toast("DEMO ONLY");draw_screen();refresh(MODE_DU);return true;}break;
         case Screen::Discovery:
-            for(int i=0;i<4;++i)if(hit(x,y,12,120+i*150,516,142)){show_toast("CONTACT ADDED");draw_screen();refresh(MODE_DU);return true;}break;
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}break;
+        case Screen::More:
+            if(hit(x,y,12,130,516,112)){open_screen(Screen::Discovery);return true;}
+            if(hit(x,y,12,260,516,112)){open_screen(Screen::AdvertMenu);return true;}
+            if(hit(x,y,12,390,516,112)){open_screen(Screen::Settings);return true;}
+            if(hit(x,y,12,520,516,112)){open_screen(Screen::CompanionConfirm);return true;}break;
+        case Screen::AdvertMenu:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
+            if(hit(x,y,12,180,516,112)){show_toast(local_mesh_send_advert(false)?"ZERO HOP ADVERT SENT":"ADVERT FAILED");draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,12,320,516,112)){show_toast(local_mesh_send_advert(true)?"FLOOD ADVERT QUEUED":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}break;
         case Screen::Settings:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
             if(hit(x,y,12,118,516,112)){keyboard_message_mode=false;keyboard_visible=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,12,238,516,112)){open_screen(Screen::RadioSettings);return true;}
             if(hit(x,y,12,358,516,112)){open_screen(Screen::GpsSettings);return true;}
-            if(hit(x,y,12,478,516,112)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit(x,y,12,598,516,112)){open_screen(Screen::CompanionConfirm);return true;}
+            if(hit(x,y,12,478,516,112)){open_screen(Screen::PrivacySettings);return true;}
+            if(hit(x,y,12,598,516,112)){open_screen(Screen::DisplaySettings);return true;}
             if(hit(x,y,12,718,516,112)){open_screen(Screen::About);return true;}break;
         case Screen::RadioSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
@@ -534,9 +574,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             if(hit(x,y,12,160,516,112)){local_mesh_apply_gps(!local_mesh_gps_enabled());show_toast(local_mesh_gps_enabled()?"GPS ENABLED":"GPS DISABLED");draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,24,600,492,70)){status_gps_enabled=true;status_gps_fix=!status_gps_fix;show_toast(status_gps_fix?"GPS FIX ACQUIRED":"GPS FIX CLEARED");draw_screen();refresh(MODE_DU);return true;}break;
-        case Screen::DisplaySettings:
+        case Screen::PrivacySettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             for(uint8_t i=0;i<6;++i)if(hit(x,y,12,130+i*118,516,112)){local_mesh_toggle_privacy(i);show_toast("SETTING SAVED");draw_screen();refresh(MODE_DU);return true;}return true;
+        case Screen::DisplaySettings:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         case Screen::About:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         default:break;
@@ -558,7 +600,7 @@ static void handle_tap(int16_t x,int16_t y) {
         return;
     }
     if(screen==Screen::CompanionConfirm){
-        if(hit(x,y,30,500,220,72)){screen=setup_complete?Screen::Settings:Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
+        if(hit(x,y,30,500,220,72)){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
         if(hit(x,y,290,500,220,72)){Serial.println("[T5-UI] companion mode confirmed");request_companion_mode();return;}
         return;
     }
@@ -597,7 +639,7 @@ void ui_setup() {
         for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else Serial.printf("[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
         node_name[out]=0;
     }
-    if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;status_unread=3;status_channel_unread=4;}
+    if(setup_complete){screen=Screen::Messages;keyboard_visible=false;status_unread=0;status_channel_unread=0;}
     update_status_hardware();
     epd_hl_set_all_white(&display);centred("MESHCORE",290,7,0,true);centred(UI_VERSION,900,2);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
@@ -625,7 +667,7 @@ void ui_loop() {
     if(status_dirty&&!held){status_dirty=false;draw_screen();refresh(MODE_DU);}
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0&&!held){
         toast_visible=false;
-        if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=3;status_channel_unread=4;}
+        if(toast_opens_main){toast_opens_main=false;screen=Screen::Messages;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MODE_DU);
     }
     delay(12);

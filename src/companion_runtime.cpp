@@ -21,17 +21,27 @@ void local_mesh_on_frame(const uint8_t*, size_t);
 class LocalSerial final : public BaseSerialInterface {
     bool enabled=false;
     uint8_t pending=0;
+    uint8_t command[16]{};
+    size_t command_len=0;
 public:
     void enable() override { enabled=true; } void disable() override { enabled=false; }
     bool isEnabled() const override { return enabled; } bool isConnected() const override { return true; }
     bool isWriteBusy() const override { return false; }
     size_t writeFrame(const uint8_t* frame,size_t len) override { if(len==1&&frame[0]==0x83){if(pending<255)pending++;}else local_mesh_on_frame(frame,len);return len; }
-    size_t checkRecvFrame(uint8_t* frame) override { if(!pending)return 0;pending--;frame[0]=10;return 1; }
+    size_t checkRecvFrame(uint8_t* frame) override {
+        if(command_len){const size_t len=command_len;memcpy(frame,command,len);command_len=0;return len;}
+        if(!pending)return 0;pending--;frame[0]=10;return 1;
+    }
+    bool enqueue(const uint8_t* frame,size_t len){
+        if(!frame||!len||len>sizeof(command)||command_len)return false;
+        memcpy(command,frame,len);command_len=len;return true;
+    }
 };
 
 static LocalSerial local_interface;
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
+bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
 void companion_setup() {
     Serial.println("[T5-BOOT] starting upstream MeshCore companion runtime");
@@ -73,5 +83,6 @@ void local_mesh_setup() {
     the_mesh.applyGpsPrefs();
 #endif
     ui_use_data_provider(local_mesh_provider());
+    local_mesh_runtime_begin();
     Serial.printf("[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
 }

@@ -5,10 +5,13 @@
 #include "ui_data.h"
 
 void local_mesh_setup();
+void local_mesh_runtime_begin();
 void local_mesh_loop();
 UiDataProvider* local_mesh_provider();
 bool local_mesh_send_direct(size_t contact_index, const char* text);
 bool local_mesh_send_channel(size_t channel_index, const char* text);
+bool local_mesh_send_active(const char* text);
+bool local_mesh_send_advert(bool flood);
 void local_mesh_apply_name(const char* name);
 void local_mesh_apply_gps(bool enabled);
 bool local_mesh_gps_enabled();
