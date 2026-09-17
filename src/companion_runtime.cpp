@@ -13,7 +13,7 @@ static SerialBLEInterface bluetooth_interface;
 static DataStore store(SPIFFS, rtc_clock);
 static StdRNG fast_rng;
 static SimpleMeshTables tables;
-static MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 
 void companion_setup() {
     Serial.println("[T5-BOOT] starting upstream MeshCore companion runtime");
@@ -43,4 +43,3 @@ void companion_loop() {
     sensors.loop();
     rtc_clock.tick();
 }
-
