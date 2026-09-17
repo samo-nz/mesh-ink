@@ -28,3 +28,9 @@ restarts into local UI; releasing the button is not required. In UI mode the
 frontlight remains steadily on and is independent of e-paper refreshes until a
 user-selectable frontlight policy is added.
 Both paths display the same centrally defined firmware version.
+
+Release 0.1.3 gives both boot splashes matching title/version geometry and adds
+the companion BOOT-button exit instruction. The onboarding keyboard is now a
+reusable show/hide component with a top number row, upper/lowercase shift and a
+symbols layer. Local UI screens no longer repeat Bluetooth state or the firmware
+version after the splash.
