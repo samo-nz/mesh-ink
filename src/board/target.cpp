@@ -176,34 +176,48 @@ uint16_t T5Board::getBattMilliVolts() {
 struct Glyph { char letter; uint8_t rows[7]; };
 static constexpr Glyph notice_glyphs[] = {
     {'0',{14,17,19,21,25,17,14}}, {'1',{4,12,4,4,4,4,14}},
-    {'3',{30,1,1,14,1,1,30}},
+    {'2',{14,17,1,2,4,8,31}}, {'3',{30,1,1,14,1,1,30}},
     {'4',{2,6,10,18,31,2,2}},
+    {'5',{31,16,16,30,1,1,30}}, {'6',{14,16,16,30,17,17,14}},
+    {'7',{31,1,2,4,8,8,8}}, {'8',{14,17,17,14,17,17,14}},
+    {'9',{14,17,17,15,1,1,14}},
     {'.',{0,0,0,0,0,6,6}},
     {'A',{14,17,17,31,17,17,17}}, {'B',{30,17,17,30,17,17,30}},
     {'C',{14,17,16,16,16,17,14}}, {'D',{30,17,17,17,17,17,30}},
-    {'E',{31,16,16,30,16,16,31}}, {'H',{17,17,17,31,17,17,17}},
-    {'I',{31,4,4,4,4,4,31}}, {'M',{17,27,21,21,17,17,17}},
+    {'E',{31,16,16,30,16,16,31}}, {'F',{31,16,16,30,16,16,16}},
+    {'G',{14,17,16,23,17,17,15}}, {'H',{17,17,17,31,17,17,17}},
+    {'I',{31,4,4,4,4,4,31}}, {'L',{16,16,16,16,16,16,31}},
+    {'M',{17,27,21,21,17,17,17}},
     {'N',{17,25,21,19,17,17,17}}, {'O',{14,17,17,17,17,17,14}},
     {'P',{30,17,17,30,16,16,16}}, {'R',{30,17,17,30,20,18,17}},
     {'S',{15,16,16,14,1,1,30}}, {'T',{31,4,4,4,4,4,4}},
+    {'U',{17,17,17,17,17,17,14}}, {'X',{17,17,10,4,10,17,17}},
 };
 
-static void notice_text(const char* message, int x, int y, int scale, uint8_t* fb) {
+static void notice_text(const char* message, int x, int y, int scale, uint8_t* fb, bool bold = false) {
     for (const char* c = message; *c; ++c, x += 6 * scale) {
         for (const Glyph& glyph : notice_glyphs) {
             if (glyph.letter != *c) continue;
             for (int row = 0; row < 7; ++row) {
                 for (int col = 0; col < 5; ++col) {
                     if (!(glyph.rows[row] & (1 << (4 - col)))) continue;
-                    for (int dy = 0; dy < scale; ++dy)
-                        for (int dx = 0; dx < scale; ++dx)
+                    for (int dy = 0; dy < scale; ++dy) {
+                        for (int dx = 0; dx < scale; ++dx) {
                             epd_draw_pixel(x + col * scale + dx,
                                            y + row * scale + dy, 0, fb);
+                            if (bold) epd_draw_pixel(x + col * scale + dx + 1,
+                                                     y + row * scale + dy, 0, fb);
+                        }
+                    }
                 }
             }
             break;
         }
     }
+}
+
+static void notice_centred(const char* message, int y, int scale, uint8_t* fb, bool bold = false) {
+    notice_text(message, (540 - (int)strlen(message) * 6 * scale) / 2, y, scale, fb, bold);
 }
 
 static void show_companion_notice() {
@@ -217,9 +231,11 @@ static void show_companion_notice() {
     T5_TRACE("notice: framebuffer=%p, heap=%u, psram=%u\n", fb, ESP.getFreeHeap(), ESP.getFreePsram());
     if (fb) {
         epd_hl_set_all_white(&display);
-        notice_text("MESHCORE", 90, 290, 7, fb);
-        notice_text("BT COMPANION MODE", 63, 410, 4, fb);
-        notice_text(T5_FIRMWARE_VERSION, 225, 900, 3, fb);
+        notice_centred("MESHCORE", 290, 7, fb, true);
+        notice_centred("BT COMPANION MODE", 410, 4, fb);
+        notice_centred("PRESS AND HOLD BOOT BUTTON", 770, 2, fb);
+        notice_centred("2 SECONDS TO EXIT", 805, 2, fb);
+        notice_centred(T5_FIRMWARE_VERSION, 900, 2, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
         epd_poweron();
         T5_TRACE("notice: full panel clear start\n");
