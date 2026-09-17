@@ -156,6 +156,7 @@ uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval
 bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=t5_mesh().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();}
 void local_mesh_toggle_gps_advert_location(){auto* p=t5_mesh().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;t5_mesh().savePrefs();}
+uint32_t local_mesh_current_time(){return rtc_clock.getCurrentTime();}
 const char* local_mesh_node_name(){return t5_mesh().getNodeName();}
 const char* local_mesh_radio_summary(){auto* p=t5_mesh().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f SF%u BW%.1f CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
 const char* local_mesh_privacy_value(uint8_t item){auto* p=t5_mesh().getNodePrefs();switch(item){case 0:return p->autoadd_config?"ENABLED":"DISABLED";case 1:snprintf(setting_value,sizeof(setting_value),"%u HOPS",p->autoadd_max_hops);return setting_value;case 2:return p->advert_loc_policy?"SHARE":"HIDDEN";case 3:return p->telemetry_mode_base?"ALLOW":"DENY";case 4:return p->telemetry_mode_loc?"ALLOW":"DENY";default:return p->isRepeatEn()?"ENABLED":"DISABLED";}}

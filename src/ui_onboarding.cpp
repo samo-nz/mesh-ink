@@ -511,7 +511,7 @@ static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
 static bool update_status_hardware() {
     const int8_t old_hour=status_hour,old_minute=status_minute;
     const int16_t old_battery=status_battery;
-    if(mesh_is_ready){time_t now=(time_t)rtc_clock.getCurrentTime();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
+    if(mesh_is_ready){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
     else{uint8_t rtc[3]={};if(i2c_read8(0x51,0x02,rtc,sizeof(rtc))){const uint8_t hour=from_bcd(rtc[2]&0x3F),minute=from_bcd(rtc[1]&0x7F);if(hour<24&&minute<60){status_hour=hour;status_minute=minute;}}}
     uint8_t gauge[2]={};
     if(i2c_read8(0x55,0x2C,gauge,sizeof(gauge))){
