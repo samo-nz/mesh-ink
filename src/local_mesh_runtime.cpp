@@ -78,8 +78,12 @@ char setting_value[20]{};
 }
 
 UiDataProvider* local_mesh_provider(){return &provider;}
-void local_mesh_on_direct(const ContactInfo& from,uint32_t timestamp,const char* text){provider.received_direct(from,timestamp,text);}
-void local_mesh_on_channel(const mesh::GroupChannel& ch,uint32_t timestamp,const char* text){provider.received_channel(ch,timestamp,text);}
+void local_mesh_on_frame(const uint8_t* frame,size_t len){
+    if(!frame||len<1)return;
+    char message[150]{};
+    if(frame[0]==7&&len>13){uint32_t timestamp=0;memcpy(&timestamp,&frame[9],4);const size_t start=frame[8]==2?17:13;if(len<=start)return;memcpy(message,&frame[start],min(sizeof(message)-1,len-start));ContactInfo from{};ContactInfo* found=t5_mesh().lookupContactByPubKey(&frame[1],6);if(found)from=*found;provider.received_direct(from,timestamp,message);}
+    else if(frame[0]==8&&len>8){uint32_t timestamp=0;memcpy(&timestamp,&frame[4],4);memcpy(message,&frame[8],min(sizeof(message)-1,len-8));mesh::GroupChannel ch{};provider.received_channel(ch,timestamp,message);}
+}
 
 void local_mesh_loop(){ provider.refresh(); sensors.loop(); rtc_clock.tick(); ui_status_set_gps(local_mesh_gps_enabled(),local_mesh_gps_fix()); }
 bool local_mesh_send_direct(size_t index,const char* text){
