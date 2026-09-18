@@ -15,7 +15,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.4"
+#define T5_FIRMWARE_VERSION "1.0.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
