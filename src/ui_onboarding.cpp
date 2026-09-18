@@ -15,7 +15,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.3"
+#define T5_FIRMWARE_VERSION "0.9.4"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -136,13 +136,14 @@ static bool hardware_failure=false;
 static uint8_t standby_timeout_index=1;
 static uint32_t last_user_activity=0;
 static bool status_wake_light=false;
-static bool alert_flash_active=false;
-static uint8_t alert_flash_phase=0;
-static uint32_t alert_flash_deadline=0;
+static bool message_alert_active=false;
+static uint8_t message_alert_phase=0;
+static uint32_t message_alert_deadline=0;
+static uint32_t message_alert_cooldown_until=0;
 enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
-    Messages, Contacts, ContactChat, ContactDetails,
-    Channels, ChannelChat, Discovery, More, AdvertMenu,
+    Contacts, ContactChat, ContactDetails,
+    Channels, ChannelChat, Maps, Discovery, More, AdvertMenu,
     Settings, RadioSettings, GpsSettings, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
 };
 static Screen screen = Screen::Welcome;
@@ -173,7 +174,7 @@ static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(
 static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
 static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();const uint8_t duty=frontlight_lit?(uint8_t)max(1,(frontlight_brightness*255)/100):0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);}
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
-static void frontlight_service(){if(alert_flash_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);Serial.println("[T5-LIGHT] timeout; frontlight off");}}
+static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);Serial.println("[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 struct QueuedTap{int16_t x;int16_t y;int16_t dy;};
@@ -387,11 +388,11 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
 }
 
 static void draw_bottom_nav(int selected) {
-    static const char* labels[]={"MESSAGES","CONTACTS","CHANNELS","MORE"};
+    static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
     for(int i=0;i<4;++i){
         box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;
         text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);
-        const bool unread=(i==0&&status_unread)||(i==2&&status_channel_unread);
+        const bool unread=(i==0&&status_unread)||(i==1&&status_channel_unread);
         if(unread)epd_fill_rect({i*135+118,908,11,11},color,fb);
     }
 }
@@ -415,13 +416,6 @@ static void draw_contacts() {
     draw_app_header("CONTACTS");
     if(!ui_data||!ui_data->contact_count())centred("NO SAVED CONTACTS",300,3,0,true);
     else for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)draw_list_entry(ui_data->contact(i),120+i*150);
-    draw_bottom_nav(1);
-}
-
-static void draw_messages() {
-    draw_app_header("MESSAGES");
-    if(!ui_data||!ui_data->conversation_count()){centred("NO CONVERSATIONS",300,3,0,true);centred("START FROM CONTACTS",350,2);}
-    else for(size_t i=0;i<ui_data->conversation_count()&&i<5;++i)draw_list_entry(ui_data->conversation(i),120+i*150);
     draw_bottom_nav(0);
 }
 
@@ -429,6 +423,14 @@ static void draw_channels() {
     draw_app_header("CHANNELS");
     if(!ui_data||!ui_data->channel_count())centred("NO CONFIGURED CHANNELS",300,3,0,true);
     else for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)draw_list_entry(ui_data->channel(i),120+i*150);
+    draw_bottom_nav(1);
+}
+
+static void draw_maps() {
+    draw_app_header("MAPS");
+    centred("MAPS COMING LATER",310,4,0,true);
+    centred("GPS STATUS REMAINS AVAILABLE",375,2,0,true);
+    centred("IN SETTINGS",410,2,0,true);
     draw_bottom_nav(2);
 }
 
@@ -582,11 +584,14 @@ static void draw_screen() {
     if(standby_active){draw_standby();return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
-        case Screen::Messages:draw_messages();break;case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
-        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
+        case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
+        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::Timezone:draw_timezone();break;
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::About:draw_about();break;
     }
+    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::About;
+    if(screen==Screen::ContactDetails)draw_bottom_nav(0);
+    else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
 }
 
@@ -600,17 +605,30 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     Serial.printf("[T5-UI] refresh=%d name='%s' preset=%s cpu=%luMHz\n",err,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
+static void invalidate_display_back_buffer() {
+    const size_t bytes=(size_t)epd_width()*epd_height()/2;
+    for(size_t i=0;i<bytes;++i)display.back_fb[i]=(uint8_t)~display.front_fb[i];
+}
+
+static void force_redraw(EpdDrawMode mode,const char* reason,bool wake_light=false) {
+    invalidate_display_back_buffer();
+    Serial.printf("[T5-EPD] forced full redraw reason=%s mode=%d\n",reason,(int)mode);
+    refresh(mode,wake_light);
+}
+
+static void fast_full_redraw(const char* reason,bool wake_light=false) {
+    // ED047TC1's bundled waveform provides DU, GC16, GL16 and the known-state
+    // transitions, but not mode 3 (GC16_FAST). GL16 is the supported fast,
+    // full-screen quality transition for this panel.
+    Serial.printf("[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
+    force_redraw(MODE_GL16,reason,wake_light);
+}
+
 static void full_display_clean(const char* reason) {
-    if(standby_active)return;
-    Serial.printf("[T5-EPD] full refresh requested by %s\n",reason);
-    set_cpu_target(240,"full-display-clean",false);
-    epd_poweron();
-    epd_clear();
-    epd_poweroff();
-    Serial.println("[T5-EPD] full clean complete");
+    Serial.printf("[T5-EPD] full GC16 redraw requested by %s standby=%d\n",reason,standby_active);
     draw_screen();
-    refresh(MODE_GL16,false);
-    Serial.println("[T5-EPD] full UI redraw complete");
+    force_redraw(MODE_GC16,reason,false);
+    Serial.println("[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
 
 static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
@@ -755,13 +773,11 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
-    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Messages);return true;}
+    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
     if(screen==Screen::ContactChat&&hit(x,y,430,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;open_screen(Screen::ContactDetails);return true;}
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
-    if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Messages:tab==1?Screen::Contacts:tab==2?Screen::Channels:Screen::More);return true;}
+    if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
-        case Screen::Messages:
-            if(ui_data)for(size_t i=0;i<ui_data->conversation_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_conversation(i)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
         case Screen::Contacts:
             if(ui_data)for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_contact=i;if(ui_data->open_contact(i)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
         case Screen::Channels:
@@ -889,27 +905,53 @@ static void set_touch_power(bool enabled){
 
 static void enter_standby(const char* reason){
     if(standby_active)return;standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
-    Serial.printf("[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();refresh(MODE_GL16,false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    Serial.printf("[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
-    if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();alert_flash_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
-    set_cpu_target(160,"wake");Serial.println("[T5-STANDBY] leaving; restoring local UI");draw_screen();refresh(MODE_GL16,true);
+    if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
+    set_cpu_target(160,"wake");Serial.println("[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
 }
 
-static void start_message_flash(){alert_flash_active=true;alert_flash_phase=0;alert_flash_deadline=millis();}
-static void service_message_flash(){
-    if(!alert_flash_active||(int32_t)(millis()-alert_flash_deadline)<0)return;
-    const bool on=(alert_flash_phase&1)==0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,on?255:0);frontlight_lit=on;
-    alert_flash_phase++;alert_flash_deadline+=125;
-    if(alert_flash_phase>=8){alert_flash_active=false;frontlight_lit=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);Serial.println("[T5-STANDBY] message alert flash complete");}
+static void start_message_alert(){
+    const uint32_t now=millis();
+    if(message_alert_active){Serial.println("[T5-STANDBY] message alert coalesced into active sequence");return;}
+    if((int32_t)(now-message_alert_cooldown_until)<0){Serial.println("[T5-STANDBY] message alert suppressed by cooldown");return;}
+    message_alert_active=true;message_alert_phase=0;message_alert_deadline=now;
+    Serial.println("[T5-STANDBY] combined EPD/frontlight message alert started");
+}
+
+static void service_message_alert(){
+    if(!message_alert_active||(int32_t)(millis()-message_alert_deadline)<0)return;
+    switch(message_alert_phase++){
+        case 0:
+        case 2:
+            ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
+            memset(display.front_fb,0x00,(size_t)epd_width()*epd_height()/2);
+            force_redraw(MODE_DU,"MESSAGE_ALERT_BLACK",false);
+            message_alert_deadline=millis()+100;
+            break;
+        case 1:
+        case 3:
+            ledcWrite(FRONTLIGHT_PWM_CHANNEL,255);frontlight_lit=true;
+            epd_hl_set_all_white(&display);
+            force_redraw(MODE_DU,"MESSAGE_ALERT_WHITE",false);
+            message_alert_deadline=millis()+100;
+            break;
+        default:
+            ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;frontlight_deadline=0;
+            draw_screen();force_redraw(MODE_GC16,"MESSAGE_ALERT_RESTORE",false);
+            status_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
+            Serial.println("[T5-STANDBY] combined message alert complete; standby screen restored with GC16");
+            break;
+    }
 }
 
 static void service_boot_button(){
     static uint32_t pressed_at=0;static bool handled=false;const bool pressed=digitalRead(BOOT_BUTTON)==LOW;
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
-    if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&!standby_active&&duration>=40)full_display_clean("SHORT_BOOT");pressed_at=0;handled=false;}
+    if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){draw_screen();fast_full_redraw("SHORT_BOOT",false);}pressed_at=0;handled=false;}
 }
 
 void ui_setup() {
@@ -935,7 +977,7 @@ void ui_setup() {
         for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else Serial.printf("[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
         node_name[out]=0;
     }
-    if(setup_complete){screen=Screen::Messages;keyboard_visible=false;}
+    if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
     update_status_hardware();
     epd_hl_set_all_white(&display);centred("MESHCORE",290,7,0,true);centred(UI_VERSION,900,2);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
@@ -971,14 +1013,14 @@ void ui_loop() {
         last_status_poll=millis();
         if(update_status_hardware())status_dirty=true;
     }
-    if(status_dirty){const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;draw_screen();refresh(MODE_DU,wake);}
+    if(status_dirty&&!message_alert_active){const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;draw_screen();refresh(MODE_DU,wake);}
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
         toast_visible=false;
-        if(toast_opens_main){toast_opens_main=false;screen=Screen::Messages;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
+        if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MODE_DU,true);
     }
     frontlight_service();
-    service_message_flash();
+    service_message_alert();
     static uint32_t power_report_at=0,loop_count=0;loop_count++;
     if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);Serial.printf("[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
     delay(12);
@@ -1018,7 +1060,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
 void ui_notify_message_received(bool channel){
     const bool visible=channel?screen==Screen::ChannelChat:screen==Screen::ContactChat;
     if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
-    status_dirty=true;if(standby_active)start_message_flash();else status_wake_light=true;Serial.printf("[T5-UI] %s message event unread=%u refresh queued standby=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active);
+    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;Serial.printf("[T5-UI] %s message event unread=%u refresh queued standby=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active);
 }
 
 void ui_mesh_ready(){
