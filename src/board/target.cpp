@@ -7,7 +7,7 @@
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "0.9.4"
+#define T5_FIRMWARE_VERSION "1.0.0"
 #endif
 
 #if T5_DIAGNOSTICS
@@ -61,6 +61,43 @@ static ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
+enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
+static GpsModule detected_gps_module = GpsModule::Unknown;
+static bool gps_command_sleeping = false;
+static uint32_t gps_last_byte_at = 0;
+static void t5_power_diagnostics_tick();
+
+static const char* gps_module_name() {
+    switch (detected_gps_module) {
+        case GpsModule::L76K: return "L76K";
+        case GpsModule::MiaM10Q: return "MIA-M10Q";
+        default: return "UNKNOWN";
+    }
+}
+
+static void gps_wake_command() {
+    if (!gps_command_sleeping) return;
+    // L76K exits PMTK standby on any UART activity. Do not send an
+    // unverified binary command to an unknown/u-blox receiver.
+    if (detected_gps_module == GpsModule::L76K) {
+        Serial1.write((uint8_t)'\r'); Serial1.write((uint8_t)'\n'); Serial1.flush();
+        delay(120);
+        T5_TRACE("gps power: L76K wake byte sent\n");
+    }
+    gps_command_sleeping = false;
+}
+
+static void gps_sleep_command() {
+    if (gps_command_sleeping) return;
+    if (detected_gps_module == GpsModule::L76K) {
+        // PMTK161 standby retains data for a fast warm start.
+        Serial1.print("$PMTK161,0*28\r\n"); Serial1.flush();
+        gps_command_sleeping = true;
+        T5_TRACE("gps power: L76K standby command sent\n");
+    } else {
+        T5_TRACE("gps power: sleep skipped module=%s (radio/GPS rail is shared)\n", gps_module_name());
+    }
+}
 
 // Observes the same bytes MicroNMEA consumes, allowing baud detection without
 // stealing data from MeshCore's parser.
@@ -126,6 +163,7 @@ public:
     T5GPS() : MicroNMEALocationProvider(gps_stream, &rtc_clock) {}
     void begin() override {
         Serial1.updateBaudRate(detected_gps_baud);
+        gps_wake_command();
         MicroNMEALocationProvider::begin();
         active = true;
         next_baud_retry = millis() + 6000;
@@ -134,17 +172,21 @@ public:
     void stop() override {
         MicroNMEALocationProvider::stop();
         active = false;
+        gps_sleep_command();
         T5_TRACE("gps: disabled by MeshCore sensor setting\n");
     }
     void loop() override {
+        t5_power_diagnostics_tick();
 #if T5_DIAGNOSTICS
         const int pending = Serial1.available();
+        if (pending > 0) gps_last_byte_at = millis();
 #endif
         MicroNMEALocationProvider::loop();
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
             gps_baud_locked = true;
             detected_gps_baud = Serial1.baudRate();
-            T5_TRACE("gps: background probe locked %u baud with valid NMEA\n", detected_gps_baud);
+            detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+            T5_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
         } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
             detected_gps_baud = Serial1.baudRate() == 9600 ? 38400 : 9600;
             Serial1.updateBaudRate(detected_gps_baud);
@@ -152,6 +194,15 @@ public:
             MicroNMEALocationProvider::syncTime();
             next_baud_retry = millis() + 6000;
             T5_TRACE("gps: background probe trying %u baud\n", detected_gps_baud);
+        }
+        if (active && gps_baud_locked && !gps_command_sleeping && gps_last_byte_at && millis() - gps_last_byte_at > 30000) {
+            T5_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
+            gps_command_sleeping = true;
+            gps_wake_command();
+            gps_stream.clearValidation();
+            gps_baud_locked = false;
+            next_baud_retry = millis() + 6000;
+            gps_last_byte_at = millis();
         }
 #if T5_DIAGNOSTICS
         static uint32_t last_report = 0;
@@ -179,6 +230,52 @@ static bool gauge_word(uint8_t command, uint16_t& result) {
     const uint8_t hi = Wire.read();
     result = static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
     return true;
+}
+
+static bool pmic_byte(uint8_t reg, uint8_t& result) {
+    constexpr uint8_t BQ25896_ADDR = 0x6B;
+    Wire.beginTransmission(BQ25896_ADDR);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom(BQ25896_ADDR, static_cast<uint8_t>(1)) != 1) return false;
+    result = Wire.read();
+    return true;
+}
+
+static void t5_power_diagnostics_tick() {
+#if T5_DIAGNOSTICS
+    static uint32_t reported_at = 0;
+    if (reported_at && millis() - reported_at < 60000) return;
+    reported_at = millis() ? millis() : 1;
+
+    uint8_t reg00=0,reg04=0,reg0b=0,reg0c=0,reg0e=0,reg10=0,reg11=0,reg12=0;
+    const bool charger_ok=pmic_byte(0x00,reg00)&&pmic_byte(0x04,reg04)&&
+        pmic_byte(0x0B,reg0b)&&pmic_byte(0x0C,reg0c)&&pmic_byte(0x0E,reg0e)&&
+        pmic_byte(0x10,reg10)&&pmic_byte(0x11,reg11)&&pmic_byte(0x12,reg12);
+    if(charger_ok){
+        static const char* charge_names[]={"IDLE","PRECHARGE","FAST","DONE"};
+        const uint8_t charge=(reg0b>>3)&0x03;
+        const unsigned input_limit=100U+50U*(reg00&0x3F);
+        const unsigned target_current=64U*(reg04&0x7F);
+        const unsigned adc_battery=2304U+20U*(reg0e&0x7F);
+        const unsigned adc_vbus=2600U+100U*(reg11&0x7F);
+        const unsigned adc_charge=50U*(reg12&0x7F);
+        T5_TRACE("charger: VBUS=%umV good=%u source=%u state=%s IINLIM=%umA ICHG_TARGET=%umA ICHG_ADC=%umA BAT_ADC=%umV TS=0x%02X fault=0x%02X\n",
+            adc_vbus,(reg11>>7)&1,(reg0b>>5)&7,charge_names[charge],input_limit,target_current,
+            adc_charge,adc_battery,reg10,reg0c);
+    }else T5_TRACE("charger: BQ25896 diagnostic read failed\n");
+
+    uint16_t temp=0,voltage=0,current_raw=0,remaining=0,full=0,soc=0;
+    const bool gauge_ok=gauge_word(0x06,temp)&&gauge_word(0x08,voltage)&&
+        gauge_word(0x0C,current_raw)&&gauge_word(0x10,remaining)&&
+        gauge_word(0x12,full)&&gauge_word(0x2C,soc);
+    if(gauge_ok){
+        const int current=(int16_t)current_raw;
+        const int temp_c10=(int)temp-2731;
+        T5_TRACE("gauge: voltage=%umV current=%dmA SOC=%u%% remaining=%umAh full=%umAh temp=%d.%dC\n",
+            voltage,current,soc,remaining,full,temp_c10/10,abs(temp_c10%10));
+    }else T5_TRACE("gauge: BQ27220 diagnostic read failed\n");
+#endif
 }
 
 uint16_t T5Board::getBattMilliVolts() {
@@ -359,7 +456,13 @@ bool radio_init() {
                     delay(5);
                 }
                 T5_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n", pass + 1, baud, found);
-                if (found) { detected_gps_baud = baud; gps_baud_locked = true; break; }
+                if (found) {
+                    detected_gps_baud = baud;
+                    gps_baud_locked = true;
+                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                    gps_last_byte_at = millis();
+                    break;
+                }
             }
         }
         if (!found) {
@@ -368,8 +471,8 @@ bool radio_init() {
             gps_stream.clearValidation();
             T5_TRACE("gps: startup probe inconclusive; background retry enabled\n");
         }
-        T5_TRACE("gps: selected baud=%u locked=%d; MeshCore owns position and settings\n",
-                 Serial1.baudRate(), gps_baud_locked);
+        T5_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
+                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
     }
     return ready;
 }
