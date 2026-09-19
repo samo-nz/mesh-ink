@@ -2,8 +2,16 @@
 
 #include <helpers/ESP32Board.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
-#include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
+
+class T5RTCClock : public mesh::RTCClock {
+    bool valid_ = false;
+public:
+    void begin();
+    uint32_t getCurrentTime() override;
+    void setCurrentTime(uint32_t time) override;
+    bool isValid() const { return valid_; }
+};
 
 class T5Board : public ESP32Board {
 public:
@@ -16,7 +24,7 @@ public:
 
 extern T5Board board;
 extern CustomSX1262Wrapper radio_driver;
-extern AutoDiscoverRTCClock rtc_clock;
+extern T5RTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;
 
 bool radio_init();

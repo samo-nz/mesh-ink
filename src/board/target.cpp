@@ -3,6 +3,8 @@
 #include <epdiy.h>
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
+#include <sys/time.h>
+#include <RTClib.h>
 #include "target.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
@@ -25,6 +27,49 @@ static bool pca_read(uint8_t reg,uint8_t& value){
 static bool pca_write(uint8_t reg,uint8_t value){
     const uint8_t data[2]={reg,value};
     return i2c_master_write_to_device(I2C_NUM_0,PCA9535_ADDR,data,sizeof(data),pdMS_TO_TICKS(50))==ESP_OK;
+}
+
+static bool idf_read(uint8_t address,uint8_t reg,uint8_t* data,size_t len){
+    return i2c_master_write_read_device(I2C_NUM_0,address,&reg,1,data,len,pdMS_TO_TICKS(50))==ESP_OK;
+}
+static bool idf_write(uint8_t address,uint8_t reg,const uint8_t* data,size_t len){
+    uint8_t buffer[9];if(len>sizeof(buffer)-1)return false;buffer[0]=reg;memcpy(buffer+1,data,len);
+    return i2c_master_write_to_device(I2C_NUM_0,address,buffer,len+1,pdMS_TO_TICKS(50))==ESP_OK;
+}
+static uint8_t from_bcd(uint8_t v){return (uint8_t)((v>>4)*10+(v&0x0F));}
+static uint8_t to_bcd(uint8_t v){return (uint8_t)(((v/10)<<4)|(v%10));}
+
+void T5RTCClock::begin(){
+    uint8_t r[7]{};
+    if(!idf_read(0x51,0x02,r,sizeof(r))){
+        valid_=false;T5_TRACE("rtc: PCF8563 read failed; system fallback active\n");return;
+    }
+    const bool voltage_low=(r[0]&0x80)!=0;
+    const uint8_t second=from_bcd(r[0]&0x7F),minute=from_bcd(r[1]&0x7F),hour=from_bcd(r[2]&0x3F);
+    const uint8_t day=from_bcd(r[3]&0x3F),month=from_bcd(r[5]&0x1F),year=from_bcd(r[6]);
+    valid_=!voltage_low&&second<60&&minute<60&&hour<24&&day>=1&&day<=31&&month>=1&&month<=12;
+    if(valid_){
+        const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
+        timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+        T5_TRACE("rtc: PCF8563 valid UTC=%04u-%02u-%02u %02u:%02u:%02u epoch=%lu\n",
+            2000+year,month,day,hour,minute,second,(unsigned long)utc);
+    }else{
+        T5_TRACE("rtc: PCF8563 INVALID voltage-low=%u raw=%02X/%02X/%02X %02X/%02X/%02X\n",
+            voltage_low,r[2],r[1],r[0],r[3],r[5],r[6]);
+    }
+}
+uint32_t T5RTCClock::getCurrentTime(){
+    if(!valid_)return (uint32_t)time(nullptr);
+    uint8_t r[7]{};if(!idf_read(0x51,0x02,r,sizeof(r))||(r[0]&0x80)){valid_=false;return (uint32_t)time(nullptr);}
+    return DateTime(2000+from_bcd(r[6]),from_bcd(r[5]&0x1F),from_bcd(r[3]&0x3F),
+        from_bcd(r[2]&0x3F),from_bcd(r[1]&0x7F),from_bcd(r[0]&0x7F)).unixtime();
+}
+void T5RTCClock::setCurrentTime(uint32_t utc){
+    const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
+        to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
+    valid_=idf_write(0x51,0x02,r,sizeof(r));
+    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+    T5_TRACE("rtc: GPS/system sync UTC=%lu hardware-write=%s\n",(unsigned long)utc,valid_?"OK":"FAILED");
 }
 
 bool T5Board::enableRadioGpsRail(){
@@ -57,8 +102,7 @@ static CustomSX1262 radio = new Module(
     P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, radio_spi);
 CustomSX1262Wrapper radio_driver(radio, board);
 
-static ESP32RTCClock fallback_clock;
-AutoDiscoverRTCClock rtc_clock(fallback_clock);
+T5RTCClock rtc_clock;
 static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
 enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
@@ -222,24 +266,16 @@ EnvironmentSensorManager sensors(gps);
 // 0x08 (mV) and state-of-charge 0x2C (%). No calibration or gauge writes.
 static constexpr uint8_t BQ27220_ADDR = 0x55;
 static bool gauge_word(uint8_t command, uint16_t& result) {
-    Wire.beginTransmission(BQ27220_ADDR);
-    Wire.write(command);
-    if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom(BQ27220_ADDR, static_cast<uint8_t>(2)) != 2) return false;
-    const uint8_t lo = Wire.read();
-    const uint8_t hi = Wire.read();
+    uint8_t data[2]{};
+    if(!idf_read(BQ27220_ADDR,command,data,sizeof(data)))return false;
+    const uint8_t lo=data[0],hi=data[1];
     result = static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
     return true;
 }
 
 static bool pmic_byte(uint8_t reg, uint8_t& result) {
     constexpr uint8_t BQ25896_ADDR = 0x6B;
-    Wire.beginTransmission(BQ25896_ADDR);
-    Wire.write(reg);
-    if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom(BQ25896_ADDR, static_cast<uint8_t>(1)) != 1) return false;
-    result = Wire.read();
-    return true;
+    return idf_read(BQ25896_ADDR,reg,&result,1);
 }
 
 static void t5_power_diagnostics_tick() {
@@ -434,8 +470,7 @@ void T5Board::beginLocal() {
 
 bool radio_init() {
     T5_TRACE("radio: begin clock and RTC\n");
-    fallback_clock.begin();
-    rtc_clock.begin(Wire);
+    rtc_clock.begin();
     T5_TRACE("radio: SX1262 init on SPI pins 14/21/13\n");
     const bool ready = radio.std_init(&radio_spi);
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
