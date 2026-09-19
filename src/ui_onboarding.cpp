@@ -15,7 +15,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "1.0.0"
+#define T5_FIRMWARE_VERSION "1.1.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -91,6 +91,7 @@ static bool replace_name_on_type = false;
 static bool keyboard_visible = true;
 static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
+static bool keyboard_landscape = false;
 static uint16_t status_unread = 0;
 static uint16_t status_channel_unread = 0;
 static bool status_gps_enabled = false;
@@ -237,6 +238,8 @@ static void key(const char* label, int x, int y, int w) {
     text(label,x+(w-(int)strlen(label)*6*scale)/2,y+(62-7*scale)/2,scale,0,true);
 }
 
+static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines);
+
 static void draw_keyboard() {
     const char* numbers="1234567890";
     for(int i=0;numbers[i];++i){char label[2]={numbers[i],0};key(label,15+i*52,618,49);}
@@ -246,9 +249,34 @@ static void draw_keyboard() {
     const char** rows=keyboard_symbols?symbol_rows:(keyboard_upper?letter_rows_upper:letter_rows_lower);
     const int starts[]={15,41,93};const int ys[]={688,758,828};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char label[2]={rows[r][i],0};key(label,starts[r]+i*52,ys[r],49);}
-    key(keyboard_upper?"Aa":"aA",12,828,76);
-    key(keyboard_symbols?"ABC":"SYM",460,828,68);
+    key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
+    key("LAND",460,828,68);
     key("DEL",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_message_mode?"SEND":"SAVE",426,898,102);
+}
+
+static void landscape_key(const char* label,int x,int y,int w){
+    EpdRect r={x,y,w,62};epd_fill_rect(r,0xFF,fb);epd_draw_rect(r,0,fb);
+    const int scale=strlen(label)<=5?3:2;text(label,x+(w-(int)strlen(label)*6*scale)/2,y+(62-7*scale)/2,scale,0,true);
+}
+static const char** active_keyboard_rows(){
+    static const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
+    static const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
+    static const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};
+    return keyboard_symbols?symbols:(keyboard_upper?upper:lower);
+}
+static void draw_landscape_keyboard(){
+    epd_hl_set_all_white(&display);
+    const char* value=keyboard_message_mode?compose_text:node_name;
+    EpdRect entry={16,14,928,72};epd_draw_rect(entry,0,fb);
+    draw_wrapped(value[0]?value:"ENTER TEXT",32,34,48,3,0,true,2);
+    const char* numbers="1234567890";
+    for(int i=0;i<10;++i){char s[2]={numbers[i],0};landscape_key(s,15+i*93,100,88);}
+    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={170,240,310};
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char s[2]={rows[r][i],0};landscape_key(s,starts[r]+i*93,ys[r],88);}
+    landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),14,390,110);
+    landscape_key("DEL",132,390,110);landscape_key("SPACE",250,390,300);
+    landscape_key("PORTRAIT",558,390,170);landscape_key(keyboard_message_mode?"SEND":"SAVE",736,390,210);
+    text("LANDSCAPE TEXT ENTRY",16,480,2,0,true);
 }
 
 static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
@@ -311,8 +339,6 @@ static void show_toast(const char* message) {
     strncpy(toast_message,message,sizeof(toast_message)-1);toast_message[sizeof(toast_message)-1]=0;
     toast_visible=true;toast_until=millis()+1500;
 }
-
-static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines);
 
 static void draw_welcome() {
     epd_hl_set_all_white(&display);
@@ -466,7 +492,7 @@ static void draw_chat(bool channel) {
     const bool keyboard=keyboard_visible&&keyboard_message_mode;const int history_bottom=keyboard?526:800;const int available=history_bottom-126;
     size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
     if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
-    if(keyboard){box(12,544,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,564,2,0,true);draw_keyboard();}
+    if(keyboard){box(12,544,516,70);draw_wrapped(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,558,25,3,0,true,2);draw_keyboard();}
     else{
         if(pages>1){box(12,818,160,62,chat_page+1>=pages);text("OLDER",50,839,2,chat_page+1>=pages?0xFF:0,true);box(368,818,160,62,chat_page==0);text("NEWER",406,839,2,chat_page==0?0xFF:0,true);char p[18];snprintf(p,sizeof(p),"PAGE %u OF %u",chat_page+1,pages);centred(p,840,2,0,true);}
         box(12,888,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,908,2,0,true);
@@ -512,15 +538,16 @@ static void settings_row(const char* title,const char* subtitle,int y) {
 
 static void draw_settings() {
     draw_app_header("SETTINGS",true);
-    settings_row("NODE AND IDENTITY",local_mesh_node_name(),118);settings_row("RADIO",local_mesh_radio_summary(),238);
-    settings_row("LOCATION AND GPS","POSITION, INTERVAL, ADVERT",358);settings_row("CONTACTS AND PRIVACY","AUTO ADD AND TELEMETRY",478);
-    settings_row("DISPLAY AND POWER","FRONTLIGHT, REFRESH, STANDBY",598);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",718);
+    settings_row("ID & RADIO",local_mesh_radio_summary(),118);
+    settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
+    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
 }
 
 static void draw_radio_settings() {
-    draw_app_header("RADIO",true);settings_row("REGION PRESET",PRESETS[selected_preset].title,140);
-    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),270);settings_row("PATH HASH MODE","1 BYTE",400);
-    settings_row("TRANSMIT POWER","22 DBM",530);settings_row("ADVERT INTERVAL","ZERO HOP  60 MIN",660);
+    draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
+    settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
+    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE","1 BYTE",510);
+    if(keyboard_visible){draw_keyboard();}
 }
 
 static void draw_gps_settings() {
@@ -535,7 +562,7 @@ static void draw_gps_settings() {
 static void draw_timezone(){draw_app_header("TIMEZONE",true);for(uint8_t i=0;i<TIMEZONE_COUNT;++i){const int y=118+i*102;box(12,y,516,92,i==timezone_index);const uint8_t c=i==timezone_index?0xFF:0;text(TIMEZONES[i].label,28,y+10,3,c,true);text(TIMEZONES[i].detail,28,y+54,2,c,true);}}
 
 static void draw_privacy_settings() {
-    draw_app_header("CONTACTS & PRIVACY",true);
+    draw_app_header("PRIVACY",true);
     settings_row("AUTO ADD CONTACTS",local_mesh_privacy_value(0),130);settings_row("AUTO ADD MAX HOPS",local_mesh_privacy_value(1),248);
     settings_row("ADVERTISE LOCATION",local_mesh_privacy_value(2),366);settings_row("BASE TELEMETRY",local_mesh_privacy_value(3),484);
     settings_row("LOCATION TELEMETRY",local_mesh_privacy_value(4),602);settings_row("PACKET REPEATING",local_mesh_privacy_value(5),720);
@@ -581,6 +608,7 @@ static void draw_about() {
 }
 
 static void draw_screen() {
+    if(keyboard_landscape){draw_landscape_keyboard();return;}
     if(standby_active){draw_standby();return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
@@ -704,8 +732,8 @@ static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
 static bool update_status_hardware() {
     const int8_t old_hour=status_hour,old_minute=status_minute;
     const int16_t old_battery=status_battery;
-    if(mesh_is_ready){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
-    else{uint8_t rtc[3]={};if(i2c_read8(0x51,0x02,rtc,sizeof(rtc))){const uint8_t hour=from_bcd(rtc[2]&0x3F),minute=from_bcd(rtc[1]&0x7F);if(hour<24&&minute<60){status_hour=hour;status_minute=minute;}}}
+    if(mesh_is_ready&&local_mesh_time_valid()){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
+    else{status_hour=-1;status_minute=-1;}
     uint8_t gauge[2]={};
     if(i2c_read8(0x55,0x2C,gauge,sizeof(gauge))){
         const uint16_t soc=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
@@ -743,6 +771,11 @@ static void touch_sampler_task(void*){
 }
 
 static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_'; }
+static void cycle_keyboard_mode(){
+    if(keyboard_symbols){keyboard_symbols=false;keyboard_upper=true;}
+    else if(keyboard_upper)keyboard_upper=false;
+    else keyboard_symbols=true;
+}
 static void append(char c) {
     if(keyboard_message_mode){size_t n=strlen(compose_text);if(n<48){compose_text[n]=c;compose_text[n+1]=0;}return;}
     if(!legal_name_character(c)){Serial.printf("[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
@@ -754,6 +787,36 @@ static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&
 static void open_screen(Screen next) { keyboard_visible=false;keyboard_message_mode=false;screen=next;draw_screen();refresh(MODE_GL16); }
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
 static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=millis()+110;}
+static void set_keyboard_orientation(bool landscape){
+    keyboard_landscape=landscape;
+    epd_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
+    Serial.printf("[T5-UI] keyboard orientation=%s\n",landscape?"landscape":"portrait");
+    draw_screen();refresh(MODE_GL16);
+}
+static void save_node_name(){
+    prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);
+    prefs.putBool("complete",true);prefs.putBool("name_migrated",true);prefs.end();
+    if(mesh_is_ready)local_mesh_apply_name(node_name);
+    saved=true;setup_complete=true;
+}
+static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
+    if(!keyboard_landscape)return false;
+    const int16_t x=raw_y,y=539-raw_x;
+    Serial.printf("[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
+    const char* numbers="1234567890";for(int i=0;i<10;++i)if(hit(x,y,15+i*93,100,88,62)){append(numbers[i]);queue_text_refresh();return true;}
+    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={170,240,310};
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*93,ys[r],88,62)){append(rows[r][i]);queue_text_refresh();return true;}
+    if(hit(x,y,14,390,110,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,132,390,110,62)){char* value=keyboard_message_mode?compose_text:node_name;size_t n=strlen(value);if(n)value[n-1]=0;queue_text_refresh();return true;}
+    if(hit(x,y,250,390,300,62)){append(' ');queue_text_refresh();return true;}
+    if(hit(x,y,558,390,170,62)){set_keyboard_orientation(false);return true;}
+    if(hit(x,y,736,390,210,62)){
+        if(keyboard_message_mode){if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;}
+        else save_node_name();
+        keyboard_visible=true;set_keyboard_orientation(false);return true;
+    }
+    return true;
+}
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
@@ -762,12 +825,26 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
     const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
     const int starts[]={15,41,93};const int ys[]={688,758,828};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
-    if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,460,828,68,62)){set_keyboard_orientation(true);return true;}
     if(hit(x,y,12,898,100,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;queue_text_refresh();return true;}
     if(hit(x,y,120,898,190,62)){append(' ');queue_text_refresh();return true;}
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=local_mesh_send_active(compose_text);if(ok){compose_text[0]=0;keyboard_visible=false;}draw_screen();refresh(MODE_DU);}return true;}
+    return true;
+}
+
+static bool handle_name_keyboard(int16_t x,int16_t y){
+    if(!keyboard_visible||keyboard_message_mode)return false;
+    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);queue_text_refresh();return true;}
+    const char** rows=active_keyboard_rows();const int starts[]={15,41,93};const int ys[]={688,758,828};
+    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
+    if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,460,828,68,62)){set_keyboard_orientation(true);return true;}
+    if(hit(x,y,12,898,100,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return true;}
+    if(hit(x,y,120,898,190,62))return true;
+    if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+    if(hit(x,y,426,898,102,62)){save_node_name();keyboard_visible=false;toast_opens_main=screen==Screen::Welcome;show_toast(screen==Screen::Welcome?"SETTINGS SAVED":"IDENTITY SAVED");draw_screen();refresh(MODE_DU);return true;}
     return true;
 }
 
@@ -776,6 +853,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
     if(screen==Screen::ContactChat&&hit(x,y,430,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;open_screen(Screen::ContactDetails);return true;}
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
+    if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
         case Screen::Contacts:
@@ -807,16 +885,16 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,320,516,112)){show_toast(local_mesh_send_advert(true)?"FLOOD ADVERT QUEUED":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}break;
         case Screen::Settings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
-            if(hit(x,y,12,118,516,112)){keyboard_message_mode=false;keyboard_visible=false;screen=Screen::Welcome;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,12,238,516,112)){open_screen(Screen::RadioSettings);return true;}
-            if(hit(x,y,12,358,516,112)){open_screen(Screen::GpsSettings);return true;}
-            if(hit(x,y,12,478,516,112)){open_screen(Screen::PrivacySettings);return true;}
-            if(hit(x,y,12,598,516,112)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit(x,y,12,718,516,112)){open_screen(Screen::About);return true;}break;
+            if(hit(x,y,12,118,516,112)){open_screen(Screen::RadioSettings);return true;}
+            if(hit(x,y,12,238,516,112)){open_screen(Screen::GpsSettings);return true;}
+            if(hit(x,y,12,358,516,112)){open_screen(Screen::PrivacySettings);return true;}
+            if(hit(x,y,12,478,516,112)){open_screen(Screen::DisplaySettings);return true;}
+            if(hit(x,y,12,598,516,112)){open_screen(Screen::About);return true;}break;
         case Screen::RadioSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
-            if(hit(x,y,12,140,516,112)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,12,400,516,112)){local_mesh_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,12,120,516,112)){replace_name_on_type=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,12,250,516,112)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,12,510,516,112)){local_mesh_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MODE_DU);return true;}
             return true;
         case Screen::GpsSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
@@ -855,6 +933,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
     Serial.printf("[T5-UI] tap x=%d y=%d\n",x,y);
+    if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
         if(y>=48&&y<132){screen=preset_return_screen;draw_screen();refresh(MODE_GL16);return;}
@@ -880,21 +959,7 @@ static void handle_tap(int16_t x,int16_t y) {
     if(hit(x,y,24,292,492,88)){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
     if(!keyboard_visible){if(hit(x,y,30,840,480,64)){keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return;}
-    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);queue_text_refresh();return;}
-    const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
-    const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
-    const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return;}
-    if(hit(x,y,12,828,76,62)){keyboard_upper=!keyboard_upper;keyboard_symbols=false;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,460,828,68,62)){keyboard_symbols=!keyboard_symbols;draw_screen();refresh(MODE_DU);return;}
-    if(hit(x,y,12,898,100,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return;}
-    if(hit(x,y,120,898,190,62)){return;}
-    if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return;}
-    if(hit(x,y,426,898,102,62)){
-        prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);prefs.putBool("complete",true);prefs.putBool("name_migrated",true);prefs.end();
-        if(mesh_is_ready)local_mesh_apply_name(node_name);
-        saved=true;setup_complete=true;toast_opens_main=true;show_toast("SETTINGS SAVED");draw_screen();refresh(MODE_DU);
-    }
+    handle_name_keyboard(x,y);
 }
 
 static void set_touch_power(bool enabled){
