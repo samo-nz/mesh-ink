@@ -13,16 +13,16 @@ void* png_open(const char* name,int32_t* size){file=SD.open(name,FILE_READ);if(!
 void png_close(void*){if(file)file.close();}
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length){return file.read(data,length);}
 int32_t png_seek(PNGFILE*,int32_t position){return file.seek(position)?position:-1;}
-void png_draw(PNGDRAW* row){
+int png_draw(PNGDRAW* row){
     static uint16_t pixels[256];png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
-    if(row->y<ctx.crop_y||row->y>=ctx.crop_y+ctx.crop_size)return;
+    if(row->y<ctx.crop_y||row->y>=ctx.crop_y+ctx.crop_size)return 1;
     const int out_y=ctx.dy+(row->y-ctx.crop_y)*256/ctx.crop_size;
     const int next_y=ctx.dy+(row->y-ctx.crop_y+1)*256/ctx.crop_size;
     for(int sx=ctx.crop_x;sx<ctx.crop_x+ctx.crop_size;++sx){
-        const uint16_t c=pixels[sx];const uint8_t gray=(uint8_t)((((c>>11)&31)*77+((c>>5)&63)*75+(c&31)*29)>>5)&0xF0);
+        const uint16_t c=pixels[sx];const uint8_t gray=(uint8_t)(((((c>>11)&31)*77+((c>>5)&63)*75+(c&31)*29)>>5)&0xF0);
         const int ox=ctx.dx+(sx-ctx.crop_x)*256/ctx.crop_size,next_x=ctx.dx+(sx-ctx.crop_x+1)*256/ctx.crop_size;
         if(next_x>0&&ox<540&&next_y>118&&out_y<900)epd_fill_rect({max(0,ox),max(118,out_y),min(540,next_x)-max(0,ox),min(900,next_y)-max(118,out_y)},gray,target);
-    }
+    }return 1;
 }
 bool draw_tile(int z,int x,int y,int dx,int dy,int& reused){
     const int n=1<<z;x=(x%n+n)%n;if(y<0||y>=n)return false;
