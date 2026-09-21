@@ -65,12 +65,23 @@ uint32_t T5RTCClock::getCurrentTime(){
         from_bcd(r[2]&0x3F),from_bcd(r[1]&0x7F),from_bcd(r[0]&0x7F)).unixtime();
 }
 void T5RTCClock::setCurrentTime(uint32_t utc){
+    const uint32_t current=getCurrentTime();
+    const bool trusted_gps=trusted_gps_time_&&millis()<=trusted_gps_until_&&
+        (utc>trusted_gps_time_?utc-trusted_gps_time_:trusted_gps_time_-utc)<=3;
+    trusted_gps_time_=0;trusted_gps_until_=0;
+    if(valid_&&!trusted_gps&&utc+300<current){
+        T5_TRACE("rtc: rejected stale fallback UTC=%lu current=%lu delta=-%lu\n",
+            (unsigned long)utc,(unsigned long)current,(unsigned long)(current-utc));
+        return;
+    }
     const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
         to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
     valid_=idf_write(0x51,0x02,r,sizeof(r));
     timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-    T5_TRACE("rtc: GPS/system sync UTC=%lu hardware-write=%s\n",(unsigned long)utc,valid_?"OK":"FAILED");
+    T5_TRACE("rtc: %s sync UTC=%lu hardware-write=%s\n",trusted_gps?"trusted GPS":"system",
+        (unsigned long)utc,valid_?"OK":"FAILED");
 }
+void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
 
 bool T5Board::enableRadioGpsRail(){
     // LilyGO maps LORA_EN (shared LoRa/GPS 3V3 rail) to PCA9535 port 0 bit 0.
@@ -110,6 +121,7 @@ static GpsModule detected_gps_module = GpsModule::Unknown;
 static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
 static void t5_power_diagnostics_tick();
+static void t5_power_diagnostics_report(const char* reason);
 
 static const char* gps_module_name() {
     switch (detected_gps_module) {
@@ -225,6 +237,7 @@ public:
         const int pending = Serial1.available();
         if (pending > 0) gps_last_byte_at = millis();
 #endif
+        if(isValid())rtc_clock.expectGpsTime((uint32_t)getTimestamp());
         MicroNMEALocationProvider::loop();
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
             gps_baud_locked = true;
@@ -262,14 +275,19 @@ public:
 static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
 
-// BQ27220 on the T5 shared I2C bus. Read-only standard commands: voltage
-// 0x08 (mV) and state-of-charge 0x2C (%). No calibration or gauge writes.
+// BQ27220 on the T5 shared I2C bus. Every access below is a direct, read-only
+// standard command from TI SLUUBD4A. In particular, this code never writes a
+// Control()/MAC subcommand, enters CONFIG UPDATE, selects a profile, resets,
+// calibrates, or writes data memory.
 static constexpr uint8_t BQ27220_ADDR = 0x55;
 static bool gauge_word(uint8_t command, uint16_t& result) {
     uint8_t data[2]{};
     if(!idf_read(BQ27220_ADDR,command,data,sizeof(data)))return false;
     const uint8_t lo=data[0],hi=data[1];
     result = static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
+    // SLUUBD4A section 5.3 requires at least 66 us bus-free time between
+    // packets at 400 kHz. Keep diagnostic snapshots comfortably compliant.
+    delayMicroseconds(70);
     return true;
 }
 
@@ -278,12 +296,38 @@ static bool pmic_byte(uint8_t reg, uint8_t& result) {
     return idf_read(BQ25896_ADDR,reg,&result,1);
 }
 
-static void t5_power_diagnostics_tick() {
-#if T5_DIAGNOSTICS
-    static uint32_t reported_at = 0;
-    if (reported_at && millis() - reported_at < 60000) return;
-    reported_at = millis() ? millis() : 1;
+struct GaugeDiagnosticSnapshot {
+    uint16_t control_status=0;
+    uint16_t temperature=0;
+    uint16_t voltage=0;
+    uint16_t battery_status=0;
+    uint16_t current_raw=0;
+    uint16_t remaining=0;
+    uint16_t full=0;
+    uint16_t cycle_count=0;
+    uint16_t soc=0;
+    uint16_t soh=0;
+    uint16_t charging_voltage=0;
+    uint16_t charging_current=0;
+    uint16_t operation_status=0;
+    uint16_t design_capacity=0;
+};
 
+static bool gauge_diagnostic_snapshot(GaugeDiagnosticSnapshot& s) {
+    // Registers and byte order are BQ27220-specific (TI SLUUBD4A, table 2-1).
+    return gauge_word(0x00,s.control_status)&&gauge_word(0x06,s.temperature)&&
+        gauge_word(0x08,s.voltage)&&gauge_word(0x0A,s.battery_status)&&
+        gauge_word(0x0C,s.current_raw)&&gauge_word(0x10,s.remaining)&&
+        gauge_word(0x12,s.full)&&gauge_word(0x2A,s.cycle_count)&&
+        gauge_word(0x2C,s.soc)&&gauge_word(0x2E,s.soh)&&
+        gauge_word(0x30,s.charging_voltage)&&gauge_word(0x32,s.charging_current)&&
+        gauge_word(0x3A,s.operation_status)&&gauge_word(0x3C,s.design_capacity);
+}
+
+static uint8_t last_charger_state=0xFF;
+
+static void t5_power_diagnostics_report(const char* reason) {
+#if T5_DIAGNOSTICS
     uint8_t reg00=0,reg04=0,reg0b=0,reg0c=0,reg0e=0,reg10=0,reg11=0,reg12=0;
     const bool charger_ok=pmic_byte(0x00,reg00)&&pmic_byte(0x04,reg04)&&
         pmic_byte(0x0B,reg0b)&&pmic_byte(0x0C,reg0c)&&pmic_byte(0x0E,reg0e)&&
@@ -296,21 +340,62 @@ static void t5_power_diagnostics_tick() {
         const unsigned adc_battery=2304U+20U*(reg0e&0x7F);
         const unsigned adc_vbus=2600U+100U*(reg11&0x7F);
         const unsigned adc_charge=50U*(reg12&0x7F);
-        T5_TRACE("charger: VBUS=%umV good=%u source=%u state=%s IINLIM=%umA ICHG_TARGET=%umA ICHG_ADC=%umA BAT_ADC=%umV TS=0x%02X fault=0x%02X\n",
-            adc_vbus,(reg11>>7)&1,(reg0b>>5)&7,charge_names[charge],input_limit,target_current,
+        T5_TRACE("power snapshot reason=%s uptime=%lums\n",reason,(unsigned long)millis());
+        T5_TRACE("charger: VBUS=%umV good=%u source=%u state=%s(%u) IINLIM=%umA ICHG_TARGET=%umA ICHG_ADC=%umA BAT_ADC=%umV TS=0x%02X fault=0x%02X\n",
+            adc_vbus,(reg11>>7)&1,(reg0b>>5)&7,charge_names[charge],charge,input_limit,target_current,
             adc_charge,adc_battery,reg10,reg0c);
+        last_charger_state=charge;
     }else T5_TRACE("charger: BQ25896 diagnostic read failed\n");
 
-    uint16_t temp=0,voltage=0,current_raw=0,remaining=0,full=0,soc=0;
-    const bool gauge_ok=gauge_word(0x06,temp)&&gauge_word(0x08,voltage)&&
-        gauge_word(0x0C,current_raw)&&gauge_word(0x10,remaining)&&
-        gauge_word(0x12,full)&&gauge_word(0x2C,soc);
-    if(gauge_ok){
-        const int current=(int16_t)current_raw;
-        const int temp_c10=(int)temp-2731;
-        T5_TRACE("gauge: voltage=%umV current=%dmA SOC=%u%% remaining=%umAh full=%umAh temp=%d.%dC\n",
-            voltage,current,soc,remaining,full,temp_c10/10,abs(temp_c10%10));
+    GaugeDiagnosticSnapshot s{};
+    if(gauge_diagnostic_snapshot(s)){
+        const int current=(int16_t)s.current_raw;
+        const int temp_c10=(int)s.temperature-2731;
+        T5_TRACE("gauge: voltage=%umV current=%dmA SOC=%u%% SOH=%u%% RM=%umAh FCC=%umAh Design=%umAh cycles=%u temp=%d.%dC\n",
+            s.voltage,current,s.soc,s.soh,s.remaining,s.full,s.design_capacity,s.cycle_count,
+            temp_c10/10,abs(temp_c10%10));
+        T5_TRACE("gauge request: charging_voltage=%umV charging_current=%umA\n",
+            s.charging_voltage,s.charging_current);
+        T5_TRACE("gauge BatteryStatus=0x%04X FC=%u TCA=%u OCVCOMP=%u OCVFAIL=%u OCVGD=%u BATTPRES=%u SLEEP=%u SYSDWN=%u DSG=%u\n",
+            s.battery_status,(s.battery_status>>9)&1,(s.battery_status>>6)&1,
+            (s.battery_status>>14)&1,(s.battery_status>>13)&1,(s.battery_status>>5)&1,
+            (s.battery_status>>3)&1,(s.battery_status>>12)&1,(s.battery_status>>1)&1,
+            s.battery_status&1);
+        T5_TRACE("gauge OperationStatus=0x%04X INITCOMP=%u CFGUPDATE=%u VDQ=%u SMTH=%u SEC=%u CALMD=%u ControlStatus=0x%04X CCA=%u BCA=%u SNOOZE=%u BATT_ID=%u\n",
+            s.operation_status,(s.operation_status>>5)&1,(s.operation_status>>10)&1,
+            (s.operation_status>>4)&1,(s.operation_status>>6)&1,
+            (s.operation_status>>1)&3,s.operation_status&1,s.control_status,
+            (s.control_status>>5)&1,(s.control_status>>4)&1,(s.control_status>>3)&1,
+            s.control_status&7);
     }else T5_TRACE("gauge: BQ27220 diagnostic read failed\n");
+#else
+    (void)reason;
+#endif
+}
+
+static void t5_power_diagnostics_tick() {
+#if T5_DIAGNOSTICS
+    static uint32_t probed_at=0;
+    static uint32_t reported_at=0;
+    const uint32_t now=millis();
+    if(probed_at&&now-probed_at<5000)return;
+    probed_at=now?now:1;
+
+    uint8_t reg0b=0;
+    if(!pmic_byte(0x0B,reg0b))return;
+    const uint8_t state=(reg0b>>3)&0x03;
+    const bool first=last_charger_state==0xFF;
+    const bool changed=!first&&state!=last_charger_state;
+    const bool fast_to_done=last_charger_state==2&&state==3;
+    const bool periodic=!reported_at||now-reported_at>=60000;
+    if(changed||periodic){
+        const char* reason=fast_to_done?"charger-FAST-to-DONE":
+            (changed?"charger-state-change":"periodic");
+        t5_power_diagnostics_report(reason);
+        reported_at=now?now:1;
+    }else{
+        last_charger_state=state;
+    }
 #endif
 }
 
@@ -445,6 +530,7 @@ void T5Board::begin() {
     T5_TRACE("board: MeshCore I2C ready\n");
     enableRadioGpsRail();
     getBattMilliVolts();
+    t5_power_diagnostics_report("early-boot");
     T5_TRACE("board: disabling touch and frontlight\n");
     pinMode(9, OUTPUT);
     digitalWrite(9, LOW);  // GT911 disabled in companion mode
@@ -463,6 +549,7 @@ void T5Board::beginLocal() {
     startup_reason = BD_STARTUP_NORMAL;
     enableRadioGpsRail();
     getBattMilliVolts();
+    t5_power_diagnostics_report("early-boot");
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
     T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
