@@ -3,6 +3,7 @@
 #include <helpers/ESP32Board.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
+#include <SPI.h>
 
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
@@ -29,6 +30,7 @@ extern T5Board board;
 extern CustomSX1262Wrapper radio_driver;
 extern T5RTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;
+SPIClass& t5_shared_spi();
 
 bool radio_init();
 mesh::LocalIdentity radio_new_identity();
