@@ -6,10 +6,13 @@
 
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
+    uint32_t trusted_gps_time_ = 0;
+    uint32_t trusted_gps_until_ = 0;
 public:
     void begin();
     uint32_t getCurrentTime() override;
     void setCurrentTime(uint32_t time) override;
+    void expectGpsTime(uint32_t time);
     bool isValid() const { return valid_; }
 };
 

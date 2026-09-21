@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Failed };
+enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Failed, Retrying1, Retrying2, Retrying3, Retrying4, Retrying5 };
 
 struct UiListEntry {
     const char* title;
@@ -16,6 +16,15 @@ struct UiMessage {
     const char* time;
     bool outgoing;
     UiMessageState state;
+};
+
+struct UiNodeDetails {
+    const char* name;
+    const char* identity;
+    const char* last_seen;
+    const char* route;
+    const char* position;
+    bool saved_contact;
 };
 
 class UiDataProvider {
@@ -32,6 +41,10 @@ public:
     virtual bool open_channel(size_t index) = 0;
     virtual size_t advert_count() const = 0;
     virtual const UiListEntry& advert(size_t index) const = 0;
+    virtual bool open_advert(size_t index) = 0;
+    virtual bool active_node_details(UiNodeDetails& out) const = 0;
+    virtual bool add_active_node() = 0;
+    virtual bool remove_active_contact() = 0;
     virtual const char* active_title() const = 0;
     virtual bool active_is_channel() const = 0;
     virtual size_t active_message_count() const = 0;

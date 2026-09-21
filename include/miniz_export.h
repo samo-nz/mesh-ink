@@ -1,5 +1,8 @@
 #pragma once
 
-// miniz's CMake packaging generates this header; PlatformIO builds the
-// pinned source directly, so its functions use normal static linkage.
+// miniz generates this header in its CMake/Meson builds. PlatformIO consumes
+// the pinned sources directly, so provide the static-library definition used
+// by miniz's own test build.
+#ifndef MINIZ_EXPORT
 #define MINIZ_EXPORT
+#endif

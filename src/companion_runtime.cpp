@@ -21,7 +21,7 @@ void local_mesh_on_frame(const uint8_t*, size_t);
 class LocalSerial final : public BaseSerialInterface {
     bool enabled=false;
     uint8_t pending=0;
-    uint8_t command[16]{};
+    uint8_t command[MAX_FRAME_SIZE+1]{};
     size_t command_len=0;
 public:
     void enable() override { enabled=true; } void disable() override { enabled=false; }

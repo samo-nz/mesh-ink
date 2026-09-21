@@ -15,7 +15,7 @@
 #include "local_mesh_runtime.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "1.1.0"
+#define T5_FIRMWARE_VERSION "1.2.1"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -150,6 +150,7 @@ enum class Screen : uint8_t {
 static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
+static bool details_from_discovery=false;
 static constexpr uint8_t PRESETS_PER_PAGE = 5;
 
 struct TimezoneChoice { const char* label; const char* detail; const char* rule; };
@@ -205,6 +206,13 @@ static constexpr Preset PRESETS[] = {
 };
 static constexpr uint8_t PRESET_COUNT = sizeof(PRESETS)/sizeof(PRESETS[0]);
 
+static bool apply_selected_preset(){
+    if(selected_preset==0)return true;float freq=0,bw=0;unsigned sf=0,cr=0,bytes=1;
+    const int fields=sscanf(PRESETS[selected_preset].detail,"%f / SF%u / BW%f / CR%u / %uB",&freq,&sf,&bw,&cr,&bytes);
+    if(fields<4)return false;return local_mesh_apply_radio(freq,bw,(uint8_t)sf,(uint8_t)cr,(uint8_t)(max(1u,min(3u,bytes))-1));
+}
+static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BYTES","3 BYTES"};return labels[min((uint8_t)2,local_mesh_path_hash_mode())];}
+
 static const uint8_t* glyph(char c) {
     for (const auto& g : FONT) if (g.c == c) return g.r;
     return FONT[0].r;
@@ -250,8 +258,8 @@ static void draw_keyboard() {
     const int starts[]={15,41,93};const int ys[]={688,758,828};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char label[2]={rows[r][i],0};key(label,starts[r]+i*52,ys[r],49);}
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
-    key("LAND",460,828,68);
-    key("DEL",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_message_mode?"SEND":"SAVE",426,898,102);
+    key("DEL",460,828,68);
+    key("LAND",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_message_mode?"SEND":"SAVE",426,898,102);
 }
 
 static void landscape_key(const char* label,int x,int y,int w){
@@ -267,16 +275,16 @@ static const char** active_keyboard_rows(){
 static void draw_landscape_keyboard(){
     epd_hl_set_all_white(&display);
     const char* value=keyboard_message_mode?compose_text:node_name;
-    EpdRect entry={16,14,928,72};epd_draw_rect(entry,0,fb);
-    draw_wrapped(value[0]?value:"ENTER TEXT",32,34,48,3,0,true,2);
+    EpdRect entry={16,14,928,112};epd_draw_rect(entry,0,fb);
+    draw_wrapped(value[0]?value:"ENTER TEXT",32,30,48,4,0,true,2);
     const char* numbers="1234567890";
-    for(int i=0;i<10;++i){char s[2]={numbers[i],0};landscape_key(s,15+i*93,100,88);}
-    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={170,240,310};
+    for(int i=0;i<10;++i){char s[2]={numbers[i],0};landscape_key(s,15+i*93,145,88);}
+    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={215,285,355};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char s[2]={rows[r][i],0};landscape_key(s,starts[r]+i*93,ys[r],88);}
-    landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),14,390,110);
-    landscape_key("DEL",132,390,110);landscape_key("SPACE",250,390,300);
-    landscape_key("PORTRAIT",558,390,170);landscape_key(keyboard_message_mode?"SEND":"SAVE",736,390,210);
-    text("LANDSCAPE TEXT ENTRY",16,480,2,0,true);
+    landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),15,355,130);
+    landscape_key("DEL",812,355,133);
+    landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
+    landscape_key(keyboard_message_mode?"SEND":"SAVE",711,425,234);
 }
 
 static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
@@ -427,7 +435,7 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     epd_hl_set_all_white(&display);draw_status_bar();
     if(back)text("< BACK",16,70,2,0,true);
     centred(title,64,4,0,true);
-    if(action)text(action,540-(int)strlen(action)*12-16,70,2,0,true);
+    if(action)text(action,540-(int)strlen(action)*18-12,66,3,0,true);
 }
 
 static void draw_list_entry(const UiListEntry& item,int y) {
@@ -473,7 +481,7 @@ static void draw_message_bubble(const UiMessage& message,int y,int h) {
     const int x=message.outgoing?82:12,w=446;box(x,y,w,h,message.outgoing);
     draw_wrapped(message.text,x+16,y+12,23,3,message.outgoing?0xFF:0,true,8);
     char footer[26];const char* state="";
-    if(message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;default:break;}}
+    if(message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;case UiMessageState::Retrying1:state="RETRYING 1/5";break;case UiMessageState::Retrying2:state="RETRYING 2/5";break;case UiMessageState::Retrying3:state="RETRYING 3/5";break;case UiMessageState::Retrying4:state="RETRYING 4/5";break;case UiMessageState::Retrying5:state="RETRYING 5/5";break;default:break;}}
     snprintf(footer,sizeof(footer),"%s%s%s",message.time,state[0]?"  ":"",state);
     text(footer,x+w-(int)strlen(footer)*12-12,y+h-28,2,message.outgoing?0xFF:0,true);
 }
@@ -492,7 +500,7 @@ static void draw_chat(bool channel) {
     const bool keyboard=keyboard_visible&&keyboard_message_mode;const int history_bottom=keyboard?526:800;const int available=history_bottom-126;
     size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
     if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
-    if(keyboard){box(12,544,516,70);draw_wrapped(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,558,25,3,0,true,2);draw_keyboard();}
+    if(keyboard){box(12,544,516,70);if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);else text("Enter text",28,568,2,0,false);draw_keyboard();}
     else{
         if(pages>1){box(12,818,160,62,chat_page+1>=pages);text("OLDER",50,839,2,chat_page+1>=pages?0xFF:0,true);box(368,818,160,62,chat_page==0);text("NEWER",406,839,2,chat_page==0?0xFF:0,true);char p[18];snprintf(p,sizeof(p),"PAGE %u OF %u",chat_page+1,pages);centred(p,840,2,0,true);}
         box(12,888,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,908,2,0,true);
@@ -500,15 +508,15 @@ static void draw_chat(bool channel) {
 }
 
 static void draw_contact_details() {
-    draw_app_header("CONTACT",true);
-    centred("ALICE",132,5,0,true);centred("CHAT NODE",184,2,0,true);
-    text("LAST SEEN",24,250,2,0,true);text("JUST NOW",280,250,2);
-    text("SIGNAL",24,304,2,0,true);text("SNR 8.5  RSSI -91",280,304,2);
-    text("ROUTE",24,358,2,0,true);text("DIRECT",280,358,2);
-    text("LOCATION",24,412,2,0,true);text("42.72 S  170.96 E",280,412,2);
-    text("PUBLIC KEY",24,466,2,0,true);text("8A71...C42E",280,466,2);
-    box(24,560,492,70);centred("START CONVERSATION",584,3,0,true);
-    box(24,660,492,70);centred("DELETE CONTACT",684,3,0,true);
+    draw_app_header("NODE INFO",true);UiNodeDetails node{};
+    if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",300,3,0,true);return;}
+    centred(node.name,132,4,0,true);centred(node.saved_contact?"SAVED CONTACT":"DISCOVERED NODE",184,2,0,true);
+    text("LAST SEEN",24,250,2,0,true);draw_wrapped(node.last_seen,250,250,23,2,0,false,2);
+    text("ROUTE",24,330,2,0,true);text(node.route,250,330,2);
+    text("POSITION",24,390,2,0,true);draw_wrapped(node.position,250,390,23,2,0,false,2);
+    text("IDENTITY",24,470,2,0,true);text(node.identity,250,470,2);
+    if(node.saved_contact){box(24,580,492,70);centred("START CONVERSATION",604,3,0,true);box(24,680,492,70);centred("DELETE CONTACT",704,3,0,true);}
+    else{box(24,620,492,80,true);centred("ADD CONTACT",648,3,0xFF,true);}
 }
 
 static void settings_row(const char* title,const char* subtitle,int y);
@@ -546,7 +554,7 @@ static void draw_settings() {
 static void draw_radio_settings() {
     draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
     settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
-    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE","1 BYTE",510);
+    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
 }
 
@@ -618,7 +626,7 @@ static void draw_screen() {
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::About:draw_about();break;
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::About;
-    if(screen==Screen::ContactDetails)draw_bottom_nav(0);
+    if(screen==Screen::ContactDetails)draw_bottom_nav(details_from_discovery?3:0);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
 }
@@ -803,14 +811,14 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(!keyboard_landscape)return false;
     const int16_t x=raw_y,y=539-raw_x;
     Serial.printf("[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
-    const char* numbers="1234567890";for(int i=0;i<10;++i)if(hit(x,y,15+i*93,100,88,62)){append(numbers[i]);queue_text_refresh();return true;}
-    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={170,240,310};
+    const char* numbers="1234567890";for(int i=0;i<10;++i)if(hit(x,y,15+i*93,145,88,62)){append(numbers[i]);queue_text_refresh();return true;}
+    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={215,285,355};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*93,ys[r],88,62)){append(rows[r][i]);queue_text_refresh();return true;}
-    if(hit(x,y,14,390,110,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,132,390,110,62)){char* value=keyboard_message_mode?compose_text:node_name;size_t n=strlen(value);if(n)value[n-1]=0;queue_text_refresh();return true;}
-    if(hit(x,y,250,390,300,62)){append(' ');queue_text_refresh();return true;}
-    if(hit(x,y,558,390,170,62)){set_keyboard_orientation(false);return true;}
-    if(hit(x,y,736,390,210,62)){
+    if(hit(x,y,15,355,130,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+    if(hit(x,y,812,355,133,62)){char* value=keyboard_message_mode?compose_text:node_name;size_t n=strlen(value);if(n)value[n-1]=0;queue_text_refresh();return true;}
+    if(hit(x,y,15,425,180,62)){set_keyboard_orientation(false);return true;}
+    if(hit(x,y,203,425,500,62)){append(' ');queue_text_refresh();return true;}
+    if(hit(x,y,711,425,234,62)){
         if(keyboard_message_mode){if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;}
         else save_node_name();
         keyboard_visible=true;set_keyboard_orientation(false);return true;
@@ -826,8 +834,8 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
     const int starts[]={15,41,93};const int ys[]={688,758,828};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
     if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,460,828,68,62)){set_keyboard_orientation(true);return true;}
-    if(hit(x,y,12,898,100,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;queue_text_refresh();return true;}
+    if(hit(x,y,460,828,68,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;queue_text_refresh();return true;}
+    if(hit(x,y,12,898,100,62)){set_keyboard_orientation(true);return true;}
     if(hit(x,y,120,898,190,62)){append(' ');queue_text_refresh();return true;}
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=local_mesh_send_active(compose_text);if(ok){compose_text[0]=0;keyboard_visible=false;}draw_screen();refresh(MODE_DU);}return true;}
@@ -840,8 +848,8 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     const char** rows=active_keyboard_rows();const int starts[]={15,41,93};const int ys[]={688,758,828};
     for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
     if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,460,828,68,62)){set_keyboard_orientation(true);return true;}
-    if(hit(x,y,12,898,100,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return true;}
+    if(hit(x,y,460,828,68,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return true;}
+    if(hit(x,y,12,898,100,62)){set_keyboard_orientation(true);return true;}
     if(hit(x,y,120,898,190,62))return true;
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(hit(x,y,426,898,102,62)){save_node_name();keyboard_visible=false;toast_opens_main=screen==Screen::Welcome;show_toast(screen==Screen::Welcome?"SETTINGS SAVED":"IDENTITY SAVED");draw_screen();refresh(MODE_DU);return true;}
@@ -851,7 +859,7 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
-    if(screen==Screen::ContactChat&&hit(x,y,430,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;open_screen(Screen::ContactDetails);return true;}
+    if(screen==Screen::ContactChat&&hit(x,y,430,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;open_screen(Screen::ContactDetails);return true;}
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
@@ -869,11 +877,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(!keyboard_visible&&hit(x,y,368,818,160,62)&&chat_page>0){chat_page--;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,12,888,516,62)){keyboard_message_mode=true;keyboard_visible=true;chat_page=0;draw_screen();refresh(MODE_GL16);return true;}break;
         case Screen::ContactDetails:
-            if(hit(x,y,0,48,110,70)){open_screen(Screen::ContactChat);return true;}
-            if(hit(x,y,24,560,492,70)){open_screen(Screen::ContactChat);return true;}
-            if(hit(x,y,24,660,492,70)){show_toast("DEMO ONLY");draw_screen();refresh(MODE_DU);return true;}break;
+            if(hit(x,y,0,48,110,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
+            {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
+                if(node.saved_contact&&hit(x,y,24,580,492,70)){open_screen(Screen::ContactChat);return true;}
+                if(node.saved_contact&&hit(x,y,24,680,492,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
+                if(!node.saved_contact&&hit(x,y,24,620,492,80)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
+            }}break;
         case Screen::Discovery:
-            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}break;
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
+            if(ui_data)for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_advert(i)){details_from_discovery=true;open_screen(Screen::ContactDetails);}return true;}break;
         case Screen::More:
             if(hit(x,y,12,130,516,112)){open_screen(Screen::Discovery);return true;}
             if(hit(x,y,12,260,516,112)){open_screen(Screen::AdvertMenu);return true;}
@@ -881,8 +893,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,520,516,112)){open_screen(Screen::CompanionConfirm);return true;}break;
         case Screen::AdvertMenu:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
-            if(hit(x,y,12,180,516,112)){show_toast(local_mesh_send_advert(false)?"ZERO HOP ADVERT SENT":"ADVERT FAILED");draw_screen();refresh(MODE_DU);return true;}
-            if(hit(x,y,12,320,516,112)){show_toast(local_mesh_send_advert(true)?"FLOOD ADVERT QUEUED":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}break;
+            if(hit(x,y,12,180,516,112)){show_toast(local_mesh_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,12,320,516,112)){show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}break;
         case Screen::Settings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
             if(hit(x,y,12,118,516,112)){open_screen(Screen::RadioSettings);return true;}
@@ -938,7 +950,7 @@ static void handle_tap(int16_t x,int16_t y) {
     if(screen==Screen::Presets) {
         if(y>=48&&y<132){screen=preset_return_screen;draw_screen();refresh(MODE_GL16);return;}
         for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,12,132+row*128,516,112)){
-            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;screen=preset_return_screen;show_toast("PRESET SELECTED");draw_screen();refresh(MODE_GL16);}return;
+            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;const bool applied=!mesh_is_ready||apply_selected_preset();prefs.begin("t5-ui",false);prefs.putUChar("preset_v2",selected_preset);prefs.end();screen=preset_return_screen;show_toast(applied?"RADIO PRESET APPLIED":"PRESET FAILED");draw_screen();refresh(MODE_GL16);}return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
         if(hit(x,y,24,800,180,62)&&preset_page>0){preset_page--;draw_screen();refresh(MODE_GL16);return;}
@@ -1126,6 +1138,15 @@ void ui_notify_message_received(bool channel){
     const bool visible=channel?screen==Screen::ChannelChat:screen==Screen::ContactChat;
     if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
     status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;Serial.printf("[T5-UI] %s message event unread=%u refresh queued standby=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active);
+}
+
+void ui_notify_advert_result(bool flood,bool ok){
+    show_toast(ok?(flood?"FLOOD ADVERT SENT":"ZERO HOP ADVERT SENT"):"ADVERT FAILED");
+    status_dirty=true;Serial.printf("[T5-UI] advert result flood=%d ok=%d\n",flood,ok);
+}
+
+void ui_request_data_refresh(const char* reason){
+    status_dirty=true;Serial.printf("[T5-UI] refresh queued reason=%s\n",reason?reason:"data");
 }
 
 void ui_mesh_ready(){
