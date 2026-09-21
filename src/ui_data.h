@@ -24,6 +24,12 @@ struct UiNodeDetails {
     const char* last_seen;
     const char* route;
     const char* position;
+    const char* status;
+    const char* telemetry;
+    const char* path;
+    int32_t latitude;
+    int32_t longitude;
+    bool request_active;
     bool saved_contact;
 };
 
@@ -45,6 +51,7 @@ public:
     virtual bool active_node_details(UiNodeDetails& out) const = 0;
     virtual bool add_active_node() = 0;
     virtual bool remove_active_contact() = 0;
+    virtual bool request_active_node_info() = 0;
     virtual const char* active_title() const = 0;
     virtual bool active_is_channel() const = 0;
     virtual size_t active_message_count() const = 0;

@@ -109,6 +109,7 @@ bool T5Board::enableRadioGpsRail(){
 // Board mapping only. The upstream wrapper controls radio parameters and
 // transmit/receive/power state through MeshCore.
 static SPIClass radio_spi(FSPI);
+SPIClass& t5_shared_spi() { return radio_spi; }
 static CustomSX1262 radio = new Module(
     P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, radio_spi);
 CustomSX1262Wrapper radio_driver(radio, board);

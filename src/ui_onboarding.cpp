@@ -13,9 +13,10 @@
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
+#include "map_tiles.h"
 
 #ifndef T5_FIRMWARE_VERSION
-#define T5_FIRMWARE_VERSION "1.2.1"
+#define T5_FIRMWARE_VERSION "1.3.0"
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -101,6 +102,7 @@ static long status_gps_latitude = 0;
 static long status_gps_longitude = 0;
 static uint32_t status_gps_timestamp = 0;
 static int16_t status_battery = -1;
+static uint8_t status_charge_state=0;
 static int8_t status_hour = -1;
 static int8_t status_minute = -1;
 static bool status_dirty = false;
@@ -151,6 +153,10 @@ static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
+static uint8_t details_page=0;
+static double map_latitude=-41.2865,map_longitude=174.7762;
+static uint8_t map_zoom=12;
+static bool map_imperial=false;
 static constexpr uint8_t PRESETS_PER_PAGE = 5;
 
 struct TimezoneChoice { const char* label; const char* detail; const char* rule; };
@@ -179,7 +185,7 @@ static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false)
 static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);Serial.println("[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
-struct QueuedTap{int16_t x;int16_t y;int16_t dy;};
+struct QueuedTap{int16_t x;int16_t y;int16_t dy;bool home;};
 
 static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
@@ -310,6 +316,7 @@ static void draw_envelope_icon(int x,int y) {
 static void draw_battery_icon(int x,int y,int level=-1) {
     epd_draw_rect({x,y+6,31,18},0,fb);epd_fill_rect({x+31,y+11,4,8},0,fb);
     if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;epd_fill_rect({x+2,y+8,fill,14},0,fb);}
+    if(status_charge_state==1||status_charge_state==2){epd_fill_rect({x+13,y+7,9,15},0xFF,fb);line(x+20,y+6,x+13,y+16);line(x+13,y+16,x+19,y+16);line(x+19,y+16,x+12,y+26);}
 }
 
 static void draw_status_bar(bool standby_quantized=false) {
@@ -433,9 +440,9 @@ static void draw_bottom_nav(int selected) {
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
     epd_hl_set_all_white(&display);draw_status_bar();
-    if(back)text("< BACK",16,70,2,0,true);
+    if(back){box(12,58,58,48,true);centred("",0,1);text("<",31,70,3,0xFF,true);}
     centred(title,64,4,0,true);
-    if(action)text(action,540-(int)strlen(action)*18-12,66,3,0,true);
+    if(action){box(470,58,58,48,true);text(action,470+(58-(int)strlen(action)*18)/2,70,3,0xFF,true);}
 }
 
 static void draw_list_entry(const UiListEntry& item,int y) {
@@ -462,9 +469,13 @@ static void draw_channels() {
 
 static void draw_maps() {
     draw_app_header("MAPS");
-    centred("MAPS COMING LATER",310,4,0,true);
-    centred("GPS STATUS REMAINS AVAILABLE",375,2,0,true);
-    centred("IN SETTINGS",410,2,0,true);
+    const auto result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
+    epd_fill_rect({258,500,24,24},0xFF,fb);epd_draw_rect({258,500,24,24},0,fb);line(270,494,270,530);line(252,512,288,512);
+    char zoom[8];snprintf(zoom,sizeof(zoom),"Z%u",map_zoom);box(12,130,62,44,true);text(zoom,20,142,2,0xFF,true);box(466,130,62,44,true);text("+-",478,142,2,0xFF,true);
+    const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
+    char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
+    epd_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
+    if(!result.sd_ready){epd_fill_rect({80,300,380,80},0xFF,fb);centred("SD CARD / MAPS UNAVAILABLE",328,2,0,true);}
     draw_bottom_nav(2);
 }
 
@@ -510,13 +521,11 @@ static void draw_chat(bool channel) {
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",300,3,0,true);return;}
-    centred(node.name,132,4,0,true);centred(node.saved_contact?"SAVED CONTACT":"DISCOVERED NODE",184,2,0,true);
-    text("LAST SEEN",24,250,2,0,true);draw_wrapped(node.last_seen,250,250,23,2,0,false,2);
-    text("ROUTE",24,330,2,0,true);text(node.route,250,330,2);
-    text("POSITION",24,390,2,0,true);draw_wrapped(node.position,250,390,23,2,0,false,2);
-    text("IDENTITY",24,470,2,0,true);text(node.identity,250,470,2);
-    if(node.saved_contact){box(24,580,492,70);centred("START CONVERSATION",604,3,0,true);box(24,680,492,70);centred("DELETE CONTACT",704,3,0,true);}
-    else{box(24,620,492,80,true);centred("ADD CONTACT",648,3,0xFF,true);}
+    centred(node.name,126,4,0,true);char page[20];snprintf(page,sizeof(page),"PAGE %u OF 2",details_page+1);centred(page,174,2,0,true);
+    if(details_page==0){text("LAST SEEN",24,230,2,0,true);draw_wrapped(node.last_seen,230,230,25,2,0,false,2);text("ROUTE",24,310,2,0,true);text(node.route,230,310,2);text("POSITION",24,380,2,0,true);draw_wrapped(node.position,230,380,25,2,0,false,2);text("IDENTITY",24,470,2,0,true);text(node.identity,230,470,2);if(node.latitude||node.longitude){box(24,540,492,62);centred("OPEN POSITION ON MAP",561,2,0,true);}}
+    else{text("STATUS",24,230,2,0,true);draw_wrapped(node.status,24,264,39,2,0,false,2);text("TELEMETRY / POSITION",24,350,2,0,true);draw_wrapped(node.telemetry,24,384,39,2,0,false,4);text("DISCOVERED PATH",24,530,2,0,true);draw_wrapped(node.path,24,564,39,2,0,false,2);box(24,650,492,70,true);centred(node.request_active?"REQUESTING...":"REQUEST ALL INFO",674,3,0xFF,true);}
+    box(24,748,220,62,details_page==0);text("PREV",82,769,2,details_page==0?0xFF:0,true);box(296,748,220,62,details_page==1);text("NEXT",354,769,2,details_page==1?0xFF:0,true);
+    if(details_page==0){if(node.saved_contact){box(24,828,240,62);centred("CHAT",849,2,0,true);box(276,828,240,62);centred("DELETE",849,2,0,true);}else{box(24,828,492,62,true);centred("ADD CONTACT",849,2,0xFF,true);}}
 }
 
 static void settings_row(const char* title,const char* subtitle,int y);
@@ -582,6 +591,7 @@ static void draw_display_settings() {
     box(12,358,516,160);text("BRIGHTNESS",28,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
     epd_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;epd_fill_rect({knob-12,449,24,35},0,fb);text("-",28,452,3,0,true);text("+",492,452,3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
+    text(map_imperial?"MAP SCALE: IMPERIAL":"MAP SCALE: METRIC",28,652,2,0,true);
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?758:674;
     if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
     box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
@@ -739,7 +749,7 @@ static void request_hardware_shutdown() {
 static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
 static bool update_status_hardware() {
     const int8_t old_hour=status_hour,old_minute=status_minute;
-    const int16_t old_battery=status_battery;
+    const int16_t old_battery=status_battery;const uint8_t old_charge=status_charge_state;
     if(mesh_is_ready&&local_mesh_time_valid()){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
     else{status_hour=-1;status_minute=-1;}
     uint8_t gauge[2]={};
@@ -747,9 +757,10 @@ static bool update_status_hardware() {
         const uint16_t soc=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
         if(soc<=100)status_battery=(int16_t)soc;
     }
+    uint8_t charger=0;if(i2c_read8(0x6B,0x0B,&charger,1))status_charge_state=(charger>>3)&0x03;
     const bool clock_changed=standby_active?(old_hour!=status_hour||old_minute/10!=status_minute/10):(old_hour!=status_hour||old_minute!=status_minute);
     const bool battery_changed=standby_active?(old_battery/5!=status_battery/5):(old_battery!=status_battery);
-    const bool changed=clock_changed||battery_changed;
+    const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
     if(changed)Serial.printf("[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
@@ -759,9 +770,10 @@ static void clear_touch() {
     uint8_t data[3] = {0x81,0x4E,0};
     i2c_master_write_to_device(I2C_NUM_0,GT911_ADDR,data,3,pdMS_TO_TICKS(20));
 }
-static bool touch_point(int16_t& x, int16_t& y) {
+static bool touch_point(int16_t& x, int16_t& y,bool& home) {
     uint8_t status=0;
-    if (!i2c_read(0x814E,&status,1) || !(status&0x80)) { x=cached_touch_x; y=cached_touch_y; return was_pressed; }
+    home=false;if (!i2c_read(0x814E,&status,1) || !(status&0x80)) { x=cached_touch_x; y=cached_touch_y; return was_pressed; }
+    if(status&0x10){home=true;clear_touch();was_pressed=false;return true;}
     const uint8_t count=status&0x0F;
     if (!count || count>5) { clear_touch(); was_pressed=false; x=cached_touch_x; y=cached_touch_y; return false; }
     uint8_t p[8]={};
@@ -773,8 +785,8 @@ static bool touch_point(int16_t& x, int16_t& y) {
 
 static void touch_sampler_task(void*){
     bool held=false;int16_t start_y=0,last_x=0,last_y=0;
-    for(;;){if(!touch_enabled){held=false;Serial.println("[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);Serial.println("[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;const bool pressed=touch_point(x,y);if(pressed){last_x=x;last_y=y;if(!held){held=true;start_y=y;frontlight_event();}}
-        else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_y-start_y)};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
+    for(;;){if(!touch_enabled){held=false;Serial.println("[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);Serial.println("[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;bool home=false;const bool pressed=touch_point(x,y,home);if(home){if(!held){QueuedTap tap{0,0,0,true};xQueueSend(touch_queue,&tap,0);held=true;}}else if(pressed){last_x=x;last_y=y;if(!held){held=true;start_y=y;frontlight_event();}}
+        else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_y-start_y),false};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
         vTaskDelay(pdMS_TO_TICKS(8));}
 }
 
@@ -811,9 +823,9 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(!keyboard_landscape)return false;
     const int16_t x=raw_y,y=539-raw_x;
     Serial.printf("[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
-    const char* numbers="1234567890";for(int i=0;i<10;++i)if(hit(x,y,15+i*93,145,88,62)){append(numbers[i]);queue_text_refresh();return true;}
+    const char* numbers="1234567890";if(y>=141&&y<211){append(numbers[min(9,max(0,(x-1)/96))]);queue_text_refresh();return true;}
     const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={215,285,355};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*93,ys[r],88,62)){append(rows[r][i]);queue_text_refresh();return true;}
+    for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+46)/93));if(r!=2||!(x<148||x>=808)){append(rows[r][i]);queue_text_refresh();return true;}}
     if(hit(x,y,15,355,130,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
     if(hit(x,y,812,355,133,62)){char* value=keyboard_message_mode?compose_text:node_name;size_t n=strlen(value);if(n)value[n-1]=0;queue_text_refresh();return true;}
     if(hit(x,y,15,425,180,62)){set_keyboard_orientation(false);return true;}
@@ -828,15 +840,15 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
-    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);queue_text_refresh();return true;}
+    const char* numbers="1234567890";if(y>=614&&y<684){append(numbers[min(9,max(0,(int)x*10/540))]);queue_text_refresh();return true;}
     const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
     const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
+    for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+26)/52));if(r!=2||!(x<90||x>=455)){append(rows[r][i]);queue_text_refresh();return true;}}
     if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
     if(hit(x,y,460,828,68,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;queue_text_refresh();return true;}
     if(hit(x,y,12,898,100,62)){set_keyboard_orientation(true);return true;}
-    if(hit(x,y,120,898,190,62)){append(' ');queue_text_refresh();return true;}
+    if(hit(x,y,110,894,210,66)){append(' ');queue_text_refresh();return true;}
     if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=local_mesh_send_active(compose_text);if(ok){compose_text[0]=0;keyboard_visible=false;}draw_screen();refresh(MODE_DU);}return true;}
     return true;
@@ -844,9 +856,9 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
-    const char* numbers="1234567890";for(int i=0;numbers[i];++i)if(hit(x,y,15+i*52,618,49,62)){append(numbers[i]);queue_text_refresh();return true;}
+    const char* numbers="1234567890";if(y>=614&&y<684){append(numbers[min(9,max(0,(int)x*10/540))]);queue_text_refresh();return true;}
     const char** rows=active_keyboard_rows();const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i)if(hit(x,y,starts[r]+i*52,ys[r],49,62)){append(rows[r][i]);queue_text_refresh();return true;}
+    for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+26)/52));if(r!=2||!(x<90||x>=455)){append(rows[r][i]);queue_text_refresh();return true;}}
     if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
     if(hit(x,y,460,828,68,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return true;}
     if(hit(x,y,12,898,100,62)){set_keyboard_orientation(true);return true;}
@@ -859,7 +871,7 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
-    if(screen==Screen::ContactChat&&hit(x,y,430,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;open_screen(Screen::ContactDetails);return true;}
+    if(screen==Screen::ContactChat&&hit(x,y,450,48,90,70)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
@@ -877,15 +889,22 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(!keyboard_visible&&hit(x,y,368,818,160,62)&&chat_page>0){chat_page--;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,12,888,516,62)){keyboard_message_mode=true;keyboard_visible=true;chat_page=0;draw_screen();refresh(MODE_GL16);return true;}break;
         case Screen::ContactDetails:
-            if(hit(x,y,0,48,110,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
+            if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
-                if(node.saved_contact&&hit(x,y,24,580,492,70)){open_screen(Screen::ContactChat);return true;}
-                if(node.saved_contact&&hit(x,y,24,680,492,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
-                if(!node.saved_contact&&hit(x,y,24,620,492,80)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
+                if(hit(x,y,24,748,220,62)&&details_page>0){details_page--;draw_screen();refresh(MODE_GL16);return true;}
+                if(hit(x,y,296,748,220,62)&&details_page<1){details_page++;draw_screen();refresh(MODE_GL16);return true;}
+                if(details_page==1&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info()?"REQUESTING ALL INFO":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,540,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps);return true;}
+                if(details_page==0&&node.saved_contact&&hit(x,y,24,828,240,62)){open_screen(Screen::ContactChat);return true;}
+                if(details_page==0&&node.saved_contact&&hit(x,y,276,828,240,62)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==0&&!node.saved_contact&&hit(x,y,24,828,492,62)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
             }}break;
+        case Screen::Maps:
+            if(hit(x,y,466,118,74,90)){map_zoom=map_zoom>=18?8:map_zoom+1;draw_screen();refresh(MODE_GL16);return true;}
+            break;
         case Screen::Discovery:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
-            if(ui_data)for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_advert(i)){details_from_discovery=true;open_screen(Screen::ContactDetails);}return true;}break;
+            if(ui_data)for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){if(ui_data->open_advert(i)){details_from_discovery=true;details_page=0;open_screen(Screen::ContactDetails);}return true;}break;
         case Screen::More:
             if(hit(x,y,12,130,516,112)){open_screen(Screen::Discovery);return true;}
             if(hit(x,y,12,260,516,112)){open_screen(Screen::AdvertMenu);return true;}
@@ -911,6 +930,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::GpsSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             if(hit(x,y,12,120,516,112)){local_mesh_apply_gps(!local_mesh_gps_enabled());show_toast(local_mesh_gps_enabled()?"GPS ENABLED":"GPS DISABLED");draw_screen();refresh(MODE_DU);return true;}
+            if(status_gps_fix&&hit(x,y,12,356,516,112)){map_latitude=status_gps_latitude/1000000.0;map_longitude=status_gps_longitude/1000000.0;open_screen(Screen::Maps);return true;}
             if(hit(x,y,12,474,516,112)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,592,516,112)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,710,516,112)){open_screen(Screen::Timezone);return true;}break;
@@ -926,6 +946,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,238,516,112)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();Serial.printf("[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,538,516,112)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,12,630,516,50)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MODE_DU);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,674,492,70)){open_screen(Screen::NightSchedule);return true;}
             if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?758:674,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
         case Screen::NightSchedule:
@@ -1042,7 +1063,7 @@ void ui_setup() {
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
     display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=epd_hl_get_framebuffer(&display);
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
-    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",60);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);prefs.end();
+    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",60);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
     if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=60;
     if(standby_timeout_index>3)standby_timeout_index=1;
@@ -1077,6 +1098,7 @@ void ui_loop() {
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         last_user_activity=millis();
+        if(tap.home){if(!keyboard_visible&&!keyboard_landscape){details_page=0;open_screen(Screen::Contacts);}continue;}
         if(screen==Screen::Presets&&abs(tap.dy)>60){
             const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
