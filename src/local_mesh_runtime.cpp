@@ -203,9 +203,9 @@ static bool enqueue_direct_attempt(){
 }
 static bool enqueue_info_stage(){uint8_t frame[4+PUB_KEY_SIZE]{};size_t len=0;if(pending_info.stage==0){frame[0]=27;memcpy(frame+1,pending_info.key,PUB_KEY_SIZE);len=1+PUB_KEY_SIZE;}else if(pending_info.stage==1){frame[0]=39;memcpy(frame+4,pending_info.key,PUB_KEY_SIZE);len=4+PUB_KEY_SIZE;}else{frame[0]=52;frame[1]=0;memcpy(frame+2,pending_info.key,PUB_KEY_SIZE);len=2+PUB_KEY_SIZE;}if(!local_mesh_enqueue_command(frame,len))return false;pending_info.waiting_sent=true;pending_info.deadline=millis()+30000;return true;}
 static void advance_info(){if(++pending_info.stage>=3){pending_info.active=false;provider.request_state(false);return;}pending_info.waiting_sent=false;enqueue_info_stage();}
-}
 
 bool MeshCoreUiProvider::request_active_node_info(){if(active_channel_||pending_info.active)return false;ContactInfo contact{};if(!active_contact(contact))return false;pending_info={};pending_info.active=true;memcpy(pending_info.key,contact.id.pub_key,PUB_KEY_SIZE);strcpy(detail_status_,"REQUESTING");strcpy(detail_telemetry_,"WAITING");strcpy(detail_path_,"WAITING");request_state(true);return enqueue_info_stage();}
+}
 
 UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
