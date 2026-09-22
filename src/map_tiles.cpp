@@ -59,10 +59,10 @@ bool map_black(uint8_t level,int world_x,int world_y) {
         0, 8, 2,10,12, 4,14, 6, 3,11, 1, 9,15, 7,13, 5
     };
     const unsigned brightness=(unsigned)level*17U;
-    // Keep the same 2x map contrast as firmware 1.3.21 during the first
-    // long-power-hold test so panel power-down is the ONLY changed variable.
-    // The 4x setting in the untested 1.3.22 trial is not evaluated here.
-    const unsigned darkness=min(255U,(255U-brightness)*2U);
+    // Moderately stronger terrain contrast than the 2x baseline, without
+    // returning to the 7x setting that made enlarged map areas too dark.
+    // Preserve binary, world-anchored dithering and the proven DU waveform.
+    const unsigned darkness=min(255U,((255U-brightness)*5U+1U)/2U);
     const unsigned threshold=16U*bayer4[((unsigned)world_y&3U)*4U+
                                       ((unsigned)world_x&3U)]+8U;
     return darkness>threshold;
@@ -283,7 +283,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
-    Serial.printf("[T5-MAP] mode=WORLD_DITHER_2X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
+    Serial.printf("[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
                   result.ram_hits,result.disk_decodes,result.sd_checks,lat,lon);
