@@ -4,34 +4,28 @@
   <img src="docs/file_00000000248c820a81311144dc2df47d.png" alt="MeshInk — Stay Connected, Further" width="720">
 </p>
 
-**MeshInk turns the LILYGO T5 E-Paper S3 Pro into a standalone MeshCore handheld.** Read and send messages, see nearby nodes, use offline maps, manage GPS and radio settings, and keep the device useful for long periods without needing a phone connected.
+**MeshInk is standalone MeshCore firmware for the LILYGO T5 E-Paper S3 Pro.**
 
-It is designed around the T5's large 4.7-inch e-paper touchscreen: information stays visible without constantly powering the display, the frontlight is there when you need it, and a dedicated standby mode cuts background activity while the mesh remains useful.
+It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
-## What MeshInk can do
+## Features
 
-- **Standalone MeshCore messaging** — contacts, direct messages and channel conversations directly on the T5.
-- **Touch-first e-paper interface** — large controls and layouts designed specifically for the 540×960 display.
-- **Offline maps** — view your own position and known mesh nodes without an internet connection.
-- **GPS built in** — position, fix status, location sharing controls and configurable GPS behaviour.
-- **Mesh discovery** — see recently heard nodes, inspect their details and send zero-hop or flood adverts.
-- **Bluetooth companion mode** — restart into the standard MeshCore BLE companion mode when you want to use a phone or another companion app.
-- **Regional radio presets** — selectable MeshCore presets, including NZ Narrow and other supported regions.
-- **Battery-friendly operation** — e-paper, configurable frontlight behaviour, automatic standby and a manual long-press standby/wake control.
-- **Message alerts** — visual e-paper/frontlight indication for new messages while the device is in standby.
-- **Device settings on the T5** — node name, radio, privacy, GPS, timezone, display, frontlight and power options are available without reflashing.
-- **Persistent local history** — recent conversations remain available on the device.
-- **MeshInk identity** — the MeshInk splash and About screen show the firmware version and configured node name.
-
-## The idea
-
-MeshInk is for people who want MeshCore to feel like a self-contained field communicator rather than a radio peripheral. The phone connection is optional: the T5 can be the interface.
-
-The project uses upstream MeshCore for the mesh networking itself, while the T5-specific interface, display, storage, power management, GPS integration and hardware support live in this repository.
+- Direct messages and channel messaging
+- Contacts and node information
+- Node discovery and advertisements
+- Offline maps with mesh-node positions
+- GPS and location sharing
+- MeshCore Bluetooth companion mode
+- Configurable LoRa region and radio presets
+- E-paper interface with frontlight controls
+- Low-power standby with long-press wake/sleep
+- New-message indication while in standby
+- Local message history
+- On-device configuration for node, radio, GPS, display and power settings
 
 ## Hardware
 
-MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro** with the 4.7-inch e-paper display, ESP32-S3, SX1262 LoRa radio and GPS hardware used by this project.
+MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro**, using its 4.7-inch 540×960 e-paper touchscreen, ESP32-S3, SX1262 LoRa radio and GPS.
 
 ## Installing
 
@@ -41,33 +35,41 @@ Prebuilt firmware is produced by the GitHub Actions workflow for the `t5-unified
 
 ## Using MeshInk
 
-On first setup, choose a node name and radio preset. After that, MeshInk opens into the main Contacts view. The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**.
+On first setup, choose a node name and radio preset. MeshInk then opens into the main Contacts view.
 
-From **More** you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode. A long press of the BOOT button enters or leaves standby; a short press forces a clean e-paper redraw.
+The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. From More you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode.
+
+A long press of the BOOT button enters or leaves standby. A short press forces a clean e-paper redraw.
 
 ## Building from source
 
-For developers, the main product environment is:
+The main firmware environment is:
 
 ```sh
 git submodule update --init --recursive
 pio run -e t5-unified
 ```
 
-MeshCore is kept as an upstream submodule. T5 board support and MeshInk's UI/runtime code are kept outside it so upstream MeshCore updates remain easier to integrate.
+MeshCore is kept as an upstream submodule. T5 board support and MeshInk's UI/runtime code are kept outside it to make upstream updates easier to integrate.
 
-The current firmware version is defined by the `T5_FIRMWARE_VERSION` build flag for the unified target. Release workflows use that version when naming binaries.
+The firmware version is defined by the `T5_FIRMWARE_VERSION` build flag for the unified target.
 
-## Project status
+## Development
 
-MeshInk is approaching its first finished release. The core handheld experience is working: live MeshCore data, messaging, channels, discovery, GPS, offline maps, radio/settings UI, Bluetooth companion mode, standby/power controls and device-local history are all part of the current firmware.
+**MeshInk was developed by Samo using ChatGPT.**
 
-Hardware testing is still important, especially after changes affecting radio behaviour, e-paper refresh, GPS, power management or flash layout.
+The project grew from experimentation with the LILYGO T5 hardware and MeshCore into a standalone e-paper MeshCore client.
 
-## Credits
+## Acknowledgements
 
-MeshInk builds on **MeshCore** and the open-source libraries used by the LILYGO T5 ecosystem. MeshCore remains an upstream dependency rather than a fork embedded into the application code.
+MeshInk is built on the work of several open-source projects. Many thanks to their developers and contributors:
 
----
+- [MeshCore](https://github.com/meshcore-dev/MeshCore) — mesh networking protocol and core firmware that MeshInk is built around.
+- [EPDiy](https://github.com/vroland/epdiy) — e-paper display support.
+- [PNGdec](https://github.com/bitbank2/PNGdec) — embedded PNG decoding.
+- [miniz](https://github.com/richgel999/miniz) — compression and decompression support.
+- [MicroNMEA](https://github.com/stevemarple/MicroNMEA) — GPS/NMEA parsing.
+- [Adafruit BusIO](https://github.com/adafruit/Adafruit_BusIO) — hardware bus abstractions.
+- [base64](https://github.com/Densaugeo/base64_arduino) — Base64 encoding and decoding.
 
-**MeshInk — Stay Connected, Further.**
+Thank you to everyone who develops and maintains these projects. MeshInk would not exist without their work.
