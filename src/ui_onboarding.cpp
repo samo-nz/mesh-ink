@@ -789,10 +789,9 @@ static void draw_screen() {
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
-    // Controlled panel-waveform test: Maps already contains only black and
-    // white pixels. Drive ordinary map updates with the direct monochrome DU
-    // waveform rather than GC16's many grayscale transition phases.
-    // Preserve explicitly requested GC16 for BOOT/full display cleaning.
+    // Maps contains only black and white pixels. Use the direct DU waveform
+    // for normal updates; the 1.3.24 device test confirmed it prevents the
+    // terrain fading seen after GC16. BOOT on Maps uses DU as well.
     const EpdDrawMode requested_mode=mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MODE_GL16)mode=MODE_DU;
@@ -821,11 +820,13 @@ static void force_redraw(EpdDrawMode mode,const char* reason,bool wake_light=fal
 }
 
 static void fast_full_redraw(const char* reason,bool wake_light=false) {
-    // BOOT on Maps must remain a genuine clean rather than a DU-only refresh.
-    // All other screens keep the existing supported GL16 full redraw.
+    // Maps: force an entire DU frame instead of using the GC16 waveform
+    // which causes the fine black map detail to fade on this panel. The
+    // inverted back framebuffer above ensures DU is not skipped as a no-op.
+    // Do not alter standby or other screens' GL16 full redraw behaviour.
     if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape) {
-        Serial.printf("[T5-EPD] full GC16 map clean reason=%s\n",reason);
-        force_redraw(MODE_GC16,reason,wake_light);
+        Serial.printf("[T5-EPD] full DU map redraw reason=%s\n",reason);
+        force_redraw(MODE_DU,reason,wake_light);
         return;
     }
     Serial.printf("[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
