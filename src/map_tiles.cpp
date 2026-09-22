@@ -10,8 +10,9 @@
 
 namespace {
 constexpr int TILE_SIZE=256;
-constexpr size_t TILE_BYTES=TILE_SIZE*TILE_SIZE/8;
-// 48 decoded source tiles = 384 KiB of PSRAM. At native zoom the 540x782
+constexpr size_t TILE_BYTES=TILE_SIZE*TILE_SIZE/2;
+// 48 native 4-bit grayscale source tiles = 1.5 MiB of PSRAM.
+// At native zoom the 540x782
 // map viewport spans at most 4x5 tiles, leaving room to pan in both directions.
 constexpr size_t CACHE_SLOTS=48;
 constexpr size_t ABSENT_SLOTS=128;
@@ -44,20 +45,20 @@ void png_close(void*) {if(file)file.close();}
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {return file.read(data,length);}
 int32_t png_seek(PNGFILE*,int32_t position) {return file.seek(position)?position:-1;}
 
-bool is_black(uint16_t colour,int x,int y) {
-    static constexpr uint8_t bayer4[16]={
-        0, 8, 2,10,12, 4,14, 6, 3,11, 1, 9,15, 7,13, 5
-    };
+// Store actual 16-level luminance rather than a binary dither. Stronger
+// contrast retains map lines and labels against pale land and sea; gray
+// levels map 0 (black) to 15 (white), 2 source pixels per PSRAM byte.
+uint8_t gray_level(uint16_t colour) {
     const unsigned raw=min(255U,(unsigned)((((colour>>11)&31)*77+
                                ((colour>>5)&63)*75+(colour&31)*29)>>5));
-    const unsigned darkness=min(255U,(255U-raw)*7U);
-    const unsigned threshold=16U*bayer4[((unsigned)y&3U)*4U+
-                                             ((unsigned)x&3U)]+8U;
-    return darkness>threshold;
+    const unsigned stretched=raw<=64U?0U:raw>=246U?255U:
+                             ((raw-64U)*255U+91U)/182U;
+    return (uint8_t)min(15U,(stretched+8U)/17U);
 }
-bool tile_black(const Tile& tile,int sx,int sy) {
+uint8_t tile_level(const Tile& tile,int sx,int sy) {
     const size_t offset=(size_t)sy*TILE_SIZE+(size_t)sx;
-    return (tile.bits[offset>>3]&(uint8_t)(0x80U>>(offset&7U)))==0;
+    const uint8_t packed=tile.bits[offset>>1];
+    return (offset&1U)?(uint8_t)(packed&0x0FU):(uint8_t)(packed>>4);
 }
 void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
     const int left=max(0,x0),top=max(118,y0);
@@ -65,16 +66,19 @@ void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
     if(left<right&&top<bottom)
         epd_fill_rect({left,top,right-left,bottom-top},colour,target);
 }
-// PNG callbacks write native-resolution 1-bit pixels to PSRAM. If PSRAM is
-// unavailable, retain the old direct-to-framebuffer decode as a fallback.
+// PNG callbacks write 4-bit grayscale pixels to PSRAM. On low-memory
+// allocation failure, decode directly to the display framebuffer instead.
 int png_draw(PNGDRAW* row) {
     static uint16_t pixels[TILE_SIZE];
     if(row->y<0||row->y>=TILE_SIZE)return 1;
     png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
     if(decode_bits) {
-        for(int sx=0;sx<TILE_SIZE;++sx)if(is_black(pixels[sx],sx,row->y)) {
+        for(int sx=0;sx<TILE_SIZE;++sx) {
             const size_t offset=(size_t)row->y*TILE_SIZE+(size_t)sx;
-            decode_bits[offset>>3]&=(uint8_t)~(0x80U>>(offset&7U));
+            const uint8_t level=gray_level(pixels[sx]);
+            uint8_t& packed=decode_bits[offset>>1];
+            if(offset&1U)packed=(uint8_t)((packed&0xF0U)|level);
+            else packed=(uint8_t)((packed&0x0FU)|(level<<4));
         }
         return 1;
     }
@@ -85,7 +89,7 @@ int png_draw(PNGDRAW* row) {
         const int ox=ctx.dx+(sx-ctx.crop_x)*TILE_SIZE/ctx.crop_size;
         const int next_x=ctx.dx+(sx-ctx.crop_x+1)*TILE_SIZE/ctx.crop_size;
         fill_clipped(ox,out_y,next_x,next_y,
-                     is_black(pixels[sx],ox,out_y)?0x00:0xFF);
+                     (uint8_t)(gray_level(pixels[sx])*17U));
     }
     return 1;
 }
@@ -167,7 +171,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     return true;
 }
 void draw_cached(const Tile& tile,const DrawContext& draw) {
-    // Merge same-colour horizontal runs to reduce EPD framebuffer operations.
+    // Merge equal-gray horizontal runs to reduce EPD framebuffer operations.
     // Crop/scale only when reading a lower-zoom parent of the requested tile.
     const int end_y=draw.crop_y+draw.crop_size;
     const int end_x=draw.crop_x+draw.crop_size;
@@ -176,13 +180,13 @@ void draw_cached(const Tile& tile,const DrawContext& draw) {
         const int next_y=draw.dy+(sy-draw.crop_y+1)*TILE_SIZE/draw.crop_size;
         if(next_y<=118||out_y>=900)continue;
         for(int sx=draw.crop_x;sx<end_x;) {
-            const bool black=tile_black(tile,sx,sy);
+            const uint8_t level=tile_level(tile,sx,sy);
             int end_run=sx+1;
-            while(end_run<end_x&&tile_black(tile,end_run,sy)==black)
+            while(end_run<end_x&&tile_level(tile,end_run,sy)==level)
                 ++end_run;
             const int out_x=draw.dx+(sx-draw.crop_x)*TILE_SIZE/draw.crop_size;
             const int next_x=draw.dx+(end_run-draw.crop_x)*TILE_SIZE/draw.crop_size;
-            fill_clipped(out_x,out_y,next_x,next_y,black?0x00:0xFF);
+            fill_clipped(out_x,out_y,next_x,next_y,(uint8_t)(level*17U));
             sx=end_run;
         }
     }
@@ -207,8 +211,15 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
         ++result.tiles;
         if(depth)++result.reused;
         else ++result.native;
-        result.min_source_zoom=min(result.min_source_zoom,(uint8_t)source_zoom);
-        result.max_source_zoom=max(result.max_source_zoom,(uint8_t)source_zoom);
+        // The initial range is only a placeholder. Do not claim the requested
+        // zoom was loaded when all displayed tiles came from parent tiles.
+        if(result.tiles==1) {
+            result.min_source_zoom=(uint8_t)source_zoom;
+            result.max_source_zoom=(uint8_t)source_zoom;
+        } else {
+            result.min_source_zoom=min(result.min_source_zoom,(uint8_t)source_zoom);
+            result.max_source_zoom=max(result.max_source_zoom,(uint8_t)source_zoom);
+        }
         return true;
     }
     return false;
@@ -240,7 +251,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
-    Serial.printf("[T5-MAP] zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
+    Serial.printf("[T5-MAP] grayscale=16 zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
                   result.ram_hits,result.disk_decodes,result.sd_checks,lat,lon);
