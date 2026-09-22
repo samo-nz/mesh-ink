@@ -524,11 +524,17 @@ static void draw_map_nodes() {
         char short_name[19]{};strncpy(short_name,n.node.name,sizeof(short_name)-1);
         const int w=min(230,max(48,(int)strlen(short_name)*12+8));
         char age[16];
-        if(!n.node.advertised_at||now<n.node.advertised_at)strcpy(age,"?");
+        if(n.node.gps_from_reply){
+            // This is when our T5 RECEIVED GPS telemetry, not the remote fix time.
+            const uint32_t seconds=(uint32_t)(millis()-n.node.gps_received_millis)/1000U;
+            if(seconds<3600)snprintf(age,sizeof(age),"GPS %lum",(unsigned long)(seconds/60));
+            else if(seconds<86400)snprintf(age,sizeof(age),"GPS %luh",(unsigned long)(seconds/3600));
+            else snprintf(age,sizeof(age),"GPS %lud",(unsigned long)(seconds/86400));
+        }else if(!n.node.advertised_at||now<n.node.advertised_at)strcpy(age,"ADV ?");
         else {const uint32_t seconds=now-n.node.advertised_at;
-            if(seconds<3600)snprintf(age,sizeof(age),"%lum",(unsigned long)(seconds/60));
-            else if(seconds<86400)snprintf(age,sizeof(age),"%luh",(unsigned long)(seconds/3600));
-            else snprintf(age,sizeof(age),"%lud",(unsigned long)(seconds/86400));}
+            if(seconds<3600)snprintf(age,sizeof(age),"ADV %lum",(unsigned long)(seconds/60));
+            else if(seconds<86400)snprintf(age,sizeof(age),"ADV %luh",(unsigned long)(seconds/3600));
+            else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));}
         const int offsets[4][2]={{12,-18},{-12-w,-18},{12,12},{-12-w,12}};
         int lx=0,ly=0;bool placed=false;
         for(const auto& offset:offsets) {
@@ -697,7 +703,22 @@ static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",300,3,0,true);return;}
     centred(node.name,126,4,0,true);char page[20];snprintf(page,sizeof(page),"PAGE %u OF 2",details_page+1);centred(page,174,2,0,true);
-    if(details_page==0){text("LAST SEEN",24,230,2,0,true);draw_wrapped(node.last_seen,230,230,25,2,0,false,2);text("ROUTE",24,310,2,0,true);text(node.route,230,310,2);text("POSITION",24,380,2,0,true);draw_wrapped(node.position,230,380,25,2,0,false,2);text("IDENTITY",24,470,2,0,true);text(node.identity,230,470,2);if(node.latitude||node.longitude){box(24,540,492,62);centred("OPEN POSITION ON MAP",561,2,0,true);}}
+    if(details_page==0){
+        text("LAST ADVERT",24,230,2,0,true);
+        text(node.advert_age,230,230,2);
+        text("ROUTE",24,310,2,0,true);text(node.route,230,310,2);
+        text("POSITION",24,380,2,0,true);
+        draw_wrapped(node.position,230,380,25,2,0,false,2);
+        // Source age and last-heard time differ: a successful info reply
+        // does not make an older saved coordinate a fresh GPS fix.
+        draw_wrapped(node.position_source,230,424,25,2,0,false,1);
+        text("LAST HEARD",24,450,2,0,true);
+        draw_wrapped(node.last_seen,230,450,25,2,0,false,1);
+        text("IDENTITY",24,480,2,0,true);text(node.identity,230,480,2);
+        if(node.latitude||node.longitude){
+            box(24,540,492,62);centred("OPEN POSITION ON MAP",561,2,0,true);
+        }
+    }
     else{text("STATUS",24,230,2,0,true);draw_wrapped(node.status,24,264,39,2,0,false,2);text("TELEMETRY / POSITION",24,350,2,0,true);draw_wrapped(node.telemetry,24,384,39,2,0,false,4);text("DISCOVERED PATH",24,530,2,0,true);draw_wrapped(node.path,24,564,39,2,0,false,2);box(24,650,492,70,true);centred(node.request_active?"REQUESTING...":"REQUEST ALL INFO",674,3,0xFF,true);}
     // Action labels must be centered within THEIR OWN rectangles. centred()
     // centers over the entire 540px display and previously put both CHAT and
@@ -1416,6 +1437,13 @@ void ui_notify_message_received(bool channel){
 void ui_notify_advert_result(bool flood,bool ok){
     show_toast(ok?(flood?"FLOOD ADVERT SENT":"ZERO HOP ADVERT SENT"):"ADVERT FAILED");
     status_dirty=true;Serial.printf("[T5-UI] advert result flood=%d ok=%d\n",flood,ok);
+}
+
+void ui_notify_node_position_unavailable(){
+    if(screen!=Screen::ContactDetails||standby_active)return;
+    show_toast("NO POSITION RECEIVED");
+    status_dirty=true;
+    Serial.println("[T5-UI] no GPS returned by latest node info request; retaining last known position");
 }
 
 void ui_request_data_refresh(const char* reason){

@@ -31,6 +31,8 @@ struct UiNodeDetails {
     int32_t longitude;
     bool request_active;
     bool saved_contact;
+    const char* advert_age;       // time since the last saved advertisement
+    const char* position_source;  // last advert vs GPS reply receipt age
 };
 
 struct UiMapNode {
@@ -39,6 +41,8 @@ struct UiMapNode {
     int32_t latitude;
     int32_t longitude;
     uint32_t advertised_at; // MeshCore last advert, not a GPS fix timestamp.
+    uint32_t gps_received_millis=0; // local reception of GPS telemetry
+    bool gps_from_reply=false;
 };
 
 class UiDataProvider {
