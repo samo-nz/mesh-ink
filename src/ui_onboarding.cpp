@@ -476,7 +476,10 @@ static void draw_maps() {
     const auto result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
     epd_fill_rect({258,500,24,24},0xFF,fb);epd_draw_rect({258,500,24,24},0,fb);line(270,494,270,530);line(252,512,288,512);
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
-    box(430,130,44,44,true);centred("+",139,3,0xFF,true);box(484,130,44,44,true);centred("-",139,3,0xFF,true);
+    // Vertical zoom rocker. Draw symbols directly so they don't depend on
+    // unsupported font glyphs.
+    box(484,130,44,44,true);line(495,152,517,152,0xFF);line(506,141,506,163,0xFF);line(495,151,517,151,0xFF);line(505,141,505,163,0xFF);
+    box(484,184,44,44,true);line(495,206,517,206,0xFF);line(495,205,517,205,0xFF);
     const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
     char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
     epd_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
@@ -905,8 +908,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(details_page==0&&!node.saved_contact&&hit(x,y,24,828,492,62)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
             }}break;
         case Screen::Maps:
-            if(hit(x,y,430,118,44,70)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,484,118,44,70)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,478,118,62,62)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,478,174,62,70)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
             break;
         case Screen::Discovery:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
