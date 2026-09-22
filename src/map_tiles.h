@@ -12,6 +12,7 @@ struct MapRenderResult {
     uint16_t missing;
     uint8_t min_source_zoom;
     uint8_t max_source_zoom;
+    // Decoded source PNGs are cached as packed 4-bit (16-level) grayscale.
     // RAM hits are tile requests served without decoding a PNG.
     // disk_decodes counts successful new PNG decodes in this render.
     // sd_checks counts card metadata checks for candidate tile paths.
