@@ -45,15 +45,23 @@ void png_close(void*) {if(file)file.close();}
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {return file.read(data,length);}
 int32_t png_seek(PNGFILE*,int32_t position) {return file.seek(position)?position:-1;}
 
-// Store actual 16-level luminance rather than a binary dither. Stronger
-// contrast retains map lines and labels against pale land and sea; gray
-// levels map 0 (black) to 15 (white), 2 source pixels per PSRAM byte.
+// Keep source brightness in the 4-bit RAM cache, independent of how the
+// panel is driven. The known-working map display uses ONLY stable black
+// (0x00) and white (0xFF) pixels via ordered dithering at composition time.
 uint8_t gray_level(uint16_t colour) {
     const unsigned raw=min(255U,(unsigned)((((colour>>11)&31)*77+
                                ((colour>>5)&63)*75+(colour&31)*29)>>5));
-    const unsigned stretched=raw<=64U?0U:raw>=246U?255U:
-                             ((raw-64U)*255U+91U)/182U;
-    return (uint8_t)min(15U,(stretched+8U)/17U);
+    return (uint8_t)min(15U,(raw+8U)/17U);
+}
+bool map_black(uint8_t level,int screen_x,int screen_y) {
+    static constexpr uint8_t bayer4[16]={
+        0, 8, 2,10,12, 4,14, 6, 3,11, 1, 9,15, 7,13, 5
+    };
+    const unsigned brightness=(unsigned)level*17U;
+    const unsigned darkness=min(255U,(255U-brightness)*7U);
+    const unsigned threshold=16U*bayer4[((unsigned)screen_y&3U)*4U+
+                                      ((unsigned)screen_x&3U)]+8U;
+    return darkness>threshold;
 }
 uint8_t tile_level(const Tile& tile,int sx,int sy) {
     const size_t offset=(size_t)sy*TILE_SIZE+(size_t)sx;
@@ -66,8 +74,8 @@ void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
     if(left<right&&top<bottom)
         epd_fill_rect({left,top,right-left,bottom-top},colour,target);
 }
-// PNG callbacks write 4-bit grayscale pixels to PSRAM. On low-memory
-// allocation failure, decode directly to the display framebuffer instead.
+// PNG callbacks keep source luminance in PSRAM. If allocation fails,
+// decode directly to the framebuffer with the SAME monochrome map palette.
 int png_draw(PNGDRAW* row) {
     static uint16_t pixels[TILE_SIZE];
     if(row->y<0||row->y>=TILE_SIZE)return 1;
@@ -89,7 +97,7 @@ int png_draw(PNGDRAW* row) {
         const int ox=ctx.dx+(sx-ctx.crop_x)*TILE_SIZE/ctx.crop_size;
         const int next_x=ctx.dx+(sx-ctx.crop_x+1)*TILE_SIZE/ctx.crop_size;
         fill_clipped(ox,out_y,next_x,next_y,
-                     (uint8_t)(gray_level(pixels[sx])*17U));
+                     map_black(gray_level(pixels[sx]),ox,out_y)?0x00:0xFF);
     }
     return 1;
 }
@@ -171,7 +179,8 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     return true;
 }
 void draw_cached(const Tile& tile,const DrawContext& draw) {
-    // Merge equal-gray horizontal runs to reduce EPD framebuffer operations.
+    // Apply dithering in SCREEN coordinates to cached source luminance.
+    // Merge adjacent black/white runs to reduce EPD framebuffer operations.
     // Crop/scale only when reading a lower-zoom parent of the requested tile.
     const int end_y=draw.crop_y+draw.crop_size;
     const int end_x=draw.crop_x+draw.crop_size;
@@ -180,13 +189,18 @@ void draw_cached(const Tile& tile,const DrawContext& draw) {
         const int next_y=draw.dy+(sy-draw.crop_y+1)*TILE_SIZE/draw.crop_size;
         if(next_y<=118||out_y>=900)continue;
         for(int sx=draw.crop_x;sx<end_x;) {
-            const uint8_t level=tile_level(tile,sx,sy);
-            int end_run=sx+1;
-            while(end_run<end_x&&tile_level(tile,end_run,sy)==level)
-                ++end_run;
             const int out_x=draw.dx+(sx-draw.crop_x)*TILE_SIZE/draw.crop_size;
+            const bool black=map_black(tile_level(tile,sx,sy),out_x,out_y);
+            int end_run=sx+1;
+            while(end_run<end_x) {
+                const int candidate_x=draw.dx+
+                    (end_run-draw.crop_x)*TILE_SIZE/draw.crop_size;
+                if(map_black(tile_level(tile,end_run,sy),candidate_x,out_y)!=black)
+                    break;
+                ++end_run;
+            }
             const int next_x=draw.dx+(end_run-draw.crop_x)*TILE_SIZE/draw.crop_size;
-            fill_clipped(out_x,out_y,next_x,next_y,(uint8_t)(level*17U));
+            fill_clipped(out_x,out_y,next_x,next_y,black?0x00:0xFF);
             sx=end_run;
         }
     }
@@ -251,7 +265,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
-    Serial.printf("[T5-MAP] grayscale=16 zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
+    Serial.printf("[T5-MAP] mode=BINARY_DITHER zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
                   result.ram_hits,result.disk_decodes,result.sd_checks,lat,lon);
