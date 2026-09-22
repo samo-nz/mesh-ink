@@ -820,35 +820,44 @@ static void draw_night_schedule(){
 }
 
 static void draw_meshink_logo(int top,bool compact=false) {
-    // Screen-native rendition of the MeshInk mountain/mesh/quill mark.
-    const int ox=compact?54:20, w=compact?432:500;
-    const int base=top+(compact?190:300);
-    const int peak=top+(compact?42:65);
-    // terrain
-    line(ox,base,ox+70,base-85);line(ox+70,base-85,ox+125,base-35);
-    line(ox+125,base-35,ox+220,peak);line(ox+220,peak,ox+305,base-55);
-    line(ox+305,base-55,ox+360,base-115);line(ox+360,base-115,ox+w,base);
-    line(ox,base,ox+w,base);
-    // pine silhouettes
-    for(int t=0;t<3;++t){const int x=ox+22+t*42;line(x,base,x+18,base-58);line(x+18,base-58,x+36,base);line(x+7,base-18,x+29,base-18);}
-    // mesh nodes sit on the terrain, with deliberately high radio-hop arcs.
-    const int nx[]={ox+70,ox+220,ox+360,ox+w-8};
-    const int ny[]={base-85,peak,base-115,base-5};
-    for(int i=0;i<4;++i)epd_fill_rect({nx[i]-6,ny[i]-6,13,13},0,fb);
-    for(int i=0;i<3;++i){
-        const int x0=nx[i],x1=nx[i+1],y0=ny[i],y1=ny[i+1];
-        const int apex=min(y0,y1)-(compact?42:70);
-        for(int s=0;s<28;++s)if((s/2)%2==0){const float u=s/27.0f;const int x=x0+(int)((x1-x0)*u);const float q=4*u*(1-u);const int y=y0+(int)((y1-y0)*u)+(int)((apex-min(y0,y1))*q);epd_fill_rect({x,y,3,3},0,fb);}
+    // Faithful monochrome screen rendition of the approved MeshInk artwork:
+    // forest + mountain range + mesh hops + striped sun + tower + wordmark + quill/inkpot.
+    const int x0=compact?45:18, scale=compact?1:1;
+    const int base=top+(compact?170:300);
+    // Mountain skyline.
+    const int px[]={x0,x0+42,x0+70,x0+105,x0+145,x0+190,x0+235,x0+285,x0+330,x0+375,x0+425,x0+500};
+    const int py[]={base,base-52,base-85,base-55,base-125,base-75,base-210,base-105,base-145,base-70,base-100,base};
+    for(int i=0;i<11;++i)line(px[i],py[i],px[i+1],py[i+1]);
+    line(px[0],base,px[11],base);
+    // Snow cuts.
+    line(x0+132,base-112,x0+145,base-125);line(x0+145,base-125,x0+158,base-92);
+    line(x0+218,base-175,x0+235,base-210);line(x0+235,base-210,x0+252,base-158);
+    line(x0+316,base-126,x0+330,base-145);line(x0+330,base-145,x0+346,base-110);
+    // Forest silhouettes across the lower left.
+    for(int t=0;t<7;++t){const int x=x0+20+t*42;const int h=55+(t%3)*18;line(x,base,x+15,base-h);line(x+15,base-h,x+30,base);line(x+5,base-20,x+25,base-20);line(x+8,base-36,x+22,base-36);}
+    // Striped sun behind the right peaks.
+    const int sx=x0+385,sy=top+(compact?48:75),sw=82;
+    for(int r=0;r<6;++r)epd_fill_rect({sx,sy+r*13,sw,6},0x88,fb);
+    // Mesh nodes on the landscape and high dashed radio arcs.
+    const int nx[]={x0+40,x0+105,x0+145,x0+235,x0+330,x0+425};
+    const int ny[]={base-50,base-55,base-125,base-210,base-145,base-100};
+    for(int i=0;i<6;++i)epd_fill_rect({nx[i]-6,ny[i]-6,13,13},0,fb);
+    for(int i=0;i<5;++i){
+        const int ax=nx[i],bx=nx[i+1],ay=ny[i],by=ny[i+1];
+        const int lift=compact?34:58;
+        for(int q=0;q<30;++q)if((q/2)%2==0){const float u=q/29.0f;const float arch=4*u*(1-u);const int xx=ax+(int)((bx-ax)*u);const int yy=ay+(int)((by-ay)*u)-(int)(lift*arch);epd_fill_rect({xx,yy,3,3},0,fb);}
     }
-    // radio tower
-    const int tx=ox+w-28;line(tx,base-8,tx+13,base-80);line(tx+26,base-8,tx+13,base-80);line(tx+5,base-38,tx+21,base-38);
-    // MeshInk wordmark and inkpot/quill.
+    // Radio tower on the far-right hill.
+    const int tx=x0+452;line(tx,base-5,tx+14,base-78);line(tx+28,base-5,tx+14,base-78);line(tx+6,base-35,tx+22,base-35);line(tx+9,base-52,tx+19,base-52);
+    epd_fill_rect({tx+9,base-88,11,11},0,fb);line(tx+3,base-95,tx-7,base-105);line(tx+25,base-95,tx+35,base-105);
+    // Wordmark. The quill and ink pot deliberately sit to its right, matching the approved artwork.
     centred("MeshInk",base+(compact?18:28),compact?5:6,0,true);
-    const int qx=compact?440:445,qy=base+(compact?20:34);
-    epd_draw_rect({qx,qy+28,44,28},0,fb);line(qx+22,qy+28,qx+52,qy-24);line(qx+52,qy-24,qx+45,qy+12);line(qx+45,qy+12,qx+22,qy+28);
-    if(!compact)centred("STAY CONNECTED, FURTHER",base+100,2,0,true);
+    const int qx=x0+420,qy=base+(compact?18:32);
+    epd_draw_rect({qx,qy+32,48,27},0,fb);epd_fill_rect({qx-3,qy+28,54,7},0,fb);
+    line(qx+20,qy+28,qx+68,qy-42);line(qx+68,qy-42,qx+55,qy+3);line(qx+55,qy+3,qx+20,qy+28);
+    line(qx+32,qy+18,qx+60,qy-27);
+    if(!compact){centred("STAY CONNECTED, FURTHER",base+105,2,0,true);centred("LILYGO T5",base+145,2,0,true);}
 }
-
 static void draw_about() {
     draw_app_header("ABOUT",true);
     draw_meshink_logo(118,true);
