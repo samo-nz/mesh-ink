@@ -245,6 +245,11 @@ public:
         // valid GPS time. Only mark a GPS write as trusted when the RTC is
         // invalid, or when our deliberate hourly correction is due.
         static uint32_t last_gps_clock_sync_ms = 0;
+        if (!last_gps_clock_sync_ms) {
+            // Start the hourly correction window at boot. A valid RTC
+            // must not be reset merely because the first GPS fix arrived.
+            last_gps_clock_sync_ms = millis() ? millis() : 1;
+        }
         if (isValid()) {
             const uint32_t now_ms = millis();
             const bool rtc_needs_time = !rtc_clock.isValid();
