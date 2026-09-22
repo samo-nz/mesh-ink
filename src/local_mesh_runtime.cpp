@@ -13,6 +13,7 @@ extern MyMesh& t5_mesh();
 
 namespace {
 constexpr size_t MAX_UI_CONTACTS=16;
+constexpr size_t MAX_MAP_NODES=50;
 constexpr size_t MAX_UI_CHANNELS=8;
 constexpr size_t MAX_UI_ADVERTS=16;
 constexpr size_t MAX_STORED_MESSAGES=96;
@@ -85,6 +86,8 @@ public:
 class MeshCoreUiProvider final:public UiDataProvider{
     ListStorage contacts_[MAX_UI_CONTACTS]{},channels_[MAX_UI_CHANNELS]{},conversations_[MAX_UI_CONTACTS+MAX_UI_CHANNELS]{},adverts_[MAX_UI_ADVERTS]{};
     MessageView active_messages_[MAX_STORED_MESSAGES]{};
+    UiMapNode map_nodes_[MAX_MAP_NODES]{};
+    size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
     bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
     UnreadPeer direct_unread_[MAX_UI_CONTACTS]{};
@@ -136,6 +139,20 @@ public:
             strncpy(item.title,heard[i].name,sizeof(item.title)-1);snprintf(item.subtitle,sizeof(item.subtitle),hops?"RECEIVED ADVERT  %u HOP%s":"RECEIVED ADVERT  ZERO HOP",hops,hops==1?"":"S");format_time(heard[i].recv_timestamp,item.time);memcpy(item.key,heard[i].pubkey_prefix,7);
             Serial.printf("[T5-MESH] advert '%s' path=0x%02x hops=%u\n",item.title,heard[i].path_len,hops);
         }
+        // MeshCore's saved contacts are the single source of last-known GPS.
+        // Traverse independently of the 16-contact list screen limit.
+        map_node_count_=0;
+        ContactInfo positioned{};auto positions=t5_mesh().startContactsIterator();
+        while(map_node_count_<MAX_MAP_NODES&&positions.hasNext(&t5_mesh(),positioned)) {
+            if((!positioned.gps_lat&&!positioned.gps_lon)||
+               positioned.gps_lat < -85051100 || positioned.gps_lat > 85051100 ||
+               positioned.gps_lon < -180000000 || positioned.gps_lon > 180000000)continue;
+            UiMapNode& item=map_nodes_[map_node_count_++];memset(&item,0,sizeof(item));
+            strncpy(item.name,positioned.name[0]?positioned.name:"UNNAMED",sizeof(item.name)-1);
+            memcpy(item.key,positioned.id.pub_key,sizeof(item.key));
+            item.latitude=positioned.gps_lat;item.longitude=positioned.gps_lon;
+            item.advertised_at=positioned.last_advert_timestamp;
+        }
         rebuild_active();
         static uint32_t last_report=0;if(force||millis()-last_report>=60000){last_report=millis();Serial.printf("[T5-POWER] model refresh=%luus interval=%lums contacts=%u channels=%u adverts=%u standby=%d\n",(unsigned long)(micros()-started),(unsigned long)interval,(unsigned)contact_count_,(unsigned)channel_count_,(unsigned)advert_count_,ui_is_standby());}
     }
@@ -144,6 +161,15 @@ public:
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){auto* m=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return m->sequence;}
     uint32_t queue_direct(const char* text,uint32_t timestamp){auto* m=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return m->sequence;}
     void update_message(uint32_t sequence,UiMessageState state){store_.update_state(sequence,state);rebuild_active();ui_request_data_refresh("message-state");}
+    size_t map_node_count() const override {return map_node_count_;}
+    bool map_node(size_t index,UiMapNode& out) const override {
+        if(index>=map_node_count_)return false;out=map_nodes_[index];return true;
+    }
+    bool open_map_node(size_t index) override {
+        if(index>=map_node_count_)return false;
+        ListStorage item{};bind(item);strncpy(item.title,map_nodes_[index].name,sizeof(item.title)-1);
+        memcpy(item.key,map_nodes_[index].key,sizeof(item.key));return activate(item,false);
+    }
     size_t conversation_count()const override{return conversation_count_;}const UiListEntry& conversation(size_t i)const override{return conversations_[i].entry;}
     bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;direct_unread(conversations_[i].key)=0;conversations_[i].entry.unread=0;return activate(conversations_[i],false);}
     size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;direct_unread(contacts_[i].key)=0;contacts_[i].entry.unread=0;return activate(contacts_[i],false);}
