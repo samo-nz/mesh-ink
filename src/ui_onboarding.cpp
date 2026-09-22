@@ -965,13 +965,10 @@ static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&
 
 static void open_screen(Screen next) {
     keyboard_visible=false;keyboard_message_mode=false;screen=next;
-    if(next==Screen::Maps&&!map_cache_hit()) {
-        // Show a responsive map shell before synchronous SD/PNG decoding.
-        draw_app_header("MAPS");
-        centred("LOADING MAP...",450,3,0,true);
-        draw_bottom_nav(2);
-        refresh(MODE_GL16);
-    }
+    // The complete-screen cache still handles unchanged views. When the map
+    // centre changes, render immediately from cached source tiles, decoding
+    // only newly encountered PNGs. Avoid an extra slow GC16 "LOADING MAP"
+    // refresh on every small pan or jump to a nearby node.
     draw_screen();refresh(MODE_GL16);
 }
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
