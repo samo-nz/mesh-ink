@@ -1,7 +1,7 @@
 # MeshInk
 
 <p align="center">
-  <img src="docs/meshink-logo.svg" alt="MeshInk — Stay Connected, Further" width="720">
+  <img src="docs/file_00000000248c820a81311144dc2df47d.png" alt="MeshInk — Stay Connected, Further" width="720">
 </p>
 
 **MeshInk turns the LILYGO T5 E-Paper S3 Pro into a standalone MeshCore handheld.** Read and send messages, see nearby nodes, use offline maps, manage GPS and radio settings, and keep the device useful for long periods without needing a phone connected.
