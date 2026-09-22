@@ -297,10 +297,11 @@ public:
 static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
 
-// BQ27220 on the T5 shared I2C bus. Every access below is a direct, read-only
-// standard command from TI SLUUBD4A. In particular, this code never writes a
-// Control()/MAC subcommand, enters CONFIG UPDATE, selects a profile, resets,
-// calibrates, or writes data memory.
+// BQ27220 on the shared I2C bus. Standard telemetry is read-only. The
+// profile audit selects data-memory addresses for READING only; it never
+// enters config-update, unseals the gauge or changes its battery model.
+// Do not change capacity before the installed cell's voltage/charge limits
+// and active profile have been verified on the physical board.
 static constexpr uint8_t BQ27220_ADDR = 0x55;
 static bool gauge_word(uint8_t command, uint16_t& result) {
     uint8_t data[2]{};
@@ -312,6 +313,22 @@ static bool gauge_word(uint8_t command, uint16_t& result) {
     delayMicroseconds(70);
     return true;
 }
+
+#if T5_DIAGNOSTICS
+static bool gauge_dm_read_word(uint16_t address,uint16_t& result) {
+    // TI SLUUBD4A section 6.1: select the RAM address at 0x3E/0x3F,
+    // then read its big-endian value from the MAC data window at 0x40.
+    // Merely selecting an address does NOT commit a change to data memory.
+    const uint8_t pointer[2]={(uint8_t)(address>>8),(uint8_t)address};
+    uint8_t bytes[2]{};
+    if(!idf_write(BQ27220_ADDR,0x3E,pointer,sizeof(pointer)))return false;
+    delay(2);
+    if(!idf_read(BQ27220_ADDR,0x40,bytes,sizeof(bytes)))return false;
+    result=((uint16_t)bytes[0]<<8)|bytes[1];
+    delayMicroseconds(70);
+    return true;
+}
+#endif
 
 static bool pmic_byte(uint8_t reg, uint8_t& result) {
     constexpr uint8_t BQ25896_ADDR = 0x6B;
@@ -378,6 +395,23 @@ static void t5_power_diagnostics_report(const char* reason) {
             temp_c10/10,abs(temp_c10%10));
         T5_TRACE("gauge request: charging_voltage=%umV charging_current=%umA\n",
             s.charging_voltage,s.charging_current);
+        if(s.design_capacity!=1500)
+            T5_TRACE("gauge: CAPACITY MISMATCH fitted=1500mAh reported=%umAh; SOC and FCC not yet trustworthy\n",s.design_capacity);
+        if(!strcmp(reason,"early-boot")) {
+            uint16_t learned=0,design=0,nominal=0,charge_current=0,charge_voltage=0,taper=0;
+            const bool profile_ok=gauge_dm_read_word(0x929D,learned)&&
+                gauge_dm_read_word(0x929F,design)&&gauge_dm_read_word(0x92A3,nominal);
+            const bool charge_ok=gauge_dm_read_word(0x91FB,charge_current)&&
+                gauge_dm_read_word(0x91FD,charge_voltage)&&gauge_dm_read_word(0x9201,taper);
+            if(profile_ok)
+                T5_TRACE("gauge profile1 RAM: learned_FCC=%umAh design=%umAh nominal=%umV\n",learned,design,nominal);
+            else T5_TRACE("gauge profile1 RAM: read unavailable; gauge may be sealed\n");
+            if(charge_ok)
+                T5_TRACE("gauge profile RAM: configured_charge=%umA charge_voltage=%umV taper=%umA\n",
+                    charge_current,charge_voltage,taper);
+            else T5_TRACE("gauge profile RAM: charge settings read unavailable\n");
+            T5_TRACE("gauge profile audit: READ ONLY, no calibration or battery model written\n");
+        }
         T5_TRACE("gauge BatteryStatus=0x%04X FC=%u TCA=%u OCVCOMP=%u OCVFAIL=%u OCVGD=%u BATTPRES=%u SLEEP=%u SYSDWN=%u DSG=%u\n",
             s.battery_status,(s.battery_status>>9)&1,(s.battery_status>>6)&1,
             (s.battery_status>>14)&1,(s.battery_status>>13)&1,(s.battery_status>>5)&1,
