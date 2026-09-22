@@ -8,10 +8,10 @@ struct MapRenderResult {
     bool sd_ready;
     uint16_t tiles;
     uint16_t reused;
-    uint16_t native = 0;
-    uint16_t missing = 0;
-    uint8_t min_source_zoom = 0;
-    uint8_t max_source_zoom = 0;
+    uint16_t native;
+    uint16_t missing;
+    uint8_t min_source_zoom;
+    uint8_t max_source_zoom;
 };
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,
                                  double latitude,double longitude,uint8_t zoom);
