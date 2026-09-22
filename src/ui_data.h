@@ -33,12 +33,23 @@ struct UiNodeDetails {
     bool saved_contact;
 };
 
+struct UiMapNode {
+    char name[32];
+    uint8_t key[7];
+    int32_t latitude;
+    int32_t longitude;
+    uint32_t advertised_at; // MeshCore last advert, not a GPS fix timestamp.
+};
+
 class UiDataProvider {
 public:
     virtual ~UiDataProvider() = default;
     virtual size_t conversation_count() const = 0;
     virtual const UiListEntry& conversation(size_t index) const = 0;
     virtual bool open_conversation(size_t index) = 0;
+    virtual size_t map_node_count() const = 0;
+    virtual bool map_node(size_t index, UiMapNode& out) const = 0;
+    virtual bool open_map_node(size_t index) = 0;
     virtual size_t contact_count() const = 0;
     virtual const UiListEntry& contact(size_t index) const = 0;
     virtual bool open_contact(size_t index) = 0;

@@ -164,6 +164,9 @@ static size_t map_base_bytes=0;
 static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
+struct MapMarkerHit {int16_t x,y;size_t index;};
+static MapMarkerHit map_marker_hits[50]{};
+static size_t map_marker_hit_count=0;
 static bool map_cache_hit() {
     return map_base_valid&&map_base_cache&&map_base_zoom==map_zoom&&
         fabs(map_base_lat-map_latitude)<0.00000001&&fabs(map_base_lon-map_longitude)<0.00000001;
@@ -483,6 +486,70 @@ static void draw_channels() {
     draw_bottom_nav(1);
 }
 
+// Node positions are stable; only the labels move to avoid collisions.
+static void draw_map_nodes() {
+    map_marker_hit_count=0;
+    if(!ui_data)return;
+    const double world=256.0*(1U<<map_zoom);
+    const double centre_x=(map_longitude+180.0)/360.0*world;
+    const double rad=map_latitude*PI/180.0;
+    const double centre_y=(1.0-log(tan(rad)+1.0/cos(rad))/PI)*world/2.0;
+    struct Visible {int16_t x,y;size_t index;UiMapNode node;};
+    Visible visible[50]{};size_t count=0;
+    for(size_t i=0;i<ui_data->map_node_count()&&count<50;++i) {
+        UiMapNode node{};if(!ui_data->map_node(i,node))continue;
+        const double x=(node.longitude/1000000.0+180.0)/360.0*world;
+        double delta_x=x-centre_x;
+        if(delta_x>world/2)delta_x-=world;
+        if(delta_x<-world/2)delta_x+=world;
+        const double lat=node.latitude/1000000.0,r=lat*PI/180.0;
+        const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
+        const int sx=(int)lround(270+delta_x),sy=(int)lround(509+y-centre_y);
+        if(sx<7||sx>533||sy<125||sy>893)continue;
+        visible[count++]={(int16_t)sx,(int16_t)sy,i,node};
+    }
+    struct Bounds {int x,y,w,h;};Bounds occupied[50]{};size_t occupied_count=0;
+    const uint32_t now=(uint32_t)time(nullptr);
+    for(size_t i=0;i<count;++i) {
+        const auto& n=visible[i];
+        char short_name[19]{};strncpy(short_name,n.node.name,sizeof(short_name)-1);
+        const int w=min(230,max(48,(int)strlen(short_name)*12+8));
+        char age[16];
+        if(!n.node.advertised_at||now<n.node.advertised_at)strcpy(age,"?");
+        else {const uint32_t seconds=now-n.node.advertised_at;
+            if(seconds<3600)snprintf(age,sizeof(age),"%lum",(unsigned long)(seconds/60));
+            else if(seconds<86400)snprintf(age,sizeof(age),"%luh",(unsigned long)(seconds/3600));
+            else snprintf(age,sizeof(age),"%lud",(unsigned long)(seconds/86400));}
+        const int offsets[4][2]={{12,-18},{-12-w,-18},{12,12},{-12-w,12}};
+        int lx=0,ly=0;bool placed=false;
+        for(const auto& offset:offsets) {
+            const int x=n.x+offset[0],y=n.y+offset[1];
+            if(x<3||x+w>537||y<120||y+34>897)continue;
+            bool overlap=false;
+            for(size_t j=0;j<occupied_count;++j)if(x<occupied[j].x+occupied[j].w+4&&
+                x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
+                {overlap=true;break;}
+            if(!overlap){lx=x;ly=y;placed=true;break;}
+        }
+        if(!placed)continue; // Keep the true-position dot even if labels collide.
+        occupied[occupied_count++]={lx,ly,w,34};
+        epd_fill_rect({lx,ly,w,34},0xFF,fb);
+        text(short_name,lx+4,ly+2,2,0,true);
+        text(age,lx+4,ly+18,2,0,true);
+    }
+    // Always draw position dots last so a neighbouring label cannot move or
+    // obscure a marker. Each circle has a white halo for contrast.
+    for(size_t i=0;i<count;++i) {
+        const auto& n=visible[i];
+        epd_fill_rect({n.x-6,n.y-6,13,13},0xFF,fb);
+        for(int dy=-4;dy<=4;++dy) {
+            const int half=abs(dy)==4?1:abs(dy)==3?3:4;
+            epd_fill_rect({n.x-half,n.y+dy,half*2+1,1},0,fb);
+        }
+        map_marker_hits[map_marker_hit_count++]={n.x,n.y,n.index};
+    }
+}
+
 static void draw_maps() {
     MapRenderResult result{true,0,0};
     if(map_cache_hit()) {
@@ -503,6 +570,7 @@ static void draw_maps() {
             } else Serial.println("[T5-MAP] PSRAM unavailable; uncached rendering");
         }
     }
+    draw_map_nodes();
     epd_fill_rect({258,500,24,24},0xFF,fb);epd_draw_rect({258,500,24,24},0,fb);line(270,494,270,530);line(252,512,288,512);
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // Vertical zoom rocker. Draw symbols directly so they don't depend on
@@ -949,6 +1017,12 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(details_page==0&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
             }}break;
         case Screen::Maps:
+            for(size_t i=0;i<map_marker_hit_count;++i) {
+                const auto& marker=map_marker_hits[i];
+                if(abs(x-marker.x)<=10&&abs(y-marker.y)<=10&&ui_data&&ui_data->open_map_node(marker.index)) {
+                    details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
+                }
+            }
             if(hit(x,y,478,118,62,62)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,478,174,62,70)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
             break;
