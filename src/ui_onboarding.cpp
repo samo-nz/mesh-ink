@@ -200,7 +200,7 @@ static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false)
 static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);Serial.println("[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
-struct QueuedTap{int16_t x;int16_t y;int16_t dy;bool home;};
+struct QueuedTap{int16_t x;int16_t y;int16_t dx;int16_t dy;bool home;};
 
 static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
@@ -550,6 +550,16 @@ static void draw_map_nodes() {
     }
 }
 
+static void pan_map_by_pixels(int dx,int dy) {
+    const double world=256.0*(1U<<map_zoom);
+    double x=(map_longitude+180.0)/360.0*world-dx;
+    x=fmod(fmod(x,world)+world,world);
+    const double r=max(-85.0511,min(85.0511,map_latitude))*PI/180.0;
+    const double cy=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
+    const double y=max(0.0,min(world,cy-dy));
+    map_longitude=x/world*360.0-180.0;
+    map_latitude=atan(sinh(PI*(1.0-2.0*y/world)))*180.0/PI;
+}
 static void draw_maps() {
     MapRenderResult result{true,0,0};
     if(map_cache_hit()) {
@@ -891,9 +901,9 @@ static bool touch_point(int16_t& x, int16_t& y,bool& home) {
 }
 
 static void touch_sampler_task(void*){
-    bool held=false;int16_t start_y=0,last_x=0,last_y=0;
-    for(;;){if(!touch_enabled){held=false;Serial.println("[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);Serial.println("[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;bool home=false;const bool pressed=touch_point(x,y,home);if(home){if(!held){QueuedTap tap{0,0,0,true};xQueueSend(touch_queue,&tap,0);held=true;}}else if(pressed){last_x=x;last_y=y;if(!held){held=true;start_y=y;frontlight_event();}}
-        else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_y-start_y),false};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
+    bool held=false;int16_t start_x=0,start_y=0,last_x=0,last_y=0;
+    for(;;){if(!touch_enabled){held=false;Serial.println("[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);Serial.println("[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;bool home=false;const bool pressed=touch_point(x,y,home);if(home){if(!held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);held=true;}}else if(pressed){last_x=x;last_y=y;if(!held){held=true;start_x=x;start_y=y;frontlight_event();}}
+        else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
         vTaskDelay(pdMS_TO_TICKS(8));}
 }
 
@@ -1223,6 +1233,13 @@ void ui_loop() {
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         last_user_activity=millis();
         if(tap.home){if(!keyboard_visible&&!keyboard_landscape){details_page=0;open_screen(Screen::Contacts);}continue;}
+        if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
+           tap.y>=118&&tap.y<900&&tap.x>=0&&tap.x<540&&
+           !(tap.x>=478&&tap.y<244)) {
+            pan_map_by_pixels(tap.dx,tap.dy);
+            open_screen(Screen::Maps);
+            continue;
+        }
         if(screen==Screen::Presets&&abs(tap.dy)>60){
             const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
