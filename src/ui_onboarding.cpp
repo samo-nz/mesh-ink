@@ -164,7 +164,7 @@ static size_t map_base_bytes=0;
 static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
-static MapRenderResult map_last_result{false,0,0,0,0,0,0};
+static MapRenderResult map_base_result{false,0,0,0,0,0,0};
 struct MapMarkerHit {int16_t x,y;size_t index;};
 static MapMarkerHit map_marker_hits[50]{};
 static size_t map_marker_hit_count=0;
@@ -564,13 +564,12 @@ static void pan_map_by_pixels(int dx,int dy) {
 static void draw_maps() {
     MapRenderResult result{true,0,0,0,0,map_zoom,map_zoom};
     if(map_cache_hit()) {
-        result=map_last_result;
+        result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar(); // clock, battery and unread counts are live.
     } else {
         draw_app_header("MAPS");
         result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
-        map_last_result=result;
         // 4 bits per pixel in the high-level EPD framebuffer. A full base
         // snapshot also preserves exact panel row ordering and rotation.
         if(result.sd_ready&&result.tiles) {
@@ -578,7 +577,7 @@ static void draw_maps() {
             if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
             if(map_base_cache) {
                 memcpy(map_base_cache,fb,bytes);map_base_bytes=bytes;
-                map_base_lat=map_latitude;map_base_lon=map_longitude;map_base_zoom=map_zoom;map_base_valid=true;
+                map_base_lat=map_latitude;map_base_lon=map_longitude;map_base_zoom=map_zoom;map_base_result=result;map_base_valid=true;
                 Serial.printf("[T5-MAP] cached %u bytes (%u tiles)\n",(unsigned)bytes,result.tiles);
             } else Serial.println("[T5-MAP] PSRAM unavailable; uncached rendering");
         }
