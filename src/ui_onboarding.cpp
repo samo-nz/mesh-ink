@@ -583,8 +583,8 @@ static void draw_maps() {
         }
     }
     draw_map_nodes();
-    // Report actual SD source zoom separately from the selected zoom.
-    // 16-level grayscale cannot recover detail from upscaled parent tiles.
+    // Report actual SD source zoom separately from selected zoom.
+    // Binary dithering cannot recover detail from upscaled parent tiles.
     if(result.sd_ready) {
         char detail[48]{};
         if(!result.tiles)snprintf(detail,sizeof(detail),"NO MAP TILES HERE");
@@ -789,9 +789,9 @@ static void draw_screen() {
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
-    // For Maps, use the panel's full 16-level GC16 waveform to drive the
-    // actual grayscale framebuffer. Retain the hardware-proven post-refresh
-    // settling interval before panel power-off.
+    // Continue the hardware-verified GC16 + 500 ms settling sequence on
+    // Maps, but feed the map with stable black/white binary-dithered pixels.
+    // Intermediate grays were faint even after extended panel settling.
     const EpdDrawMode requested_mode=mode;
     if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape)
         mode=MODE_GC16;
