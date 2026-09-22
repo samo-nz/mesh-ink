@@ -583,8 +583,8 @@ static void draw_maps() {
         }
     }
     draw_map_nodes();
-    // Report real SD tile detail separately from the selected map zoom.
-    // Native tiles show full detail; upscaled parent tiles cannot add detail.
+    // Report actual SD source zoom separately from the selected zoom.
+    // 16-level grayscale cannot recover detail from upscaled parent tiles.
     if(result.sd_ready) {
         char detail[48]{};
         if(!result.tiles)snprintf(detail,sizeof(detail),"NO MAP TILES HERE");
@@ -789,18 +789,17 @@ static void draw_screen() {
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
-    // For maps, prefer the panel's full grayscale-cleaning waveform. GL16
-    // briefly exposes black intermediate drive phases that don't persist on
-    // the ED047TC1; GC16 + binary map pixels is our visibility test.
+    // For Maps, use the panel's full 16-level GC16 waveform to drive the
+    // actual grayscale framebuffer. Retain the hardware-proven post-refresh
+    // settling interval before panel power-off.
     const EpdDrawMode requested_mode=mode;
     if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape)
         mode=MODE_GC16;
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
-    // A map frame has been observed to appear during refresh and fade as soon
-    // as panel power is removed. Keep only Maps powered briefly after the
-    // waveform completes to test whether the ED047TC1 needs settling time.
+    // Keep the known-working 500 ms post-waveform settling interval for
+    // Maps: the prior image faded when power was removed immediately.
     // Do not change standby, battery, message-alert or other-screen timing.
     const bool map_panel_settle=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(map_panel_settle)delay(500);
