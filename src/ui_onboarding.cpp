@@ -634,19 +634,11 @@ static void draw_maps() {
     }
     draw_map_nodes();
     draw_device_location_marker();
-    // Report actual SD source zoom separately from selected zoom.
-    // Binary dithering cannot recover detail from upscaled parent tiles.
-    if(result.sd_ready) {
-        char detail[48]{};
-        if(!result.tiles)snprintf(detail,sizeof(detail),"NO MAP TILES HERE");
-        else if(result.min_source_zoom==result.max_source_zoom)
-            snprintf(detail,sizeof(detail),"SOURCE Z%u / NATIVE %u/%u",
-                result.min_source_zoom,result.native,result.tiles);
-        else snprintf(detail,sizeof(detail),"SOURCE Z%u-%u / NATIVE %u/%u",
-                result.min_source_zoom,result.max_source_zoom,result.native,result.tiles);
-        const int label_width=min(504,(int)strlen(detail)*12+12);
-        epd_fill_rect({18,774,label_width,30},0xFF,fb);
-        text(detail,22,778,2,0,true);
+    // Show missing-map coverage when needed, but keep source zoom and tile
+    // statistics in serial diagnostics instead of overlaying them on the map.
+    if(result.sd_ready&&!result.tiles) {
+        epd_fill_rect({18,774,232,30},0xFF,fb);
+        text("NO MAP TILES HERE",22,778,2,0,true);
     }
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // Vertical zoom rocker. Draw symbols directly so they don't depend on
