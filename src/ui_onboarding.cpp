@@ -819,13 +819,44 @@ static void draw_night_schedule(){
     draw_wrapped("The selected timezone from GPS settings is used automatically.",24,740,39,2,0,true,3);
 }
 
+static void draw_meshink_logo(int top,bool compact=false) {
+    // Screen-native rendition of the MeshInk mountain/mesh/quill mark.
+    const int ox=compact?54:20, w=compact?432:500;
+    const int base=top+(compact?190:300);
+    const int peak=top+(compact?42:65);
+    // terrain
+    line(ox,base,ox+70,base-85);line(ox+70,base-85,ox+125,base-35);
+    line(ox+125,base-35,ox+220,peak);line(ox+220,peak,ox+305,base-55);
+    line(ox+305,base-55,ox+360,base-115);line(ox+360,base-115,ox+w,base);
+    line(ox,base,ox+w,base);
+    // pine silhouettes
+    for(int t=0;t<3;++t){const int x=ox+22+t*42;line(x,base,x+18,base-58);line(x+18,base-58,x+36,base);line(x+7,base-18,x+29,base-18);}
+    // mesh nodes sit on the terrain, with deliberately high radio-hop arcs.
+    const int nx[]={ox+70,ox+220,ox+360,ox+w-8};
+    const int ny[]={base-85,peak,base-115,base-5};
+    for(int i=0;i<4;++i)epd_fill_rect({nx[i]-6,ny[i]-6,13,13},0,fb);
+    for(int i=0;i<3;++i){
+        const int x0=nx[i],x1=nx[i+1],y0=ny[i],y1=ny[i+1];
+        const int apex=min(y0,y1)-(compact?42:70);
+        for(int s=0;s<28;++s)if((s/2)%2==0){const float u=s/27.0f;const int x=x0+(int)((x1-x0)*u);const float q=4*u*(1-u);const int y=y0+(int)((y1-y0)*u)+(int)((apex-min(y0,y1))*q);epd_fill_rect({x,y,3,3},0,fb);}
+    }
+    // radio tower
+    const int tx=ox+w-28;line(tx,base-8,tx+13,base-80);line(tx+26,base-8,tx+13,base-80);line(tx+5,base-38,tx+21,base-38);
+    // MeshInk wordmark and inkpot/quill.
+    centred("MeshInk",base+(compact?18:28),compact?5:6,0,true);
+    const int qx=compact?440:445,qy=base+(compact?20:34);
+    epd_draw_rect({qx,qy+28,44,28},0,fb);line(qx+22,qy+28,qx+52,qy-24);line(qx+52,qy-24,qx+45,qy+12);line(qx+45,qy+12,qx+22,qy+28);
+    if(!compact)centred("STAY CONNECTED, FURTHER",base+100,2,0,true);
+}
+
 static void draw_about() {
-    draw_app_header("ABOUT",true);centred("MESHCORE T5 PAPER",150,4,0,true);centred(UI_VERSION,210,3,0,true);
-    text("HARDWARE",24,300,2,0,true);text("LILYGO T5 PRO",250,300,2);
-    text("MODE",24,354,2,0,true);text("LOCAL UI",250,354,2);
-    text("DATA",24,408,2,0,true);text("MESHCORE LIVE",250,408,2);
-    text("STORE",24,462,2,0,true);text("96 MESSAGE RING",250,462,2);
-    draw_wrapped("Oldest messages are removed automatically when fixed storage reaches capacity.",24,550,38,2,0,true,4);
+    draw_app_header("ABOUT",true);
+    draw_meshink_logo(118,true);
+    if(node_name[0])centred(node_name,560,3,0,true);
+    centred(UI_VERSION,602,3,0,true);
+    text("HARDWARE",24,680,2,0,true);text("LILYGO T5 PRO",250,680,2);
+    text("MODE",24,730,2,0,true);text("LOCAL UI + BLE",250,730,2);
+    text("CORE",24,780,2,0,true);text("MESHCORE",250,780,2);
 }
 
 static void draw_screen() {
@@ -1311,7 +1342,10 @@ void ui_setup() {
     }
     if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
     update_status_hardware();
-    epd_hl_set_all_white(&display);centred("MESHCORE",290,7,0,true);centred(UI_VERSION,900,2);
+    epd_hl_set_all_white(&display);
+    draw_meshink_logo(160,false);
+    if(node_name[0])centred(node_name,830,3,0,true);
+    centred(UI_VERSION,885,2,0,true);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
     draw_screen();refresh(MODE_GL16);
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
