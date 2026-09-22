@@ -444,11 +444,13 @@ static void gauge_apply_factory_profile_if_needed() {
         for(size_t i=0;i<T5_PROFILE_COUNT;++i) {
             const auto& field=T5_FACTORY_GAUGE_PROFILE[i];
             if(originals[i]==field.value)continue;
+            // A failed verify can occur AFTER the hardware committed data.
+            // Mark it first so even that field is included in rollback.
+            modified[i]=true;
             if(!gauge_profile_write(field,field.value)) {
                 T5_TRACE("gauge profile: WRITE OR VERIFY FAILED address=0x%04X\n",field.address);
                 write_ok=false;break;
             }
-            modified[i]=true;
         }
         if(!write_ok) {
             // Best-effort rollback of fields already changed, while still in
