@@ -773,12 +773,19 @@ static void draw_screen() {
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
+    // For maps, prefer the panel's full grayscale-cleaning waveform. GL16
+    // briefly exposes black intermediate drive phases that don't persist on
+    // the ED047TC1; GC16 + binary map pixels is our visibility test.
+    const EpdDrawMode requested_mode=mode;
+    if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape)
+        mode=MODE_GC16;
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
-    Serial.printf("[T5-UI] refresh=%d name='%s' preset=%s cpu=%luMHz\n",err,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+    Serial.printf("[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
+        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
 static void invalidate_display_back_buffer() {

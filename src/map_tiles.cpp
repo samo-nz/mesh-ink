@@ -21,14 +21,19 @@ int png_draw(PNGDRAW* row){
     for(int sx=ctx.crop_x;sx<ctx.crop_x+ctx.crop_size;++sx){
         const uint16_t c=pixels[sx];
         const uint8_t raw=(uint8_t)min(255U,(unsigned)((((c>>11)&31)*77+((c>>5)&63)*75+(c&31)*29)>>5));
-        // E-paper needs stronger separation than a colour LCD. Expand the
-        // useful mid-tones so roads/coastlines don't disappear into white.
-        // Deliberately posterize colour tiles for the ED047TC1. Subtle
-        // cartographic colours that look fine on LCD otherwise vanish on paper.
-        // Keep light land/water light, but force roads, borders and labels into
-        // visibly separated darker bands.
-        const uint8_t gray=raw<105?0x10:raw<145?0x40:raw<180?0x70:raw<210?0xA0:raw<232?0xD0:0xF0;
+        // The ED047TC1 may briefly show intermediate gray during GL16
+        // transitions then settle much lighter. For the offline map, drive
+        // each final pixel to a stable BLACK or WHITE state only. Ordered
+        // dithering preserves pale roads/coastlines and fine labels without
+        // relying on the panel to hold intermediate grayscale charge.
+        // White stays white; light map colours become sparse black dots.
+        static constexpr uint8_t bayer4[16]={
+             0, 8, 2,10,12, 4,14, 6, 3,11, 1, 9,15, 7,13, 5
+        };
+        const unsigned darkness=min(255U,(255U-(unsigned)raw)*7U);
         const int ox=ctx.dx+(sx-ctx.crop_x)*256/ctx.crop_size,next_x=ctx.dx+(sx-ctx.crop_x+1)*256/ctx.crop_size;
+        const unsigned threshold=16U*bayer4[((unsigned)out_y&3U)*4U+((unsigned)ox&3U)]+8U;
+        const uint8_t gray=darkness>threshold?0x00:0xFF;
         if(next_x>0&&ox<540&&next_y>118&&out_y<900)epd_fill_rect({max(0,ox),max(118,out_y),min(540,next_x)-max(0,ox),min(900,next_y)-max(118,out_y)},gray,target);
     }return 1;
 }
