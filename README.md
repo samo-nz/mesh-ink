@@ -29,7 +29,100 @@ MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro**, using its 4.7-inch 5
 
 ## Installing
 
-Prebuilt firmware is produced by the GitHub Actions workflow for the `t5-unified` target. For a normal update, use the versioned application image. A complete image is also produced for first-time installation or when the flash layout needs to be installed from scratch.
+Download the latest release from the [MeshInk Releases](https://github.com/samo-nz/meshcore-t5-paper/releases) page. Releases contain only the unified MeshInk firmware:
+
+- **`meshink-VERSION-update.bin`** — use this when MeshInk is already installed. Flash it at **0x10000**. It updates the application and leaves the rest of flash alone.
+- **`meshink-VERSION-full-wipe.bin`** — use this for a new device or a completely clean reinstall. Flash it at **0x0**. This image is padded to the full 16 MB flash, so it overwrites old settings, messages and other stored data.
+
+A data-capable USB cable is required. If the computer does not see the T5 in flashing mode, hold **BOOT**, press and release **RESET**, then release **BOOT**.
+
+### Windows
+
+1. Install [Python](https://www.python.org/downloads/windows/) if it is not already installed. During installation, enable **Add Python to PATH**.
+2. Open **Command Prompt** in the folder containing the downloaded `.bin` file.
+3. Install Espressif's flashing tool:
+
+   ```bat
+   py -m pip install esptool
+   ```
+
+4. Connect the T5 by USB and put it into flashing mode if necessary. In **Device Manager → Ports**, note its COM port, for example `COM5`.
+5. For a normal update:
+
+   ```bat
+   py -m esptool --chip esp32s3 -p COM5 write-flash 0x10000 meshink-VERSION-update.bin
+   ```
+
+   For a new installation / complete wipe:
+
+   ```bat
+   py -m esptool --chip esp32s3 -p COM5 write-flash 0x0 meshink-VERSION-full-wipe.bin
+   ```
+
+6. Press **RESET** after flashing if the T5 does not restart automatically.
+
+### macOS
+
+1. Install [Python 3](https://www.python.org/downloads/macos/) if needed, then open **Terminal**.
+2. Install esptool:
+
+   ```sh
+   python3 -m pip install --user esptool
+   ```
+
+3. Connect the T5 and put it into flashing mode if necessary. Find its port with:
+
+   ```sh
+   ls /dev/cu.*
+   ```
+
+   It will normally look like `/dev/cu.usbmodem...` or `/dev/cu.usbserial...`.
+
+4. Change to the folder containing the downloaded firmware and flash either the update:
+
+   ```sh
+   python3 -m esptool --chip esp32s3 -p /dev/cu.YOUR_PORT write-flash 0x10000 meshink-VERSION-update.bin
+   ```
+
+   or the full wipe:
+
+   ```sh
+   python3 -m esptool --chip esp32s3 -p /dev/cu.YOUR_PORT write-flash 0x0 meshink-VERSION-full-wipe.bin
+   ```
+
+5. Press **RESET** if the T5 does not restart automatically.
+
+### Linux
+
+1. Open a terminal and make sure Python 3 and pip are installed. On Debian/Ubuntu this is:
+
+   ```sh
+   sudo apt install python3 python3-pip
+   python3 -m pip install --user esptool
+   ```
+
+2. Connect the T5 and put it into flashing mode if necessary. Find its port with:
+
+   ```sh
+   ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+   ```
+
+3. Change to the folder containing the downloaded firmware and flash either the update:
+
+   ```sh
+   python3 -m esptool --chip esp32s3 -p /dev/ttyACM0 write-flash 0x10000 meshink-VERSION-update.bin
+   ```
+
+   or the full wipe:
+
+   ```sh
+   python3 -m esptool --chip esp32s3 -p /dev/ttyACM0 write-flash 0x0 meshink-VERSION-full-wipe.bin
+   ```
+
+4. If you get a serial-port permission error, add your user to the serial-port group (commonly `dialout` on Debian/Ubuntu), log out and back in, then retry.
+5. Press **RESET** if the T5 does not restart automatically.
+
+If esptool reports that it cannot connect, repeat the BOOT/RESET sequence and try again. Espressif's [ESP32-S3 boot-mode guide](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/boot-mode-selection.html) has additional troubleshooting information.
 
 > **Radio settings matter.** Select the preset appropriate for your country and local MeshCore network before transmitting.
 
