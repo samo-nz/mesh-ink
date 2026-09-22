@@ -157,6 +157,7 @@ static uint8_t details_page=0;
 static double map_latitude=-41.2865,map_longitude=174.7762;
 static uint8_t map_zoom=12;
 static bool map_imperial=false;
+static uint8_t map_pans_since_clean=0;
 // The background contains only decoded tiles and the map header; markers and
 // controls are applied after copying it, never baked into the cache.
 static uint8_t* map_base_cache=nullptr;
@@ -818,6 +819,7 @@ static void force_redraw(EpdDrawMode mode,const char* reason,bool wake_light=fal
     invalidate_display_back_buffer();
     Serial.printf("[T5-EPD] forced full redraw reason=%s mode=%d\n",reason,(int)mode);
     refresh(mode,wake_light);
+    if(screen==Screen::Maps&&!standby_active)map_pans_since_clean=0;
 }
 
 static void fast_full_redraw(const char* reason,bool wake_light=false) {
@@ -1275,7 +1277,13 @@ void ui_loop() {
            tap.y>=118&&tap.y<900&&tap.x>=0&&tap.x<540&&
            !(tap.x>=478&&tap.y<244)) {
             pan_map_by_pixels(tap.dx,tap.dy);
-            open_screen(Screen::Maps);
+            // Differential map updates can accumulate ghosting. After six
+            // pans, force the same complete redraw available via short BOOT.
+            // This reuses the RAM tile cache, without re-decoding PNG files.
+            if(++map_pans_since_clean>=6) {
+                draw_screen();
+                force_redraw(MODE_GC16,"MAP_AUTO_CLEAN",false);
+            } else open_screen(Screen::Maps);
             continue;
         }
         if(screen==Screen::Presets&&abs(tap.dy)>60){
