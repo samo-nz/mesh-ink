@@ -789,40 +789,21 @@ static void draw_screen() {
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
-    // Continue the hardware-verified GC16 + 500 ms settling sequence on
-    // Maps, but feed the map with stable black/white binary-dithered pixels.
-    // Intermediate grays were faint even after extended panel settling.
+    // Controlled panel-waveform test: Maps already contains only black and
+    // white pixels. Drive ordinary map updates with the direct monochrome DU
+    // waveform rather than GC16's many grayscale transition phases.
+    // Preserve explicitly requested GC16 for BOOT/full display cleaning.
     const EpdDrawMode requested_mode=mode;
-    if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape)
-        mode=MODE_GC16;
+    const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
+    if(active_map&&mode==MODE_GL16)mode=MODE_DU;
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
-    // DIAGNOSTIC: on the first active Maps refresh after boot, keep the
-    // display supply on for six seconds AFTER the GC16 update has returned.
-    // This isolates fading during the waveform / powered hold from fading
-    // immediately after epd_poweroff(). It is deliberately once per boot
-    // to avoid repeated HV-on delays and excess battery usage while panning.
-    // Do not change standby, battery, message-alert or other-screen timing.
-    static bool first_map_hold_pending=true;
-    const bool map_panel_settle=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
-    const bool long_map_hold=map_panel_settle&&first_map_hold_pending;
-    const unsigned map_settle_ms=long_map_hold?6000U:(map_panel_settle?500U:0U);
-    if(long_map_hold) {
-        first_map_hold_pending=false;
-        Serial.printf("[T5-EPD] MAP HOLD START powered=1 duration_ms=%u uptime_ms=%lu refresh=%d\n",
-                      map_settle_ms,(unsigned long)millis(),(int)err);
-    }
+    // Six seconds of powered settling did not improve the fading; return to
+    // the short Maps delay. Other screens, alerts and standby remain untouched.
+    const unsigned map_settle_ms=active_map?500U:0U;
     if(map_settle_ms)delay(map_settle_ms);
-    if(long_map_hold) {
-        Serial.printf("[T5-EPD] MAP HOLD END / POWER OFF NEXT uptime_ms=%lu\n",
-                      (unsigned long)millis());
-        Serial.flush();
-    }
     epd_poweroff();
-    if(long_map_hold)
-        Serial.printf("[T5-EPD] MAP POWER OFF COMPLETE uptime_ms=%lu\n",
-                      (unsigned long)millis());
     set_cpu_target(standby_active?80:160,"display-complete",false);
     Serial.printf("[T5-UI] refresh=%d waveform=%d requested=%d screen=%d map_settle_ms=%u name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,map_settle_ms,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
@@ -840,9 +821,13 @@ static void force_redraw(EpdDrawMode mode,const char* reason,bool wake_light=fal
 }
 
 static void fast_full_redraw(const char* reason,bool wake_light=false) {
-    // ED047TC1's bundled waveform provides DU, GC16, GL16 and the known-state
-    // transitions, but not mode 3 (GC16_FAST). GL16 is the supported fast,
-    // full-screen quality transition for this panel.
+    // BOOT on Maps must remain a genuine clean rather than a DU-only refresh.
+    // All other screens keep the existing supported GL16 full redraw.
+    if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape) {
+        Serial.printf("[T5-EPD] full GC16 map clean reason=%s\n",reason);
+        force_redraw(MODE_GC16,reason,wake_light);
+        return;
+    }
     Serial.printf("[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
     force_redraw(MODE_GL16,reason,wake_light);
 }
