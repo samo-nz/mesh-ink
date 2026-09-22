@@ -37,19 +37,31 @@ int png_draw(PNGDRAW* row){
         if(next_x>0&&ox<540&&next_y>118&&out_y<900)epd_fill_rect({max(0,ox),max(118,out_y),min(540,next_x)-max(0,ox),min(900,next_y)-max(118,out_y)},gray,target);
     }return 1;
 }
-bool draw_tile(int z,int x,int y,int dx,int dy,int& reused){
+bool draw_tile(int z,int x,int y,int dx,int dy,int& reused,uint8_t& source_zoom){
     const int n=1<<z;x=(x%n+n)%n;if(y<0||y>=n)return false;
     for(int d=0;d<=min(z,6);++d){const int pz=z-d,px=x>>d,py=y>>d;char path[64];snprintf(path,sizeof(path),"/maps/%d/%d/%d.png",pz,px,py);if(!SD.exists(path))continue;
         const int divisions=1<<d;ctx={dx,dy,(x&(divisions-1))*256/divisions,(y&(divisions-1))*256/divisions,256/divisions};
-        if(png.open(path,png_open,png_close,png_read,png_seek,png_draw)==PNG_SUCCESS){png.decode(nullptr,0);png.close();if(d)++reused;return true;}
+        if(png.open(path,png_open,png_close,png_read,png_seek,png_draw)==PNG_SUCCESS){png.decode(nullptr,0);png.close();source_zoom=(uint8_t)pz;if(d)++reused;return true;}
     }return false;
 }
 }
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,double lat,double lon,uint8_t zoom){
     static bool attempted=false,ready=false;if(!attempted){attempted=true;pinMode(12,OUTPUT);digitalWrite(12,HIGH);ready=SD.begin(12,t5_shared_spi(),10000000);Serial.printf("[T5-MAP] SD init=%d\n",ready);}
-    MapRenderResult result{ready,0,0};if(!ready)return result;target=framebuffer;lat=max(-85.0511,min(85.0511,lat));const double scale=256.0*(1<<zoom);const double cx=(lon+180.0)/360.0*scale;const double rad=lat*PI/180.0;const double cy=(1.0-log(tan(rad)+1.0/cos(rad))/PI)/2.0*scale;
+    MapRenderResult result{ready,0,0,0,0,zoom,zoom};if(!ready)return result;target=framebuffer;lat=max(-85.0511,min(85.0511,lat));const double scale=256.0*(1<<zoom);const double cx=(lon+180.0)/360.0*scale;const double rad=lat*PI/180.0;const double cy=(1.0-log(tan(rad)+1.0/cos(rad))/PI)/2.0*scale;
     const int left=(int)floor(cx-width/2.0),top=(int)floor(cy-height/2.0);const int tx0=(int)floor(left/256.0),ty0=(int)floor(top/256.0);
-    for(int ty=ty0;ty*256<top+height;++ty)for(int tx=tx0;tx*256<left+width;++tx){int reused=0;if(draw_tile(zoom,tx,ty,x+tx*256-left,y+ty*256-top,reused)){result.tiles++;result.reused+=reused;}}
+    for(int ty=ty0;ty*256<top+height;++ty)for(int tx=tx0;tx*256<left+width;++tx){
+        int reused=0;uint8_t source_zoom=zoom;
+        if(draw_tile(zoom,tx,ty,x+tx*256-left,y+ty*256-top,reused,source_zoom)){
+            ++result.tiles;
+            result.reused+=reused;
+            if(!reused)++result.native;
+            result.min_source_zoom=min(result.min_source_zoom,source_zoom);
+            result.max_source_zoom=max(result.max_source_zoom,source_zoom);
+        }else ++result.missing;
+    }
+    Serial.printf("[T5-MAP] zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u centre=%.5f,%.5f\n",
+        zoom,result.min_source_zoom,result.max_source_zoom,result.tiles,result.native,
+        result.reused,result.missing,lat,lon);
     return result;
 }
