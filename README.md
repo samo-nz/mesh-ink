@@ -1,60 +1,73 @@
-# MeshCore T5 Pro
+# MeshInk
 
-A new firmware project for the LILYGO T5 E-Paper S3 Pro (915 MHz hardware with GPS). MeshCore is an unmodified Git submodule at `lib/MeshCore`, tracking the upstream [`meshcore-dev/MeshCore`](https://github.com/meshcore-dev/MeshCore) main branch. Our radio board, local UI, BLE companion, storage and power code live outside that submodule.
+<p align="center">
+  <img src="docs/meshink-logo.svg" alt="MeshInk — Stay Connected, Further" width="720">
+</p>
 
-`t5-pro` is a **build gate**, not usable MeshCore firmware. `t5-companion` builds upstream MeshCore's BLE companion example against our independent T5 board adapter. It physically clears the e-paper, prints “MESHCORE / BT COMPANION MODE” once, powers the panel off and releases its shared pins before MeshCore initializes the SX1262. The T5's BQ27220 fuel gauge supplies battery voltage to the companion protocol, with a 30-second read cache. No continuous display or touch task runs. The previous PaperUI archive is only a hardware reference; none of its application or UI source is imported here.
+**MeshInk turns the LILYGO T5 E-Paper S3 Pro into a standalone MeshCore handheld.** Read and send messages, see nearby nodes, use offline maps, manage GPS and radio settings, and keep the device useful for long periods without needing a phone connected.
 
-The product target has two persisted boot modes. Handheld mode runs MeshCore locally and presents an e-paper/touch interface with the Android companion app's contacts, channels, conversations, compose and settings flow. Bluetooth companion mode leaves the native UI inactive and exposes the official MeshCore companion interface. Each mode starts only the hardware and tasks it needs. NZ radio preset support includes 917.375 MHz and must be verified with hardware before normal transmission.
+It is designed around the T5's large 4.7-inch e-paper touchscreen: information stays visible without constantly powering the display, the frontlight is there when you need it, and a dedicated standby mode cuts background activity while the mesh remains useful.
 
-## Build
+## What MeshInk can do
 
-Run `git submodule update --init --recursive`, then `pio run -e t5-companion`. CI uploads a versioned `t5-pro-companion-0.0.1.bin` and its SHA-256 digest. All future release binaries use `major.milestone.release`: increase the rightmost digit for every new test release, the middle digit when a functional milestone is achieved, and the first digit for a major firmware milestone. Update `T5_FIRMWARE_VERSION` in the workflow for each release and never reuse a published binary filename. To remove board checkpoint logs in later builds, change `-DT5_DIAGNOSTICS=1` to `-DT5_DIAGNOSTICS=0` in `platformio.ini`; all our diagnostic lines start `[T5]` at 115200 baud. MeshCore's own logging is independent. The submodule and external e-paper driver are pinned for repeatable builds.
+- **Standalone MeshCore messaging** — contacts, direct messages and channel conversations directly on the T5.
+- **Touch-first e-paper interface** — large controls and layouts designed specifically for the 540×960 display.
+- **Offline maps** — view your own position and known mesh nodes without an internet connection.
+- **GPS built in** — position, fix status, location sharing controls and configurable GPS behaviour.
+- **Mesh discovery** — see recently heard nodes, inspect their details and send zero-hop or flood adverts.
+- **Bluetooth companion mode** — restart into the standard MeshCore BLE companion mode when you want to use a phone or another companion app.
+- **Regional radio presets** — selectable MeshCore presets, including NZ Narrow and other supported regions.
+- **Battery-friendly operation** — e-paper, configurable frontlight behaviour, automatic standby and a manual long-press standby/wake control.
+- **Message alerts** — visual e-paper/frontlight indication for new messages while the device is in standby.
+- **Device settings on the T5** — node name, radio, privacy, GPS, timezone, display, frontlight and power options are available without reflashing.
+- **Persistent local history** — recent conversations remain available on the device.
+- **MeshInk identity** — the MeshInk splash and About screen show the firmware version and configured node name.
 
-The Actions ZIP also contains `t5-pro-companion-0.0.1-complete.bin` with the correct **16 MB flash header**, plus the matching bootloader, partition table and Arduino OTA initializer. A first installation can flash the complete image at `0x0`. An app-only upload of `t5-pro-companion-0.0.1.bin` at `0x10000` assumes this partition layout and corrected bootloader are already installed. Replacing a partition table may make old contacts/messages inaccessible; keep a backup if needed. Monitor serial at 115200 baud and capture `[T5]` lines through MeshCore BLE startup.
+## The idea
 
-Companion mode is now a hardware-verified milestone and remains available as
-the `t5-companion` target. The `t5-ui-onboarding` target begins milestone 0.1.0
-with Bluetooth disabled: a MeshCore-style welcome screen, region presets,
-device-name entry and touch OSK. Keeping these as separate targets during UI
-bring-up prevents experimental display/input work from destabilizing the
-working companion build. They will later be joined behind the persisted boot
-mode described above, selected before BLE or UI resources are allocated.
+MeshInk is for people who want MeshCore to feel like a self-contained field communicator rather than a radio peripheral. The phone connection is optional: the T5 can be the interface.
 
-Starting with 0.1.1, `t5-unified` is the product test target. Local UI is the
-default. Its menu can set a one-shot flag and restart into the verified Bluetooth
-companion application; that flag is consumed at boot, so the next restart returns
-to local UI. In companion mode only, holding BOOT for two seconds immediately
-restarts into local UI; releasing the button is not required. In UI mode the
-frontlight remains steadily on and is independent of e-paper refreshes until a
-user-selectable frontlight policy is added.
-Both paths display the same centrally defined firmware version.
+The project uses upstream MeshCore for the mesh networking itself, while the T5-specific interface, display, storage, power management, GPS integration and hardware support live in this repository.
 
-Release 0.1.3 gives both boot splashes matching title/version geometry and adds
-the companion BOOT-button exit instruction. The onboarding keyboard is now a
-reusable show/hide component with a top number row, upper/lowercase shift and a
-symbols layer. Local UI screens no longer repeat Bluetooth state or the firmware
-version after the splash.
+## Hardware
 
-Milestone 0.2.0 introduces the persistent local-UI status bar. It reads the
-onboard RTC and BQ27220 fuel gauge, reserves live unread-message and GPS state
-slots, and remains present on every post-boot screen. The reusable keyboard is
-anchored flush to the display bottom with larger key labels.
+MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro** with the 4.7-inch e-paper display, ESP32-S3, SX1262 LoRa radio and GPS hardware used by this project.
 
-Release 0.2.1 replaces status labels with compact GPS, direct-message, channel
-and battery icons, enlarges the status typography, centres the clock, and adds
-a reusable 1.5-second high-contrast toast overlay for action confirmations.
+## Installing
 
-Milestone 0.4.0 starts the live upstream MeshCore runtime in local UI mode with
-Bluetooth disabled. Contacts, channels, message reception/transmission, GPS
-state, identity, radio values and app-derived contact/privacy settings now use
-MeshCore data and preferences. The 0.3.0 navigable inspection UI remains the
-presentation layer, with larger conversation text. The adapter code stays
-outside the MeshCore submodule so upstream updates remain straightforward.
+Prebuilt firmware is produced by the GitHub Actions workflow for the `t5-unified` target. For a normal update, use the versioned application image. A complete image is also produced for first-time installation or when the flash layout needs to be installed from scratch.
 
-Milestone 0.3.0 was the complete, navigable local-UI inspection prototype based on
-the open-source MeshCore companion application's information architecture. It
-adds contacts, direct and channel conversations, contact details, channels,
-discovery, settings, radio, GPS, display/power and about screens with realistic
-mock data. Map and external-node connection flows are intentionally omitted.
-All screen data is read through `UiDataProvider`, allowing a later MeshCore
-provider to replace the mock provider without coupling protocol code to views.
+> **Radio settings matter.** Select the preset appropriate for your country and local MeshCore network before transmitting.
+
+## Using MeshInk
+
+On first setup, choose a node name and radio preset. After that, MeshInk opens into the main Contacts view. The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**.
+
+From **More** you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode. A long press of the BOOT button enters or leaves standby; a short press forces a clean e-paper redraw.
+
+## Building from source
+
+For developers, the main product environment is:
+
+```sh
+git submodule update --init --recursive
+pio run -e t5-unified
+```
+
+MeshCore is kept as an upstream submodule. T5 board support and MeshInk's UI/runtime code are kept outside it so upstream MeshCore updates remain easier to integrate.
+
+The current firmware version is defined by the `T5_FIRMWARE_VERSION` build flag for the unified target. Release workflows use that version when naming binaries.
+
+## Project status
+
+MeshInk is approaching its first finished release. The core handheld experience is working: live MeshCore data, messaging, channels, discovery, GPS, offline maps, radio/settings UI, Bluetooth companion mode, standby/power controls and device-local history are all part of the current firmware.
+
+Hardware testing is still important, especially after changes affecting radio behaviour, e-paper refresh, GPS, power management or flash layout.
+
+## Credits
+
+MeshInk builds on **MeshCore** and the open-source libraries used by the LILYGO T5 ecosystem. MeshCore remains an upstream dependency rather than a fork embedded into the application code.
+
+---
+
+**MeshInk — Stay Connected, Further.**
