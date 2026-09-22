@@ -69,9 +69,12 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
     const bool trusted_gps=trusted_gps_time_&&millis()<=trusted_gps_until_&&
         (utc>trusted_gps_time_?utc-trusted_gps_time_:trusted_gps_time_-utc)<=3;
     trusted_gps_time_=0;trusted_gps_until_=0;
-    if(valid_&&!trusted_gps&&utc+300<current){
-        T5_TRACE("rtc: rejected stale fallback UTC=%lu current=%lu delta=-%lu\n",
-            (unsigned long)utc,(unsigned long)current,(unsigned long)(current-utc));
+    if(valid_&&!trusted_gps){
+        // Once the hardware RTC is known-good, generic MeshCore/system time
+        // sources must not overwrite it. GPS corrections are explicitly
+        // authorised by expectGpsTime() above.
+        T5_TRACE("rtc: ignored non-GPS set UTC=%lu current=%lu (RTC already valid)\n",
+            (unsigned long)utc,(unsigned long)current);
         return;
     }
     const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
@@ -238,7 +241,20 @@ public:
         const int pending = Serial1.available();
         if (pending > 0) gps_last_byte_at = millis();
 #endif
-        if(isValid())rtc_clock.expectGpsTime((uint32_t)getTimestamp());
+        // MeshCore's provider may call RTCClock::setCurrentTime whenever it sees
+        // valid GPS time. Only mark a GPS write as trusted when the RTC is
+        // invalid, or when our deliberate hourly correction is due.
+        static uint32_t last_gps_clock_sync_ms = 0;
+        if (isValid()) {
+            const uint32_t now_ms = millis();
+            const bool rtc_needs_time = !rtc_clock.isValid();
+            const bool hourly_correction_due = last_gps_clock_sync_ms == 0 ||
+                now_ms - last_gps_clock_sync_ms >= 3600000UL;
+            if (rtc_needs_time || hourly_correction_due) {
+                rtc_clock.expectGpsTime((uint32_t)getTimestamp());
+                last_gps_clock_sync_ms = now_ms ? now_ms : 1;
+            }
+        }
         MicroNMEALocationProvider::loop();
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
             gps_baud_locked = true;
