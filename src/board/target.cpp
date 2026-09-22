@@ -787,6 +787,9 @@ void T5Board::beginLocal() {
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
     enableRadioGpsRail();
+    // Unified/local mode calls beginLocal(), not begin(). Without this call
+    // the 1500mAh factory-profile migration ran only in BLE companion mode.
+    gauge_apply_factory_profile_if_needed();
     getBattMilliVolts();
     t5_power_diagnostics_report("early-boot");
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);

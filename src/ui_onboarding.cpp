@@ -639,10 +639,23 @@ static void draw_contact_details() {
     centred(node.name,126,4,0,true);char page[20];snprintf(page,sizeof(page),"PAGE %u OF 2",details_page+1);centred(page,174,2,0,true);
     if(details_page==0){text("LAST SEEN",24,230,2,0,true);draw_wrapped(node.last_seen,230,230,25,2,0,false,2);text("ROUTE",24,310,2,0,true);text(node.route,230,310,2);text("POSITION",24,380,2,0,true);draw_wrapped(node.position,230,380,25,2,0,false,2);text("IDENTITY",24,470,2,0,true);text(node.identity,230,470,2);if(node.latitude||node.longitude){box(24,540,492,62);centred("OPEN POSITION ON MAP",561,2,0,true);}}
     else{text("STATUS",24,230,2,0,true);draw_wrapped(node.status,24,264,39,2,0,false,2);text("TELEMETRY / POSITION",24,350,2,0,true);draw_wrapped(node.telemetry,24,384,39,2,0,false,4);text("DISCOVERED PATH",24,530,2,0,true);draw_wrapped(node.path,24,564,39,2,0,false,2);box(24,650,492,70,true);centred(node.request_active?"REQUESTING...":"REQUEST ALL INFO",674,3,0xFF,true);}
-    // Keep detail actions clear of the persistent bottom navigation at y=900.
-    box(24,738,220,58,details_page==0);text("PREV",82,757,2,details_page==0?0xFF:0,true);
-    box(296,738,220,58,details_page==1);text("NEXT",354,757,2,details_page==1?0xFF:0,true);
-    if(details_page==0){if(node.saved_contact){box(24,808,240,70);centred("CHAT",832,2,0,true);box(276,808,240,70);centred("DELETE",832,2,0,true);}else{box(24,808,492,70,true);centred("ADD CONTACT",832,2,0xFF,true);}}
+    // Action labels must be centered within THEIR OWN rectangles. centred()
+    // centers over the entire 540px display and previously put both CHAT and
+    // DELETE on top of each other, between two otherwise blank buttons.
+    auto action_button=[](const char* label,int x,int y,int w,int h,bool selected=false) {
+        box(x,y,w,h,selected);
+        const int scale=2;
+        const int label_width=(int)strlen(label)*6*scale;
+        text(label,x+(w-label_width)/2,y+(h-7*scale)/2,scale,selected?0xFF:0,true);
+    };
+    action_button("PREV",24,738,220,58,details_page==0);
+    action_button("NEXT",296,738,220,58,details_page==1);
+    if(details_page==0){
+        if(node.saved_contact){
+            action_button("CHAT",24,808,240,70);
+            action_button("DELETE",276,808,240,70);
+        } else action_button("ADD CONTACT",24,808,492,70,true);
+    }
 }
 
 static void settings_row(const char* title,const char* subtitle,int y);
