@@ -782,10 +782,16 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
+    // A map frame has been observed to appear during refresh and fade as soon
+    // as panel power is removed. Keep only Maps powered briefly after the
+    // waveform completes to test whether the ED047TC1 needs settling time.
+    // Do not change standby, battery, message-alert or other-screen timing.
+    const bool map_panel_settle=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
+    if(map_panel_settle)delay(500);
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
-    Serial.printf("[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
-        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+    Serial.printf("[T5-UI] refresh=%d waveform=%d requested=%d screen=%d map_settle_ms=%u name='%s' preset=%s cpu=%luMHz\n",
+        err,(int)mode,(int)requested_mode,(int)screen,map_panel_settle?500U:0U,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
 static void invalidate_display_back_buffer() {
