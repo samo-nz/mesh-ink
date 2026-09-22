@@ -94,6 +94,15 @@ class MeshCoreUiProvider final:public UiDataProvider{
     uint8_t channel_unread_[MAX_UI_CHANNELS]{};
     DiscoveredContact discovered_[MAX_UI_ADVERTS]{};
     ContactInfo detail_contact_{};bool detail_valid_=false;bool detail_saved_=false;
+    // Successful info replies are live observations, not new adverts.
+    // Keep their timestamp and optional GPS in RAM without rewriting MeshCore
+    // contact storage or falsely updating last_advert_timestamp.
+    struct RecentInfo {
+        uint8_t key[PUB_KEY_SIZE]{};
+        uint32_t reply_millis=0;
+        int32_t lat=0,lon=0;
+        bool heard=false,has_gps=false;
+    } recent_info_{};
     char detail_identity_[24]{},detail_seen_[72]{},detail_route_[40]{},detail_position_[64]{};
     char detail_status_[80]="NOT REQUESTED",detail_telemetry_[120]="NOT REQUESTED",detail_path_[64]="NOT REQUESTED";
     bool detail_request_active_=false;int32_t detail_lat_=0,detail_lon_=0;
@@ -102,6 +111,19 @@ class MeshCoreUiProvider final:public UiDataProvider{
     static void bind(ListStorage& item){item.entry.title=item.title;item.entry.subtitle=item.subtitle;item.entry.time=item.time;}
     static void bind(MessageView& item){item.entry.text=item.text;item.entry.time=item.time;}
     bool matches(const StoredMessage& m)const{return m.kind==(uint8_t)(active_channel_?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,active_key_,active_channel_?1:6)==0;}
+    bool has_recent_info(const uint8_t* full_key)const {
+        return recent_info_.heard&&memcmp(recent_info_.key,full_key,PUB_KEY_SIZE)==0;
+    }
+    void note_info_reply() {
+        // Only a matched reply (not a request, send acknowledgement or timeout)
+        // establishes that the remote node was heard.
+        if(!has_recent_info(detail_contact_.id.pub_key)){
+            recent_info_={};
+            memcpy(recent_info_.key,detail_contact_.id.pub_key,PUB_KEY_SIZE);
+        }
+        recent_info_.heard=true;
+        recent_info_.reply_millis=millis();
+    }
     const StoredMessage* last_for(const uint8_t* key,bool channel)const{
         for(size_t n=store_.count();n>0;--n){const auto& m=store_.at(n-1);if(m.kind==(uint8_t)(channel?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,key,channel?1:6)==0)return &m;}return nullptr;
     }
@@ -153,6 +175,26 @@ public:
             item.latitude=positioned.gps_lat;item.longitude=positioned.gps_lon;
             item.advertised_at=positioned.last_advert_timestamp;
         }
+        // A node with no saved advert GPS may still have returned valid GPS
+        // telemetry. Let it appear on the map for this session.
+        if(recent_info_.heard&&recent_info_.has_gps){
+            bool found=false;
+            for(size_t i=0;i<map_node_count_;++i)
+                if(memcmp(map_nodes_[i].key,recent_info_.key,
+                          sizeof(map_nodes_[i].key))==0){found=true;break;}
+            if(!found&&map_node_count_<MAX_MAP_NODES){
+                UiMapNode& item=map_nodes_[map_node_count_++];item={};
+                if(const ContactInfo* contact=t5_mesh().lookupContactByPubKey(
+                        recent_info_.key,PUB_KEY_SIZE)){
+                    strncpy(item.name,contact->name[0]?contact->name:"UNNAMED",
+                            sizeof(item.name)-1);
+                    item.advertised_at=contact->last_advert_timestamp;
+                    memcpy(item.key,recent_info_.key,sizeof(item.key));
+                    item.latitude=recent_info_.lat;
+                    item.longitude=recent_info_.lon;
+                }else --map_node_count_;
+            }
+        }
         rebuild_active();
         static uint32_t last_report=0;if(force||millis()-last_report>=60000){last_report=millis();Serial.printf("[T5-POWER] model refresh=%luus interval=%lums contacts=%u channels=%u adverts=%u standby=%d\n",(unsigned long)(micros()-started),(unsigned long)interval,(unsigned)contact_count_,(unsigned)channel_count_,(unsigned)advert_count_,ui_is_standby());}
     }
@@ -163,7 +205,16 @@ public:
     void update_message(uint32_t sequence,UiMessageState state){store_.update_state(sequence,state);rebuild_active();ui_request_data_refresh("message-state");}
     size_t map_node_count() const override {return map_node_count_;}
     bool map_node(size_t index,UiMapNode& out) const override {
-        if(index>=map_node_count_)return false;out=map_nodes_[index];return true;
+        if(index>=map_node_count_)return false;
+        out=map_nodes_[index];
+        // Map markers reflect GPS telemetry received in this session, while
+        // their age remains the last advert time (not the info reply time).
+        if(recent_info_.heard&&recent_info_.has_gps&&
+           memcmp(recent_info_.key,out.key,sizeof(out.key))==0){
+            out.latitude=recent_info_.lat;
+            out.longitude=recent_info_.lon;
+        }
+        return true;
     }
     bool open_map_node(size_t index) override {
         if(index>=map_node_count_)return false;
@@ -193,10 +244,33 @@ public:
     }
     bool active_node_details(UiNodeDetails& out)const override{
         auto* self=const_cast<MeshCoreUiProvider*>(this);if(!detail_valid_){ContactInfo contact{};if(!active_contact(contact))return false;self->detail_contact_=contact;self->detail_valid_=self->detail_saved_=true;}
+        // Re-read the contact on each UI render: later advertisements may
+        // update its stored position and advert timestamp while Info is open.
+        if(detail_saved_) {
+            if(const ContactInfo* current=t5_mesh().lookupContactByPubKey(
+                    detail_contact_.id.pub_key,PUB_KEY_SIZE))
+                self->detail_contact_=*current;
+        }
         snprintf(self->detail_identity_,sizeof(self->detail_identity_),"%02X%02X%02X%02X...%02X%02X",detail_contact_.id.pub_key[0],detail_contact_.id.pub_key[1],detail_contact_.id.pub_key[2],detail_contact_.id.pub_key[3],detail_contact_.id.pub_key[30],detail_contact_.id.pub_key[31]);
-        format_last_seen(detail_contact_.last_advert_timestamp,self->detail_seen_);const uint8_t hops=detail_contact_.out_path_len&0x3F;if(detail_contact_.out_path_len==OUT_PATH_UNKNOWN)strcpy(self->detail_route_,"FLOOD / UNKNOWN");else snprintf(self->detail_route_,sizeof(self->detail_route_),hops?"%u HOP%s":"ZERO HOP",hops,hops==1?"":"S");
-        if(detail_contact_.gps_lat||detail_contact_.gps_lon)snprintf(self->detail_position_,sizeof(self->detail_position_),"%ld.%06ld  %ld.%06ld",(long)(detail_contact_.gps_lat/1000000),(long)abs(detail_contact_.gps_lat%1000000),(long)(detail_contact_.gps_lon/1000000),(long)abs(detail_contact_.gps_lon%1000000));else strcpy(self->detail_position_,"NOT ADVERTISED");
-        self->detail_lat_=detail_contact_.gps_lat;self->detail_lon_=detail_contact_.gps_lon;
+        format_last_seen(detail_contact_.last_advert_timestamp,self->detail_seen_);
+        const bool recent=has_recent_info(detail_contact_.id.pub_key);
+        if(recent){
+            const uint32_t age=(uint32_t)(millis()-recent_info_.reply_millis)/1000U;
+            if(age<60)strcpy(self->detail_seen_,"INFO REPLY JUST NOW");
+            else if(age<3600)snprintf(self->detail_seen_,sizeof(self->detail_seen_),"INFO REPLY %lu MIN AGO",(unsigned long)(age/60));
+            else snprintf(self->detail_seen_,sizeof(self->detail_seen_),"INFO REPLY %lu HOUR%s AGO",(unsigned long)(age/3600),age/3600==1?"":"S");
+        }
+        const uint8_t hops=detail_contact_.out_path_len&0x3F;if(detail_contact_.out_path_len==OUT_PATH_UNKNOWN)strcpy(self->detail_route_,"FLOOD / UNKNOWN");else snprintf(self->detail_route_,sizeof(self->detail_route_),hops?"%u HOP%s":"ZERO HOP",hops,hops==1?"":"S");
+        const bool live_gps=recent&&recent_info_.has_gps;
+        self->detail_lat_=live_gps?recent_info_.lat:detail_contact_.gps_lat;
+        self->detail_lon_=live_gps?recent_info_.lon:detail_contact_.gps_lon;
+        if(live_gps||self->detail_lat_||self->detail_lon_){
+            const long alat=labs((long)self->detail_lat_),alon=labs((long)self->detail_lon_);
+            snprintf(self->detail_position_,sizeof(self->detail_position_),
+                "%s%c%ld.%06ld  %c%ld.%06ld",live_gps?"GPS ":"",
+                self->detail_lat_<0?'-':'+',alat/1000000,alat%1000000,
+                self->detail_lon_<0?'-':'+',alon/1000000,alon%1000000);
+        }else strcpy(self->detail_position_,"NOT ADVERTISED");
         out={detail_contact_.name,self->detail_identity_,self->detail_seen_,self->detail_route_,self->detail_position_,self->detail_status_,self->detail_telemetry_,self->detail_path_,self->detail_lat_,self->detail_lon_,detail_request_active_,detail_saved_};return true;
     }
     bool add_active_node()override{if(!detail_valid_||detail_saved_||!detail_frame_len_)return false;detail_frame_[0]=9;if(!local_mesh_enqueue_command(detail_frame_,detail_frame_len_))return false;detail_saved_=true;return true;}
@@ -205,12 +279,24 @@ public:
     const uint8_t* detail_key()const{return detail_contact_.id.pub_key;}
     void request_state(bool active){detail_request_active_=active;ui_request_data_refresh("node-info");}
     void request_timeout(uint8_t stage){char* out=stage==0?detail_status_:stage==1?detail_telemetry_:detail_path_;strcpy(out,"NO RESPONSE / NOT ALLOWED");}
-    void status_response(const uint8_t* data,size_t len){snprintf(detail_status_,sizeof(detail_status_),"RECEIVED  %u BYTES",(unsigned)len);}
-    void path_response(const uint8_t* data,size_t len){if(!len){strcpy(detail_path_,"NO PATH DATA");return;}const uint8_t hops=data[0]&0x3F;snprintf(detail_path_,sizeof(detail_path_),hops?"OUTBOUND %u HOP%s":"DIRECT / ZERO HOP",hops,hops==1?"":"S");}
+    void status_response(const uint8_t* data,size_t len){note_info_reply();snprintf(detail_status_,sizeof(detail_status_),"RECEIVED  %u BYTES",(unsigned)len);Serial.println("[T5-MESH] node info: status reply received");}
+    void path_response(const uint8_t* data,size_t len){note_info_reply();if(!len){strcpy(detail_path_,"NO PATH DATA");return;}const uint8_t hops=data[0]&0x3F;snprintf(detail_path_,sizeof(detail_path_),hops?"OUTBOUND %u HOP%s":"DIRECT / ZERO HOP",hops,hops==1?"":"S");Serial.println("[T5-MESH] node info: path reply received");}
     void telemetry_response(const uint8_t* data,size_t len){
+        note_info_reply();
         LPPReader reader(data,(uint8_t)min(len,(size_t)255));uint8_t channel=0,type=0;char* cursor=detail_telemetry_;size_t left=sizeof(detail_telemetry_);cursor[0]=0;
-        while(reader.readHeader(channel,type)&&left>12){float v=0;char item[48]{};switch(type){case LPP_GPS:{float lat,lon,alt;if(reader.readGPS(lat,lon,alt)){detail_lat_=(int32_t)(lat*1000000);detail_lon_=(int32_t)(lon*1000000);snprintf(item,sizeof(item),"GPS %.4f %.4f",lat,lon);}break;}case LPP_VOLTAGE:reader.readVoltage(v);snprintf(item,sizeof(item),"%.2fV",v);break;case LPP_CURRENT:reader.readCurrent(v);snprintf(item,sizeof(item),"%.3fA",v);break;case LPP_TEMPERATURE:reader.readTemperature(v);snprintf(item,sizeof(item),"%.1fC",v);break;case LPP_RELATIVE_HUMIDITY:reader.readRelativeHumidity(v);snprintf(item,sizeof(item),"%.1f%% RH",v);break;case LPP_BAROMETRIC_PRESSURE:reader.readPressure(v);snprintf(item,sizeof(item),"%.1f HPA",v);break;default:reader.skipData(type);break;}if(item[0]){const int n=snprintf(cursor,left,"%s%s",cursor==detail_telemetry_?"":"  ",item);if(n<0||(size_t)n>=left)break;cursor+=n;left-=n;}}
+        while(reader.readHeader(channel,type)&&left>12){float v=0;char item[48]{};switch(type){case LPP_GPS:{float lat,lon,alt;if(reader.readGPS(lat,lon,alt)){
+            if(isfinite(lat)&&isfinite(lon)&&lat>=-85.0511f&&lat<=85.0511f&&lon>=-180.0f&&lon<=180.0f){
+                recent_info_.lat=(int32_t)(lat*1000000.0f);
+                recent_info_.lon=(int32_t)(lon*1000000.0f);
+                recent_info_.has_gps=true;
+                detail_lat_=recent_info_.lat;detail_lon_=recent_info_.lon;
+                snprintf(item,sizeof(item),"GPS %.4f %.4f",lat,lon);
+            }
+        }break;}case LPP_VOLTAGE:reader.readVoltage(v);snprintf(item,sizeof(item),"%.2fV",v);break;case LPP_CURRENT:reader.readCurrent(v);snprintf(item,sizeof(item),"%.3fA",v);break;case LPP_TEMPERATURE:reader.readTemperature(v);snprintf(item,sizeof(item),"%.1fC",v);break;case LPP_RELATIVE_HUMIDITY:reader.readRelativeHumidity(v);snprintf(item,sizeof(item),"%.1f%% RH",v);break;case LPP_BAROMETRIC_PRESSURE:reader.readPressure(v);snprintf(item,sizeof(item),"%.1f HPA",v);break;default:reader.skipData(type);break;}if(item[0]){const int n=snprintf(cursor,left,"%s%s",cursor==detail_telemetry_?"":"  ",item);if(n<0||(size_t)n>=left)break;cursor+=n;left-=n;}}
         if(!detail_telemetry_[0])strcpy(detail_telemetry_,"NO TELEMETRY RETURNED");
+        if(recent_info_.has_gps)refresh(true);
+        Serial.printf("[T5-MESH] node info: telemetry reply received bytes=%u gps=%d\n",
+                      (unsigned)len,recent_info_.has_gps);
     }
     const char* active_title()const override{return active_title_;}bool active_is_channel()const override{return active_channel_;}size_t active_message_count()const override{return active_count_;}const UiMessage& active_message(size_t i)const override{return active_messages_[i].entry;}
     bool active_contact(ContactInfo& out)const{if(active_channel_)return false;auto* found=t5_mesh().lookupContactByPubKey(active_key_,6);if(!found)return false;out=*found;return true;}

@@ -165,6 +165,11 @@ static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
 static MapRenderResult map_base_result{false,0,0,0,0,0,0};
+// The own-position bullseye is drawn over the map, never stored in the
+// raster base cache. The last drawn screen position supports low-rate GPS
+// marker updates without refreshing the e-paper for every GPS sample.
+static bool map_device_marker_visible=false;
+static int map_device_marker_x=0,map_device_marker_y=0;
 struct MapMarkerHit {int16_t x,y;size_t index;};
 static MapMarkerHit map_marker_hits[50]{};
 static size_t map_marker_hit_count=0;
@@ -475,7 +480,10 @@ static void draw_list_entry(const UiListEntry& item,int y) {
 
 static void draw_contacts() {
     draw_app_header("CONTACTS");
-    if(!ui_data||!ui_data->contact_count())centred("NO SAVED CONTACTS",300,3,0,true);
+    // The model is fully populated before ui_use_data_provider() attaches it.
+    // A missing provider means STARTUP, not a completed empty contact list.
+    if(!ui_data)centred("LOADING CONTACT INFO..",300,3,0,true);
+    else if(!ui_data->contact_count())centred("NO SAVED CONTACTS",300,3,0,true);
     else for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)draw_list_entry(ui_data->contact(i),120+i*150);
     draw_bottom_nav(0);
 }
@@ -551,6 +559,42 @@ static void draw_map_nodes() {
     }
 }
 
+// Convert a GPS position to the same screen projection as map node markers.
+static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy) {
+    if(latitude<-85051100L||latitude>85051100L||
+       longitude<-180000000L||longitude>180000000L)return false;
+    const double world=256.0*(1U<<map_zoom);
+    const double centre_x=(map_longitude+180.0)/360.0*world;
+    const double centre_rad=map_latitude*PI/180.0;
+    const double centre_y=(1.0-log(tan(centre_rad)+1.0/cos(centre_rad))/PI)*world/2.0;
+    const double x=(longitude/1000000.0+180.0)/360.0*world;
+    double delta_x=x-centre_x;
+    if(delta_x>world/2)delta_x-=world;
+    if(delta_x<-world/2)delta_x+=world;
+    const double r=latitude/1000000.0*PI/180.0;
+    const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
+    sx=(int)lround(270+delta_x);
+    sy=(int)lround(509+y-centre_y);
+    return true;
+}
+
+// Reuse the previous centre bullseye as a true, label-free device marker.
+// Do not display a misleading own-position marker without a valid GPS fix.
+static void draw_device_location_marker() {
+    map_device_marker_visible=false;
+    if(!status_gps_enabled||!status_gps_fix)return;
+    int sx=0,sy=0;
+    if(!project_device_on_map(status_gps_latitude,status_gps_longitude,sx,sy)||
+       sx<20||sx>520||sy<139||sy>879)return;
+    epd_fill_rect({sx-14,sy-14,29,29},0xFF,fb);
+    epd_draw_rect({sx-12,sy-12,24,24},0,fb);
+    line(sx,sy-18,sx,sy+18);
+    line(sx-18,sy,sx+18,sy);
+    epd_fill_rect({sx-2,sy-2,5,5},0,fb);
+    map_device_marker_x=sx;map_device_marker_y=sy;
+    map_device_marker_visible=true;
+}
+
 static void pan_map_by_pixels(int dx,int dy) {
     const double world=256.0*(1U<<map_zoom);
     double x=(map_longitude+180.0)/360.0*world-dx;
@@ -583,6 +627,7 @@ static void draw_maps() {
         }
     }
     draw_map_nodes();
+    draw_device_location_marker();
     // Report actual SD source zoom separately from selected zoom.
     // Binary dithering cannot recover detail from upscaled parent tiles.
     if(result.sd_ready) {
@@ -597,7 +642,6 @@ static void draw_maps() {
         epd_fill_rect({18,774,label_width,30},0xFF,fb);
         text(detail,22,778,2,0,true);
     }
-    epd_fill_rect({258,500,24,24},0xFF,fb);epd_draw_rect({258,500,24,24},0,fb);line(270,494,270,530);line(252,512,288,512);
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // Vertical zoom rocker. Draw symbols directly so they don't depend on
     // unsupported font glyphs.
@@ -1337,7 +1381,30 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
     if(state_changed)Serial.printf("[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
     status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
-    static uint32_t last_detail_refresh=0;if(state_changed||(detail_changed&&screen==Screen::GpsSettings&&millis()-last_detail_refresh>=10000)){last_detail_refresh=millis();status_dirty=true;Serial.println("[T5-UI] refresh queued reason=gps-state");}
+    static uint32_t last_detail_refresh=0;
+    const uint32_t now=millis();
+    bool marker_moved=false;
+    // Keep the own-position marker reasonably current while travelling,
+    // but avoid expensive e-paper updates for every 1 Hz GPS sample.
+    static uint32_t last_marker_refresh=0;
+    if(screen==Screen::Maps&&enabled&&has_fix&&
+       (status_gps_latitude!=latitude||status_gps_longitude!=longitude)&&
+       now-last_marker_refresh>=15000) {
+        int sx=0,sy=0;
+        if(project_device_on_map(latitude,longitude,sx,sy)) {
+            const bool now_visible=sx>=20&&sx<=520&&sy>=139&&sy<=879;
+            marker_moved=map_device_marker_visible?
+                (abs(sx-map_device_marker_x)>=3||abs(sy-map_device_marker_y)>=3):
+                now_visible;
+        }
+        if(marker_moved)last_marker_refresh=now;
+    }
+    if(state_changed||(detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000)||marker_moved){
+        last_detail_refresh=now;
+        status_dirty=true;
+        Serial.println(marker_moved?"[T5-UI] refresh queued reason=map-own-position":
+                               "[T5-UI] refresh queued reason=gps-state");
+    }
 }
 
 void ui_notify_message_received(bool channel){
