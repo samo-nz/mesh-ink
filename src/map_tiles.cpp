@@ -19,7 +19,12 @@ int png_draw(PNGDRAW* row){
     const int out_y=ctx.dy+(row->y-ctx.crop_y)*256/ctx.crop_size;
     const int next_y=ctx.dy+(row->y-ctx.crop_y+1)*256/ctx.crop_size;
     for(int sx=ctx.crop_x;sx<ctx.crop_x+ctx.crop_size;++sx){
-        const uint16_t c=pixels[sx];const uint8_t gray=(uint8_t)(((((c>>11)&31)*77+((c>>5)&63)*75+(c&31)*29)>>5)&0xF0);
+        const uint16_t c=pixels[sx];
+        const uint8_t raw=(uint8_t)min(255U,(unsigned)((((c>>11)&31)*77+((c>>5)&63)*75+(c&31)*29)>>5));
+        // E-paper needs stronger separation than a colour LCD. Expand the
+        // useful mid-tones so roads/coastlines don't disappear into white.
+        const int contrasted=max(0,min(255,128+((int)raw-128)*2));
+        const uint8_t gray=(uint8_t)(contrasted&0xF0);
         const int ox=ctx.dx+(sx-ctx.crop_x)*256/ctx.crop_size,next_x=ctx.dx+(sx-ctx.crop_x+1)*256/ctx.crop_size;
         if(next_x>0&&ox<540&&next_y>118&&out_y<900)epd_fill_rect({max(0,ox),max(118,out_y),min(540,next_x)-max(0,ox),min(900,next_y)-max(118,out_y)},gray,target);
     }return 1;
