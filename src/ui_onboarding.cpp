@@ -532,8 +532,10 @@ static void draw_contact_details() {
     centred(node.name,126,4,0,true);char page[20];snprintf(page,sizeof(page),"PAGE %u OF 2",details_page+1);centred(page,174,2,0,true);
     if(details_page==0){text("LAST SEEN",24,230,2,0,true);draw_wrapped(node.last_seen,230,230,25,2,0,false,2);text("ROUTE",24,310,2,0,true);text(node.route,230,310,2);text("POSITION",24,380,2,0,true);draw_wrapped(node.position,230,380,25,2,0,false,2);text("IDENTITY",24,470,2,0,true);text(node.identity,230,470,2);if(node.latitude||node.longitude){box(24,540,492,62);centred("OPEN POSITION ON MAP",561,2,0,true);}}
     else{text("STATUS",24,230,2,0,true);draw_wrapped(node.status,24,264,39,2,0,false,2);text("TELEMETRY / POSITION",24,350,2,0,true);draw_wrapped(node.telemetry,24,384,39,2,0,false,4);text("DISCOVERED PATH",24,530,2,0,true);draw_wrapped(node.path,24,564,39,2,0,false,2);box(24,650,492,70,true);centred(node.request_active?"REQUESTING...":"REQUEST ALL INFO",674,3,0xFF,true);}
-    box(24,748,220,62,details_page==0);text("PREV",82,769,2,details_page==0?0xFF:0,true);box(296,748,220,62,details_page==1);text("NEXT",354,769,2,details_page==1?0xFF:0,true);
-    if(details_page==0){if(node.saved_contact){box(24,828,240,62);centred("CHAT",849,2,0,true);box(276,828,240,62);centred("DELETE",849,2,0,true);}else{box(24,828,492,62,true);centred("ADD CONTACT",849,2,0xFF,true);}}
+    // Keep detail actions clear of the persistent bottom navigation at y=900.
+    box(24,738,220,58,details_page==0);text("PREV",82,757,2,details_page==0?0xFF:0,true);
+    box(296,738,220,58,details_page==1);text("NEXT",354,757,2,details_page==1?0xFF:0,true);
+    if(details_page==0){if(node.saved_contact){box(24,808,240,70);centred("CHAT",832,2,0,true);box(276,808,240,70);centred("DELETE",832,2,0,true);}else{box(24,808,492,70,true);centred("ADD CONTACT",832,2,0xFF,true);}}
 }
 
 static void settings_row(const char* title,const char* subtitle,int y);
@@ -899,13 +901,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::ContactDetails:
             if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
-                if(hit(x,y,24,748,220,62)&&details_page>0){details_page--;draw_screen();refresh(MODE_GL16);return true;}
-                if(hit(x,y,296,748,220,62)&&details_page<1){details_page++;draw_screen();refresh(MODE_GL16);return true;}
+                if(hit(x,y,24,738,220,58)&&details_page>0){details_page--;draw_screen();refresh(MODE_GL16);return true;}
+                if(hit(x,y,296,738,220,58)&&details_page<1){details_page++;draw_screen();refresh(MODE_GL16);return true;}
                 if(details_page==1&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info()?"REQUESTING ALL INFO":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
                 if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,540,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps);return true;}
-                if(details_page==0&&node.saved_contact&&hit(x,y,24,828,240,62)){open_screen(Screen::ContactChat);return true;}
-                if(details_page==0&&node.saved_contact&&hit(x,y,276,828,240,62)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==0&&!node.saved_contact&&hit(x,y,24,828,492,62)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==0&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
+                if(details_page==0&&node.saved_contact&&hit(x,y,276,808,240,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==0&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
             }}break;
         case Screen::Maps:
             if(hit(x,y,478,118,62,62)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
