@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760">
+<rect width="1200" height="760" fill="white"/>
+<g fill="none" stroke="#202020" stroke-width="10" stroke-linecap="round">
+  <path d="M110 340 Q210 150 320 265 Q455 55 610 250 Q720 120 835 275 Q950 150 1080 325" stroke-dasharray="20 18"/>
+</g>
+<g fill="#222">
+  <path d="M70 410 L190 255 245 320 390 115 535 315 650 205 770 350 880 285 1015 410Z"/>
+  <path d="M55 410 L110 325 145 410Z M115 410 L175 295 220 410Z M185 410 L245 315 285 410Z"/>
+  <circle cx="110" cy="340" r="17"/><circle cx="320" cy="265" r="17"/><circle cx="455" cy="150" r="17"/>
+  <circle cx="720" cy="250" r="17"/><circle cx="1080" cy="325" r="17"/>
+</g>
+<g fill="#999"><circle cx="885" cy="160" r="105"/><rect x="770" y="125" width="230" height="18" fill="white"/><rect x="770" y="165" width="230" height="18" fill="white"/><rect x="770" y="205" width="230" height="18" fill="white"/></g>
+<g stroke="#222" stroke-width="9" fill="none"><path d="M1050 330 L1090 185 1130 330 M1065 275 L1115 275 M1073 245 L1107 245"/><path d="M1075 185 Q1090 165 1105 185 M1060 170 Q1090 135 1120 170"/></g>
+<text x="85" y="585" font-family="Arial,Helvetica,sans-serif" font-size="150" font-weight="700" fill="#111">MeshInk</text>
+<g transform="translate(900 455)" fill="#222"><path d="M75 95 C135 20 205 0 245 0 C210 55 160 110 90 130Z"/><path d="M90 128 L210 25" stroke="#fff" stroke-width="7"/><path d="M55 130 H145 L155 205 H40Z"/><rect x="50" y="120" width="100" height="20" rx="8"/></g>
+<text x="300" y="655" font-family="Arial,Helvetica,sans-serif" font-size="34" letter-spacing="12" fill="#222">STAY CONNECTED, FURTHER</text>
+<text x="475" y="715" font-family="Arial,Helvetica,sans-serif" font-size="30" letter-spacing="8" fill="#222">LILYGO T5</text>
+</svg>
