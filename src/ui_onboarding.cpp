@@ -164,6 +164,7 @@ static size_t map_base_bytes=0;
 static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
+static MapRenderResult map_last_result{false,0,0,0,0,0,0};
 struct MapMarkerHit {int16_t x,y;size_t index;};
 static MapMarkerHit map_marker_hits[50]{};
 static size_t map_marker_hit_count=0;
@@ -561,13 +562,15 @@ static void pan_map_by_pixels(int dx,int dy) {
     map_latitude=atan(sinh(PI*(1.0-2.0*y/world)))*180.0/PI;
 }
 static void draw_maps() {
-    MapRenderResult result{true,0,0};
+    MapRenderResult result{true,0,0,0,0,map_zoom,map_zoom};
     if(map_cache_hit()) {
+        result=map_last_result;
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar(); // clock, battery and unread counts are live.
     } else {
         draw_app_header("MAPS");
         result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
+        map_last_result=result;
         // 4 bits per pixel in the high-level EPD framebuffer. A full base
         // snapshot also preserves exact panel row ordering and rotation.
         if(result.sd_ready&&result.tiles) {
@@ -581,6 +584,20 @@ static void draw_maps() {
         }
     }
     draw_map_nodes();
+    // Report real SD tile detail separately from the selected map zoom.
+    // Native tiles show full detail; upscaled parent tiles cannot add detail.
+    if(result.sd_ready) {
+        char detail[48]{};
+        if(!result.tiles)snprintf(detail,sizeof(detail),"NO MAP TILES HERE");
+        else if(result.min_source_zoom==result.max_source_zoom)
+            snprintf(detail,sizeof(detail),"SOURCE Z%u / NATIVE %u/%u",
+                result.min_source_zoom,result.native,result.tiles);
+        else snprintf(detail,sizeof(detail),"SOURCE Z%u-%u / NATIVE %u/%u",
+                result.min_source_zoom,result.max_source_zoom,result.native,result.tiles);
+        const int label_width=min(504,(int)strlen(detail)*12+12);
+        epd_fill_rect({18,774,label_width,30},0xFF,fb);
+        text(detail,22,778,2,0,true);
+    }
     epd_fill_rect({258,500,24,24},0xFF,fb);epd_draw_rect({258,500,24,24},0,fb);line(270,494,270,530);line(252,512,288,512);
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // Vertical zoom rocker. Draw symbols directly so they don't depend on
