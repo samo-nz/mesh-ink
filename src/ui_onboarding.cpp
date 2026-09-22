@@ -157,6 +157,18 @@ static uint8_t details_page=0;
 static double map_latitude=-41.2865,map_longitude=174.7762;
 static uint8_t map_zoom=12;
 static bool map_imperial=false;
+// The background contains only decoded tiles and the map header; markers and
+// controls are applied after copying it, never baked into the cache.
+static uint8_t* map_base_cache=nullptr;
+static size_t map_base_bytes=0;
+static bool map_base_valid=false;
+static double map_base_lat=0,map_base_lon=0;
+static uint8_t map_base_zoom=0;
+static bool map_cache_hit() {
+    return map_base_valid&&map_base_cache&&map_base_zoom==map_zoom&&
+        fabs(map_base_lat-map_latitude)<0.00000001&&fabs(map_base_lon-map_longitude)<0.00000001;
+}
+
 static constexpr uint8_t PRESETS_PER_PAGE = 5;
 
 struct TimezoneChoice { const char* label; const char* detail; const char* rule; };
@@ -472,8 +484,25 @@ static void draw_channels() {
 }
 
 static void draw_maps() {
-    draw_app_header("MAPS");
-    const auto result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
+    MapRenderResult result{true,0,0};
+    if(map_cache_hit()) {
+        memcpy(fb,map_base_cache,map_base_bytes);
+        draw_status_bar(); // clock, battery and unread counts are live.
+    } else {
+        draw_app_header("MAPS");
+        result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
+        // 4 bits per pixel in the high-level EPD framebuffer. A full base
+        // snapshot also preserves exact panel row ordering and rotation.
+        if(result.sd_ready&&result.tiles) {
+            const size_t bytes=(size_t)epd_width()*epd_height()/2;
+            if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+            if(map_base_cache) {
+                memcpy(map_base_cache,fb,bytes);map_base_bytes=bytes;
+                map_base_lat=map_latitude;map_base_lon=map_longitude;map_base_zoom=map_zoom;map_base_valid=true;
+                Serial.printf("[T5-MAP] cached %u bytes (%u tiles)\n",(unsigned)bytes,result.tiles);
+            } else Serial.println("[T5-MAP] PSRAM unavailable; uncached rendering");
+        }
+    }
     epd_fill_rect({258,500,24,24},0xFF,fb);epd_draw_rect({258,500,24,24},0,fb);line(270,494,270,530);line(252,512,288,512);
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // Vertical zoom rocker. Draw symbols directly so they don't depend on
@@ -814,7 +843,17 @@ static void append(char c) {
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
 
-static void open_screen(Screen next) { keyboard_visible=false;keyboard_message_mode=false;screen=next;draw_screen();refresh(MODE_GL16); }
+static void open_screen(Screen next) {
+    keyboard_visible=false;keyboard_message_mode=false;screen=next;
+    if(next==Screen::Maps&&!map_cache_hit()) {
+        // Show a responsive map shell before synchronous SD/PNG decoding.
+        draw_app_header("MAPS");
+        centred("LOADING MAP...",450,3,0,true);
+        draw_bottom_nav(2);
+        refresh(MODE_GL16);
+    }
+    draw_screen();refresh(MODE_GL16);
+}
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
 static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=millis()+110;}
 static void set_keyboard_orientation(bool landscape){
