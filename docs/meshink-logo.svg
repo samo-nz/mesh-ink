@@ -1,18 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760">
-<rect width="1200" height="760" fill="white"/>
-<g fill="none" stroke="#202020" stroke-width="10" stroke-linecap="round">
-  <path d="M110 340 Q210 150 320 265 Q455 55 610 250 Q720 120 835 275 Q950 150 1080 325" stroke-dasharray="20 18"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1024">
+<rect width="1536" height="1024" fill="#fff"/>
+<!-- sun -->
+<defs><clipPath id="sun"><circle cx="1070" cy="275" r="125"/></clipPath></defs>
+<g clip-path="url(#sun)" fill="#999">
+ <rect x="930" y="150" width="280" height="34"/><rect x="930" y="196" width="280" height="34"/>
+ <rect x="930" y="242" width="280" height="34"/><rect x="930" y="288" width="280" height="34"/>
+ <rect x="930" y="334" width="280" height="34"/>
 </g>
-<g fill="#222">
-  <path d="M70 410 L190 255 245 320 390 115 535 315 650 205 770 350 880 285 1015 410Z"/>
-  <path d="M55 410 L110 325 145 410Z M115 410 L175 295 220 410Z M185 410 L245 315 285 410Z"/>
-  <circle cx="110" cy="340" r="17"/><circle cx="320" cy="265" r="17"/><circle cx="455" cy="150" r="17"/>
-  <circle cx="720" cy="250" r="17"/><circle cx="1080" cy="325" r="17"/>
+<!-- mountain range -->
+<g fill="#171717">
+ <path d="M115 596 L165 520 205 545 245 438 285 500 330 420 385 470 445 300 510 390 545 350 610 420 715 210 805 335 845 305 920 410 955 335 1035 430 1100 405 1215 485 1280 465 1390 595Z"/>
+ <path d="M405 430 l40-130 22 70 20-38 35 78-38-22-25 45-18-40z" fill="#fff"/>
+ <path d="M680 285 l35-75 30 78 18-32 48 84-58-35-25 50-23-54z" fill="#fff"/>
+ <path d="M935 375 l20-40 28 55 18-20 30 58-42-28-18 30z" fill="#fff"/>
 </g>
-<g fill="#999"><circle cx="885" cy="160" r="105"/><rect x="770" y="125" width="230" height="18" fill="white"/><rect x="770" y="165" width="230" height="18" fill="white"/><rect x="770" y="205" width="230" height="18" fill="white"/></g>
-<g stroke="#222" stroke-width="9" fill="none"><path d="M1050 330 L1090 185 1130 330 M1065 275 L1115 275 M1073 245 L1107 245"/><path d="M1075 185 Q1090 165 1105 185 M1060 170 Q1090 135 1120 170"/></g>
-<text x="85" y="585" font-family="Arial,Helvetica,sans-serif" font-size="150" font-weight="700" fill="#111">MeshInk</text>
-<g transform="translate(900 455)" fill="#222"><path d="M75 95 C135 20 205 0 245 0 C210 55 160 110 90 130Z"/><path d="M90 128 L210 25" stroke="#fff" stroke-width="7"/><path d="M55 130 H145 L155 205 H40Z"/><rect x="50" y="120" width="100" height="20" rx="8"/></g>
-<text x="300" y="655" font-family="Arial,Helvetica,sans-serif" font-size="34" letter-spacing="12" fill="#222">STAY CONNECTED, FURTHER</text>
-<text x="475" y="715" font-family="Arial,Helvetica,sans-serif" font-size="30" letter-spacing="8" fill="#222">LILYGO T5</text>
+<!-- forest -->
+<g fill="#111">
+ <path d="M115 596h680l-105-35-70-8-60-30-70 10-55-28-60 20-80-20-75 20-65-5z"/>
+ <g id="pine"><path d="M0 0l-24 48h15l-22 36h20l-25 43h72L11 84h20L9 48h15z"/></g>
+ <use href="#pine" x="170" y="455"/><use href="#pine" x="245" y="405"/><use href="#pine" x="330" y="430"/>
+ <use href="#pine" x="410" y="420"/><use href="#pine" x="500" y="455"/><use href="#pine" x="570" y="445"/>
+</g>
+<!-- lake/valley -->
+<path d="M620 548 C760 535 860 542 955 560 C850 565 760 575 680 590 C820 588 920 594 1010 604 L610 604Z" fill="#fff"/>
+<!-- radio hill -->
+<path d="M950 596 Q1090 500 1215 485 Q1310 505 1400 595Z" fill="#171717"/>
+<path d="M1030 590l45-48 25 8 35-45 28 12 35-34" stroke="#666" stroke-width="10" fill="none"/>
+<!-- mesh arcs -->
+<g fill="none" stroke="#111" stroke-width="7" stroke-linecap="round" stroke-dasharray="16 15">
+ <path d="M245 438 Q330 245 445 300"/><path d="M445 300 Q555 85 715 210"/>
+ <path d="M715 210 Q840 100 955 335"/><path d="M955 335 Q1120 250 1215 485"/>
+ <path d="M245 438 Q180 345 125 470"/><path d="M820 500 Q920 600 1010 550"/><path d="M1010 550 Q1115 450 1215 485"/>
+</g>
+<g fill="#171717" stroke="#fff" stroke-width="5">
+ <circle cx="125" cy="470" r="16"/><circle cx="245" cy="438" r="16"/><circle cx="445" cy="300" r="16"/>
+ <circle cx="715" cy="210" r="16"/><circle cx="955" cy="335" r="16"/><circle cx="1010" cy="550" r="16"/><circle cx="1215" cy="485" r="16"/>
+</g>
+<!-- tower -->
+<g stroke="#111" stroke-width="8" fill="none">
+ <path d="M1285 478 L1310 330 1335 478 M1295 420h30M1300 385h20M1304 350h12"/>
+ <circle cx="1310" cy="330" r="12" fill="#111"/>
+ <path d="M1285 315 Q1260 340 1285 365 M1270 300 Q1230 340 1270 380 M1335 315 Q1360 340 1335 365 M1350 300 Q1390 340 1350 380"/>
+</g>
+<!-- wordmark -->
+<text x="185" y="790" font-family="Arial,Helvetica,sans-serif" font-size="205" font-weight="800" letter-spacing="-12" fill="#111">MeshInk</text>
+<!-- correctly placed quill and ink pot, to the right of the wordmark -->
+<g transform="translate(1200 610)" fill="#111">
+ <path d="M65 105 C110 10 190 -45 255 -60 C225 10 180 75 105 125 C150 95 190 60 220 25 C175 45 135 75 95 115Z"/>
+ <path d="M92 115 L218 -20" stroke="#fff" stroke-width="7"/>
+ <path d="M25 150 Q75 135 125 150 L138 218 Q80 230 12 218Z"/>
+ <rect x="18" y="137" width="116" height="20" rx="8"/>
+ <ellipse cx="75" cy="222" rx="82" ry="8"/>
+</g>
+<text x="330" y="855" font-family="Arial,Helvetica,sans-serif" font-size="34" letter-spacing="14" fill="#111">STAY CONNECTED, FURTHER</text>
+<path d="M500 914h92M945 914h92" stroke="#111" stroke-width="4"/>
+<text x="630" y="925" font-family="Arial,Helvetica,sans-serif" font-size="32" letter-spacing="10" fill="#111">LILYGO T5</text>
 </svg>
