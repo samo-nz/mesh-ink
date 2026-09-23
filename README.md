@@ -134,7 +134,31 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
 
-### GPS status and power behaviour (v1.4.7 pre-release)
+### GPS status and receiver tuning (v1.4.8 experimental pre-release)
+
+The GPS status icon is shown in normal and standby views, but the satellite
+count is displayed **only while awake and with a GPS fix**. No cached count
+appears in standby or while searching.
+
+The on-device **GPS POWER SAVING** screen provides two independent, opt-in
+L76K configuration settings. **CONSTELLATIONS** cycles from the existing
+receiver setting (untouched) through GPS-only, GPS+GLONASS, GPS+BeiDou, and
+GPS+BeiDou+GLONASS. GPS-only may reduce receiver workload but can make
+acquisition less reliable; select a multi-constellation mode if necessary.
+**NMEA SENTENCES** toggles full standard output versus compact GGA+RMC
+at the existing 1 Hz positioning rate. Compact mode reduces UART traffic
+and ESP32 parsing, but receiver battery-current savings are unverified.
+
+The settings are stored locally and applied only to the 9600-baud L76K
+target (not the MIA-M10Q receiver); no PCAS sleep commands or shared power
+rail switches are used. The initial setting is unchanged to preserve the
+working GPS configuration until users explicitly select a tuning mode.
+When testing, leave GPS in continuous mode and compare satellite acquisition,
+fix stability, UART bytes, and actual current if a meter is available.
+The **UNCHANGED** choice means no constellation override is sent; after
+selecting a mode, pick GPS+GLONASS to restore LilyGO's reference combination.
+
+
 
 The GPS status bar displays a thicker OFF/searching/fixed icon and a
 satellite count while GPS is enabled. Satellite count display updates
