@@ -645,6 +645,8 @@ static void draw_maps() {
     // unsupported font glyphs.
     box(484,130,44,44,true);line(495,152,517,152,0xFF);line(506,141,506,163,0xFF);line(495,151,517,151,0xFF);line(505,141,505,163,0xFF);
     box(484,184,44,44,true);line(495,206,517,206,0xFF);line(495,205,517,205,0xFF);
+    // Locate button: centre the map on this device's latest valid GPS fix.
+    box(484,238,44,44,true);draw_target_icon(491,245,!status_gps_fix);
     const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
     char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
     epd_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
@@ -798,7 +800,7 @@ static void draw_display_settings() {
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?758:674;
     if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
     box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
-    centred("SHORT BOOT: CLEAN DISPLAY",856,2,0,true);
+    centred("SHORT BOOT: HOME",856,2,0,true);
     centred("HOLD BOOT: STANDBY",882,2,0,true);
 }
 
@@ -1175,6 +1177,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             if(hit(x,y,478,118,62,62)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,478,174,62,70)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,478,232,62,62)){
+                if(status_gps_fix){
+                    map_latitude=status_gps_latitude/1000000.0;
+                    map_longitude=status_gps_longitude/1000000.0;
+                    map_base_valid=false;
+                    show_toast("CENTRED ON DEVICE");
+                }else show_toast("WAITING FOR GPS FIX");
+                draw_screen();refresh(MODE_GL16);return true;
+            }
             break;
         case Screen::Discovery:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
@@ -1323,7 +1334,14 @@ static void service_boot_button(){
     static uint32_t pressed_at=0;static bool handled=false;const bool pressed=digitalRead(BOOT_BUTTON)==LOW;
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
-    if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){draw_screen();fast_full_redraw("SHORT_BOOT",false);}pressed_at=0;handled=false;}
+    if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){
+        // Short BOOT is Home, not merely a display refresh. Clear transient
+        // navigation/input state so a later status refresh cannot restore the old tab.
+        keyboard_visible=false;keyboard_message_mode=false;keyboard_landscape=false;
+        details_page=0;details_from_discovery=false;chat_page=0;
+        screen=setup_complete?Screen::Contacts:Screen::Welcome;
+        draw_screen();fast_full_redraw("SHORT_BOOT_HOME",false);
+    }pressed_at=0;handled=false;}
 }
 
 void ui_setup() {
@@ -1378,7 +1396,7 @@ void ui_loop() {
         if(tap.home){if(!keyboard_visible&&!keyboard_landscape){details_page=0;open_screen(Screen::Contacts);}continue;}
         if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
            tap.y>=118&&tap.y<900&&tap.x>=0&&tap.x<540&&
-           !(tap.x>=478&&tap.y<244)) {
+           !(tap.x>=478&&tap.y<294)) {
             pan_map_by_pixels(tap.dx,tap.dy);
             open_screen(Screen::Maps);
             continue;
