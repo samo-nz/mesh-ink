@@ -1,0 +1,79 @@
+name: Deploy MeshInk web flasher
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'tools/check_web_flasher.py'
+      - '.github/workflows/web-flasher-pages.yml'
+  workflow_run:
+    workflows: ['MeshInk build and release']
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: meshink-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # A release build must pass before its matching binaries are published.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare static site from the latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/vendor dist/assets
+          cp web/index.html web/style.css web/flasher.js dist/
+          touch dist/.nojekyll
+          TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          test -n "$TAG"
+          VERSION="${TAG#v}"
+          test "$TAG" = "v$VERSION"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "meshink-$VERSION-update.bin" \
+            --pattern "meshink-$VERSION-full-wipe.bin" \
+            --pattern "SHA256SUMS.txt" \
+            --dir dist/assets
+          (
+            cd dist/assets
+            sha256sum -c SHA256SUMS.txt
+            test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
+            test "$(stat -c%s "meshink-$VERSION-update.bin")" -lt 16711680
+          )
+          # Pin and self-host the browser flasher: no third-party network
+          # requests are required by visitors to the deployed GitHub site.
+          curl --fail --location --show-error --silent \
+            https://unpkg.com/esptool-js@0.6.0/bundle.js \
+            --output dist/vendor/esptool-js.js
+          test -s dist/vendor/esptool-js.js
+          python tools/check_web_flasher.py --build dist --version "$VERSION"
+          echo "Published MeshInk $VERSION, app-only update and 16MB full-wipe images"
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v4

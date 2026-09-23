@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101b24">
+  <title>MeshInk · Web Flasher</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./flasher.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <div class="brand-icon" aria-hidden="true">M</div>
+      <div><p class="eyebrow">LILYGO T5 E-PAPER S3 PRO · ESP32-S3</p><h1>MeshInk <span>Web Flasher</span></h1></div>
+    </header>
+    <p class="intro">Install MeshInk directly from your computer using a USB data cable. Choose an update to keep your existing node identity, radio presets, contacts and messages—or explicitly choose a fresh installation.</p>
+    <div class="status-line" id="site-status" role="status">Checking the latest GitHub release…</div>
+    <section class="panel" aria-labelledby="flash-heading">
+      <h2 id="flash-heading">Choose how to flash</h2>
+      <div class="choices" role="radiogroup" aria-label="Flashing mode">
+        <label class="option" id="update-choice">
+          <input type="radio" name="mode" value="update" checked>
+          <span><strong>Update MeshInk</strong><small>Recommended for an existing MeshInk installation. Writes only the app at <code>0x10000</code>. Existing settings and messages are not intentionally erased.</small></span>
+        </label>
+        <label class="option destructive" id="wipe-choice">
+          <input type="radio" name="mode" value="wipe">
+          <span><strong>Fresh installation · FULL WIPE</strong><small>For a new board or an intentional factory reset. Erases ALL 16 MB of flash, including node identity, presets, contacts, messages and stored data.</small></span>
+        </label>
+      </div>
+      <div id="wipe-confirm" class="wipe-confirm" hidden>
+        <label for="wipe-word">To unlock a full wipe, type <strong>ERASE</strong>:</label>
+        <input id="wipe-word" type="text" autocomplete="off" spellcheck="false" placeholder="Type ERASE" maxlength="5">
+        <p class="warning">This cannot be undone. Make a backup of anything you need to keep before proceeding.</p>
+      </div>
+      <div class="actions">
+        <button id="flash-button" type="button" disabled>Loading firmware…</button>
+        <span id="flash-detail">No firmware downloaded or device connected yet.</span>
+      </div>
+      <progress id="progress" max="100" value="0" hidden aria-label="Flashing progress"></progress>
+      <p id="progress-label" aria-live="polite"></p>
+    </section>
+    <section class="panel" aria-labelledby="prepare-heading">
+      <h2 id="prepare-heading">Before connecting</h2>
+      <ol>
+        <li>Use desktop <strong>Chrome or Edge</strong> on a computer with Web Serial support. Close PlatformIO Serial Monitor and any other app using the board's USB port.</li>
+        <li>Connect the T5 with a <strong>data-capable USB cable</strong>. Choose the T5 USB serial port when prompted.</li>
+        <li>If the flasher cannot connect, hold <strong>BOOT</strong>, briefly press <strong>RESET</strong>, then release BOOT and try again.</li>
+        <li>Keep USB connected until flashing completes. Press RESET if the board does not restart automatically.</li>
+      </ol>
+      <p>Update is intended for boards already running MeshInk with its existing partition layout. For a blank board or a different firmware/partition layout, choose Fresh installation, which erases stored data.</p>
+    </section>
+    <section class="panel" aria-labelledby="log-heading">
+      <h2 id="log-heading">Flashing status</h2>
+      <pre id="log" role="log" aria-live="polite">Waiting for the latest firmware…</pre>
+    </section>
+    <footer>Open-source firmware and release checksums on <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">GitHub</a>. <a href="https://github.com/samo-nz/mesh-ink/releases/latest" target="_blank" rel="noopener noreferrer">Download release binaries</a> · <a href="https://github.com/samo-nz/mesh-ink#installing" target="_blank" rel="noopener noreferrer">Command-line flashing</a></footer>
+  </main>
+</body>
+</html>
