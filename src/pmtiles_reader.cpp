@@ -108,9 +108,24 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     if (!output_size || output_size > MAX_DIRECTORY_BYTES) return false;
     output = (uint8_t*)map_alloc(output_size);
     if (!output) return false;
-    const size_t actual = tinfl_decompress_mem_to_mem(
-        output, output_size, in + pos, in_size - 8 - pos, 0);
-    if (actual != output_size ||
+    // tinfl_decompress_mem_to_mem() creates an ~8 KiB decompressor on
+    // loopTask's stack and trips the ESP32-S3 stack canary. Place its
+    // scratch state in PSRAM instead and call the low-level API directly.
+    tinfl_decompressor* decoder =
+        (tinfl_decompressor*)map_alloc(sizeof(tinfl_decompressor));
+    if (!decoder) {
+        free(output);
+        output = nullptr;
+        return false;
+    }
+    tinfl_init(decoder);
+    size_t input_length = in_size - 8 - pos;
+    size_t actual = output_size;
+    const tinfl_status status = tinfl_decompress(
+        decoder, in + pos, &input_length, output, output, &actual,
+        TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    free(decoder);
+    if (status != TINFL_STATUS_DONE || actual != output_size ||
         (uint32_t)mz_crc32(MZ_CRC32_INIT, output, actual) !=
             little32(in + in_size - 8)) {
         free(output);
