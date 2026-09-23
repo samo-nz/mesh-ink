@@ -126,7 +126,13 @@ static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
 static uint32_t gps_sleep_requested_at = 0;
 static uint32_t gps_sleep_bytes_after = 0;
+static uint32_t gps_sleep_window_bytes = 0;
+static uint32_t gps_sleep_last_report = 0;
 static uint32_t gps_wake_requested_at = 0;
+static uint32_t gps_wake_started_at = 0;
+static uint32_t gps_wake_previous_stamp = 0;
+static bool gps_wake_logged_nmea = false;
+static bool gps_wake_logged_fix = false;
 static void t5_power_diagnostics_tick();
 static void t5_power_diagnostics_report(const char* reason);
 
@@ -143,10 +149,12 @@ static void gps_wake_command() {
     // L76K exits PMTK standby on any UART activity. Do not send an
     // unverified binary command to an unknown/u-blox receiver.
     if (detected_gps_module == GpsModule::L76K) {
+        gps_wake_requested_at=gps_wake_started_at=millis();
+        gps_wake_logged_nmea=gps_wake_logged_fix=false;
+        gps_sleep_requested_at=0;
         Serial1.write((uint8_t)'\r'); Serial1.write((uint8_t)'\n'); Serial1.flush();
         delay(120);
-        gps_wake_requested_at=millis();
-        T5_TRACE("gps probe: L76K wake bytes sent; watching for NMEA resume\n");
+        T5_TRACE("gps probe: L76K wake bytes sent; watching for fresh NMEA and GPS fix\n");
     }
     gps_command_sleeping = false;
 }
@@ -154,11 +162,16 @@ static void gps_wake_command() {
 static void gps_sleep_command() {
     if (gps_command_sleeping) return;
     if (detected_gps_module == GpsModule::L76K) {
-        // PMTK161 standby retains data for a fast warm start.
+        // PMTK161 support on this L76K board is UNVERIFIED: probe UART
+        // traffic while the provider is stopped, and never claim electrical sleep.
+        // Discard any already-buffered bytes before starting the off-state probe.
+        while (Serial1.available() > 0) Serial1.read();
         Serial1.print("$PMTK161,0*28\r\n"); Serial1.flush();
         gps_command_sleeping = true;
-        gps_sleep_requested_at=millis();gps_sleep_bytes_after=0;
-        T5_TRACE("gps probe: PMTK161 standby requested; this is EXPERIMENTAL on L76K, watching UART to verify actual sleep\n");
+        gps_sleep_requested_at=gps_sleep_last_report=millis();
+        gps_sleep_bytes_after=gps_sleep_window_bytes=0;
+        gps_wake_started_at=gps_wake_requested_at=0;
+        T5_TRACE("gps probe: PMTK161 standby requested (EXPERIMENTAL on L76K); monitoring UART while provider is OFF\n");
     } else {
         T5_TRACE("gps power: sleep skipped module=%s (radio/GPS rail is shared)\n", gps_module_name());
     }
@@ -226,8 +239,11 @@ class T5GPS : public MicroNMEALocationProvider {
     uint32_t next_baud_retry = 0;
 public:
     T5GPS() : MicroNMEALocationProvider(gps_stream, &rtc_clock) {}
+    bool isActive() const { return active; }
     void begin() override {
         Serial1.updateBaudRate(detected_gps_baud);
+        gps_wake_previous_stamp=(uint32_t)getTimestamp();
+        gps_stream.clearValidation();
         gps_wake_command();
         MicroNMEALocationProvider::begin();
         active = true;
@@ -246,19 +262,11 @@ public:
         const int pending = Serial1.available();
         if (pending > 0) {
             gps_last_byte_at = millis();
-            if(gps_command_sleeping)gps_sleep_bytes_after+=(uint32_t)pending;
             if(gps_wake_requested_at){
-                T5_TRACE("gps probe: UART resumed %lums after wake request (%d bytes pending)\n",
+                T5_TRACE("gps probe: first UART bytes %lums after wake request (%d pending)\n",
                     (unsigned long)(millis()-gps_wake_requested_at),pending);
                 gps_wake_requested_at=0;
             }
-        }
-        static uint32_t last_power_probe=0;
-        if(gps_command_sleeping&&gps_sleep_requested_at&&millis()-last_power_probe>=5000){
-            last_power_probe=millis();
-            T5_TRACE("gps probe: %lums after sleep request, UART bytes observed=%lu, pending=%d; %s\n",
-                (unsigned long)(millis()-gps_sleep_requested_at),(unsigned long)gps_sleep_bytes_after,pending,
-                gps_sleep_bytes_after?"receiver still talking (not asleep)":"UART quiet (sleep plausible, not electrical proof)");
         }
 #endif
         // MeshCore's provider may call RTCClock::setCurrentTime whenever it sees
@@ -281,6 +289,19 @@ public:
             }
         }
         MicroNMEALocationProvider::loop();
+#if T5_DIAGNOSTICS
+        if (gps_wake_started_at && !gps_wake_logged_nmea && gps_stream.hasValidSentence()) {
+            gps_wake_logged_nmea=true;
+            T5_TRACE("gps probe: first checksum-valid NMEA %lums after wake request\n",
+                (unsigned long)(millis()-gps_wake_started_at));
+        }
+        if (gps_wake_started_at && !gps_wake_logged_fix && isValid() &&
+            (uint32_t)getTimestamp()!=gps_wake_previous_stamp) {
+            gps_wake_logged_fix=true;
+            T5_TRACE("gps probe: first fresh GPS fix %lums after wake request (sats=%ld)\n",
+                (unsigned long)(millis()-gps_wake_started_at),(long)satellitesCount());
+        }
+#endif
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
             gps_baud_locked = true;
             detected_gps_baud = Serial1.baudRate();
@@ -316,6 +337,31 @@ public:
 };
 static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
+
+// Run independently of T5GPS::loop(): MeshCore stops calling the provider
+// when GPS is OFF. Consume UART bytes ONLY while the provider is inactive,
+// so we can distinguish a quiet receiver from a stopped parser.
+void t5_gps_power_probe_tick(){
+#if T5_DIAGNOSTICS
+    if(gps.isActive()||!gps_sleep_requested_at)return;
+    const uint32_t now=millis();
+    uint32_t drained=0;
+    while(Serial1.available()>0 && drained<512){Serial1.read();++drained;}
+    // Ignore the first second (bytes already in flight after the stop request).
+    if(now-gps_sleep_requested_at>=1000){
+        gps_sleep_bytes_after+=drained;
+        gps_sleep_window_bytes+=drained;
+    }
+    if(now-gps_sleep_last_report>=5000){
+        gps_sleep_last_report=now;
+        T5_TRACE("gps probe: OFF +%lus UART bytes last ~5s=%lu total after 1s=%lu (%s; current draw NOT measured)\n",
+            (unsigned long)((now-gps_sleep_requested_at)/1000),
+            (unsigned long)gps_sleep_window_bytes,(unsigned long)gps_sleep_bytes_after,
+            gps_sleep_window_bytes?"receiver still emits UART":"UART quiet");
+        gps_sleep_window_bytes=0;
+    }
+#endif
+}
 
 // BQ27220 on the shared I2C bus. Standard telemetry is read-only. The
 // profile audit selects data-memory addresses for READING only; it never
