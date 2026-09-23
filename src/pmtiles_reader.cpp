@@ -67,9 +67,22 @@ void clear_directory(Directory& d) {
 bool within(uint64_t start, uint64_t length, uint64_t total) {
     return start <= total && length <= total - start;
 }
+// SD's SPI read path may require DMA-capable internal RAM. Reading a
+// multi-kilobyte directory straight into a PSRAM allocation can overwrite
+// neighbouring PSRAM heap metadata on some ESP32-S3/SD combinations.
+// Stage small reads in internal DRAM, then copy the exact byte count.
 bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
-    return start <= UINT32_MAX && file.seek((uint32_t)start) &&
-           file.read(dst, n) == n;
+    if (!dst || start > UINT32_MAX || !file.seek((uint32_t)start))
+        return false;
+    alignas(4) static uint8_t stage[256];
+    while (n) {
+        const size_t chunk = n < sizeof(stage) ? n : sizeof(stage);
+        if (file.read(stage, chunk) != chunk) return false;
+        memcpy(dst, stage, chunk);
+        dst += chunk;
+        n -= chunk;
+    }
+    return true;
 }
 bool read_varint(const uint8_t*& cursor, const uint8_t* end, uint64_t& out) {
     out = 0;
