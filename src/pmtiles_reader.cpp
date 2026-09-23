@@ -14,6 +14,16 @@ namespace {
 constexpr size_t MAX_DIRECTORY_BYTES = 512 * 1024;
 constexpr uint32_t MAX_ROOT_BYTES = 16384;
 constexpr uint32_t MAX_DIRECTORY_HOPS = 4;
+// Temporary diagnostics for on-device PMTiles crash investigation.
+// Check immediately after SD reads and gzip decoding, before later frees
+// can obscure the operation that first damaged the heap.
+void pmtiles_heap_check(const char* stage) {
+    if (!heap_caps_check_integrity_all(false)) {
+        Serial.printf("[T5-PMT] HEAP DAMAGED after %s\\n", stage);
+        heap_caps_check_integrity_all(true);
+        abort();
+    }
+}
 struct Entry {
     uint64_t id;
     uint64_t offset;
@@ -124,6 +134,7 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     const tinfl_status status = tinfl_decompress(
         decoder, in + pos, &input_length, output, output, &actual,
         TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    pmtiles_heap_check("gzip inflate (before decoder free)");
     free(decoder);
     if (status != TINFL_STATUS_DONE || actual != output_size ||
         (uint32_t)mz_crc32(MZ_CRC32_INIT, output, actual) !=
@@ -145,6 +156,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
         free(compressed);
         return false;
     }
+    pmtiles_heap_check("directory SD read");
     uint8_t* decoded = compressed;
     size_t decoded_size = (size_t)size;
     if (archive.compression == 2) {
@@ -154,6 +166,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
             return false;
         }
         free(compressed);
+        pmtiles_heap_check("gzip directory decompression");
     }
     const uint8_t* cur = decoded;
     const uint8_t* end = decoded + decoded_size;
@@ -196,6 +209,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
             previous_end = offset + entries[i].length;
         }
     }
+    pmtiles_heap_check("directory varint parsing");
     free(decoded);
     if (!ok) { free(entries); return false; }
     output.entries = entries;
@@ -234,6 +248,9 @@ bool prepare(File& file, const char* path) {
         !within(archive.leaf_offset, archive.leaf_length, archive.file_size) ||
         !within(archive.tile_offset, archive.tile_length, archive.file_size))
         return false;
+    Serial.printf("[T5-PMT] open %s root=%llu bytes compression=%u\\n",
+                  path, (unsigned long long)archive.root_length,
+                  (unsigned)archive.compression);
     archive.supported = parse_directory(file, archive.root_offset,
                                         archive.root_length, root);
     return archive.supported;
@@ -302,6 +319,9 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             clear_directory(leaf);
             cached_leaf_offset = entry->offset;
             cached_leaf_length = entry->length;
+            Serial.printf("[T5-PMT] leaf for z=%d x=%d y=%d offset=%llu length=%u\\n",
+                          zoom, x, y, (unsigned long long)entry->offset,
+                          (unsigned)entry->length);
             if (!parse_directory(file, archive.leaf_offset + entry->offset,
                                  entry->length, leaf)) break;
         }
