@@ -30,10 +30,15 @@
       </div>
       <div class="actions">
         <button id="flash-button" type="button" disabled>Loading firmware…</button>
+        <button id="restart-button" type="button" hidden disabled>Restart device</button>
         <span id="flash-detail">No firmware downloaded or device connected yet.</span>
       </div>
       <progress id="progress" max="100" value="0" hidden aria-label="Flashing progress"></progress>
       <p id="progress-label" aria-live="polite"></p>
+      <div class="live-status" aria-labelledby="log-heading">
+        <h3 id="log-heading">Live flashing status</h3>
+        <pre id="log" role="log" aria-live="polite">Waiting for the latest firmware…</pre>
+      </div>
     </section>
     <section class="panel" aria-labelledby="prepare-heading">
       <h2 id="prepare-heading">Before connecting</h2>
@@ -44,10 +49,6 @@
         <li>Keep USB connected until flashing completes. Press RESET if the board does not restart automatically.</li>
       </ol>
       <p>Installing for the first time resets any data already on the device. Updating is for devices that already have MeshInk installed.</p>
-    </section>
-    <section class="panel" aria-labelledby="log-heading">
-      <h2 id="log-heading">Flashing status</h2>
-      <pre id="log" role="log" aria-live="polite">Waiting for the latest firmware…</pre>
     </section>
     <footer>Open-source firmware and release checksums on <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">GitHub</a>. <a href="https://github.com/samo-nz/mesh-ink/releases/latest" target="_blank" rel="noopener noreferrer">Download release binaries</a> · <a href="https://github.com/samo-nz/mesh-ink#installing" target="_blank" rel="noopener noreferrer">Command-line flashing</a></footer>
   </main>

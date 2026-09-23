@@ -5,6 +5,7 @@ const FULL_WIPE_ADDRESS = 0x0;
 const FULL_WIPE_SIZE = 16 * 1024 * 1024;
 const $ = (id) => document.getElementById(id);
 const button = $("flash-button");
+const restartButton = $("restart-button");
 const detail = $("flash-detail");
 const progress = $("progress");
 const progressLabel = $("progress-label");
@@ -13,6 +14,8 @@ const siteStatus = $("site-status");
 const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
 let manifest = null;
 let busy = false;
+let flashingCompleted = false;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function log(message) {
   logArea.textContent += "\n" + message;
@@ -25,12 +28,19 @@ function ready() {
   if (!manifest || busy || !navigator.serial || !window.isSecureContext) return false;
   return true;
 }
+function setActivity(message) {
+  siteStatus.textContent = message;
+  progressLabel.textContent = message;
+  log(message);
+}
 function updateControls() {
   const wipe = selectedMode() === "wipe";
   button.classList.toggle("wipe", wipe);
   button.textContent = busy ? "Flashing — do not disconnect" :
     !manifest ? "Loading firmware…" : wipe ? "Install MeshInk" : "Update MeshInk";
   button.disabled = !ready();
+  restartButton.hidden = !flashingCompleted;
+  restartButton.disabled = busy || !navigator.serial || !window.isSecureContext;
   for (const input of modeInputs) input.disabled = busy;
   detail.textContent = !navigator.serial || !window.isSecureContext ?
     "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
@@ -81,6 +91,58 @@ async function loadLatest() {
   updateControls();
 }
 
+// esptool-js 0.6.0's after("hard_reset") only releases RTS.
+ // An explicit LOW/HIGH EN pulse provides a real hardware reset request.
+async function pulseReset(transport) {
+  await transport.setDTR(false); // release BOOT/IO0 before starting firmware
+  await transport.setRTS(false);
+  await sleep(70);
+  await transport.setRTS(true);  // assert EN reset
+  await sleep(160);
+  await transport.setRTS(false); // release EN reset
+  await sleep(200);
+}
+async function resetWithRetry(transport) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      log(`Sending reset pulse ${attempt}/2…`);
+      await pulseReset(transport);
+      log("Reset pulse sent. The board should restart shortly.");
+      return true;
+    } catch (error) {
+      log(`Reset attempt ${attempt} could not finish: ${error.message || String(error)}`);
+      // Native USB may disconnect when the board reboots. Never treat
+      // loss of its serial port as a firmware-flashing failure.
+      if (attempt === 1) await sleep(300);
+    }
+  }
+  return false;
+}
+
+async function restartBoard() {
+  if (busy || !flashingCompleted) return;
+  busy = true;
+  updateControls();
+  let resetTransport = null;
+  try {
+    setActivity("Choose your T5 USB port to retry the restart…");
+    const port = await navigator.serial.requestPort();
+    resetTransport = new Transport(port, false);
+    await resetTransport.connect(115200);
+    const sent = await resetWithRetry(resetTransport);
+    if (sent) setActivity("Restart pulse sent. If needed, press RESET on the T5.");
+    else setActivity("Automatic restart unavailable. Press the RESET button on the T5.");
+  } catch (error) {
+    setActivity(`Restart not available: ${error.message || String(error)}. Press RESET on the T5.`);
+  } finally {
+    if (resetTransport) {
+      try { await resetTransport.disconnect(); } catch { /* USB can detach when rebooting */ }
+    }
+    busy = false;
+    updateControls();
+  }
+}
+
 async function flash() {
   if (!ready()) return;
   const mode = selectedMode();
@@ -90,19 +152,23 @@ async function flash() {
     "Install MeshInk for the first time? This will reset any existing data on the device."
   )) return;
   busy = true;
+  flashingCompleted = false;
+  progress.hidden = false;
+  progress.removeAttribute("value"); // show indeterminate activity while downloading/checking
+  setActivity("Downloading firmware…");
   updateControls();
   let transport = null;
   let completed = false;
   try {
-    log(`Preparing MeshInk v${activeManifest.version} ${wipe ? "FULL WIPE" : "UPDATE"}…`);
+    setActivity(`Preparing MeshInk v${activeManifest.version} ${wipe ? "install" : "update"}…`);
     const item = activeManifest.files[mode];
     const response = await fetch(`./assets/${item.name}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`Firmware download failed (HTTP ${response.status}).`);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.length !== item.size) throw new Error("Firmware size mismatch; nothing was flashed.");
-    log("Checking firmware SHA-256 before opening the serial port…");
+    setActivity("Checking firmware checksum…");
     if (await sha256(bytes) !== item.sha256) throw new Error("Firmware checksum mismatch; nothing was flashed.");
-    log("Firmware checksum verified. Choose the T5 USB serial port.");
+    setActivity("Firmware verified. Choose the T5 USB serial port…");
     const port = await navigator.serial.requestPort();
     transport = new Transport(port, false);
     const loader = new ESPLoader({
@@ -110,11 +176,10 @@ async function flash() {
       terminal: { clean() {}, write(message) { log(message); }, writeLine(message) { log(message); } }
     });
     const chip = String(await loader.main());
-    log(`Connected to ${chip}.`);
+    setActivity(`Connected to ${chip}. Starting flash…`);
     if (!/ESP32-S3/i.test(chip)) throw new Error("This image is only for ESP32-S3. No flash was written.");
-    progress.hidden = false;
     progress.value = 0;
-    progressLabel.textContent = "0%";
+    progressLabel.textContent = "Writing firmware: 0%";
     log(wipe ? "Erasing entire flash, then writing 16 MB image at 0x0…" :
                "Writing application at 0x10000 with eraseAll=false; NVS and message storage are left alone.");
     await loader.writeFlash({
@@ -127,20 +192,25 @@ async function flash() {
       reportProgress: (_index, written, total) => {
         const percent = total ? Math.min(100, Math.floor(written * 100 / total)) : 0;
         progress.value = percent;
-        progressLabel.textContent = `${percent}% written`;
+        progressLabel.textContent = `Writing firmware: ${percent}%`;
       }
     });
     completed = true;
+    flashingCompleted = true;
     progress.value = 100;
-    progressLabel.textContent = "100% · flashing complete";
-    log("Flashing completed. Attempting to restart the T5…");
-    try { await loader.after("hard_reset"); }
-    catch (error) { log(`Automatic reset was unavailable: ${error.message}. Press RESET on the T5.`); }
-    siteStatus.textContent = `MeshInk v${activeManifest.version} flashed successfully`;
-    log("SUCCESS. If the T5 does not restart, press RESET.");
+    setActivity("Firmware written successfully. Restarting the T5…");
+    const sent = await resetWithRetry(transport);
+    siteStatus.textContent = sent ?
+      `MeshInk v${activeManifest.version} flashed · reset pulse sent` :
+      `MeshInk v${activeManifest.version} flashed · press RESET to restart`;
+    progressLabel.textContent = "100% · firmware flashed";
+    log(sent ?
+      "If the T5 does not restart, click Restart device below or press RESET on the T5." :
+      "Automatic restart was not confirmed. Click Restart device below or press RESET on the T5.");
   } catch (error) {
     if (!completed) {
       siteStatus.textContent = "Flashing did not complete";
+      progressLabel.textContent = "Flashing did not complete";
       log(`ERROR: ${error.message || String(error)}`);
       if (error.name === "NotFoundError") log("No serial port selected; no flash operation started.");
       log("If an update was interrupted during writing, do not assume the firmware is bootable. Reconnect and retry.");
@@ -156,5 +226,6 @@ async function flash() {
 }
 
 button.addEventListener("click", flash);
+restartButton.addEventListener("click", restartBoard);
 updateControls();
 loadLatest();

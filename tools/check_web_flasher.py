@@ -33,6 +33,21 @@ require('await sha256(bytes) !== item.sha256' in js, "checksum gate before USB f
 require('new Uint8Array(await response.arrayBuffer())' in js, "typed binary data")
 require('siteStatus.textContent' in js and 'aria-live' in html, "user-visible flash status")
 require('background:' in css, "flasher stylesheet exists")
+require('id="restart-button"' in html, "manual retry restart button present")
+require(html.index('id="log"') < html.index('id="prepare-heading"'),
+        "live flashing log appears above preparation guide")
+require('async function pulseReset(transport)' in js, "explicit EN reset pulse helper")
+require('await transport.setDTR(false)' in js, "release BOOT before restart")
+require('await transport.setRTS(true)' in js and 'await transport.setRTS(false)' in js,
+        "explicit reset assert and release")
+require('async function resetWithRetry(transport)' in js and 'attempt <= 2' in js,
+        "automatic reset attempt is retryable")
+require('restartButton.addEventListener("click", restartBoard)' in js,
+        "manual restart button is wired")
+require('flashingCompleted = true;' in js, "manual restart only appears after firmware written")
+require('progress.removeAttribute("value")' in js, "visible indeterminate progress during download")
+require('setActivity("Checking firmware checksum…")' in js, "checksum progress is visible")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--build", type=Path, default=None, help="Pages output directory")
