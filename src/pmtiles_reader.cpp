@@ -155,25 +155,52 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     if (pos >= in_size - 8) return false;
     output_size = little32(in + in_size - 4);
     if (!output_size || output_size > MAX_DIRECTORY_BYTES) return false;
-    output = (uint8_t*)map_alloc(output_size);
-    if (!output) return false;
-    // tinfl_decompress_mem_to_mem() creates an ~8 KiB decompressor on
-    // loopTask's stack and trips the ESP32-S3 stack canary. Place its
-    // scratch state in PSRAM instead and call the low-level API directly.
-    tinfl_decompressor* decoder =
-        (tinfl_decompressor*)map_alloc(sizeof(tinfl_decompressor));
+    // The leaf directory reproducing the crash expands to 8,045 bytes.
+    // Both inflate's large state and its output previously lived in PSRAM;
+    // isolate them in internal, byte-addressable RAM for small directories.
+    // Never fall back to the known-crashing configuration if unavailable.
+    constexpr size_t OUTPUT_GUARD = 32;
+    constexpr size_t INTERNAL_DECODE_LIMIT = 16 * 1024;
+    if (output_size > SIZE_MAX - OUTPUT_GUARD) return false;
+    const bool internal_output = output_size <= INTERNAL_DECODE_LIMIT;
+    output = (uint8_t*)(internal_output
+        ? heap_caps_malloc(output_size + OUTPUT_GUARD,
+                           MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+        : map_alloc(output_size + OUTPUT_GUARD));
+    if (!output) {
+        Serial.printf("[T5-PMT] gzip output allocation failed (%u bytes)\\n",
+                      (unsigned)output_size);
+        return false;
+    }
+    memset(output + output_size, 0xa5, OUTPUT_GUARD);
+    // tinfl_decompress_mem_to_mem() puts this large struct on loopTask's
+    // stack. The low-level API lets us keep it on the internal heap.
+    tinfl_decompressor* decoder = (tinfl_decompressor*)heap_caps_malloc(
+        sizeof(tinfl_decompressor), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!decoder) {
+        Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes)\\n",
+                      (unsigned)sizeof(tinfl_decompressor));
         free(output);
         output = nullptr;
         return false;
     }
+    Serial.printf("[T5-PMT] gzip input=%p output=%p (%u bytes) scratch=%p (%u bytes)\\n",
+                  (const void*)in, (void*)output, (unsigned)output_size,
+                  (void*)decoder, (unsigned)sizeof(tinfl_decompressor));
     tinfl_init(decoder);
     size_t input_length = in_size - 8 - pos;
     size_t actual = output_size;
     const tinfl_status status = tinfl_decompress(
         decoder, in + pos, &input_length, output, output, &actual,
         TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-    pmtiles_heap_check("gzip inflate (before decoder free)");
+    for (size_t i = 0; i < OUTPUT_GUARD; ++i) {
+        if (output[output_size + i] != 0xa5) {
+            Serial.printf("[T5-PMT] gzip output exceeded buffer at +%u\\n",
+                          (unsigned)i);
+            abort();
+        }
+    }
+    pmtiles_heap_check("gzip inflate (internal scratch/output)");
     free(decoder);
     if (status != TINFL_STATUS_DONE || actual != output_size ||
         (uint32_t)mz_crc32(MZ_CRC32_INIT, output, actual) !=
