@@ -83,7 +83,18 @@ void local_mesh_setup() {
     }
     if (!radio_ready) { Serial.println("[T5-MESH] ERROR: SX1262 unavailable; stopping on hardware failure screen");ui_show_radio_failure();return; }
     fast_rng.begin(radio_driver.getRngSeed());
-    SPIFFS.begin(true); store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
+    // Probe without formatting, so an existing filesystem gets the fast
+    // "STARTING UP..." splash. Only show "INITIALISING STORAGE..." if the
+    // partition does not mount and the original format-on-failure path is
+    // actually necessary (first install or filesystem recovery).
+    bool storage_mounted=SPIFFS.begin(false);
+    if(!storage_mounted){
+        Serial.println("[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
+        ui_show_storage_initializing();
+        storage_mounted=SPIFFS.begin(true);
+    }
+    Serial.printf("[T5-STORE] SPIFFS mount result=%s\n",storage_mounted?"OK":"FAILED");
+    store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
     sensors.begin();
 #if ENV_INCLUDE_GPS == 1
     the_mesh.applyGpsPrefs();

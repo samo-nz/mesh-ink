@@ -3,6 +3,7 @@
 class UiDataProvider;
 
 void ui_setup();
+void ui_show_storage_initializing(); // update boot splash before formatting
 void ui_finish_startup(); // reveal interactive UI after storage/mesh initialization
 void ui_loop();
 void ui_status_set_unread(uint16_t count);
