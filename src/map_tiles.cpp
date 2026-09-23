@@ -6,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include <math.h>
 #include <string.h>
+#include <strings.h>
 #include "map_tiles.h"
 #include "pmtiles_reader.h"
 #include "board/target.h"
