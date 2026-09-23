@@ -132,34 +132,7 @@ On first setup, choose a node name and radio preset. MeshInk then opens into the
 
 The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. From More you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode.
 
-A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
-
-### GPS status and configuration (v1.5.0)
-
-The bold GPS status icon indicates OFF, searching or fixed. Its satellite
-count is shown **only when the device is awake and has a current fix**.
-The number is hidden in standby and while GPS is OFF or searching.
-
-On the 9600-baud L76K, MeshInk automatically requests compact **RMC + GGA**
-NMEA output at the unchanged positioning rate whenever the GPS provider
-starts. The former NMEA settings toggle and its saved preference are ignored.
-For receiver troubleshooting, developers can compile with
-`-DT5_GPS_FULL_NMEA_DIAGNOSTIC=1` to request full standard NMEA output
-instead; this option is not present in the on-device settings.
-The MIA-M10Q receiver is not sent these PCAS commands.
-
-The **GPS POWER SAVING** screen retains a user-selectable constellation
-setting: unchanged (no constellation command), GPS only, GPS + GLONASS,
-GPS + BeiDou or all three. The choice is stored locally. GPS-only can
-reduce receiver workload but may degrade reception in obstructed locations.
-Compact NMEA reduces UART and host parsing workload. Neither change has
-a verified measured effect on receiver current or battery life.
-
-**GPS OFF and timed position intervals stop the MeshCore software GPS
-provider; they do not electrically power down the receiver.** LoRa and
-GPS share a switched 3.3 V supply, so MeshInk never disables it to turn
-off GPS. The previously unsuccessful PCAS12 and PMTK161 standby
-experiments are not used. The radio remains active in normal standby.
+A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
 
 ## Building from source
 
