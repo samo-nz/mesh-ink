@@ -143,6 +143,24 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
 
+## Offline map files
+
+MeshInk reads 256×256 raster PNG map tiles from the SD card. Either put loose
+tiles in `/maps/Z/X/Y.png`, or copy a **PMTiles v3 raster PNG** archive to
+`/maps/your-map.pmtiles`. MeshInk discovers up to eight `.pmtiles` files in
+that folder and looks in them when a loose PNG tile is not available. Loose
+tiles take priority; archives are checked in SD-directory order. The normal
+parent-zoom fallback and RAM tile cache still apply.
+
+PMTiles directories may be uncompressed or gzip-compressed. The embedded reader
+retrieves only the requested tile bytes from SD rather than unpacking the whole
+archive; it supports unwrapped PNG payloads and directory sizes up to 512 KiB
+after decompression. The ESP32 SD file API used here supports 32-bit seek
+offsets, so tile data beyond 4 GiB is not supported. Vector tiles (MVT),
+JPEG/WebP, and separately gzip-compressed tile payloads are **not** rendered.
+A typical Protomaps vector `.pmtiles` map therefore needs to be rendered to
+raster PNG tiles before it can be used on MeshInk.
+
 ## Building from source
 
 The main firmware environment is:
