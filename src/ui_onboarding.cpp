@@ -1133,8 +1133,15 @@ static void load_map_with_feedback(bool already_on_map) {
     // PNG decoding run synchronously. draw_screen() replaces both in fb.
     draw_screen();
 
-    // Match the Maps short-BOOT refresh exactly: force one complete DU frame
-    // without epd_clear(), a blank/white phase, or the fading GC16 waveform.
+    // First show the completed map and remove the toast with a normal DU
+    // transition. Pixels under the toast get a strong white-to-map update;
+    // unchanged terrain elsewhere can remain lighter after just this pass.
+    refresh(MODE_DU,false);
+
+    // Then give ALL map pixels the additional forced DU pass that the user
+    // previously got by manually short-pressing BOOT. refresh() already
+    // includes the map's 500 ms panel-settle period, so no extra delay or
+    // full-screen white clear is needed between the two updates.
     fast_full_redraw("MAP_LOAD_COMPLETE",false);
 }
 
