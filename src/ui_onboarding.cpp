@@ -504,12 +504,16 @@ static void draw_status_bar(bool standby_quantized=false) {
     text(battery,battery_x,13,3,0,true);
 }
 
-static void draw_toast() {
-    if(!toast_visible)return;
-    const int scale=3,w=max(300,(int)strlen(toast_message)*6*scale+48),h=72,x=(540-w)/2,y=640,r=12;
+// Share the same small black notification style between ordinary settings
+// toasts and the synchronous Maps loading message (which has no timeout).
+static void draw_toast_message(const char* message) {
+    const int scale=3,w=max(300,(int)strlen(message)*6*scale+48),h=72,x=(540-w)/2,y=640,r=12;
     epd_fill_rect({x+r,y,w-2*r,h},0,fb);epd_fill_rect({x,y+r,w,h-2*r},0,fb);
     epd_fill_rect({x+5,y+5,w-10,h-10},0,fb);
-    text(toast_message,x+(w-(int)strlen(toast_message)*6*scale)/2,y+25,scale,0xFF,true);
+    text(message,x+(w-(int)strlen(message)*6*scale)/2,y+25,scale,0xFF,true);
+}
+static void draw_toast() {
+    if(toast_visible)draw_toast_message(toast_message);
 }
 
 static void show_toast(const char* message) {
@@ -1091,28 +1095,32 @@ static void fast_full_redraw(const char* reason,bool wake_light=false) {
     force_redraw(MODE_GL16,reason,wake_light);
 }
 
-// Map navigation can decode dozens of SD tiles. Present the destination
-// tab and an explicit progress message on the *physical display* before any
-// map renderer or PMTiles I/O runs; the message remains visible throughout
-// the synchronous render.
-static void load_map_with_feedback() {
-    epd_hl_set_all_white(&display);
-    draw_status_bar();
-    draw_bottom_nav(2);
-    box(166,420,208,84);
-    centred("Loading..",448,3,0,true);
+// Display the saved previous map underneath the same toast used for saved
+// settings. Never decode the requested tiles before the progress notification
+// has appeared on the physical e-paper screen.
+static void load_map_with_feedback(bool already_on_map) {
+    if(!already_on_map) {
+        // Opening Maps from another tab: restore the previously rendered
+        // terrain if available. On first-ever entry show the Maps shell
+        // rather than leaving Contacts/Settings underneath the notification.
+        if(map_base_valid&&map_base_cache&&map_base_bytes)
+            memcpy(fb,map_base_cache,map_base_bytes);
+        else
+            epd_hl_set_all_white(&display);
+        draw_status_bar();
+        draw_bottom_nav(2);
+    }
+    // When panning or zooming, fb still holds the visible previous map.
+    // This overlay does not invalidate or replace the cached map background.
+    draw_toast_message("Loading..");
     refresh(MODE_DU);
 
-    // No map reads or expensive drawing begin until the loading frame is on
-    // the panel. Reuse the normal map renderer and its existing tile cache.
+    // The previous map and toast stay on the panel while all tile I/O and
+    // PNG decoding run synchronously. draw_screen() replaces both in fb.
     draw_screen();
 
-    // A full physical-panel clear removes ghosts from the old terrain and
-    // the loading card. Follow it with a forced full DU map redraw: GC16
-    // previously faded fine black map detail on this ED047TC1 panel.
-    epd_poweron();
-    epd_clear();
-    epd_poweroff();
+    // Match the Maps short-BOOT refresh exactly: force one complete DU frame
+    // without epd_clear(), a blank/white phase, or the fading GC16 waveform.
     fast_full_redraw("MAP_LOAD_COMPLETE",false);
 }
 
@@ -1282,9 +1290,10 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     // and therefore does not get unexpectedly re-centred on the device.
     if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)
         centre_map_on_device();
+    const bool already_on_map=screen==Screen::Maps;
     keyboard_visible=false;keyboard_message_mode=false;screen=next;
     if(next==Screen::Maps) {
-        load_map_with_feedback();
+        load_map_with_feedback(already_on_map);
         return;
     }
     draw_screen();refresh(MODE_GL16);
