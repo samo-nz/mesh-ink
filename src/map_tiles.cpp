@@ -45,6 +45,65 @@ size_t archive_count=0;
 bool archives_discovered=false;
 bool png_range_active=false;
 uint32_t png_range_start=0,png_range_length=0;
+bool zoom_folder_known[25]{},zoom_folder_present[25]{};
+bool sd_mounted=false,map_io_failed=false;
+uint32_t sd_retry_after=0,sd_media_epoch=0;
+constexpr uint32_t SD_RETRY_MS=1500;
+void reset_sd_caches() {
+    for(auto& tile:tile_cache)tile.valid=false;
+    memset(absent_tiles,0,sizeof(absent_tiles));
+    absent_cursor=0;
+    memset(zoom_folder_known,0,sizeof(zoom_folder_known));
+    memset(zoom_folder_present,0,sizeof(zoom_folder_present));
+    archive_count=0;
+    archives_discovered=false;
+    png_range_active=false;
+    png_range_start=png_range_length=0;
+    pmtiles_reset();
+}
+void mark_sd_unavailable() {
+    if(file)file.close();
+    reset_sd_caches(); // close all archive handles before unmounting
+    if(sd_mounted)SD.end();
+    sd_mounted=false;
+    map_io_failed=false;
+    sd_retry_after=millis()+SD_RETRY_MS;
+    ++sd_media_epoch;
+    Serial.println("[T5-MAP] SD unavailable; map caches invalidated");
+}
+bool media_ready(bool probe=true) {
+    if(!sd_mounted) {
+        if((int32_t)(millis()-sd_retry_after)<0)return false;
+        pinMode(12,OUTPUT);digitalWrite(12,HIGH);
+        SD.end();
+        if(!SD.begin(12,t5_shared_spi(),10000000)) {
+            sd_retry_after=millis()+SD_RETRY_MS;
+            return false;
+        }
+        sd_mounted=true;
+        reset_sd_caches();
+        ++sd_media_epoch;
+        Serial.println("[T5-MAP] SD mounted; map caches reset");
+    }
+    if(probe) {
+        File root=SD.open("/");
+        if(!root){mark_sd_unavailable();return false;}
+        root.close();
+        // A mounted FAT directory may remain cached after removal. Reading
+        // a rotating archive sector exercises the physical SPI card instead.
+        if(archives_discovered&&archive_count) {
+            File check=SD.open(archive_paths[0],FILE_READ);
+            const uint32_t length=check?check.size():0;
+            const uint32_t sectors=length/512;
+            const uint32_t offset=sectors
+                ? ((millis()/2000U)%sectors)*512U : 0;
+            const bool ok=check&&length&&check.seek(offset)&&check.read()>=0;
+            if(check)check.close();
+            if(!ok){mark_sd_unavailable();return false;}
+        }
+    }
+    return true;
+}
 // Scans /maps/*.pmtiles and /maps/<name>/*.pmtiles so files copied
 // directly from common map downloaders work without being renamed.
 void add_archive(const char* parent,const char* name) {
@@ -69,9 +128,12 @@ bool is_zoom_folder(const char* name) {
 }
 void discover_archives() {
     if(archives_discovered)return;
-    archives_discovered=true;
     File directory=SD.open("/maps");
-    if(!directory||!directory.isDirectory())return;
+    if(!directory||!directory.isDirectory()) {
+        if(directory)directory.close();
+        return;
+    }
+    archives_discovered=true;
     File candidate=directory.openNextFile();
     while(candidate) {
         const char* entry_name=candidate.name();
@@ -112,7 +174,7 @@ void discover_archives() {
 
 void* png_open(const char* name,int32_t* size) {
     file=SD.open(name,FILE_READ);
-    if(!file)return nullptr;
+    if(!file){map_io_failed=true;return nullptr;}
     if(png_range_active) {
         if(!png_range_length||png_range_length>INT32_MAX||
            !file.seek(png_range_start)) {
@@ -132,14 +194,19 @@ int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
         if(pos<png_range_start||pos>=end)return 0;
         length=(int32_t)min((uint64_t)length,end-pos);
     }
-    return file.read(data,length);
+    const int32_t n=file.read(data,length);
+    if(n!=length)map_io_failed=true;
+    return n;
 }
 int32_t png_seek(PNGFILE*,int32_t position) {
     if(position<0 || (png_range_active &&
        (uint32_t)position>png_range_length))return -1;
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
-    if(absolute>UINT32_MAX||!file.seek((uint32_t)absolute))return -1;
+    if(absolute>UINT32_MAX||!file.seek((uint32_t)absolute)){
+        map_io_failed=true;
+        return -1;
+    }
     return position;
 }
 
@@ -264,12 +331,25 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                  MapRenderResult& result,Tile*& output,bool& direct) {
     output=find_cached(z,x,y);
     if(output){++result.ram_hits;return true;}
+    if(map_io_failed||pmtiles_had_io_error())return false;
     if(previously_absent(z,x,y))return false;
     char path[SOURCE_PATH_BYTES];
     snprintf(path,sizeof(path),"/maps/%d/%d/%d.png",z,x,y);
-    ++result.sd_checks;
     PmtilesPngRange range{};
-    if(!SD.exists(path)) {
+    // One test per zoom when only PMTiles exist; loose PNGs still win.
+    if(z>=0&&z<25&&!zoom_folder_known[z]) {
+        char folder[24];
+        snprintf(folder,sizeof(folder),"/maps/%d",z);
+        zoom_folder_present[z]=SD.exists(folder);
+        zoom_folder_known[z]=true;
+        ++result.sd_checks;
+    }
+    bool loose_present=false;
+    if(z>=0&&z<25&&zoom_folder_present[z]){
+        loose_present=SD.exists(path);
+        ++result.sd_checks;
+    }
+    if(!loose_present) {
         discover_archives();
         bool found=false;
         for(size_t i=0;i<archive_count;++i) {
@@ -279,6 +359,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 found=true;
                 break;
             }
+            if(pmtiles_had_io_error()){map_io_failed=true;return false;}
         }
         if(!found){mark_absent(z,x,y);return false;}
     }
@@ -288,6 +369,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     const int open_status=png.open(path,png_open,png_close,
                                   png_read,png_seek,png_draw);
     if(open_status!=PNG_SUCCESS) {
+        if(file)file.close();
         png_range_active=false;
         return false;
     }
@@ -304,6 +386,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     png.close();
     png_range_active=false;
     decode_bits=nullptr;
+    if(map_io_failed) {
+        if(slot)slot->valid=false;
+        return false;
+    }
     if(decode_status!=PNG_SUCCESS) {
         if(slot)slot->valid=false;
         Serial.printf("[T5-MAP] PNG decode failed: %s status=%d\n",
@@ -380,18 +466,16 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
 }
 } // namespace
 
+bool map_tiles_media_ready(){return media_ready(true);}
+uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
+
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
-    static bool attempted=false,ready=false;
-    if(!attempted) {
-        attempted=true;
-        pinMode(12,OUTPUT);digitalWrite(12,HIGH);
-        ready=SD.begin(12,t5_shared_spi(),10000000);
-        if(!ready)Serial.println("[T5-MAP] WARNING: SD initialization failed");
-        else T5_DEBUGLN(T5_LOG_MAP,"[T5-MAP] SD initialized");
-    }
+    const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
+    map_io_failed=false;
+    pmtiles_begin_frame();
     target=framebuffer;
     lat=max(-85.0511,min(85.0511,lat));
     const double world=256.0*(1<<zoom);
@@ -401,11 +485,18 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     const int left=(int)floor(centre_x-width/2.0);
     const int top=(int)floor(centre_y-height/2.0);
     const int tx0=(int)floor(left/256.0),ty0=(int)floor(top/256.0);
-    for(int ty=ty0;ty*256<top+height;++ty)
-        for(int tx=tx0;tx*256<left+width;++tx)
+    for(int ty=ty0;ty*256<top+height&&!map_io_failed&&!pmtiles_had_io_error();++ty)
+        for(int tx=tx0;tx*256<left+width&&!map_io_failed&&!pmtiles_had_io_error();++tx)
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
+    const bool failed=map_io_failed||pmtiles_had_io_error();
+    pmtiles_end_frame();
+    if(failed) {
+        mark_sd_unavailable();
+        result.sd_ready=false;
+        result.tiles=0;
+    }
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
