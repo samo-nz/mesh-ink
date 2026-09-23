@@ -103,6 +103,13 @@ static int16_t status_gps_satellites = 0;
 static long status_gps_latitude = 0;
 static long status_gps_longitude = 0;
 static uint32_t status_gps_timestamp = 0;
+// Retain the last genuine fix when GPS is searching/off, including across
+// reboots. Never mistake placeholder (0,0) or "no fix" for a new location.
+static bool map_has_last_gps_position=false;
+static long map_last_gps_latitude=0,map_last_gps_longitude=0;
+static bool map_last_gps_saved=false;
+static long map_saved_gps_latitude=0,map_saved_gps_longitude=0;
+static uint32_t map_last_gps_save_ms=0;
 static int16_t status_battery = -1;
 static uint8_t status_charge_state=0;
 static int8_t status_hour = -1;
@@ -125,7 +132,7 @@ static bool mesh_is_ready = false;
 enum class FrontlightMode:uint8_t{On=0,NightTimer=1,Off=2};
 static FrontlightMode frontlight_mode=FrontlightMode::On;
 static uint8_t frontlight_timeout_index=2;
-static uint8_t frontlight_brightness=60;
+static uint8_t frontlight_brightness=30;
 static uint16_t night_start_minutes=20*60;
 static uint16_t night_end_minutes=7*60;
 static bool frontlight_lit=false;
@@ -178,6 +185,26 @@ static size_t map_marker_hit_count=0;
 static bool map_cache_hit() {
     return map_base_valid&&map_base_cache&&map_base_zoom==map_zoom&&
         fabs(map_base_lat-map_latitude)<0.00000001&&fabs(map_base_lon-map_longitude)<0.00000001;
+}
+// A current fix takes priority; otherwise use the last verified position.
+// The stored fallback is for map navigation, never advertised as a GPS fix.
+static bool map_device_position(long& latitude,long& longitude,bool& current_fix){
+    current_fix=status_gps_enabled&&status_gps_fix;
+    if(current_fix &&
+       status_gps_latitude>=-85051100L&&status_gps_latitude<=85051100L &&
+       status_gps_longitude>=-180000000L&&status_gps_longitude<=180000000L){
+        latitude=status_gps_latitude;longitude=status_gps_longitude;return true;
+    }
+    current_fix=false;
+    if(!map_has_last_gps_position)return false;
+    latitude=map_last_gps_latitude;longitude=map_last_gps_longitude;
+    return true;
+}
+static bool centre_map_on_device(){
+    long latitude=0,longitude=0;bool current_fix=false;
+    if(!map_device_position(latitude,longitude,current_fix))return false;
+    map_latitude=latitude/1000000.0;map_longitude=longitude/1000000.0;
+    return true;
 }
 
 static constexpr uint8_t PRESETS_PER_PAGE = 5;
@@ -362,7 +389,7 @@ static void draw_target_icon(int x,int y,bool disabled) {
     epd_fill_rect({x,y+14,30,3},0,fb);
     epd_fill_rect({x+14,y,3,30},0,fb);
     if(disabled) {
-        for(int d=-1;d<=1;++d)line(x+2,y+2+d,x+27,y+27+d);
+        for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);
     }
 }
 
@@ -375,7 +402,15 @@ static void draw_search_icon(int x,int y) {
 }
 
 static void draw_envelope_icon(int x,int y) {
-    epd_draw_rect({x,y+5,30,21},0,fb);line(x+1,y+6,x+15,y+17);line(x+29,y+6,x+15,y+17);
+    // Bold three-pixel outline and flap, legible at status-bar size.
+    epd_fill_rect({x,y+5,30,3},0,fb);
+    epd_fill_rect({x,y+23,30,3},0,fb);
+    epd_fill_rect({x,y+5,3,21},0,fb);
+    epd_fill_rect({x+27,y+5,3,21},0,fb);
+    for(int d=-1;d<=1;++d) {
+        line(x+3,y+8+d,x+15,y+18+d);
+        line(x+26,y+8+d,x+15,y+18+d);
+    }
 }
 
 static void draw_battery_icon(int x,int y,int level=-1) {
@@ -639,15 +674,16 @@ static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy) 
 // Do not display a misleading own-position marker without a valid GPS fix.
 static void draw_device_location_marker() {
     map_device_marker_visible=false;
-    if(!status_gps_enabled||!status_gps_fix)return;
+    long latitude=0,longitude=0;bool current_fix=false;
+    if(!map_device_position(latitude,longitude,current_fix))return;
     int sx=0,sy=0;
-    if(!project_device_on_map(status_gps_latitude,status_gps_longitude,sx,sy)||
+    if(!project_device_on_map(latitude,longitude,sx,sy)||
        sx<20||sx>520||sy<139||sy>879)return;
-    epd_fill_rect({sx-14,sy-14,29,29},0xFF,fb);
-    epd_draw_rect({sx-12,sy-12,24,24},0,fb);
-    line(sx,sy-18,sx,sy+18);
-    line(sx-18,sy,sx+18,sy);
-    epd_fill_rect({sx-2,sy-2,5,5},0,fb);
+    // Same bold 30x30 crosshair as the GPS-fix status icon, at real
+    // coordinates (not an always-centred marker). White backing stays
+    // legible on dark map tiles; the icon works for last-known fixes too.
+    epd_fill_rect({sx-17,sy-17,35,35},0xFF,fb);
+    draw_target_icon(sx-15,sy-15,false);
     map_device_marker_x=sx;map_device_marker_y=sy;
     map_device_marker_visible=true;
 }
@@ -692,12 +728,20 @@ static void draw_maps() {
         text("NO MAP TILES HERE",22,778,2,0,true);
     }
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
-    // Vertical zoom rocker. Draw symbols directly so they don't depend on
-    // unsupported font glyphs.
-    box(484,130,44,44,true);line(495,152,517,152,0xFF);line(506,141,506,163,0xFF);line(495,151,517,151,0xFF);line(505,141,505,163,0xFF);
-    box(484,184,44,44,true);line(495,206,517,206,0xFF);line(495,205,517,205,0xFF);
-    // Locate button: centre the map on this device's latest valid GPS fix.
-    box(484,238,44,44,true);draw_target_icon(491,245,!status_gps_fix);
+    // Map controls are 66x66 (1.5x the previous 44x44), with matching
+    // touch targets and a clear gap between the three controls.
+    constexpr int control_x=462;
+    box(control_x,130,66,66,true);
+    epd_fill_rect({control_x+20,160,26,5},0xFF,fb);
+    epd_fill_rect({control_x+30,150,5,26},0xFF,fb);
+    box(control_x,205,66,66,true);
+    epd_fill_rect({control_x+20,235,26,5},0xFF,fb);
+    // A white locate button gives the BLACK GPS icon and ME label contrast;
+    // the old black-on-black icon was invisible on the dark button.
+    box(control_x,280,66,66,false);
+    epd_draw_rect({control_x+1,281,64,64},0,fb);
+    draw_target_icon(control_x+18,284,false);
+    text("ME",control_x+21,324,2,0,true);
     const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
     char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
     epd_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
@@ -871,7 +915,7 @@ static void draw_display_settings() {
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?758:674;
     if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
     box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
-    centred("SHORT BOOT: HOME",856,2,0,true);
+    centred("SHORT BOOT: REFRESH",856,2,0,true);
     centred("HOLD BOOT: STANDBY",882,2,0,true);
 }
 
@@ -1102,10 +1146,36 @@ static bool touch_point(int16_t& x, int16_t& y,bool& home) {
 }
 
 static void touch_sampler_task(void*){
-    bool held=false;int16_t start_x=0,start_y=0,last_x=0,last_y=0;
-    for(;;){if(!touch_enabled){held=false;T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;bool home=false;const bool pressed=touch_point(x,y,home);if(home){if(!held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);held=true;}}else if(pressed){last_x=x;last_y=y;if(!held){held=true;start_x=x;start_y=y;frontlight_event();}}
-        else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
-        vTaskDelay(pdMS_TO_TICKS(8));}
+    bool held=false,home_held=false;int16_t start_x=0,start_y=0,last_x=0,last_y=0;
+    for(;;){
+        if(!touch_enabled){
+            held=false;home_held=false;
+            T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
+            ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+            T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
+            continue;
+        }
+        int16_t x=0,y=0;bool home=false;
+        const bool pressed=touch_point(x,y,home);
+        if(home){
+            if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+            home_held=true;
+            // A capacitive Home event must NEVER generate a subsequent touch
+            // release at the coordinates of the previous ordinary tap.
+            held=false;
+        }else if(home_held){
+            if(!pressed)home_held=false; // ignore contact until Home is released
+        }else if(pressed){
+            last_x=x;last_y=y;
+            if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
+        }else if(held){
+            held=false;
+            QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
+            if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                Serial.println("[T5-TOUCH] input queue full; tap discarded");
+        }
+        vTaskDelay(pdMS_TO_TICKS(8));
+    }
 }
 
 static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_'; }
@@ -1122,7 +1192,12 @@ static void append(char c) {
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
 
-static void open_screen(Screen next) {
+static void open_screen(Screen next,bool preserve_map_centre=false) {
+    // Opening Maps normally goes to our current or last known GPS location.
+    // A node's explicit "OPEN POSITION ON MAP" uses preserve_map_centre=true
+    // and therefore does not get unexpectedly re-centred on the device.
+    if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)
+        centre_map_on_device();
     keyboard_visible=false;keyboard_message_mode=false;screen=next;
     // The complete-screen cache still handles unchanged views. When the map
     // centre changes, render immediately from cached source tiles, decoding
@@ -1219,28 +1294,28 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(hit(x,y,24,738,220,58)&&details_page>0){details_page--;draw_screen();refresh(MODE_GL16);return true;}
                 if(hit(x,y,296,738,220,58)&&details_page<1){details_page++;draw_screen();refresh(MODE_GL16);return true;}
                 if(details_page==1&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info()?"REQUESTING ALL INFO":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,540,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps);return true;}
+                if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,540,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(details_page==0&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
                 if(details_page==0&&node.saved_contact&&hit(x,y,276,808,240,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
                 if(details_page==0&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
             }}break;
         case Screen::Maps:
+            // Controls take priority over map markers near the right edge.
+            if(hit(x,y,462,130,66,66)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,462,205,66,66)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,462,280,66,66)){
+                long latitude=0,longitude=0;bool current_fix=false;
+                if(map_device_position(latitude,longitude,current_fix)){
+                    centre_map_on_device();
+                    show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX");
+                }else show_toast("NO KNOWN GPS LOCATION");
+                draw_screen();refresh(MODE_GL16);return true;
+            }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
                 if(abs(x-marker.x)<=10&&abs(y-marker.y)<=10&&ui_data&&ui_data->open_map_node(marker.index)) {
                     details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
                 }
-            }
-            if(hit(x,y,478,118,62,62)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,478,174,62,70)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,478,232,62,62)){
-                if(status_gps_fix){
-                    map_latitude=status_gps_latitude/1000000.0;
-                    map_longitude=status_gps_longitude/1000000.0;
-                    map_base_valid=false;
-                    show_toast("CENTRED ON DEVICE");
-                }else show_toast("WAITING FOR GPS FIX");
-                draw_screen();refresh(MODE_GL16);return true;
             }
             break;
         case Screen::Discovery:
@@ -1271,7 +1346,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::GpsSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             if(hit(x,y,12,120,516,112)){local_mesh_apply_gps(!local_mesh_gps_enabled());show_toast(local_mesh_gps_enabled()?"GPS ENABLED":"GPS DISABLED");draw_screen();refresh(MODE_DU);return true;}
-            if(status_gps_fix&&hit(x,y,12,356,516,112)){map_latitude=status_gps_latitude/1000000.0;map_longitude=status_gps_longitude/1000000.0;open_screen(Screen::Maps);return true;}
+            if(hit(x,y,12,356,516,112)){
+                if(centre_map_on_device())open_screen(Screen::Maps,true);
+                else{show_toast("NO KNOWN GPS LOCATION");draw_screen();refresh(MODE_DU);}
+                return true;
+            }
             if(hit(x,y,12,474,516,112)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,592,516,112)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,710,516,112)){open_screen(Screen::GpsTuning);return true;}break;
@@ -1420,29 +1499,37 @@ static void service_boot_button(){
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
     if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){
-        // Short BOOT is Home, not merely a display refresh. Clear transient
-        // navigation/input state so a later status refresh cannot restore the old tab.
-        keyboard_visible=false;keyboard_message_mode=false;keyboard_landscape=false;
-        details_page=0;details_from_discovery=false;chat_page=0;
-        screen=setup_complete?Screen::Contacts:Screen::Welcome;
-        draw_screen();fast_full_redraw("SHORT_BOOT_HOME",false);
+        // Short BOOT refreshes the CURRENT screen without changing navigation,
+        // keyboard, map centre, zoom or the open conversation.
+        draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);
     }pressed_at=0;handled=false;}
 }
 
 void ui_setup() {
     Serial.begin(115200); delay(200);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
-    pinMode(BOOT_BUTTON,INPUT_PULLUP);pinMode(FRONTLIGHT,OUTPUT);digitalWrite(FRONTLIGHT,HIGH);
-    ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,255);
+    pinMode(BOOT_BUTTON,INPUT_PULLUP);pinMode(FRONTLIGHT,OUTPUT);digitalWrite(FRONTLIGHT,LOW);
+    // Stay off until preferences have been loaded. The splash refresh then
+    // uses the saved brightness or the new 30% first-install default.
+    ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);
     pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
     epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);epd_set_lcd_pixel_clock_MHz(17);
     recover_pmic_power_path();
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
     display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=epd_hl_get_framebuffer(&display);
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
-    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",60);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
+    map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
+    map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
+    map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
+    map_has_last_gps_position=map_has_last_gps_position &&
+        map_last_gps_latitude>=-85051100L&&map_last_gps_latitude<=85051100L &&
+        map_last_gps_longitude>=-180000000L&&map_last_gps_longitude<=180000000L;
+    map_last_gps_saved=map_has_last_gps_position;
+    map_saved_gps_latitude=map_last_gps_latitude;
+    map_saved_gps_longitude=map_last_gps_longitude;
+    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
-    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=60;
+    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=30;
     if(standby_timeout_index>3)standby_timeout_index=1;
     if(night_start_minutes>=1440)night_start_minutes=20*60;if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
@@ -1503,10 +1590,24 @@ void ui_loop() {
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         last_user_activity=millis();
-        if(tap.home){if(!keyboard_visible&&!keyboard_landscape){details_page=0;open_screen(Screen::Contacts);}continue;}
+        if(tap.home){
+            // Home changes the logical page, not just the e-paper frame.
+            // Clear pending taps/refreshes so the previous page cannot be
+            // redrawn immediately afterward.
+            if(touch_queue)xQueueReset(touch_queue);
+            text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
+            keyboard_visible=false;keyboard_message_mode=false;
+            if(keyboard_landscape){
+                keyboard_landscape=false;
+                epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+            }
+            details_page=0;details_from_discovery=false;chat_page=0;
+            open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
+            continue;
+        }
         if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
            tap.y>=118&&tap.y<900&&tap.x>=0&&tap.x<540&&
-           !(tap.x>=478&&tap.y<294)) {
+           !(tap.x>=456&&tap.y<353)) {
             pan_map_by_pixels(tap.dx,tap.dy);
             open_screen(Screen::Maps);
             continue;
@@ -1567,7 +1668,39 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
     const bool satellites_changed=enabled&&has_fix&&!standby_active&&status_gps_satellites!=satellites;
     if(state_changed)T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
+    const long previous_latitude=status_gps_latitude;
+    const long previous_longitude=status_gps_longitude;
     status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
+    // Only verified live fixes update the retained map location. GPS disabled
+    // or searching may report (0,0), which must not erase the last fix.
+    if(enabled&&has_fix&&latitude>=-85051100L&&latitude<=85051100L&&
+       longitude>=-180000000L&&longitude<=180000000L){
+        map_has_last_gps_position=true;
+        map_last_gps_latitude=latitude;map_last_gps_longitude=longitude;
+        const uint32_t gps_now=millis();
+        // Limit NVS writes: store the first fix, then only changed positions
+        // at most once every 30 minutes. Existing saved positions are kept
+        // until a fresh fix differs by roughly 0.005 degrees or more.
+        const bool differs=!map_last_gps_saved ||
+            labs(latitude-map_saved_gps_latitude)>=5000L ||
+            labs(longitude-map_saved_gps_longitude)>=5000L;
+        if(differs&&(!map_last_gps_save_ms||
+            gps_now-map_last_gps_save_ms>=1800000UL)){
+            Preferences location_store;
+            if(location_store.begin("t5-ui",false)){
+                const bool ok=location_store.putLong("map_fix_lat",latitude)>0 &&
+                    location_store.putLong("map_fix_lon",longitude)>0 &&
+                    location_store.putBool("map_fix_saved",true)>0;
+                location_store.end();
+                if(ok){
+                    map_last_gps_saved=true;
+                    map_saved_gps_latitude=latitude;
+                    map_saved_gps_longitude=longitude;
+                    map_last_gps_save_ms=gps_now?gps_now:1;
+                }
+            }
+        }
+    }
     static uint32_t last_detail_refresh=0;
     static uint32_t last_satellite_refresh=0;
     const uint32_t now=millis();
@@ -1579,7 +1712,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     // but avoid expensive e-paper updates for every 1 Hz GPS sample.
     static uint32_t last_marker_refresh=0;
     if(screen==Screen::Maps&&enabled&&has_fix&&
-       (status_gps_latitude!=latitude||status_gps_longitude!=longitude)&&
+       (previous_latitude!=latitude||previous_longitude!=longitude)&&
        now-last_marker_refresh>=15000) {
         int sx=0,sy=0;
         if(project_device_on_map(latitude,longitude,sx,sy)) {
