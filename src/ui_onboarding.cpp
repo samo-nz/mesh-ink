@@ -1405,14 +1405,24 @@ void ui_setup() {
     update_status_hardware();
     epd_hl_set_all_white(&display);
     draw_meshink_logo(160,false);
-    // Keep the logo visible throughout MeshCore startup. A blank SPIFFS
-    // partition may take ~20 seconds to format on its first boot.
-    // The UI and touch queue only start after storage and the mesh are ready.
-    centred("INITIALISING STORAGE...",716,3,0,true);
+    // Keep the original logo visible throughout MeshCore startup. Storage
+    // is normally already mounted, so use the generic boot status by default.
+    // local_mesh_setup() changes it only if SPIFFS fails to mount and must
+    // attempt first-time initialization/recovery.
+    centred("STARTING UP...",716,3,0,true);
     if(node_name[0])centred(node_name,830,3,0,true);
     centred(UI_VERSION,885,2,0,true);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);
-    Serial.println("[T5-BOOT] splash visible; waiting for storage and mesh initialization");
+    Serial.println("[T5-BOOT] splash visible; starting storage and mesh initialization");
+}
+
+void ui_show_storage_initializing() {
+    // Called only after a non-formatting mount fails. Update the existing
+    // splash before SPIFFS.begin(true) may block while preparing storage.
+    epd_fill_rect({0,704,540,65},0xFF,fb);
+    centred("INITIALISING STORAGE...",716,3,0,true);
+    refresh(MODE_GL16);
+    Serial.println("[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
 }
 
 void ui_finish_startup() {

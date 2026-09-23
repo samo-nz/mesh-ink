@@ -8,25 +8,26 @@
 
 It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
-## Boot artwork (v1.5.3)
+## Boot artwork and storage initialization (v1.5.4)
 
 The splash and About screens use the original
 `docs/file_00000000248c820a81311144dc2df47d.png` artwork.
-Before either UI target builds, `tools/generate_logo.py` converts that
-image into a flash-resident, 520×347, 2-bit grayscale bitmap. The display
-does not parse an SVG or PNG during boot; the "INITIALISING STORAGE..."
-message remains beneath the actual MeshInk logo.
+Before either UI target builds, `tools/generate_logo.py` converts the image
+into a flash-resident, 520×347, 2-bit grayscale bitmap. The device does
+not decode an SVG or PNG at boot.
 
-## Boot and first-time storage initialization (v1.5.1)
+The boot splash normally displays **STARTING UP...** beneath the logo. After
+the radio initializes, MeshInk tests whether the existing SPIFFS filesystem
+mounts without formatting. Only if that mount fails does the splash change
+to **INITIALISING STORAGE...**, before the existing format-on-failure path
+runs. This covers a blank filesystem after a full-wipe installation and
+recovery after filesystem corruption; ordinary subsequent boots keep the
+shorter generic message. Formatting blank SPIFFS may take around 20 seconds.
 
-The boot splash displays **INITIALISING STORAGE...** below the MeshInk logo
-while the radio, MeshCore and persistent message store initialize. After a
-full-flash install, the first SPIFFS mount can take around 20 seconds to
-format an empty filesystem; subsequent ordinary boots should be faster.
-The setup/home screen and touch sampler now start only after initialization,
-so taps made during the splash cannot be replayed into the name keyboard.
-A radio startup failure still displays the existing error screen. This does
-not change or erase existing saved data.
+The setup/home screen and touch sampler start only after storage and mesh
+initialization finish, so taps made during the splash cannot be replayed into
+the setup keyboard. An update flash preserves existing settings and messages;
+a full-wipe flash erases them. Radio and GPS behavior are unchanged.
 
 ## Features
 
