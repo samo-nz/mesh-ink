@@ -25,19 +25,6 @@ namespace {
 constexpr size_t MAX_DIRECTORY_BYTES = 512 * 1024;
 constexpr uint32_t MAX_ROOT_BYTES = 16384;
 constexpr uint32_t MAX_DIRECTORY_HOPS = 4;
-// Temporary diagnostics for on-device PMTiles crash investigation.
-// Check immediately after SD reads and gzip decoding, before later frees
-// can obscure the operation that first damaged the heap.
-void pmtiles_heap_check(const char* stage) {
-    // Emit the stage BEFORE inspecting heap internals: the integrity
-    // checker itself can fault when a damaged free-list pointer is followed.
-    Serial.printf("[T5-PMT] checking heap: %s\n", stage);
-    if (!heap_caps_check_integrity_all(false)) {
-        Serial.printf("[T5-PMT] HEAP DAMAGED after %s\\n", stage);
-        heap_caps_check_integrity_all(true);
-        abort();
-    }
-}
 struct Entry {
     uint64_t id;
     uint64_t offset;
@@ -81,43 +68,18 @@ void clear_directory(Directory& d) {
 bool within(uint64_t start, uint64_t length, uint64_t total) {
     return start <= total && length <= total - start;
 }
-// ESP32-S3 SD reads are staged through aligned internal RAM. For a
-// directory >=4 KiB, distinguish a fault during SD.read from one during
-// copying the bytes into our directory buffer.
+// Stage SD reads in bounded, aligned internal RAM rather than passing
+// potentially unaligned PSRAM allocations directly to the SD driver.
 bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
     if (!dst || start > UINT32_MAX || !file.seek((uint32_t)start))
         return false;
-    alignas(4) static uint8_t stage[256 + 16];
-    const size_t total = n;
-    const bool trace = n >= 4096;
-    if (trace)
-        Serial.printf("[T5-PMT] read start=%llu bytes=%u dst=%p stage=%p\\n",
-                      (unsigned long long)start, (unsigned)total,
-                      (void*)dst, (void*)stage);
-    size_t copied = 0;
+    alignas(4) static uint8_t stage[256];
     while (n) {
-        const size_t chunk = n < 256 ? n : 256;
-        memset(stage + 256, 0xa5, 16);
+        const size_t chunk = n < sizeof(stage) ? n : sizeof(stage);
         if (file.read(stage, chunk) != chunk) return false;
-        for (size_t guard = 256; guard < 272; ++guard) {
-            if (stage[guard] != 0xa5) {
-                Serial.printf("[T5-PMT] SD read exceeded stage buffer at %u\\n",
-                              (unsigned)copied);
-                abort();
-            }
-        }
-        if (trace && copied == 0)
-            pmtiles_heap_check("first leaf SD read, before copy");
         memcpy(dst, stage, chunk);
         dst += chunk;
         n -= chunk;
-        copied += chunk;
-        if (trace && (copied == 256 || copied == 2048 ||
-                      copied == 4096 || n == 0)) {
-            Serial.printf("[T5-PMT] leaf bytes copied=%u/%u\\n",
-                          (unsigned)copied, (unsigned)total);
-            pmtiles_heap_check("leaf chunk copied");
-        }
     }
     return true;
 }
@@ -166,10 +128,8 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     if (pos >= in_size - 8) return false;
     output_size = little32(in + in_size - 4);
     if (!output_size || output_size > MAX_DIRECTORY_BYTES) return false;
-    // The leaf directory reproducing the crash expands to 8,045 bytes.
-    // Both inflate's large state and its output previously lived in PSRAM;
-    // isolate them in internal, byte-addressable RAM for small directories.
-    // Never fall back to the known-crashing configuration if unavailable.
+    // Small directory output stays in internal RAM; larger directories
+    // use bounded PSRAM. Always use the ROM-compatible decoder state below.
     constexpr size_t OUTPUT_GUARD = 32;
     constexpr size_t INTERNAL_DECODE_LIMIT = 16 * 1024;
     if (output_size > SIZE_MAX - OUTPUT_GUARD) return false;
@@ -179,7 +139,7 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
         : map_alloc(output_size + OUTPUT_GUARD));
     if (!output) {
-        Serial.printf("[T5-PMT] gzip output allocation failed (%u bytes)\\n",
+        Serial.printf("[T5-PMT] gzip output allocation failed (%u bytes)\n",
                       (unsigned)output_size);
         return false;
     }
@@ -189,15 +149,12 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     tinfl_decompressor* decoder = (tinfl_decompressor*)heap_caps_malloc(
         sizeof(tinfl_decompressor), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!decoder) {
-        Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes)\\n",
+        Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes)\n",
                       (unsigned)sizeof(tinfl_decompressor));
         free(output);
         output = nullptr;
         return false;
     }
-    Serial.printf("[T5-PMT] gzip input=%p output=%p (%u bytes) scratch=%p (%u bytes)\\n",
-                  (const void*)in, (void*)output, (unsigned)output_size,
-                  (void*)decoder, (unsigned)sizeof(tinfl_decompressor));
     tinfl_init(decoder);
     size_t input_length = in_size - 8 - pos;
     size_t actual = output_size;
@@ -206,12 +163,11 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
         TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
     for (size_t i = 0; i < OUTPUT_GUARD; ++i) {
         if (output[output_size + i] != 0xa5) {
-            Serial.printf("[T5-PMT] gzip output exceeded buffer at +%u\\n",
+            Serial.printf("[T5-PMT] gzip output exceeded buffer at +%u\n",
                           (unsigned)i);
             abort();
         }
     }
-    pmtiles_heap_check("gzip inflate (internal scratch/output)");
     free(decoder);
     if (status != TINFL_STATUS_DONE || actual != output_size ||
         (uint32_t)mz_crc32(MZ_CRC32_INIT, output, actual) !=
@@ -224,9 +180,7 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
 }
 bool parse_directory(File& file, uint64_t start, uint64_t size,
                      Directory& output) {
-    pmtiles_heap_check("before directory parse / previous cache free");
     clear_directory(output);
-    pmtiles_heap_check("after previous directory cache free");
     if (!size || size > MAX_DIRECTORY_BYTES ||
         !within(start, size, archive.file_size)) return false;
     // Keep ordinary compressed directories (including this map's 5,769 B
@@ -238,14 +192,10 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
         : nullptr;
     if (!compressed) compressed = (uint8_t*)map_alloc((size_t)size);
     if (!compressed) return false;
-    Serial.printf("[T5-PMT] compressed directory ptr=%p size=%u\\n",
-                  (void*)compressed, (unsigned)size);
-    pmtiles_heap_check("after compressed buffer allocation / before SD read");
     if (!read_at(file, start, compressed, (size_t)size)) {
         free(compressed);
         return false;
     }
-    pmtiles_heap_check("directory SD read");
     uint8_t* decoded = compressed;
     size_t decoded_size = (size_t)size;
     if (archive.compression == 2) {
@@ -255,7 +205,6 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
             return false;
         }
         free(compressed);
-        pmtiles_heap_check("gzip directory decompression");
     }
     const uint8_t* cur = decoded;
     const uint8_t* end = decoded + decoded_size;
@@ -298,7 +247,6 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
             previous_end = offset + entries[i].length;
         }
     }
-    pmtiles_heap_check("directory varint parsing");
     free(decoded);
     if (!ok) { free(entries); return false; }
     output.entries = entries;
@@ -337,7 +285,7 @@ bool prepare(File& file, const char* path) {
         !within(archive.leaf_offset, archive.leaf_length, archive.file_size) ||
         !within(archive.tile_offset, archive.tile_length, archive.file_size))
         return false;
-    Serial.printf("[T5-PMT] open %s root=%llu bytes compression=%u\\n",
+    Serial.printf("[T5-PMT] open %s root=%llu bytes compression=%u\n",
                   path, (unsigned long long)archive.root_length,
                   (unsigned)archive.compression);
     archive.supported = parse_directory(file, archive.root_offset,
@@ -408,7 +356,7 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             clear_directory(leaf);
             cached_leaf_offset = entry->offset;
             cached_leaf_length = entry->length;
-            Serial.printf("[T5-PMT] leaf for z=%d x=%d y=%d offset=%llu length=%u\\n",
+            Serial.printf("[T5-PMT] leaf for z=%d x=%d y=%d offset=%llu length=%u\n",
                           zoom, x, y, (unsigned long long)entry->offset,
                           (unsigned)entry->length);
             if (!parse_directory(file, archive.leaf_offset + entry->offset,
