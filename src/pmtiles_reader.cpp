@@ -3,7 +3,18 @@
 #include <Arduino.h>
 #include <SD.h>
 #include <esp_heap_caps.h>
-#include <miniz.h>
+// ESP32-S3's tinfl_decompress() resolves to the built-in ROM function
+// (0x40000828), NOT to the externally installed richgel999/miniz library.
+// Its tinfl_decompressor layout is different. Using <miniz.h> allocated an
+// 8,364-byte state buffer for a ROM function expecting a larger structure,
+// overwriting heap metadata during nontrivial gzip directory decoding.
+#ifdef ESP32
+#include <esp32s3/rom/miniz.h>
+static_assert(sizeof(tinfl_decompressor) >= 9000,
+              "Use the ESP32-S3 ROM tinfl_decompressor layout");
+#else
+#include <miniz.h> // Host regression tests use a zlib-backed tinfl stub.
+#endif
 #include <string.h>
 #include <stdlib.h>
 
