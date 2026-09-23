@@ -1091,6 +1091,31 @@ static void fast_full_redraw(const char* reason,bool wake_light=false) {
     force_redraw(MODE_GL16,reason,wake_light);
 }
 
+// Map navigation can decode dozens of SD tiles. Present the destination
+// tab and an explicit progress message on the *physical display* before any
+// map renderer or PMTiles I/O runs; the message remains visible throughout
+// the synchronous render.
+static void load_map_with_feedback() {
+    epd_hl_set_all_white(&display);
+    draw_status_bar();
+    draw_bottom_nav(2);
+    box(166,420,208,84);
+    centred("Loading..",448,3,0,true);
+    refresh(MODE_DU);
+
+    // No map reads or expensive drawing begin until the loading frame is on
+    // the panel. Reuse the normal map renderer and its existing tile cache.
+    draw_screen();
+
+    // A full physical-panel clear removes ghosts from the old terrain and
+    // the loading card. Follow it with a forced full DU map redraw: GC16
+    // previously faded fine black map detail on this ED047TC1 panel.
+    epd_poweron();
+    epd_clear();
+    epd_poweroff();
+    fast_full_redraw("MAP_LOAD_COMPLETE",false);
+}
+
 static void full_display_clean(const char* reason) {
     T5_DEBUGF(T5_LOG_UI,"[T5-EPD] full GC16 redraw requested by %s standby=%d\n",reason,standby_active);
     draw_screen();
@@ -1258,10 +1283,10 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)
         centre_map_on_device();
     keyboard_visible=false;keyboard_message_mode=false;screen=next;
-    // The complete-screen cache still handles unchanged views. When the map
-    // centre changes, render immediately from cached source tiles, decoding
-    // only newly encountered PNGs. Avoid an extra slow GC16 "LOADING MAP"
-    // refresh on every small pan or jump to a nearby node.
+    if(next==Screen::Maps) {
+        load_map_with_feedback();
+        return;
+    }
     draw_screen();refresh(MODE_GL16);
 }
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
@@ -1424,15 +1449,19 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }}break;
         case Screen::Maps:
             // Controls take priority over map markers near the right edge.
-            if(hit(x,y,462,58,66,66)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,462,133,66,66)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,462,58,66,66)){if(map_zoom<18){map_zoom++;open_screen(Screen::Maps);}return true;}
+            if(hit(x,y,462,133,66,66)){if(map_zoom>8){map_zoom--;open_screen(Screen::Maps);}return true;}
             if(hit(x,y,462,208,66,66)){
                 long latitude=0,longitude=0;bool current_fix=false;
                 if(map_device_position(latitude,longitude,current_fix)){
                     centre_map_on_device();
                     show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX");
-                }else show_toast("NO KNOWN GPS LOCATION");
-                draw_screen();refresh(MODE_GL16);return true;
+                    open_screen(Screen::Maps);
+                }else{
+                    show_toast("NO KNOWN GPS LOCATION");
+                    draw_screen();refresh(MODE_DU);
+                }
+                return true;
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
