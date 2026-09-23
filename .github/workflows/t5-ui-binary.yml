@@ -28,7 +28,7 @@ jobs:
             .pio
           key: meshink-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: meshink-pio-${{ runner.os }}-
-      - run: python -m pip install platformio
+      - run: python -m pip install platformio Pillow
       - run: python -m platformio run -e t5-unified
 
       - name: Read firmware version
@@ -113,13 +113,12 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.1 keeps the boot splash visible during storage and
-          MeshCore initialization. "INITIALISING STORAGE..." appears below
-          the MeshInk logo while a first-boot SPIFFS format may be running.
-          The setup/home screen and touch sampler start only after the mesh
-          startup completes, preventing delayed taps from being replayed
-          into setup controls. This is a UI/boot-flow patch; the receiver
-          configuration, radio and persistent data format are unchanged.
+          MeshInk 1.5.2 replaces the hand-drawn logo on the boot splash and
+          About screen with the actual original PNG artwork in docs/. The
+          image is resized and converted to embedded 2-bit grayscale during
+          the firmware build, so the device needs no PNG decoder at boot.
+          The existing "INITIALISING STORAGE..." message remains below the
+          splash artwork, and the startup/touch and GPS behaviour are unchanged.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
