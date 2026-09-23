@@ -56,6 +56,28 @@ still share their power rail, and receiver current is not reduced merely
 by disabling serial debug logs. Boot-time ESP-IDF/EPDiy warnings may still
 print independently of MeshInk's log settings.
 
+## Maps and GPS defaults (v1.6.0)
+
+Maps now fills the available screen between the 48-pixel status bar and the
+bottom navigation bar. The separate large MAPS heading and unused strip are
+removed; map tiles, node positions, own-position marker, pan gestures and
+touch controls use the expanded viewport. The locate button matches the
+black zoom controls and displays a large white crosshair with no text label.
+
+For a new/full-wipe **local UI setup**, GPS now defaults to **enabled and
+continuous** (MeshCore `gps_enabled=1`, `gps_interval=0`). The board's GPS
+and LoRa share a power rail, but enabling continuous GPS processing can still
+consume additional CPU time compared with stopping the software provider.
+This first-setup default is applied only once, so manually chosen GPS settings
+are not reset on reboot. Firmware updates preserve the settings of devices
+whose initial setup has already been completed. If an already configured
+device has GPS disabled or a timed interval, change those settings on-device
+in **Settings → Location & GPS**; updating the firmware will not change them.
+
+The release build checks the expanded map viewport, locate-control geometry,
+and first-setup GPS defaults. Hardware GPS/LoRa operation and map touch
+behaviour still need real-device testing.
+
 ## Keyboard touch alignment (v1.5.9)
 
 The on-screen keyboard now uses one shared geometry definition for both

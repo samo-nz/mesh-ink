@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Mesh.h>
 #include <SPIFFS.h>
+#include <Preferences.h>
 #include <helpers/MultiSerialInterface.h>
 #include <helpers/esp32/SerialBLEInterface.h>
 #include "../lib/MeshCore/examples/companion_radio/DataStore.cpp"
@@ -98,6 +99,26 @@ void local_mesh_setup() {
     store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
     sensors.begin();
 #if ENV_INCLUDE_GPS == 1
+    // MeshCore defaults GPS off even though the receiver on this board shares
+    // the always-on LoRa rail. For a NEW local-UI setup, default the SOFTWARE
+    // GPS provider to ON with continuous reads (interval=0). Do not override
+    // any completed setup's GPS preferences, including an explicit OFF.
+    // Remember the one-time initialization so an incomplete setup that has
+    // since changed GPS settings is not reset on its next boot.
+    Preferences initial_gps;
+    if(initial_gps.begin("t5-ui",false)){
+        const bool configured=initial_gps.getBool("complete",false);
+        const bool default_applied=initial_gps.getBool("gps_default_v1",false);
+        if(!configured&&!default_applied){
+            auto* settings=the_mesh.getNodePrefs();
+            settings->gps_enabled=1;
+            settings->gps_interval=0;
+            the_mesh.savePrefs();
+            initial_gps.putBool("gps_default_v1",true);
+            Serial.println("[T5-BOOT] new setup GPS default: enabled, continuous");
+        }
+        initial_gps.end();
+    }
     the_mesh.applyGpsPrefs();
 #endif
     local_mesh_runtime_begin();

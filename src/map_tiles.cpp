@@ -74,7 +74,7 @@ uint8_t tile_level(const Tile& tile,int sx,int sy) {
     return (offset&1U)?(uint8_t)(packed&0x0FU):(uint8_t)(packed>>4);
 }
 void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
-    const int left=max(0,x0),top=max(118,y0);
+    const int left=max(0,x0),top=max(48,y0);
     const int right=min(540,x1),bottom=min(900,y1);
     if(left<right&&top<bottom)
         epd_fill_rect({left,top,right-left,bottom-top},colour,target);
@@ -99,7 +99,7 @@ int png_draw(PNGDRAW* row) {
     // Rare low-PSRAM fallback: draw the same per-DISPLAY-pixel world-anchored
     // pattern as the cached path, rather than duplicating one dither sample
     // across an enlarged source pixel.
-    const int y0=max(118,ctx.dy+
+    const int y0=max(48,ctx.dy+
         (row->y-ctx.crop_y)*TILE_SIZE/ctx.crop_size);
     const int y1=min(900,ctx.dy+
         (row->y-ctx.crop_y+1)*TILE_SIZE/ctx.crop_size);
@@ -201,7 +201,7 @@ void draw_cached(const Tile& tile,const DrawContext& draw) {
     // enlarged SOURCE pixel would turn one 2x/4x/8x block all black or all
     // white depending on a single changing threshold phase.
     const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
-    const int y0=max(118,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
+    const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
     if(x0>=x1||y0>=y1)return;
     for(int py=y0;py<y1;++py) {
         const int sy=draw.crop_y+(py-draw.dy)*draw.crop_size/TILE_SIZE;

@@ -26,11 +26,13 @@ contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
 contains("for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);", "bold GPS-off slash")
 contains("epd_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
 contains("for(int d=-1;d<=1;++d) {\n        line(x+3,y+8+d", "bold envelope flap")
-for y in (130,205,280):
+for y in (58,133,208):
     contains(f"box(control_x,{y},66,66", f"draw 1.5x map button at y={y}")
     contains(f"if(hit(x,y,462,{y},66,66))", f"matching map touch target at y={y}")
-contains('text("ME",control_x+21,324,2,0,true);', "visible locate label")
-contains("draw_target_icon(control_x+18,284,false);", "black-on-white locate crosshair")
+assert 'text("ME",control_x+' not in source, "locate icon must not display text"
+contains("box(control_x,208,66,66,true);", "black locate button matches zoom buttons")
+contains("epd_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
+contains("epd_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
 contains("draw_target_icon(sx-15,sy-15,false);", "device marker same icon as GPS fix")
 contains("if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)", "automatic map recenter")
 contains("open_screen(Screen::Maps,true);", "explicit node position preserved")
@@ -39,5 +41,19 @@ contains('location_store.putBool("map_fix_saved",true)', "persist verified last 
 contains("if(enabled&&has_fix&&latitude>=-85051100L", "never replace last fix with disabled/no-fix coordinates")
 contains("centre_map_on_device();", "current or stale position recenter")
 contains('show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
-contains("!(tap.x>=456&&tap.y<353)", "larger map controls excluded from swipe")
+contains("!(tap.x>=456&&tap.y<281)", "larger map controls excluded from swipe")
+contains("static constexpr int MAP_TOP=48;", "map starts below compact status bar")
+contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
+contains("static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;", "map projection centre matches viewport")
+contains("result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,", "map fills entire viewport")
+assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
+tiles = (Path(__file__).resolve().parents[1] / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
+assert "max(48," in tiles and "max(118," not in tiles, "map tile clipping still leaves a header strip"
+companion = (Path(__file__).resolve().parents[1] / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
+assert 'initial_gps.getBool("complete",false)' in companion, "existing GPS settings must be preserved"
+assert 'initial_gps.getBool("gps_default_v1",false)' in companion, "GPS defaults must only apply once"
+assert "settings->gps_enabled=1;" in companion, "new setup GPS must default ON"
+assert "settings->gps_interval=0;" in companion, "new setup GPS must default continuous"
+assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default marker missing"
+print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
