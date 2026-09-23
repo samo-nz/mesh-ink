@@ -86,23 +86,14 @@ bool media_ready(bool probe=true) {
         Serial.println("[T5-MAP] SD mounted; map caches reset");
     }
     if(probe) {
-        File root=SD.open("/");
-        if(!root){mark_sd_unavailable();return false;}
-        root.close();
-        // A mounted FAT directory may remain cached after removal. Reading
-        // a rotating archive sector exercises the physical SPI card instead.
-        if(archives_discovered&&archive_count) {
-            File check=SD.open(archive_paths[0],FILE_READ);
-            const uint32_t length=check?check.size():0;
-            // Limit probes to the first 8 KiB: seeking a random sector
-            // deep inside a fragmented 200 MB FAT file would add avoidable
-            // work every time the user pans or a status refresh occurs.
-            const uint32_t sectors=min((uint32_t)16,length/512U);
-            const uint32_t offset=sectors
-                ? ((millis()/2000U)%sectors)*512U : 0;
-            const bool ok=check&&length&&check.seek(offset)&&check.read()>=0;
-            if(check)check.close();
-            if(!ok){mark_sd_unavailable();return false;}
+        // SD.cardType() and FAT directory metadata may remain cached after
+        // physical removal. A raw sector read probes the actual card, even
+        // when /maps and every PMTiles archive are absent. Use an aligned,
+        // DMA-safe internal buffer, not PSRAM.
+        alignas(4) static uint8_t card_probe[512];
+        if(!SD.readRAW(card_probe,0)) {
+            mark_sd_unavailable();
+            return false;
         }
     }
     return true;
