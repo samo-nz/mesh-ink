@@ -164,6 +164,11 @@ static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
+// Maps spans the screen between the compact 48-pixel status bar and
+// the 60-pixel bottom navigation; there is no extra title/header strip.
+static constexpr int MAP_TOP=48;
+static constexpr int MAP_BOTTOM=900;
+static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;
 static double map_latitude=-41.2865,map_longitude=174.7762;
 static uint8_t map_zoom=12;
 static bool map_imperial=false;
@@ -644,8 +649,8 @@ static void draw_map_nodes() {
         if(delta_x<-world/2)delta_x+=world;
         const double lat=node.latitude/1000000.0,r=lat*PI/180.0;
         const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
-        const int sx=(int)lround(270+delta_x),sy=(int)lround(509+y-centre_y);
-        if(sx<7||sx>533||sy<125||sy>893)continue;
+        const int sx=(int)lround(270+delta_x),sy=(int)lround(MAP_CENTRE_Y+y-centre_y);
+        if(sx<7||sx>533||sy<MAP_TOP+7||sy>MAP_BOTTOM-7)continue;
         visible[count++]={(int16_t)sx,(int16_t)sy,i,node};
     }
     struct Bounds {int x,y,w,h;};Bounds occupied[50]{};size_t occupied_count=0;
@@ -670,7 +675,7 @@ static void draw_map_nodes() {
         int lx=0,ly=0;bool placed=false;
         for(const auto& offset:offsets) {
             const int x=n.x+offset[0],y=n.y+offset[1];
-            if(x<3||x+w>537||y<120||y+34>897)continue;
+            if(x<3||x+w>537||y<MAP_TOP+3||y+34>MAP_BOTTOM-3)continue;
             bool overlap=false;
             for(size_t j=0;j<occupied_count;++j)if(x<occupied[j].x+occupied[j].w+4&&
                 x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
@@ -711,7 +716,7 @@ static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy) 
     const double r=latitude/1000000.0*PI/180.0;
     const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
     sx=(int)lround(270+delta_x);
-    sy=(int)lround(509+y-centre_y);
+    sy=(int)lround(MAP_CENTRE_Y+y-centre_y);
     return true;
 }
 
@@ -723,7 +728,7 @@ static void draw_device_location_marker() {
     if(!map_device_position(latitude,longitude,current_fix))return;
     int sx=0,sy=0;
     if(!project_device_on_map(latitude,longitude,sx,sy)||
-       sx<20||sx>520||sy<139||sy>879)return;
+       sx<20||sx>520||sy<MAP_TOP+20||sy>MAP_BOTTOM-21)return;
     // Same bold 30x30 crosshair as the GPS-fix status icon, at real
     // coordinates (not an always-centred marker). White backing stays
     // legible on dark map tiles; the icon works for last-known fixes too.
@@ -750,8 +755,12 @@ static void draw_maps() {
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar(); // clock, battery and unread counts are live.
     } else {
-        draw_app_header("MAPS");
-        result=map_tiles_render(fb,0,118,540,782,map_latitude,map_longitude,map_zoom);
+        epd_hl_set_all_white(&display);
+        // Only the compact status bar remains above the terrain. The map
+        // starts directly below it and fills the view down to bottom nav.
+        draw_status_bar();
+        result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,
+                                map_latitude,map_longitude,map_zoom);
         // 4 bits per pixel in the high-level EPD framebuffer. A full base
         // snapshot also preserves exact panel row ordering and rotation.
         if(result.sd_ready&&result.tiles) {
@@ -773,20 +782,25 @@ static void draw_maps() {
         text("NO MAP TILES HERE",22,778,2,0,true);
     }
     char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
-    // Map controls are 66x66 (1.5x the previous 44x44), with matching
-    // touch targets and a clear gap between the three controls.
+    // The three map controls share their 66x66 size, black background and
+    // white glyphs. Keep their touch rectangles in sync below.
     constexpr int control_x=462;
-    box(control_x,130,66,66,true);
-    epd_fill_rect({control_x+20,160,26,5},0xFF,fb);
-    epd_fill_rect({control_x+30,150,5,26},0xFF,fb);
-    box(control_x,205,66,66,true);
-    epd_fill_rect({control_x+20,235,26,5},0xFF,fb);
-    // A white locate button gives the BLACK GPS icon and ME label contrast;
-    // the old black-on-black icon was invisible on the dark button.
-    box(control_x,280,66,66,false);
-    epd_draw_rect({control_x+1,281,64,64},0,fb);
-    draw_target_icon(control_x+18,284,false);
-    text("ME",control_x+21,324,2,0,true);
+    box(control_x,58,66,66,true);
+    epd_fill_rect({control_x+20,88,26,5},0xFF,fb);
+    epd_fill_rect({control_x+30,78,5,26},0xFF,fb);
+    box(control_x,133,66,66,true);
+    epd_fill_rect({control_x+20,163,26,5},0xFF,fb);
+    box(control_x,208,66,66,true);
+    // A large, entirely white crosshair, rather than black strokes on a
+    // black button. Its design matches the status-bar GPS target at 1.5x.
+    const int target_x=control_x+12,target_y=220;
+    epd_fill_rect({target_x+6,target_y+6,33,5},0xFF,fb);
+    epd_fill_rect({target_x+6,target_y+34,33,5},0xFF,fb);
+    epd_fill_rect({target_x+6,target_y+6,5,33},0xFF,fb);
+    epd_fill_rect({target_x+34,target_y+6,5,33},0xFF,fb);
+    epd_fill_rect({target_x+18,target_y+18,9,9},0xFF,fb);
+    epd_fill_rect({target_x,target_y+21,45,5},0xFF,fb);
+    epd_fill_rect({target_x+21,target_y,5,45},0xFF,fb);
     const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
     char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
     epd_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
@@ -1382,9 +1396,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }}break;
         case Screen::Maps:
             // Controls take priority over map markers near the right edge.
-            if(hit(x,y,462,130,66,66)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,462,205,66,66)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,462,280,66,66)){
+            if(hit(x,y,462,58,66,66)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,462,133,66,66)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,462,208,66,66)){
                 long latitude=0,longitude=0;bool current_fix=false;
                 if(map_device_position(latitude,longitude,current_fix)){
                     centre_map_on_device();
@@ -1687,8 +1701,8 @@ void ui_loop() {
             continue;
         }
         if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
-           tap.y>=118&&tap.y<900&&tap.x>=0&&tap.x<540&&
-           !(tap.x>=456&&tap.y<353)) {
+           tap.y>=MAP_TOP&&tap.y<MAP_BOTTOM&&tap.x>=0&&tap.x<540&&
+           !(tap.x>=456&&tap.y<281)) {
             pan_map_by_pixels(tap.dx,tap.dy);
             open_screen(Screen::Maps);
             continue;
@@ -1797,7 +1811,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
        now-last_marker_refresh>=15000) {
         int sx=0,sy=0;
         if(project_device_on_map(latitude,longitude,sx,sy)) {
-            const bool now_visible=sx>=20&&sx<=520&&sy>=139&&sy<=879;
+            const bool now_visible=sx>=20&&sx<=520&&sy>=MAP_TOP+20&&sy<=MAP_BOTTOM-21;
             marker_moved=map_device_marker_visible?
                 (abs(sx-map_device_marker_x)>=3||abs(sy-map_device_marker_y)>=3):
                 now_visible;
