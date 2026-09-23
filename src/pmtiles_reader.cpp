@@ -18,6 +18,9 @@ constexpr uint32_t MAX_DIRECTORY_HOPS = 4;
 // Check immediately after SD reads and gzip decoding, before later frees
 // can obscure the operation that first damaged the heap.
 void pmtiles_heap_check(const char* stage) {
+    // Emit the stage BEFORE inspecting heap internals: the integrity
+    // checker itself can fault when a damaged free-list pointer is followed.
+    Serial.printf("[T5-PMT] checking heap: %s\n", stage);
     if (!heap_caps_check_integrity_all(false)) {
         Serial.printf("[T5-PMT] HEAP DAMAGED after %s\\n", stage);
         heap_caps_check_integrity_all(true);
@@ -160,11 +163,14 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
 }
 bool parse_directory(File& file, uint64_t start, uint64_t size,
                      Directory& output) {
+    pmtiles_heap_check("before directory parse / previous cache free");
     clear_directory(output);
+    pmtiles_heap_check("after previous directory cache free");
     if (!size || size > MAX_DIRECTORY_BYTES ||
         !within(start, size, archive.file_size)) return false;
     uint8_t* compressed = (uint8_t*)map_alloc((size_t)size);
     if (!compressed) return false;
+    pmtiles_heap_check("after compressed buffer allocation / before SD read");
     if (!read_at(file, start, compressed, (size_t)size)) {
         free(compressed);
         return false;
