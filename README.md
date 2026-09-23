@@ -8,6 +8,15 @@
 
 It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
+## Boot artwork (v1.5.2)
+
+The splash and About screens use the original
+`docs/file_00000000248c820a81311144dc2df47d.png` artwork.
+Before either UI target builds, `tools/generate_logo.py` converts that
+image into a flash-resident, 520×347, 2-bit grayscale bitmap. The display
+does not parse an SVG or PNG during boot; the "INITIALISING STORAGE..."
+message remains beneath the actual MeshInk logo.
+
 ## Boot and first-time storage initialization (v1.5.1)
 
 The boot splash displays **INITIALISING STORAGE...** below the MeshInk logo
@@ -178,6 +187,7 @@ The main firmware environment is:
 
 ```sh
 git submodule update --init --recursive
+python -m pip install Pillow
 pio run -e t5-unified
 ```
 

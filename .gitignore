@@ -1,3 +1,6 @@
 .pio/
 .platformio/
 *.bin
+
+# Generated at build time from docs/ original PNG
+src/meshink_logo_bitmap.h

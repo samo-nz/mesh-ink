@@ -14,6 +14,7 @@
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
+#include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.3.0"
@@ -860,43 +861,28 @@ static void draw_night_schedule(){
 }
 
 static void draw_meshink_logo(int top,bool compact=false) {
-    // Faithful monochrome screen rendition of the approved MeshInk artwork:
-    // forest + mountain range + mesh hops + striped sun + tower + wordmark + quill/inkpot.
-    const int x0=compact?45:18, scale=compact?1:1;
-    const int base=top+(compact?170:300);
-    // Mountain skyline.
-    const int px[]={x0,x0+42,x0+70,x0+105,x0+145,x0+190,x0+235,x0+285,x0+330,x0+375,x0+425,x0+500};
-    const int py[]={base,base-52,base-85,base-55,base-125,base-75,base-210,base-105,base-145,base-70,base-100,base};
-    for(int i=0;i<11;++i)line(px[i],py[i],px[i+1],py[i+1]);
-    line(px[0],base,px[11],base);
-    // Snow cuts.
-    line(x0+132,base-112,x0+145,base-125);line(x0+145,base-125,x0+158,base-92);
-    line(x0+218,base-175,x0+235,base-210);line(x0+235,base-210,x0+252,base-158);
-    line(x0+316,base-126,x0+330,base-145);line(x0+330,base-145,x0+346,base-110);
-    // Forest silhouettes across the lower left.
-    for(int t=0;t<7;++t){const int x=x0+20+t*42;const int h=55+(t%3)*18;line(x,base,x+15,base-h);line(x+15,base-h,x+30,base);line(x+5,base-20,x+25,base-20);line(x+8,base-36,x+22,base-36);}
-    // Striped sun behind the right peaks.
-    const int sx=x0+385,sy=top+(compact?48:75),sw=82;
-    for(int r=0;r<6;++r)epd_fill_rect({sx,sy+r*13,sw,6},0x88,fb);
-    // Mesh nodes on the landscape and high dashed radio arcs.
-    const int nx[]={x0+40,x0+105,x0+145,x0+235,x0+330,x0+425};
-    const int ny[]={base-50,base-55,base-125,base-210,base-145,base-100};
-    for(int i=0;i<6;++i)epd_fill_rect({nx[i]-6,ny[i]-6,13,13},0,fb);
-    for(int i=0;i<5;++i){
-        const int ax=nx[i],bx=nx[i+1],ay=ny[i],by=ny[i+1];
-        const int lift=compact?34:58;
-        for(int q=0;q<30;++q)if((q/2)%2==0){const float u=q/29.0f;const float arch=4*u*(1-u);const int xx=ax+(int)((bx-ax)*u);const int yy=ay+(int)((by-ay)*u)-(int)(lift*arch);epd_fill_rect({xx,yy,3,3},0,fb);}
+    // Use the original, build-time downscaled PNG rather than reconstructing
+    // its mountain, forest, wordmark and quill with approximate geometry.
+    // Both splash and About share the same 520x347 grayscale source image.
+    (void)compact;
+    constexpr uint8_t shades[4]={0x00,0x55,0xAA,0xFF};
+    const int left=(540-MESHINK_LOGO_WIDTH)/2;
+    for(int y=0;y<MESHINK_LOGO_HEIGHT;++y){
+        const int row=y*MESHINK_LOGO_WIDTH;
+        int x=0;
+        while(x<MESHINK_LOGO_WIDTH){
+            const int pixel=row+x;
+            const uint8_t shade=(MESHINK_LOGO_PIXELS[pixel>>2]>>(6-2*(pixel&3)))&3;
+            if(shade==3){++x;continue;} // already white
+            const int run=x++;
+            while(x<MESHINK_LOGO_WIDTH){
+                const int next=row+x;
+                if(((MESHINK_LOGO_PIXELS[next>>2]>>(6-2*(next&3)))&3)!=shade)break;
+                ++x;
+            }
+            epd_fill_rect({left+run,top+y,x-run,1},shades[shade],fb);
+        }
     }
-    // Radio tower on the far-right hill.
-    const int tx=x0+452;line(tx,base-5,tx+14,base-78);line(tx+28,base-5,tx+14,base-78);line(tx+6,base-35,tx+22,base-35);line(tx+9,base-52,tx+19,base-52);
-    epd_fill_rect({tx+9,base-88,11,11},0,fb);line(tx+3,base-95,tx-7,base-105);line(tx+25,base-95,tx+35,base-105);
-    // Wordmark. The quill and ink pot deliberately sit to its right, matching the approved artwork.
-    centred("MeshInk",base+(compact?18:28),compact?5:6,0,true);
-    const int qx=x0+420,qy=base+(compact?18:32);
-    epd_draw_rect({qx,qy+32,48,27},0,fb);epd_fill_rect({qx-3,qy+28,54,7},0,fb);
-    line(qx+20,qy+28,qx+68,qy-42);line(qx+68,qy-42,qx+55,qy+3);line(qx+55,qy+3,qx+20,qy+28);
-    line(qx+32,qy+18,qx+60,qy-27);
-    if(!compact){centred("STAY CONNECTED, FURTHER",base+105,2,0,true);centred("LILYGO T5",base+145,2,0,true);}
 }
 static void draw_about() {
     draw_app_header("ABOUT",true);
