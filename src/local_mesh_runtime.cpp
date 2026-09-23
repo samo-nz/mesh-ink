@@ -27,11 +27,15 @@ constexpr char STORE_PATH[]="/ui_messages.bin";
 // next acquisition. On the T5 L76K, stop()/begin() maps to PMTK standby/wake.
 static bool gps_duty_sleeping=false;
 static uint32_t gps_duty_next_wake=0;
+static uint32_t gps_duty_awake_since=0;
+static uint32_t gps_duty_wake_stamp=0;
 static bool gps_duty_reset=true;
 
 static void reset_gps_duty_cycle(){
     gps_duty_reset=true;
     gps_duty_next_wake=0;
+    gps_duty_awake_since=0;
+    gps_duty_wake_stamp=0;
 }
 
 enum class MessageKind:uint8_t{Direct=0,Channel=1};
@@ -430,15 +434,20 @@ void local_mesh_loop(){
         if(gps_duty_sleeping){sensors.setSettingValue("gps","1");gps_duty_sleeping=false;}
     }else if(gps_duty_sleeping){
         if((int32_t)(gps_now-gps_duty_next_wake)>=0){
-            sensors.setSettingValue("gps","1");gps_duty_sleeping=false;
-            Serial.printf("[T5-GPS] duty wake interval=%lus\n",(unsigned long)gps_interval);
+            gps_duty_wake_stamp=gps_location?(uint32_t)gps_location->getTimestamp():0;
+            sensors.setSettingValue("gps","1");gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
+            Serial.printf("[T5-GPS] duty wake interval=%lus previous_stamp=%lu\n",(unsigned long)gps_interval,(unsigned long)gps_duty_wake_stamp);
         }
-    }else if(gps_location&&gps_location->isValid()){
-        // A fresh valid fix is enough for this sampling window. Preserve the
-        // provider's last coordinates for UI/map use, then put it into standby.
+    }else if(gps_location&&gps_location->isValid()&&
+             (!gps_duty_awake_since||
+              (gps_now-gps_duty_awake_since>=1000&&
+               (uint32_t)gps_location->getTimestamp()!=gps_duty_wake_stamp))){
+        // Require a newly observed GPS timestamp after a scheduled wake so a
+        // cached fix cannot immediately put the receiver back to sleep.
         gps_duty_next_wake=gps_now+gps_interval*1000UL;
+        gps_duty_awake_since=0;gps_duty_wake_stamp=0;
         sensors.setSettingValue("gps","0");gps_duty_sleeping=true;
-        Serial.printf("[T5-GPS] duty sleep after fix; next wake in %lus\n",(unsigned long)gps_interval);
+        Serial.printf("[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
     }
     sensors.loop();rtc_clock.tick();
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.stage);advance_info();}
