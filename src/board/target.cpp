@@ -122,6 +122,9 @@ static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
 enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
 static GpsModule detected_gps_module = GpsModule::Unknown;
+// Diagnostic only: PCAS12 is documented for some CASIC low-power variants,
+// but is not documented as an L76K standby command by Quectel.
+static constexpr uint32_t GPS_PROBE_STANDBY_MS=10000UL;
 static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
 static uint32_t gps_sleep_requested_at = 0;
@@ -146,15 +149,15 @@ static const char* gps_module_name() {
 
 static void gps_wake_command() {
     if (!gps_command_sleeping) return;
-    // L76K exits PMTK standby on any UART activity. Do not send an
-    // unverified binary command to an unknown/u-blox receiver.
+    // PCAS12 is a *timed* command. A UART newline is NOT a documented
+    // early-wake mechanism; do not pretend this call wakes the hardware.
     if (detected_gps_module == GpsModule::L76K) {
+        const uint32_t elapsed=gps_sleep_requested_at?millis()-gps_sleep_requested_at:0;
         gps_wake_requested_at=gps_wake_started_at=millis();
         gps_wake_logged_nmea=gps_wake_logged_fix=false;
         gps_sleep_requested_at=0;
-        Serial1.write((uint8_t)'\r'); Serial1.write((uint8_t)'\n'); Serial1.flush();
-        delay(120);
-        T5_TRACE("gps probe: L76K wake bytes sent; watching for fresh NMEA and GPS fix\n");
+        T5_TRACE("gps probe: GPS ON %lums after PCAS12 request; automatic wake expected after 10s IF supported; no UART wake sent\n",
+            (unsigned long)elapsed);
     }
     gps_command_sleeping = false;
 }
@@ -162,16 +165,17 @@ static void gps_wake_command() {
 static void gps_sleep_command() {
     if (gps_command_sleeping) return;
     if (detected_gps_module == GpsModule::L76K) {
-        // PMTK161 support on this L76K board is UNVERIFIED: probe UART
-        // traffic while the provider is stopped, and never claim electrical sleep.
-        // Discard any already-buffered bytes before starting the off-state probe.
+        // TEST ONLY. CASIC's generic spec lists PCAS12 for certain low-power
+        // variants; Quectel has NOT confirmed support on L76K. It auto-wakes
+        // after 10 s if accepted, so GPS OFF will NOT stay asleep in this build.
+        // Discard buffered data so off-state UART probes are meaningful.
         while (Serial1.available() > 0) Serial1.read();
-        Serial1.print("$PMTK161,0*28\r\n"); Serial1.flush();
-        gps_command_sleeping = true;
+        Serial1.print("$PCAS12,10*2F\r\n"); Serial1.flush();
+        gps_command_sleeping = true;  // command requested, NOT verified asleep
         gps_sleep_requested_at=gps_sleep_last_report=millis();
         gps_sleep_bytes_after=gps_sleep_window_bytes=0;
         gps_wake_started_at=gps_wake_requested_at=0;
-        T5_TRACE("gps probe: PMTK161 standby requested (EXPERIMENTAL on L76K); monitoring UART while provider is OFF\n");
+        T5_TRACE("gps probe: sent $PCAS12,10*2F (EXPERIMENTAL, 10s AUTO-WAKE if supported); GPS OFF is diagnostic only\n");
     } else {
         T5_TRACE("gps power: sleep skipped module=%s (radio/GPS rail is shared)\n", gps_module_name());
     }
@@ -354,10 +358,13 @@ void t5_gps_power_probe_tick(){
     }
     if(now-gps_sleep_last_report>=5000){
         gps_sleep_last_report=now;
-        T5_TRACE("gps probe: OFF +%lus UART bytes last ~5s=%lu total after 1s=%lu (%s; current draw NOT measured)\n",
-            (unsigned long)((now-gps_sleep_requested_at)/1000),
+        const uint32_t off_ms=now-gps_sleep_requested_at;
+        T5_TRACE("gps probe: OFF +%lus PCAS12/10s UART bytes last ~5s=%lu total after 1s=%lu (%s; power not measured)\n",
+            (unsigned long)(off_ms/1000),
             (unsigned long)gps_sleep_window_bytes,(unsigned long)gps_sleep_bytes_after,
-            gps_sleep_window_bytes?"receiver still emits UART":"UART quiet");
+            gps_sleep_window_bytes?"UART ACTIVE":"UART QUIET");
+        if(off_ms>=GPS_PROBE_STANDBY_MS && off_ms<GPS_PROBE_STANDBY_MS+5000UL)
+            T5_TRACE("gps probe: PCAS12 10s window elapsed; NMEA may resume automatically even while GPS setting is OFF\n");
         gps_sleep_window_bytes=0;
     }
 #endif
