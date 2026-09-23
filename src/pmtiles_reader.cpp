@@ -70,20 +70,43 @@ void clear_directory(Directory& d) {
 bool within(uint64_t start, uint64_t length, uint64_t total) {
     return start <= total && length <= total - start;
 }
-// SD's SPI read path may require DMA-capable internal RAM. Reading a
-// multi-kilobyte directory straight into a PSRAM allocation can overwrite
-// neighbouring PSRAM heap metadata on some ESP32-S3/SD combinations.
-// Stage small reads in internal DRAM, then copy the exact byte count.
+// ESP32-S3 SD reads are staged through aligned internal RAM. For a
+// directory >=4 KiB, distinguish a fault during SD.read from one during
+// copying the bytes into our directory buffer.
 bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
     if (!dst || start > UINT32_MAX || !file.seek((uint32_t)start))
         return false;
-    alignas(4) static uint8_t stage[256];
+    alignas(4) static uint8_t stage[256 + 16];
+    const size_t total = n;
+    const bool trace = n >= 4096;
+    if (trace)
+        Serial.printf("[T5-PMT] read start=%llu bytes=%u dst=%p stage=%p\\n",
+                      (unsigned long long)start, (unsigned)total,
+                      (void*)dst, (void*)stage);
+    size_t copied = 0;
     while (n) {
-        const size_t chunk = n < sizeof(stage) ? n : sizeof(stage);
+        const size_t chunk = n < 256 ? n : 256;
+        memset(stage + 256, 0xa5, 16);
         if (file.read(stage, chunk) != chunk) return false;
+        for (size_t guard = 256; guard < 272; ++guard) {
+            if (stage[guard] != 0xa5) {
+                Serial.printf("[T5-PMT] SD read exceeded stage buffer at %u\\n",
+                              (unsigned)copied);
+                abort();
+            }
+        }
+        if (trace && copied == 0)
+            pmtiles_heap_check("first leaf SD read, before copy");
         memcpy(dst, stage, chunk);
         dst += chunk;
         n -= chunk;
+        copied += chunk;
+        if (trace && (copied == 256 || copied == 2048 ||
+                      copied == 4096 || n == 0)) {
+            Serial.printf("[T5-PMT] leaf bytes copied=%u/%u\\n",
+                          (unsigned)copied, (unsigned)total);
+            pmtiles_heap_check("leaf chunk copied");
+        }
     }
     return true;
 }
@@ -168,8 +191,17 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
     pmtiles_heap_check("after previous directory cache free");
     if (!size || size > MAX_DIRECTORY_BYTES ||
         !within(start, size, archive.file_size)) return false;
-    uint8_t* compressed = (uint8_t*)map_alloc((size_t)size);
+    // Keep ordinary compressed directories (including this map's 5,769 B
+    // leaf) in internal RAM to isolate SD reads from PSRAM heap writes.
+    // Larger directories retain the existing bounded PSRAM fallback.
+    uint8_t* compressed = size <= 8192
+        ? (uint8_t*)heap_caps_malloc((size_t)size,
+                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+        : nullptr;
+    if (!compressed) compressed = (uint8_t*)map_alloc((size_t)size);
     if (!compressed) return false;
+    Serial.printf("[T5-PMT] compressed directory ptr=%p size=%u\\n",
+                  (void*)compressed, (unsigned)size);
     pmtiles_heap_check("after compressed buffer allocation / before SD read");
     if (!read_at(file, start, compressed, (size_t)size)) {
         free(compressed);
