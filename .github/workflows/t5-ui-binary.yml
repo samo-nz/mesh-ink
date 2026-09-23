@@ -115,15 +115,15 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.6 fixes a fresh-install radio mismatch: the displayed
-          default NZ NARROW preset is applied to MeshCore before the first
-          interactive setup screen, instead of leaving the radio at SF8.
-          All 28 preset options use typed RF parameters rather than parsing
-          their UI descriptions. The build checks every displayed frequency,
-          spreading factor, bandwidth, coding rate and path-hash size against
-          the applied values. Explicit KEEP CURRENT and completed setups
-          retain their stored radio configuration. Radio selection only
-          persists when it applies successfully.
+          MeshInk 1.5.7 fixes fresh-install radio setup: the displayed
+          NZ NARROW preset is applied to MeshCore automatically before the
+          first interactive setup screen, avoiding the SF8/SF7 mismatch.
+          All 28 preset options have typed RF parameters instead of parsing
+          their descriptions. Build-time checks compare displayed settings
+          with applied frequency, SF, bandwidth, coding rate and path-hash
+          size. KEEP CURRENT does not alter radio configuration; completed
+          setups preserve stored radio settings. A failed preset application
+          is not saved. This release corrects a compile error in 1.5.6.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

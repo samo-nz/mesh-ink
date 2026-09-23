@@ -56,7 +56,7 @@ still share their power rail, and receiver current is not reduced merely
 by disabling serial debug logs. Boot-time ESP-IDF/EPDiy warnings may still
 print independently of MeshInk's log settings.
 
-## Radio presets and clean-install setup (v1.5.6)
+## Radio presets and clean-install setup (v1.5.7)
 
 On a clean/full-wipe installation, MeshCore's compiled radio defaults can
 differ from the preset displayed on the welcome screen. Before the first

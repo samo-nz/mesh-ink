@@ -16,7 +16,8 @@ rows = re.findall(
 )
 assert len(rows) == 28, f"Expected 28 radio options, found {len(rows)}"
 assert len({r[0] for r in rows}) == len(rows), "Duplicate radio option title"
-assert rows[0] == ("KEEP CURRENT", "NO RADIO CHANGES", "0", "0", "0", "0", "0"), (
+assert all("." in r[3] for r in rows), "C++ float literals need a decimal point (e.g. 250.0f)"
+assert rows[0] == ("KEEP CURRENT", "NO RADIO CHANGES", "0", "0.0", "0", "0", "0"), (
     "KEEP CURRENT must not change any radio setting"
 )
 assert rows[17][0] == "NZ NARROW", "Default index 17 is no longer NZ NARROW"
