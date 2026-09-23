@@ -105,7 +105,7 @@ void discover_archives() {
     }
     directory.close();
     if(archive_count)
-        Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\\n",
+        Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
                       (unsigned)archive_count);
 }
 
