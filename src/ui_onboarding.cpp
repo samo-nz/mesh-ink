@@ -398,7 +398,7 @@ static void draw_landscape_keyboard(){
     landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),15,355,130);
     landscape_key("DEL",812,355,133);
     landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
-    landscape_key(keyboard_message_mode?"SEND":"SAVE",711,425,234);
+    landscape_key(keyboard_message_mode?"SEND":"DONE",711,425,234);
 }
 
 // The number and letter hitboxes are calculated from the EXACT geometry used
@@ -1320,12 +1320,11 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         if(x<707){append(' ');queue_text_refresh();return true;}
         if(keyboard_message_mode){
             if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;
-            keyboard_visible=true;set_keyboard_orientation(false);return true;
         }
-        const bool was_setup=screen==Screen::Welcome;
-        save_node_name();
-        if(was_setup)show_contacts_after_setup();
-        else{keyboard_visible=true;set_keyboard_orientation(false);}
+        // DONE in landscape is only an orientation switch for name entry.
+        // Return to portrait setup with radio preset still available; only
+        // the portrait SAVE button can persist the name and complete setup.
+        keyboard_visible=true;set_keyboard_orientation(false);
         return true;
     }
     return true;

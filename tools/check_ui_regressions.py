@@ -25,8 +25,11 @@ assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved 
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
 contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
 contains('fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);', "full e-paper redraw on first Contacts")
-assert source.count('if(was_setup)show_contacts_after_setup();')==1, "landscape setup completion must show Contacts"
-contains('if(was_setup){\n            show_contacts_after_setup();', "portrait setup completion must show Contacts")
+contains('landscape_key(keyboard_message_mode?"SEND":"DONE",711,425,234);', "landscape name entry uses DONE, not SAVE")
+assert 'if(was_setup)show_contacts_after_setup();' not in source, "landscape keyboard must not complete setup"
+assert source.count('save_node_name();')==1, "only the portrait SAVE may persist setup"
+contains('keyboard_visible=true;set_keyboard_orientation(false);\n        return true;', "landscape DONE returns to portrait without saving")
+contains('if(was_setup){\n            show_contacts_after_setup();', "portrait setup SAVE opens Contacts")
 
 contains("frontlight_brightness=30;", "new-device frontlight default")
 contains('prefs.getUChar("light_level",30)', "first-install brightness load")

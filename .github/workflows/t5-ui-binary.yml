@@ -121,13 +121,14 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.6.1 tidies first-time setup: removes the redundant
+          MeshInk 1.6.2 tidies first-time setup: removes the redundant
           SETTINGS SAVED line beneath the keyboard, generates a persistent
           default name MeshInk-XXXX with four random uppercase letters or
           digits, and forces a full e-paper redraw of the first setup
-          screen and the initial Contacts screen after saving. Saving
-          setup from either portrait or landscape now opens Contacts
-          directly. Existing saved names, radio settings and messages
+          screen and the initial Contacts screen after saving. Landscape
+          DONE returns to portrait setup WITHOUT saving or completing
+          setup, so the radio preset can still be reviewed. Only portrait
+          SAVE completes setup. Existing names, radio settings and messages
           are preserved by the update image.
           EOF
           gh release create "$TAG" \
