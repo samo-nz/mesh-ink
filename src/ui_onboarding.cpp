@@ -181,6 +181,7 @@ static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
 static MapRenderResult map_base_result{false,0,0,0,0,0,0};
+static uint32_t map_base_media_epoch=0;
 // The own-position bullseye is drawn over the map, never stored in the
 // raster base cache. The last drawn screen position supports low-rate GPS
 // marker updates without refreshing the e-paper for every GPS sample.
@@ -753,8 +754,15 @@ static void pan_map_by_pixels(int dx,int dy) {
     map_latitude=atan(sinh(PI*(1.0-2.0*y/world)))*180.0/PI;
 }
 static void draw_maps() {
-    MapRenderResult result{true,0,0,0,0,map_zoom,map_zoom};
-    if(map_cache_hit()) {
+    // Even a perfect framebuffer cache is stale after SD removal/remount.
+    const bool media_ready=map_tiles_media_ready();
+    const uint32_t media_epoch=map_tiles_media_epoch();
+    if(!media_ready||map_base_media_epoch!=media_epoch) {
+        map_base_valid=false;
+        map_base_media_epoch=media_epoch;
+    }
+    MapRenderResult result{media_ready,0,0,0,0,map_zoom,map_zoom};
+    if(media_ready&&map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar(); // clock, battery and unread counts are live.
@@ -765,6 +773,10 @@ static void draw_maps() {
         draw_status_bar();
         result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,
                                 map_latitude,map_longitude,map_zoom);
+        if(!result.sd_ready||map_base_media_epoch!=map_tiles_media_epoch()) {
+            map_base_valid=false;
+            map_base_media_epoch=map_tiles_media_epoch();
+        }
         // 4 bits per pixel in the high-level EPD framebuffer. A full base
         // snapshot also preserves exact panel row ordering and rotation.
         if(result.sd_ready&&result.tiles) {
@@ -1763,6 +1775,20 @@ void ui_loop() {
         delay(100);return;
     }
     service_boot_button();
+    // Hot card removal/insertion is checked even when the user is not
+    // touching Maps. The generation changes on a failed read/remount, so
+    // discard the old viewport and show the unavailable or new map promptly.
+    static uint32_t last_map_media_poll=0;
+    if(screen==Screen::Maps&&!standby_active&&!message_alert_active&&
+       millis()-last_map_media_poll>=3000) {
+        last_map_media_poll=millis();
+        const uint32_t previous_epoch=map_tiles_media_epoch();
+        map_tiles_media_ready();
+        if(map_tiles_media_epoch()!=previous_epoch) {
+            map_base_valid=false;
+            load_map_with_feedback(true);
+        }
+    }
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
     if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
