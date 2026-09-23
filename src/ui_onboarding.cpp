@@ -14,6 +14,7 @@
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
+#include "t5_logging.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
@@ -193,7 +194,7 @@ static constexpr TimezoneChoice TIMEZONES[] = {
 };
 static constexpr uint8_t TIMEZONE_COUNT=sizeof(TIMEZONES)/sizeof(TIMEZONES[0]);
 
-static void apply_timezone(){setenv("TZ",TIMEZONES[timezone_index].rule,1);tzset();Serial.printf("[T5-TIME] display timezone=%s\n",TIMEZONES[timezone_index].label);}
+static void apply_timezone(){setenv("TZ",TIMEZONES[timezone_index].rule,1);tzset();T5_DEBUGF(T5_LOG_UI,"[T5-TIME] display timezone=%s\n",TIMEZONES[timezone_index].label);}
 
 static constexpr uint32_t FRONTLIGHT_TIMEOUTS[]={5000,10000,15000,30000,0};
 static constexpr uint32_t STANDBY_TIMEOUTS[]={300000,600000,900000,0};
@@ -204,14 +205,15 @@ static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(
 static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
 static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();const uint8_t duty=frontlight_lit?(uint8_t)max(1,(frontlight_brightness*255)/100):0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);}
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
-static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);Serial.println("[T5-LIGHT] timeout; frontlight off");}}
+static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 struct QueuedTap{int16_t x;int16_t y;int16_t dx;int16_t dy;bool home;};
 
 static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
-    if(verbose||!accepted||actual!=mhz)Serial.printf("[T5-POWER] cpu target=%lu actual=%lu MHz apb=%lu MHz reason=%s result=%s\n",(unsigned long)mhz,(unsigned long)actual,(unsigned long)(getApbFrequency()/1000000),reason,(accepted&&actual==mhz)?"OK":"FAILED");
+    if(!accepted||actual!=mhz)Serial.printf("[T5-ERROR] CPU target=%lu actual=%lu MHz reason=%s\n",(unsigned long)mhz,(unsigned long)actual,reason);
+    else T5_DEBUGF(T5_LOG_POWER && verbose,"[T5-POWER] cpu target=%lu actual=%lu MHz apb=%lu MHz reason=%s result=OK\n",(unsigned long)mhz,(unsigned long)(getApbFrequency()/1000000),reason);
     return accepted&&actual==mhz;
 }
 
@@ -647,8 +649,8 @@ static void draw_maps() {
             if(map_base_cache) {
                 memcpy(map_base_cache,fb,bytes);map_base_bytes=bytes;
                 map_base_lat=map_latitude;map_base_lon=map_longitude;map_base_zoom=map_zoom;map_base_result=result;map_base_valid=true;
-                Serial.printf("[T5-MAP] cached %u bytes (%u tiles)\n",(unsigned)bytes,result.tiles);
-            } else Serial.println("[T5-MAP] PSRAM unavailable; uncached rendering");
+                T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] cached %u bytes (%u tiles)\n",(unsigned)bytes,result.tiles);
+            } else T5_DEBUGLN(T5_LOG_MAP,"[T5-MAP] PSRAM unavailable; uncached rendering");
         }
     }
     draw_map_nodes();
@@ -927,7 +929,7 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(map_settle_ms)delay(map_settle_ms);
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
-    Serial.printf("[T5-UI] refresh=%d waveform=%d requested=%d screen=%d map_settle_ms=%u name='%s' preset=%s cpu=%luMHz\n",
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d map_settle_ms=%u name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,map_settle_ms,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
@@ -938,7 +940,7 @@ static void invalidate_display_back_buffer() {
 
 static void force_redraw(EpdDrawMode mode,const char* reason,bool wake_light=false) {
     invalidate_display_back_buffer();
-    Serial.printf("[T5-EPD] forced full redraw reason=%s mode=%d\n",reason,(int)mode);
+    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] forced full redraw reason=%s mode=%d\n",reason,(int)mode);
     refresh(mode,wake_light);
 }
 
@@ -948,19 +950,19 @@ static void fast_full_redraw(const char* reason,bool wake_light=false) {
     // inverted back framebuffer above ensures DU is not skipped as a no-op.
     // Do not alter standby or other screens' GL16 full redraw behaviour.
     if(screen==Screen::Maps&&!standby_active&&!keyboard_landscape) {
-        Serial.printf("[T5-EPD] full DU map redraw reason=%s\n",reason);
+        T5_DEBUGF(T5_LOG_UI,"[T5-EPD] full DU map redraw reason=%s\n",reason);
         force_redraw(MODE_DU,reason,wake_light);
         return;
     }
-    Serial.printf("[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
+    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
     force_redraw(MODE_GL16,reason,wake_light);
 }
 
 static void full_display_clean(const char* reason) {
-    Serial.printf("[T5-EPD] full GC16 redraw requested by %s standby=%d\n",reason,standby_active);
+    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] full GC16 redraw requested by %s standby=%d\n",reason,standby_active);
     draw_screen();
     force_redraw(MODE_GC16,reason,false);
-    Serial.println("[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
 
 static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
@@ -980,7 +982,7 @@ static void recover_pmic_power_path() {
     uint8_t value=0,address=0;
     for(const uint8_t candidate:{(uint8_t)0x6B,(uint8_t)0x6A})if(i2c_read8(candidate,REG09,&value,1)){address=candidate;break;}
     if(!address){Serial.println("[T5-POWER] boot PMIC recovery skipped: charger not detected");return;}
-    if(!(value&BATFET_DIS)){Serial.printf("[T5-POWER] boot PMIC address=0x%02X REG09=0x%02X battery path ready\n",address,value);return;}
+    if(!(value&BATFET_DIS)){T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] boot PMIC address=0x%02X REG09=0x%02X battery path ready\n",address,value);return;}
     const uint8_t restored=(uint8_t)((value&~BATFET_DIS)|BATFET_RST_EN);
     const bool ok=i2c_write8(address,REG09,restored);
     Serial.printf("[T5-POWER] boot PMIC recovery address=0x%02X REG09 0x%02X->0x%02X result=%s\n",address,value,restored,ok?"OK":"FAILED");
@@ -1023,9 +1025,9 @@ static void request_hardware_shutdown() {
         if(i2c_read8(candidate,REG09,&reg09,1)){address=candidate;break;}
     }
     if(!address){Serial.println("[T5-SHUTDOWN] ERROR: BQ25896 not detected at 0x6B or 0x6A");deep_sleep_shutdown("PMIC_NOT_FOUND");return;}
-    Serial.printf("[T5-SHUTDOWN] PMIC detected address=0x%02X REG09 before=0x%02X\n",address,reg09);
+    T5_DEBUGF(T5_LOG_POWER,"[T5-SHUTDOWN] PMIC detected address=0x%02X REG09 before=0x%02X\n",address,reg09);
     const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
-    Serial.printf("[T5-SHUTDOWN] preserving wake reset; REG09 request=0x%02X BATFET_DIS=1\n",requested);
+    T5_DEBUGF(T5_LOG_POWER,"[T5-SHUTDOWN] preserving wake reset; REG09 request=0x%02X BATFET_DIS=1\n",requested);
     Serial.flush();
     if(!i2c_write8(address,REG09,requested)){Serial.println("[T5-SHUTDOWN] ERROR: REG09 write failed");deep_sleep_shutdown("PMIC_WRITE_FAILED");return;}
     delay(750);
@@ -1047,7 +1049,7 @@ static bool update_status_hardware() {
     const bool clock_changed=standby_active?(old_hour!=status_hour||old_minute/10!=status_minute/10):(old_hour!=status_hour||old_minute!=status_minute);
     const bool battery_changed=standby_active?(old_battery/5!=status_battery/5):(old_battery!=status_battery);
     const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
-    if(changed)Serial.printf("[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
+    if(changed)T5_DEBUGF(T5_LOG_UI,"[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
     return changed;
@@ -1071,7 +1073,7 @@ static bool touch_point(int16_t& x, int16_t& y,bool& home) {
 
 static void touch_sampler_task(void*){
     bool held=false;int16_t start_x=0,start_y=0,last_x=0,last_y=0;
-    for(;;){if(!touch_enabled){held=false;Serial.println("[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);Serial.println("[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;bool home=false;const bool pressed=touch_point(x,y,home);if(home){if(!held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);held=true;}}else if(pressed){last_x=x;last_y=y;if(!held){held=true;start_x=x;start_y=y;frontlight_event();}}
+    for(;;){if(!touch_enabled){held=false;T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");ulTaskNotifyTake(pdTRUE,portMAX_DELAY);T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");continue;}int16_t x=0,y=0;bool home=false;const bool pressed=touch_point(x,y,home);if(home){if(!held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);held=true;}}else if(pressed){last_x=x;last_y=y;if(!held){held=true;start_x=x;start_y=y;frontlight_event();}}
         else if(held){held=false;QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)Serial.println("[T5-TOUCH] input queue full; tap discarded");}
         vTaskDelay(pdMS_TO_TICKS(8));}
 }
@@ -1103,7 +1105,7 @@ static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=mi
 static void set_keyboard_orientation(bool landscape){
     keyboard_landscape=landscape;
     epd_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
-    Serial.printf("[T5-UI] keyboard orientation=%s\n",landscape?"landscape":"portrait");
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] keyboard orientation=%s\n",landscape?"landscape":"portrait");
     draw_screen();refresh(MODE_GL16);
 }
 static void save_node_name(){
@@ -1115,7 +1117,7 @@ static void save_node_name(){
 static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(!keyboard_landscape)return false;
     const int16_t x=raw_y,y=539-raw_x;
-    Serial.printf("[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
+    T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
     const char* numbers="1234567890";if(y>=141&&y<211){append(numbers[min(9,max(0,(x-1)/96))]);queue_text_refresh();return true;}
     const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={215,285,355};
     for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+46)/93));if(r!=2||!(x<148||x>=808)){append(rows[r][i]);queue_text_refresh();return true;}}
@@ -1263,7 +1265,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             if(hit(x,y,12,118,516,112)){frontlight_mode=(FrontlightMode)(((uint8_t)frontlight_mode+1)%3);save_frontlight_settings();if(frontlight_mode==FrontlightMode::Off)frontlight_drive(false);else frontlight_event();show_toast(frontlight_mode_name());draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,238,516,112)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MODE_DU);return true;}
-            if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();Serial.printf("[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
+            if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,538,516,112)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,630,516,50)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MODE_DU);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,674,492,70)){open_screen(Screen::NightSchedule);return true;}
@@ -1284,7 +1286,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
-    Serial.printf("[T5-UI] tap x=%d y=%d\n",x,y);
+    T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] tap x=%d y=%d\n",x,y);
     if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
@@ -1299,7 +1301,7 @@ static void handle_tap(int16_t x,int16_t y) {
     }
     if(screen==Screen::CompanionConfirm){
         if(hit(x,y,30,500,220,72)){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MODE_DU);return;}
-        if(hit(x,y,290,500,220,72)){Serial.println("[T5-UI] companion mode confirmed");request_companion_mode();return;}
+        if(hit(x,y,290,500,220,72)){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");request_companion_mode();return;}
         return;
     }
     if(screen==Screen::ShutdownConfirm){
@@ -1307,7 +1309,7 @@ static void handle_tap(int16_t x,int16_t y) {
         if(hit(x,y,290,650,220,72)){request_hardware_shutdown();return;}
         return;
     }
-    if(hit(x,y,30,180,480,64)){replace_name_on_type=true;keyboard_visible=true;Serial.println("[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MODE_DU);return;}
+    if(hit(x,y,30,180,480,64)){replace_name_on_type=true;keyboard_visible=true;T5_DEBUGLN(T5_LOG_UI,"[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MODE_DU);return;}
     if(hit(x,y,24,292,492,88)){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return;}
     if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MODE_GL16);return;}
     if(!keyboard_visible){if(hit(x,y,30,840,480,64)){keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return;}
@@ -1316,26 +1318,26 @@ static void handle_tap(int16_t x,int16_t y) {
 
 static void set_touch_power(bool enabled){
     touch_enabled=false;delay(20);was_pressed=false;
-    if(enabled){pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);clear_touch();touch_enabled=true;if(touch_task_handle)xTaskNotifyGive(touch_task_handle);Serial.println("[T5-STANDBY] touch controller enabled");}
-    else{pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);Serial.println("[T5-STANDBY] touch controller disabled");}
+    if(enabled){pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);clear_touch();touch_enabled=true;if(touch_task_handle)xTaskNotifyGive(touch_task_handle);T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] touch controller enabled");}
+    else{pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] touch controller disabled");}
 }
 
 static void enter_standby(const char* reason){
     if(standby_active)return;standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
-    Serial.printf("[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
     if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
-    set_cpu_target(160,"wake");Serial.println("[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
+    set_cpu_target(160,"wake");T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
 }
 
 static void start_message_alert(){
     const uint32_t now=millis();
-    if(message_alert_active){Serial.println("[T5-STANDBY] message alert coalesced into active sequence");return;}
-    if((int32_t)(now-message_alert_cooldown_until)<0){Serial.println("[T5-STANDBY] message alert suppressed by cooldown");return;}
+    if(message_alert_active){T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] message alert coalesced into active sequence");return;}
+    if((int32_t)(now-message_alert_cooldown_until)<0){T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] message alert suppressed by cooldown");return;}
     message_alert_active=true;message_alert_phase=0;message_alert_deadline=now;
-    Serial.println("[T5-STANDBY] combined EPD/frontlight message alert started");
+    T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] combined EPD/frontlight message alert started");
 }
 
 static void service_message_alert(){
@@ -1359,7 +1361,7 @@ static void service_message_alert(){
             ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;frontlight_deadline=0;
             draw_screen();force_redraw(MODE_GC16,"MESSAGE_ALERT_RESTORE",false);
             status_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
-            Serial.println("[T5-STANDBY] combined message alert complete; standby screen restored with GC16");
+            T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] combined message alert complete; standby screen restored with GC16");
             break;
     }
 }
@@ -1380,7 +1382,7 @@ static void service_boot_button(){
 
 void ui_setup() {
     Serial.begin(115200); delay(200);
-    Serial.printf("[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
     pinMode(BOOT_BUTTON,INPUT_PULLUP);pinMode(FRONTLIGHT,OUTPUT);digitalWrite(FRONTLIGHT,HIGH);
     ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,255);
     pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
@@ -1413,7 +1415,7 @@ void ui_setup() {
     if(node_name[0])centred(node_name,830,3,0,true);
     centred(UI_VERSION,885,2,0,true);
     epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);
-    Serial.println("[T5-BOOT] splash visible; starting storage and mesh initialization");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
 
 void ui_show_storage_initializing() {
@@ -1435,10 +1437,10 @@ void ui_finish_startup() {
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
-    if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)Serial.println("[T5-TOUCH] sampler running; interval=8ms queue depth=32");
+    if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
-    Serial.printf("[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
-    set_cpu_target(160,"ui-ready");last_user_activity=millis();Serial.println("[T5-UI] touch ready; waiting for input");
+    T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
+    set_cpu_target(160,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
 }
 
 void ui_loop() {
@@ -1463,7 +1465,7 @@ void ui_loop() {
         if(screen==Screen::Presets&&abs(tap.dy)>60){
             const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
-            preset_page=(uint8_t)next;Serial.printf("[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
+            preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(tap.x,tap.y);
     }
     if(text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0){text_refresh_pending=false;draw_screen();refresh(MODE_DU);}
@@ -1481,8 +1483,10 @@ void ui_loop() {
     }
     frontlight_service();
     service_message_alert();
+#if T5_LOG_POWER
     static uint32_t power_report_at=0,loop_count=0;loop_count++;
-    if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);Serial.printf("[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
+    if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
+#endif
     delay(12);
 }
 
@@ -1513,7 +1517,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
     const bool satellites_changed=enabled&&has_fix&&!standby_active&&status_gps_satellites!=satellites;
-    if(state_changed)Serial.printf("[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
+    if(state_changed)T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
     status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
     static uint32_t last_detail_refresh=0;
     static uint32_t last_satellite_refresh=0;
@@ -1540,7 +1544,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     if(state_changed||satellites_refresh||(detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000)||marker_moved){
         last_detail_refresh=now;
         status_dirty=true;
-        Serial.println(marker_moved?"[T5-UI] refresh queued reason=map-own-position":
+        T5_DEBUGLN(T5_LOG_UI,marker_moved?"[T5-UI] refresh queued reason=map-own-position":
                                "[T5-UI] refresh queued reason=gps-state");
     }
 }
@@ -1548,34 +1552,34 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
 void ui_notify_message_received(bool channel){
     const bool visible=channel?screen==Screen::ChannelChat:screen==Screen::ContactChat;
     if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
-    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;Serial.printf("[T5-UI] %s message event unread=%u refresh queued standby=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active);
+    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active);
 }
 
 void ui_notify_advert_result(bool flood,bool ok){
     show_toast(ok?(flood?"FLOOD ADVERT SENT":"ZERO HOP ADVERT SENT"):"ADVERT FAILED");
-    status_dirty=true;Serial.printf("[T5-UI] advert result flood=%d ok=%d\n",flood,ok);
+    status_dirty=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] advert result flood=%d ok=%d\n",flood,ok);
 }
 
 void ui_notify_node_position_unavailable(){
     if(screen!=Screen::ContactDetails||standby_active)return;
     show_toast("NO POSITION RECEIVED");
     status_dirty=true;
-    Serial.println("[T5-UI] no GPS returned by latest node info request; retaining last known position");
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-UI] no GPS returned by latest node info request; retaining last known position");
 }
 
 void ui_request_data_refresh(const char* reason){
-    status_dirty=true;Serial.printf("[T5-UI] refresh queued reason=%s\n",reason?reason:"data");
+    status_dirty=true;T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh queued reason=%s\n",reason?reason:"data");
 }
 
 void ui_mesh_ready(){
-    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){local_mesh_apply_name(node_name);state.putBool("name_migrated",true);Serial.printf("[T5-UI] migrated node name to MeshCore '%s'\n",node_name);}else{strncpy(node_name,local_mesh_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;Serial.printf("[T5-UI] node name loaded from MeshCore '%s'\n",node_name);}state.putString("name",node_name);state.end();}
+    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){local_mesh_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to MeshCore '%s'\n",node_name);}else{strncpy(node_name,local_mesh_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from MeshCore '%s'\n",node_name);}state.putString("name",node_name);state.end();}
     update_status_hardware();status_dirty=true;
 }
 
 void ui_use_data_provider(UiDataProvider* provider) {
     if (!provider) return;
     ui_data=provider;
-    Serial.println("[T5-UI] live MeshCore data provider attached");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-UI] live MeshCore data provider attached");
     // ui_finish_startup() presents the first interactive screen only after
     // the blocking storage / MeshCore boot sequence has completed.
 }

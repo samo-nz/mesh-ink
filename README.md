@@ -29,6 +29,33 @@ initialization finish, so taps made during the splash cannot be replayed into
 the setup keyboard. An update flash preserves existing settings and messages;
 a full-wipe flash erases them. Radio and GPS behavior are unchanged.
 
+## Serial logging and battery use (v1.5.5)
+
+The normal local UI and Bluetooth companion builds use
+`-DT5_DIAGNOSTICS=0`. They print a short boot summary (firmware, GPS
+receiver, filesystem and mesh startup) plus relevant hardware, storage and
+operation errors. Continuous touch coordinates, display refresh traces,
+message/radio counters, GPS fix and OFF-state probe reports, and periodic
+battery/charger diagnostic polling are off in production. The GPS software
+watchdog and OFF-state UART draining **remain active**: removing diagnostics
+must not change the receiver's normal operation.
+
+To investigate a problem, change the corresponding target's
+`-DT5_DIAGNOSTICS=0` in `platformio.ini` to `-DT5_DIAGNOSTICS=1`, then
+rebuild/reflash; this restores the detailed diagnostic build. For targeted
+logs without the full diagnostic output, leave it at 0 and add one build
+flag under `[env:t5-unified]`: `-DT5_LOG_GPS=1`,
+`-DT5_LOG_TOUCH=1`, `-DT5_LOG_POWER=1`, `-DT5_LOG_UI=1`,
+`-DT5_LOG_MESH=1`, `-DT5_LOG_MAP=1`, or `-DT5_LOG_BOARD=1`.
+The global flag also enables detailed RTC, battery gauge and GPS UART
+probes. Remove the temporary flag and rebuild for production.
+
+This reduces serial formatting/transmission and diagnostic polling;
+**battery-life improvement has not been measured**. The GPS and LoRa
+still share their power rail, and receiver current is not reduced merely
+by disabling serial debug logs. Boot-time ESP-IDF/EPDiy warnings may still
+print independently of MeshInk's log settings.
+
 ## Features
 
 - Direct messages and channel messaging

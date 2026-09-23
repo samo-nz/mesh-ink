@@ -8,6 +8,7 @@
 #include "companion_runtime.h"
 #include "local_mesh_runtime.h"
 #include "ui_onboarding.h"
+#include "t5_logging.h"
 
 // Device-owned composition root for the unmodified upstream MeshCore companion
 // classes. This is deliberately small so upstream updates remain easy to diff.
@@ -45,7 +46,7 @@ MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
 void companion_setup() {
-    Serial.println("[T5-BOOT] starting upstream MeshCore companion runtime");
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
     board.begin();
     if (!radio_init()) {
         Serial.println("[T5-BOOT] fatal: SX1262 initialization failed");
@@ -74,7 +75,7 @@ void companion_loop() {
 }
 
 void local_mesh_setup() {
-    Serial.println("[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     board.beginLocal();
     bool radio_ready=false;
     for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt){
@@ -103,6 +104,7 @@ void local_mesh_setup() {
     ui_use_data_provider(local_mesh_provider());
     ui_mesh_ready();
     local_runtime_ready=true;
-    Serial.printf("[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
+    Serial.printf("[T5-BOOT] MeshCore ready: contacts=%d\n",the_mesh.getNumContacts());
+    T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
 }
 bool local_mesh_is_running(){return local_runtime_ready;}

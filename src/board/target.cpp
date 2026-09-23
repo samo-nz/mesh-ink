@@ -7,17 +7,16 @@
 #include <sys/time.h>
 #include <RTClib.h>
 #include "target.h"
+#include "t5_logging.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.0.0"
 #endif
 
-#if T5_DIAGNOSTICS
-#define T5_TRACE(...) Serial.printf("[T5] " __VA_ARGS__)
-#else
-#define T5_TRACE(...) do {} while (0)
-#endif
+#define T5_TRACE(...) T5_DEBUGF(T5_LOG_BOARD, "[T5] " __VA_ARGS__)
+#define T5_GPS_TRACE(...) T5_DEBUGF(T5_LOG_GPS, "[T5] " __VA_ARGS__)
+#define T5_POWER_TRACE(...) T5_DEBUGF(T5_LOG_POWER, "[T5] " __VA_ARGS__)
 
 T5Board board;
 
@@ -93,19 +92,20 @@ bool T5Board::enableRadioGpsRail(){
     constexpr uint8_t OUTPUT_PORT0=0x02,CONFIG_PORT0=0x06,LORA_EN=0x01;
     uint8_t output=0,config=0;
     if(!pca_read(OUTPUT_PORT0,output)||!pca_read(CONFIG_PORT0,config)){
-        T5_TRACE("power rail: PCA9535 read failed\n");return false;
+        Serial.println("[T5-ERROR] PCA9535 power-rail read failed");return false;
     }
     const uint8_t requested_output=(uint8_t)(output|LORA_EN);
     const uint8_t requested_config=(uint8_t)(config&~LORA_EN);
     // Set the output latch first so the rail cannot glitch low when direction changes.
     if(!pca_write(OUTPUT_PORT0,requested_output)||!pca_write(CONFIG_PORT0,requested_config)){
-        T5_TRACE("power rail: PCA9535 write failed output=0x%02X config=0x%02X\n",requested_output,requested_config);return false;
+        Serial.println("[T5-ERROR] PCA9535 power-rail write failed");return false;
     }
     uint8_t verified_output=0,verified_config=0;
     const bool verified=pca_read(OUTPUT_PORT0,verified_output)&&pca_read(CONFIG_PORT0,verified_config)&&
         (verified_output&LORA_EN)&&!(verified_config&LORA_EN);
     T5_TRACE("power rail: PCA9535 output0 0x%02X->0x%02X config0 0x%02X->0x%02X verify=%s\n",
         output,verified_output,config,verified_config,verified?"OK":"FAILED");
+    if(!verified)Serial.println("[T5-ERROR] PCA9535 shared radio/GPS rail verification failed");
     if(verified)delay(150);
     return verified;
 }
@@ -159,7 +159,7 @@ static void gps_send_pcas(const char* payload) {
     for(const char* p=payload;*p;++p)checksum^=(uint8_t)*p;
     Serial1.printf("$%s*%02X\r\n",payload,checksum);
     Serial1.flush();
-    T5_TRACE("gps tuning: TX $%s*%02X (receiver acceptance not confirmed)\n",payload,checksum);
+    T5_GPS_TRACE("gps tuning: TX $%s*%02X (receiver acceptance not confirmed)\n",payload,checksum);
 }
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
@@ -193,7 +193,7 @@ bool t5_gps_set_constellation_mode(uint8_t mode){
     if(!saved)return false;
     gps_constellation_mode=mode;
     gps_constellation_dirty=mode!=0;
-    if(mode==0)T5_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
+    if(mode==0)T5_GPS_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
     else gps_apply_tuning();
     return true;
 }
@@ -226,7 +226,7 @@ static void gps_wake_command() {
         gps_wake_requested_at=gps_wake_started_at=millis();
         gps_wake_logged_nmea=gps_wake_logged_fix=false;
         gps_sleep_requested_at=0;
-        T5_TRACE("gps probe: GPS provider ON after %lums OFF; no GPS power/wake command sent\n",
+        T5_GPS_TRACE("gps probe: GPS provider ON after %lums OFF; no GPS power/wake command sent\n",
             (unsigned long)elapsed);
     }
     gps_command_sleeping = false;
@@ -244,9 +244,9 @@ static void gps_sleep_command() {
         gps_sleep_requested_at=gps_sleep_last_report=millis();
         gps_sleep_bytes_after=gps_sleep_window_bytes=0;
         gps_wake_started_at=gps_wake_requested_at=0;
-        T5_TRACE("gps probe: GPS provider OFF; no GPS standby command sent; shared LoRa/GPS power rail remains ON\n");
+        T5_GPS_TRACE("gps probe: GPS provider OFF; no GPS standby command sent; shared LoRa/GPS power rail remains ON\n");
     } else {
-        T5_TRACE("gps power: sleep skipped module=%s (radio/GPS rail is shared)\n", gps_module_name());
+        T5_GPS_TRACE("gps power: sleep skipped module=%s (radio/GPS rail is shared)\n", gps_module_name());
     }
 }
 
@@ -323,25 +323,25 @@ public:
         gps_load_tuning();
         gps_apply_tuning();
         next_baud_retry = millis() + 6000;
-        T5_TRACE("gps: enabled by MeshCore sensor setting\n");
+        T5_GPS_TRACE("gps: enabled by MeshCore sensor setting\n");
     }
     void stop() override {
         MicroNMEALocationProvider::stop();
         active = false;
         gps_sleep_command();
-        T5_TRACE("gps: disabled by MeshCore sensor setting\n");
+        T5_GPS_TRACE("gps: disabled by MeshCore sensor setting\n");
     }
     void loop() override {
         t5_power_diagnostics_tick();
-#if T5_DIAGNOSTICS
+        // Keep receiver-data watchdog operational in production. Previously
+        // this timestamp was updated only inside the diagnostics build.
         const int pending = Serial1.available();
-        if (pending > 0) {
-            gps_last_byte_at = millis();
-            if(gps_wake_requested_at){
-                T5_TRACE("gps probe: first UART bytes %lums after wake request (%d pending)\n",
-                    (unsigned long)(millis()-gps_wake_requested_at),pending);
-                gps_wake_requested_at=0;
-            }
+        if(pending>0)gps_last_byte_at=millis();
+#if T5_LOG_GPS
+        if (pending>0&&gps_wake_requested_at){
+            T5_GPS_TRACE("gps probe: first UART bytes %lums after wake request (%d pending)\n",
+                (unsigned long)(millis()-gps_wake_requested_at),pending);
+            gps_wake_requested_at=0;
         }
 #endif
         // MeshCore's provider may call RTCClock::setCurrentTime whenever it sees
@@ -364,16 +364,16 @@ public:
             }
         }
         MicroNMEALocationProvider::loop();
-#if T5_DIAGNOSTICS
+#if T5_LOG_GPS
         if (gps_wake_started_at && !gps_wake_logged_nmea && gps_stream.hasValidSentence()) {
             gps_wake_logged_nmea=true;
-            T5_TRACE("gps probe: first checksum-valid NMEA %lums after wake request\n",
+            T5_GPS_TRACE("gps probe: first checksum-valid NMEA %lums after wake request\n",
                 (unsigned long)(millis()-gps_wake_started_at));
         }
         if (gps_wake_started_at && !gps_wake_logged_fix && isValid() &&
             (uint32_t)getTimestamp()!=gps_wake_previous_stamp) {
             gps_wake_logged_fix=true;
-            T5_TRACE("gps probe: first fresh GPS fix %lums after wake request (sats=%ld)\n",
+            T5_GPS_TRACE("gps probe: first fresh GPS fix %lums after wake request (sats=%ld)\n",
                 (unsigned long)(millis()-gps_wake_started_at),(long)satellitesCount());
         }
 #endif
@@ -381,7 +381,7 @@ public:
             gps_baud_locked = true;
             detected_gps_baud = Serial1.baudRate();
             detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
-            T5_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
+            T5_GPS_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
             gps_apply_tuning();
         } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
             detected_gps_baud = Serial1.baudRate() == 9600 ? 38400 : 9600;
@@ -389,10 +389,10 @@ public:
             gps_stream.clearValidation();
             MicroNMEALocationProvider::syncTime();
             next_baud_retry = millis() + 6000;
-            T5_TRACE("gps: background probe trying %u baud\n", detected_gps_baud);
+            T5_GPS_TRACE("gps: background probe trying %u baud\n", detected_gps_baud);
         }
         if (active && gps_baud_locked && !gps_command_sleeping && gps_last_byte_at && millis() - gps_last_byte_at > 30000) {
-            T5_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
+            T5_GPS_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
             // Loss of NMEA is not proof of standby. Retry baud detection
             // without sending any unverified GPS wake or sleep command.
             gps_stream.clearValidation();
@@ -400,11 +400,11 @@ public:
             next_baud_retry = millis() + 6000;
             gps_last_byte_at = millis();
         }
-#if T5_DIAGNOSTICS
+#if T5_LOG_GPS
         static uint32_t last_report = 0;
         if (millis() - last_report >= 15000) {
             last_report = millis();
-            T5_TRACE("gps: baud=%u incoming=%d fix=%d satellites=%ld lat=%ld lon=%ld\n",
+            T5_GPS_TRACE("gps: baud=%u incoming=%d fix=%d satellites=%ld lat=%ld lon=%ld\n",
                      Serial1.baudRate(), pending, isValid(), satellitesCount(),
                      getLatitude(), getLongitude());
         }
@@ -418,11 +418,13 @@ EnvironmentSensorManager sensors(gps);
 // when GPS is OFF. Consume UART bytes ONLY while the provider is inactive,
 // so we can distinguish a quiet receiver from a stopped parser.
 void t5_gps_power_probe_tick(){
-#if T5_DIAGNOSTICS
     if(gps.isActive()||!gps_sleep_requested_at)return;
-    const uint32_t now=millis();
+    // Do not disable the OFF-state UART draining with diagnostics: otherwise
+    // the powered receiver fills the RX buffer before GPS is re-enabled.
     uint32_t drained=0;
-    while(Serial1.available()>0 && drained<512){Serial1.read();++drained;}
+    while(Serial1.available()>0&&drained<512){Serial1.read();++drained;}
+#if T5_LOG_GPS
+    const uint32_t now=millis();
     // Ignore the first second (bytes already in flight after the stop request).
     if(now-gps_sleep_requested_at>=1000){
         gps_sleep_bytes_after+=drained;
@@ -431,12 +433,14 @@ void t5_gps_power_probe_tick(){
     if(now-gps_sleep_last_report>=5000){
         gps_sleep_last_report=now;
         const uint32_t off_ms=now-gps_sleep_requested_at;
-        T5_TRACE("gps probe: OFF +%lus UART bytes last ~5s=%lu total after 1s=%lu (%s; power not measured)\n",
+        T5_GPS_TRACE("gps probe: OFF +%lus UART bytes last ~5s=%lu total after 1s=%lu (%s; power not measured)\n",
             (unsigned long)(off_ms/1000),
             (unsigned long)gps_sleep_window_bytes,(unsigned long)gps_sleep_bytes_after,
             gps_sleep_window_bytes?"UART ACTIVE":"UART QUIET");
         gps_sleep_window_bytes=0;
     }
+#else
+    (void)drained;
 #endif
 }
 
@@ -528,19 +532,19 @@ static void gauge_apply_factory_profile_if_needed() {
     if(!gauge_word(0x3C,design)||!gauge_word(0x08,voltage)||
        !gauge_word(0x0A,battery_status)||!gauge_word(0x3A,operation)||
        !gauge_word(0x00,control)) {
-        T5_TRACE("gauge profile: telemetry unavailable; no changes made\n");return;
+        T5_POWER_TRACE("gauge profile: telemetry unavailable; no changes made\n");return;
     }
     if(design==1500) {
-        T5_TRACE("gauge profile: design=1500mAh; no configuration write needed\n");return;
+        T5_POWER_TRACE("gauge profile: design=1500mAh; no configuration write needed\n");return;
     }
     // Only migrate the board's known factory-default 3000-mAh mismatch.
     // Do not overwrite an unknown/replacement battery or unexpected gauge state.
     if(design!=3000||voltage<3000||voltage>4250||!(battery_status&0x0008)||
        !(operation&0x0020)||(operation&0x0400)||(control&0x0007)) {
-        T5_TRACE("gauge profile: SKIP unexpected state design=%u voltage=%u battery=0x%04X operation=0x%04X control=0x%04X\n",
+        T5_POWER_TRACE("gauge profile: SKIP unexpected state design=%u voltage=%u battery=0x%04X operation=0x%04X control=0x%04X\n",
                  design,voltage,battery_status,operation,control);return;
     }
-    T5_TRACE("gauge profile: factory 1500mAh migration requested (reported=%umAh)\n",design);
+    T5_POWER_TRACE("gauge profile: factory 1500mAh migration requested (reported=%umAh)\n",design);
     uint8_t sec=(operation>>1)&3;bool cfg=(operation&0x0400)!=0;
     bool unlocked=false,config_entered=false,profile_ok=false,rollback_ok=true;
     uint16_t originals[T5_PROFILE_COUNT]{};
@@ -550,37 +554,37 @@ static void gauge_apply_factory_profile_if_needed() {
         if(sec==3) {
             if(!gauge_control_command(0x0414)||!gauge_control_command(0x3672)||
                !gauge_wait_state(2,0,500)) {
-                T5_TRACE("gauge profile: UNSEAL failed\n");break;
+                T5_POWER_TRACE("gauge profile: UNSEAL failed\n");break;
             }
         } else if(sec!=2&&sec!=1) {
-            T5_TRACE("gauge profile: unexpected security state=%u\n",sec);break;
+            T5_POWER_TRACE("gauge profile: unexpected security state=%u\n",sec);break;
         }
         unlocked=true;
         if(sec!=1) {
             if(!gauge_control_command(0xFFFF)||!gauge_control_command(0xFFFF)||
                !gauge_wait_state(1,0,500)) {
-                T5_TRACE("gauge profile: FULL ACCESS failed\n");break;
+                T5_POWER_TRACE("gauge profile: FULL ACCESS failed\n");break;
             }
         }
         for(size_t i=0;i<T5_PROFILE_COUNT;++i) {
             if(!gauge_profile_read(T5_FACTORY_GAUGE_PROFILE[i],originals[i])) {
-                T5_TRACE("gauge profile: preflight read failed at 0x%04X; NO WRITES\n",
+                T5_POWER_TRACE("gauge profile: preflight read failed at 0x%04X; NO WRITES\n",
                          T5_FACTORY_GAUGE_PROFILE[i].address);break;
             }
             ++changed;
         }
         if(changed!=T5_PROFILE_COUNT)break;
         if(originals[4]!=3000) {
-            T5_TRACE("gauge profile: preflight design RAM=%u differs from live design=3000; aborting\n",originals[4]);
+            T5_POWER_TRACE("gauge profile: preflight design RAM=%u differs from live design=3000; aborting\n",originals[4]);
             break;
         }
         changed=0;
         for(size_t i=0;i<T5_PROFILE_COUNT;++i)
             if(originals[i]!=T5_FACTORY_GAUGE_PROFILE[i].value)++changed;
-        T5_TRACE("gauge profile: verified %u fields, %u differ from LILYGO profile\n",
+        T5_POWER_TRACE("gauge profile: verified %u fields, %u differ from LILYGO profile\n",
                  (unsigned)T5_PROFILE_COUNT,(unsigned)changed);
         if(!gauge_control_command(0x0090)||!gauge_wait_state(1,1,1200)) {
-            T5_TRACE("gauge profile: CONFIG UPDATE entry failed\n");break;
+            T5_POWER_TRACE("gauge profile: CONFIG UPDATE entry failed\n");break;
         }
         config_entered=true;
         bool write_ok=true;
@@ -591,7 +595,7 @@ static void gauge_apply_factory_profile_if_needed() {
             // Mark it first so even that field is included in rollback.
             modified[i]=true;
             if(!gauge_profile_write(field,field.value)) {
-                T5_TRACE("gauge profile: WRITE OR VERIFY FAILED address=0x%04X\n",field.address);
+                T5_POWER_TRACE("gauge profile: WRITE OR VERIFY FAILED address=0x%04X\n",field.address);
                 write_ok=false;break;
             }
         }
@@ -600,11 +604,12 @@ static void gauge_apply_factory_profile_if_needed() {
             // CFGUPDATE. A failed rollback is reported loudly, never hidden.
             for(size_t i=0;i<T5_PROFILE_COUNT;++i)if(modified[i])
                 if(!gauge_profile_write(T5_FACTORY_GAUGE_PROFILE[i],originals[i]))rollback_ok=false;
-            T5_TRACE("gauge profile: update failed; rollback=%s\n",rollback_ok?"OK":"FAILED");
+            T5_POWER_TRACE("gauge profile: update failed; rollback=%s\n",rollback_ok?"OK":"FAILED");
+            if(!rollback_ok)Serial.println("[T5-ERROR] battery gauge profile rollback failed");
             break;
         }
         if(!gauge_control_command(0x0091)) {
-            T5_TRACE("gauge profile: EXIT/REINIT command failed\n");break;
+            T5_POWER_TRACE("gauge profile: EXIT/REINIT command failed\n");break;
         }
         config_entered=false;
         delay(2000);
@@ -614,23 +619,23 @@ static void gauge_apply_factory_profile_if_needed() {
            gauge_word(0x3C,result)&&gauge_word(0x12,fcc)&&gauge_word(0x2C,soc)&&
            result==1500&&fcc<=1500&&soc<=100) {
             profile_ok=true;
-            T5_TRACE("gauge profile: SUCCESS design=%umAh FCC=%umAh SOC=%u%%\n",result,fcc,soc);
-        } else T5_TRACE("gauge profile: POST-UPDATE VALIDATION FAILED design=%u FCC=%u SOC=%u cfg=%u\n",
+            T5_POWER_TRACE("gauge profile: SUCCESS design=%umAh FCC=%umAh SOC=%u%%\n",result,fcc,soc);
+        } else T5_POWER_TRACE("gauge profile: POST-UPDATE VALIDATION FAILED design=%u FCC=%u SOC=%u cfg=%u\n",
                        result,fcc,soc,post_cfg);
     }while(false);
     if(config_entered) {
         // Whether update or rollback failed, leave the gauge out of CFGUPDATE.
-        if(!gauge_control_command(0x0092))T5_TRACE("gauge profile: EMERGENCY CONFIG EXIT FAILED\n");
+        if(!gauge_control_command(0x0092))Serial.println("[T5-ERROR] battery gauge emergency config exit failed");
         delay(300);
     }
     if(unlocked) {
         if(!gauge_control_command(0x0030)||!gauge_wait_state(3,0,1000))
-            T5_TRACE("gauge profile: WARNING reseal failed; inspect gauge before reboot\n");
+            Serial.println("[T5-ERROR] battery gauge reseal failed; inspect before reboot");
     } else {
         // An interrupted unseal attempt may have succeeded; seal defensively.
         gauge_control_command(0x0030);
     }
-    if(!profile_ok)T5_TRACE("gauge profile: NOT VERIFIED; do not trust battery percentage\n");
+    if(!profile_ok)Serial.println("[T5-ERROR] battery gauge profile not verified; do not trust battery percentage");
 }
 
 #if T5_DIAGNOSTICS
@@ -699,28 +704,28 @@ static void t5_power_diagnostics_report(const char* reason) {
         const unsigned adc_battery=2304U+20U*(reg0e&0x7F);
         const unsigned adc_vbus=2600U+100U*(reg11&0x7F);
         const unsigned adc_charge=50U*(reg12&0x7F);
-        T5_TRACE("power snapshot reason=%s uptime=%lums\n",reason,(unsigned long)millis());
-        T5_TRACE("charger: VBUS=%umV good=%u source=%u state=%s(%u) IINLIM=%umA ICHG_TARGET=%umA ICHG_ADC=%umA BAT_ADC=%umV TS=0x%02X fault=0x%02X\n",
+        T5_POWER_TRACE("power snapshot reason=%s uptime=%lums\n",reason,(unsigned long)millis());
+        T5_POWER_TRACE("charger: VBUS=%umV good=%u source=%u state=%s(%u) IINLIM=%umA ICHG_TARGET=%umA ICHG_ADC=%umA BAT_ADC=%umV TS=0x%02X fault=0x%02X\n",
             adc_vbus,(reg11>>7)&1,(reg0b>>5)&7,charge_names[charge],charge,input_limit,target_current,
             adc_charge,adc_battery,reg10,reg0c);
         last_charger_state=charge;
-    }else T5_TRACE("charger: BQ25896 diagnostic read failed\n");
+    }else T5_POWER_TRACE("charger: BQ25896 diagnostic read failed\n");
 
     GaugeDiagnosticSnapshot s{};
     if(gauge_diagnostic_snapshot(s)){
         const int current=(int16_t)s.current_raw;
         const int temp_c10=(int)s.temperature-2731;
-        T5_TRACE("gauge: voltage=%umV current=%dmA SOC=%u%% SOH=%u%% RM=%umAh FCC=%umAh Design=%umAh cycles=%u temp=%d.%dC\n",
+        T5_POWER_TRACE("gauge: voltage=%umV current=%dmA SOC=%u%% SOH=%u%% RM=%umAh FCC=%umAh Design=%umAh cycles=%u temp=%d.%dC\n",
             s.voltage,current,s.soc,s.soh,s.remaining,s.full,s.design_capacity,s.cycle_count,
             temp_c10/10,abs(temp_c10%10));
-        T5_TRACE("gauge request: charging_voltage=%umV charging_current=%umA\n",
+        T5_POWER_TRACE("gauge request: charging_voltage=%umV charging_current=%umA\n",
             s.charging_voltage,s.charging_current);
         if(s.design_capacity!=1500)
-            T5_TRACE("gauge: CAPACITY MISMATCH fitted=1500mAh reported=%umAh; SOC and FCC not yet trustworthy\n",s.design_capacity);
+            T5_POWER_TRACE("gauge: CAPACITY MISMATCH fitted=1500mAh reported=%umAh; SOC and FCC not yet trustworthy\n",s.design_capacity);
         if(!strcmp(reason,"early-boot")) {
             const uint8_t security=(s.operation_status>>1)&3;
             if(security==3) {
-                T5_TRACE("gauge profile audit: SEALED (SEC=3), data-memory values NOT readable; previous 0 readings were invalid, not settings\n");
+                T5_POWER_TRACE("gauge profile audit: SEALED (SEC=3), data-memory values NOT readable; previous 0 readings were invalid, not settings\n");
             } else {
                 uint16_t full=0,design=0,nominal=0,charge_current=0,charge_voltage=0,taper=0;
                 const bool profile_ok=gauge_dm_read_word(0x929D,full)&&
@@ -728,14 +733,14 @@ static void t5_power_diagnostics_report(const char* reason) {
                 const bool charge_ok=gauge_dm_read_word(0x91FB,charge_current)&&
                     gauge_dm_read_word(0x91FD,charge_voltage)&&gauge_dm_read_word(0x9201,taper);
                 if(profile_ok&&design>=100&&design<=32000&&nominal>=2500&&nominal<=5000)
-                    T5_TRACE("gauge profile1 RAM: initial_FCC=%umAh design=%umAh nominal=%umV\n",full,design,nominal);
-                else T5_TRACE("gauge profile1 RAM: invalid or unavailable; do not infer values\n");
+                    T5_POWER_TRACE("gauge profile1 RAM: initial_FCC=%umAh design=%umAh nominal=%umV\n",full,design,nominal);
+                else T5_POWER_TRACE("gauge profile1 RAM: invalid or unavailable; do not infer values\n");
                 if(charge_ok&&charge_voltage>=2500&&charge_voltage<=4600)
-                    T5_TRACE("gauge profile RAM: requested_charge=%umA charge_voltage=%umV taper=%umA\n",
+                    T5_POWER_TRACE("gauge profile RAM: requested_charge=%umA charge_voltage=%umV taper=%umA\n",
                         charge_current,charge_voltage,taper);
-                else T5_TRACE("gauge profile RAM: invalid or unavailable; do not infer values\n");
+                else T5_POWER_TRACE("gauge profile RAM: invalid or unavailable; do not infer values\n");
             }
-            T5_TRACE("gauge profile audit: no unseal, config change or calibration performed\n");
+            T5_POWER_TRACE("gauge profile audit: no unseal, config change or calibration performed\n");
         }
         T5_TRACE("gauge BatteryStatus=0x%04X FC=%u TCA=%u OCVCOMP=%u OCVFAIL=%u OCVGD=%u BATTPRES=%u SLEEP=%u SYSDWN=%u DSG=%u\n",
             s.battery_status,(s.battery_status>>9)&1,(s.battery_status>>6)&1,
@@ -748,7 +753,7 @@ static void t5_power_diagnostics_report(const char* reason) {
             (s.operation_status>>1)&3,s.operation_status&1,s.control_status,
             (s.control_status>>5)&1,(s.control_status>>4)&1,(s.control_status>>3)&1,
             s.control_status&7);
-    }else T5_TRACE("gauge: BQ27220 diagnostic read failed\n");
+    }else T5_POWER_TRACE("gauge: BQ27220 diagnostic read failed\n");
 #else
     (void)reason;
 #endif
@@ -794,11 +799,11 @@ uint16_t T5Board::getBattMilliVolts() {
         cached_mv = voltage;
         uint16_t soc = 0;
         if (gauge_word(0x2C, soc) && soc <= 100)
-            T5_TRACE("battery: BQ27220 voltage=%u mV SOC=%u%%\n", cached_mv, soc);
+            T5_POWER_TRACE("battery: BQ27220 voltage=%u mV SOC=%u%%\n", cached_mv, soc);
         else
-            T5_TRACE("battery: BQ27220 voltage=%u mV; SOC unavailable\n", cached_mv);
+            T5_POWER_TRACE("battery: BQ27220 voltage=%u mV; SOC unavailable\n", cached_mv);
     } else {
-        T5_TRACE("battery: BQ27220 read failed or voltage invalid, cached=%u mV\n", cached_mv);
+        T5_POWER_TRACE("battery: BQ27220 read failed or voltage invalid, cached=%u mV\n", cached_mv);
     }
     return cached_mv;
 }
@@ -946,6 +951,7 @@ bool radio_init() {
     T5_TRACE("radio: SX1262 init on SPI pins 14/21/13\n");
     const bool ready = radio.std_init(&radio_spi);
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
+    if(!ready)Serial.println("[T5-ERROR] SX1262 radio initialization failed");
     // LoRa and GPS share the PCA9535-controlled rail; radio initialization
     // ensures power is available before probing GPS. T5 boards carry either
     // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
@@ -962,7 +968,7 @@ bool radio_init() {
                     if (gps_stream.hasValidSentence()) { found = true; break; }
                     delay(5);
                 }
-                T5_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n", pass + 1, baud, found);
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n", pass + 1, baud, found);
                 if (found) {
                     detected_gps_baud = baud;
                     gps_baud_locked = true;
@@ -976,9 +982,12 @@ bool radio_init() {
             detected_gps_baud = 9600;
             Serial1.updateBaudRate(detected_gps_baud);
             gps_stream.clearValidation();
-            T5_TRACE("gps: startup probe inconclusive; background retry enabled\n");
+            T5_GPS_TRACE("gps: startup probe inconclusive; background retry enabled\n");
         }
-        T5_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
+        Serial.printf("[T5-BOOT] GPS module=%s baud=%lu%s\n",
+            gps_module_name(),(unsigned long)Serial1.baudRate(),
+            gps_baud_locked?"":" (NMEA not yet confirmed)");
+        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
                  Serial1.baudRate(), gps_baud_locked, gps_module_name());
     }
     return ready;
