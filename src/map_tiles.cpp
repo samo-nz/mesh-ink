@@ -86,14 +86,45 @@ bool media_ready(bool probe=true) {
         Serial.println("[T5-MAP] SD mounted; map caches reset");
     }
     if(probe) {
-        // SD.cardType() and FAT directory metadata may remain cached after
-        // physical removal. A raw sector read probes the actual card, even
-        // when /maps and every PMTiles archive are absent. Use an aligned,
-        // DMA-safe internal buffer, not PSRAM.
-        alignas(4) static uint8_t card_probe[512];
-        if(!SD.readRAW(card_probe,0)) {
-            mark_sd_unavailable();
-            return false;
+        // Do not use SD.readRAW() as a card-presence oracle: an otherwise
+        // readable card may reject the raw-sector probe, which previously
+        // caused an endless mount/unmount loop. Check the *same filesystem
+        // read path* the map renderer uses, and require consecutive failures
+        // before treating a probe error as physical removal.
+        bool readable=false;
+        if(archives_discovered&&archive_count) {
+            File witness=SD.open(archive_paths[0],FILE_READ);
+            uint8_t magic[8]{};
+            readable=witness&&witness.read(magic,sizeof(magic))==sizeof(magic)
+                &&memcmp(magic,"PMTiles",7)==0&&magic[7]==3;
+            if(witness)witness.close();
+        } else {
+            File maps=SD.open("/maps");
+            readable=maps&&maps.isDirectory();
+            if(maps)maps.close();
+            // No map folder is a valid inserted card state, but the absence
+            // of a witness cannot establish removal. Never unmount here.
+            if(!readable) {
+                File root=SD.open("/");
+                readable=root&&root.isDirectory();
+                if(root)root.close();
+            }
+        }
+        static uint8_t consecutive_probe_failures=0;
+        if(readable) {
+            consecutive_probe_failures=0;
+        } else if(archives_discovered&&archive_count) {
+            if(++consecutive_probe_failures>=2) {
+                consecutive_probe_failures=0;
+                Serial.println("[T5-MAP] archive read failed twice; resetting SD");
+                mark_sd_unavailable();
+                return false;
+            }
+            Serial.println("[T5-MAP] SD archive probe failed once; verifying on next poll");
+        } else {
+            // An empty card has nothing to read as a reliable witness.
+            // Only a genuine tile read failure triggers remounting here.
+            consecutive_probe_failures=0;
         }
     }
     return true;
