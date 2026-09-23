@@ -8,7 +8,7 @@
 
 It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
-## Boot artwork (v1.5.2)
+## Boot artwork (v1.5.3)
 
 The splash and About screens use the original
 `docs/file_00000000248c820a81311144dc2df47d.png` artwork.
