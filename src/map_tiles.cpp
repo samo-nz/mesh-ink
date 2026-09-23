@@ -45,6 +45,28 @@ size_t archive_count=0;
 bool archives_discovered=false;
 bool png_range_active=false;
 uint32_t png_range_start=0,png_range_length=0;
+// Scans /maps/*.pmtiles and /maps/<name>/*.pmtiles so files copied
+// directly from common map downloaders work without being renamed.
+void add_archive(const char* parent,const char* name) {
+    if(!name||archive_count>=MAX_ARCHIVES)return;
+    const char* basename=strrchr(name,'/');
+    basename=basename?basename+1:name;
+    const size_t len=strlen(basename);
+    if(len<8||strcasecmp(basename+len-8,".pmtiles"))return;
+    char absolute[SOURCE_PATH_BYTES];
+    const int written=snprintf(absolute,sizeof(absolute),"%s/%s",
+                               parent,basename);
+    if(written<=0||written>=int(sizeof(absolute)))return;
+    for(size_t i=0;i<archive_count;++i)
+        if(!strcmp(archive_paths[i],absolute))return;
+    strcpy(archive_paths[archive_count++],absolute);
+}
+bool is_zoom_folder(const char* name) {
+    if(!name||!*name)return false;
+    for(const char* p=name;*p;++p)
+        if(*p<'0'||*p>'9')return false;
+    return true;
+}
 void discover_archives() {
     if(archives_discovered)return;
     archives_discovered=true;
@@ -52,24 +74,38 @@ void discover_archives() {
     if(!directory||!directory.isDirectory())return;
     File candidate=directory.openNextFile();
     while(candidate) {
-        const char* name=candidate.name();
-        if(!candidate.isDirectory()&&name) {
-            const size_t len=strlen(name);
-            if(len>=8&&!strcasecmp(name+len-8,".pmtiles") &&
-               archive_count<MAX_ARCHIVES) {
-                char* dst=archive_paths[archive_count];
-                const int written=name[0]=='/'?
-                    snprintf(dst,SOURCE_PATH_BYTES,"%s",name):
-                    snprintf(dst,SOURCE_PATH_BYTES,"/maps/%s",name);
-                if(written>0&&written<SOURCE_PATH_BYTES)++archive_count;
+        const char* entry_name=candidate.name();
+        const char* basename=entry_name?strrchr(entry_name,'/'):nullptr;
+        basename=basename?basename+1:entry_name;
+        if(candidate.isDirectory()&&basename&&!is_zoom_folder(basename)) {
+            char folder[SOURCE_PATH_BYTES];
+            const int written=snprintf(folder,sizeof(folder),
+                                       "/maps/%s",basename);
+            if(written>0&&written<int(sizeof(folder))) {
+                // Keep folder scanning shallow: loose XYZ tile directories
+                // can contain tens of thousands of PNG files.
+                File subdir=SD.open(folder);
+                if(subdir&&subdir.isDirectory()) {
+                    File nested=subdir.openNextFile();
+                    while(nested&&archive_count<MAX_ARCHIVES) {
+                        if(!nested.isDirectory())
+                            add_archive(folder,nested.name());
+                        nested.close();
+                        nested=subdir.openNextFile();
+                    }
+                }
+                if(subdir)subdir.close();
             }
+        } else if(!candidate.isDirectory()) {
+            add_archive("/maps",entry_name);
         }
         candidate.close();
+        if(archive_count==MAX_ARCHIVES)break;
         candidate=directory.openNextFile();
     }
     directory.close();
     if(archive_count)
-        Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
+        Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\\n",
                       (unsigned)archive_count);
 }
 
