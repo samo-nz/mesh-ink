@@ -34,6 +34,7 @@ jobs:
         run: |
           test -s .pio/build/t5-unified/firmware.bin
           cp .pio/build/t5-unified/firmware.bin meshink-pmtiles-test-update.bin
+          cp .pio/build/t5-unified/firmware.elf meshink-pmtiles-test.elf
           sha256sum meshink-pmtiles-test-update.bin > meshink-pmtiles-test-SHA256.txt
       - name: Downloadable PMTiles test firmware
         uses: actions/upload-artifact@v4
@@ -41,6 +42,7 @@ jobs:
           name: meshink-pmtiles-test-firmware
           path: |
             meshink-pmtiles-test-update.bin
+            meshink-pmtiles-test.elf
             meshink-pmtiles-test-SHA256.txt
           if-no-files-found: error
           retention-days: 14
