@@ -45,11 +45,23 @@ struct Archive {
     bool supported = false;
 };
 Archive archive;
-Directory root, leaf;
+Directory root;
+// Nearby PMTiles requests frequently cross leaf boundaries. Keep four
+// decoded directory indexes in PSRAM instead of re-reading/gunzipping them.
+constexpr size_t LEAF_CACHE_SLOTS = 4;
+struct LeafSlot {
+    Directory directory;
+    uint64_t offset = UINT64_MAX, length = 0;
+    uint32_t age = 0;
+};
+LeafSlot leaves[LEAF_CACHE_SLOTS]{};
+uint32_t leaf_age = 0;
 char cached_path[160]{};
 bool prepared = false;
-uint64_t cached_leaf_offset = UINT64_MAX;
-uint64_t cached_leaf_length = 0;
+// A map render keeps one archive file open for its repeated tile lookups.
+bool frame_active = false, io_failed = false;
+File frame_file;
+char frame_path[160]{};
 
 uint64_t little64(const uint8_t* p) {
     uint64_t v = 0;
@@ -65,18 +77,38 @@ void clear_directory(Directory& d) {
     d.entries = nullptr;
     d.count = 0;
 }
+void clear_leaves() {
+    for (auto& slot : leaves) {
+        clear_directory(slot.directory);
+        slot.offset = UINT64_MAX;
+        slot.length = 0;
+        slot.age = 0;
+    }
+    leaf_age = 0;
+}
+void close_frame_file() {
+    if (frame_file) frame_file.close();
+    frame_file = File();
+    frame_path[0] = 0;
+}
 bool within(uint64_t start, uint64_t length, uint64_t total) {
     return start <= total && length <= total - start;
 }
 // Stage SD reads in bounded, aligned internal RAM rather than passing
 // potentially unaligned PSRAM allocations directly to the SD driver.
 bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
-    if (!dst || start > UINT32_MAX || !file.seek((uint32_t)start))
+    if (!dst || start > UINT32_MAX) return false;
+    if (!file.seek((uint32_t)start)) {
+        io_failed = true;
         return false;
+    }
     alignas(4) static uint8_t stage[256];
     while (n) {
         const size_t chunk = n < sizeof(stage) ? n : sizeof(stage);
-        if (file.read(stage, chunk) != chunk) return false;
+        if (file.read(stage, chunk) != chunk) {
+            io_failed = true;
+            return false;
+        }
         memcpy(dst, stage, chunk);
         dst += chunk;
         n -= chunk;
@@ -257,9 +289,7 @@ bool prepare(File& file, const char* path) {
     if (strlen(path) >= sizeof(cached_path)) return false;
     if (strcmp(path, cached_path) == 0 && prepared) return archive.supported;
     clear_directory(root);
-    clear_directory(leaf);
-    cached_leaf_offset = UINT64_MAX;
-    cached_leaf_length = 0;
+    clear_leaves();
     archive = Archive{};
     strcpy(cached_path, path);
     prepared = true;
@@ -318,21 +348,60 @@ const Entry* select_entry(const Directory& d, uint64_t id) {
 }
 } // namespace
 
+void pmtiles_begin_frame() {
+    close_frame_file();
+    frame_active = true;
+    io_failed = false;
+}
+
+void pmtiles_end_frame() {
+    close_frame_file();
+    frame_active = false;
+}
+
+bool pmtiles_had_io_error() { return io_failed; }
+
+void pmtiles_reset() {
+    pmtiles_end_frame();
+    clear_directory(root);
+    clear_leaves();
+    archive = Archive{};
+    cached_path[0] = 0;
+    prepared = false;
+    io_failed = false;
+}
+
 bool pmtiles_find_png(const char* path, int zoom, int x, int y,
                       PmtilesPngRange& range) {
     range = {};
     if (!path || zoom < 0 || zoom > 24 ||
         x < 0 || y < 0 || (uint32_t)x >= (1U << zoom) ||
         (uint32_t)y >= (1U << zoom)) return false;
-    File file = SD.open(path, FILE_READ);
-    if (!file || !prepare(file, path) ||
-        zoom < archive.min_zoom || zoom > archive.max_zoom) {
-        if (file) file.close();
+    File local_file;
+    File* file = nullptr;
+    if (frame_active) {
+        if (!frame_file || strcmp(frame_path, path)) {
+            close_frame_file();
+            frame_file = SD.open(path, FILE_READ);
+            if (!frame_file) { io_failed = true; return false; }
+            strncpy(frame_path, path, sizeof(frame_path) - 1);
+            frame_path[sizeof(frame_path) - 1] = 0;
+        }
+        file = &frame_file;
+    } else {
+        local_file = SD.open(path, FILE_READ);
+        if (!local_file) { io_failed = true; return false; }
+        file = &local_file;
+    }
+    const bool ready = prepare(*file, path) &&
+        zoom >= archive.min_zoom && zoom <= archive.max_zoom;
+    if (!ready) {
+        if (local_file) local_file.close();
         return false;
     }
     const uint64_t id = tile_id(zoom, (uint32_t)x, (uint32_t)y);
     const Directory* directory = &root;
-    for (uint32_t hop = 0; hop < MAX_DIRECTORY_HOPS; ++hop) {
+    for (uint32_t hop = 0; hop < MAX_DIRECTORY_HOPS && !io_failed; ++hop) {
         const Entry* entry = select_entry(*directory, id);
         if (!entry) break;
         if (entry->run) {
@@ -343,7 +412,7 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
                     within(absolute, entry->length, archive.file_size)) {
                     range.offset = (uint32_t)absolute;
                     range.length = entry->length;
-                    file.close();
+                    if (local_file) local_file.close();
                     return true;
                 }
             }
@@ -351,19 +420,40 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
         }
         if (!within(entry->offset, entry->length, archive.leaf_length))
             break;
-        if (cached_leaf_offset != entry->offset ||
-            cached_leaf_length != entry->length) {
-            clear_directory(leaf);
-            cached_leaf_offset = entry->offset;
-            cached_leaf_length = entry->length;
-            Serial.printf("[T5-PMT] leaf for z=%d x=%d y=%d offset=%llu length=%u\n",
-                          zoom, x, y, (unsigned long long)entry->offset,
-                          (unsigned)entry->length);
-            if (!parse_directory(file, archive.leaf_offset + entry->offset,
-                                 entry->length, leaf)) break;
+        LeafSlot* slot = nullptr;
+        for (auto& candidate : leaves) {
+            if (candidate.directory.entries &&
+                candidate.offset == entry->offset &&
+                candidate.length == entry->length) {
+                slot = &candidate;
+                break;
+            }
         }
-        directory = &leaf;
+        if (!slot) {
+            slot = &leaves[0];
+            for (auto& candidate : leaves) {
+                if (!candidate.directory.entries) {
+                    slot = &candidate;
+                    break;
+                }
+                if (candidate.age < slot->age) slot = &candidate;
+            }
+            // Parse failure never publishes a partial/stale cache entry.
+            clear_directory(slot->directory);
+            slot->offset = UINT64_MAX;
+            slot->length = 0;
+            Serial.printf("[T5-PMT] leaf offset=%llu length=%u\n",
+                          (unsigned long long)entry->offset,
+                          (unsigned)entry->length);
+            if (!parse_directory(*file, archive.leaf_offset + entry->offset,
+                                 entry->length, slot->directory))
+                break;
+            slot->offset = entry->offset;
+            slot->length = entry->length;
+        }
+        slot->age = ++leaf_age;
+        directory = &slot->directory;
     }
-    file.close();
+    if (local_file) local_file.close();
     return false;
 }
