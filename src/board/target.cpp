@@ -124,6 +124,9 @@ enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
 static GpsModule detected_gps_module = GpsModule::Unknown;
 static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
+static uint32_t gps_sleep_requested_at = 0;
+static uint32_t gps_sleep_bytes_after = 0;
+static uint32_t gps_wake_requested_at = 0;
 static void t5_power_diagnostics_tick();
 static void t5_power_diagnostics_report(const char* reason);
 
@@ -142,7 +145,8 @@ static void gps_wake_command() {
     if (detected_gps_module == GpsModule::L76K) {
         Serial1.write((uint8_t)'\r'); Serial1.write((uint8_t)'\n'); Serial1.flush();
         delay(120);
-        T5_TRACE("gps power: L76K wake byte sent\n");
+        gps_wake_requested_at=millis();
+        T5_TRACE("gps probe: L76K wake bytes sent; watching for NMEA resume\n");
     }
     gps_command_sleeping = false;
 }
@@ -153,7 +157,8 @@ static void gps_sleep_command() {
         // PMTK161 standby retains data for a fast warm start.
         Serial1.print("$PMTK161,0*28\r\n"); Serial1.flush();
         gps_command_sleeping = true;
-        T5_TRACE("gps power: L76K standby command sent\n");
+        gps_sleep_requested_at=millis();gps_sleep_bytes_after=0;
+        T5_TRACE("gps probe: PMTK161 standby requested; this is EXPERIMENTAL on L76K, watching UART to verify actual sleep\n");
     } else {
         T5_TRACE("gps power: sleep skipped module=%s (radio/GPS rail is shared)\n", gps_module_name());
     }
@@ -239,7 +244,22 @@ public:
         t5_power_diagnostics_tick();
 #if T5_DIAGNOSTICS
         const int pending = Serial1.available();
-        if (pending > 0) gps_last_byte_at = millis();
+        if (pending > 0) {
+            gps_last_byte_at = millis();
+            if(gps_command_sleeping)gps_sleep_bytes_after+=(uint32_t)pending;
+            if(gps_wake_requested_at){
+                T5_TRACE("gps probe: UART resumed %lums after wake request (%d bytes pending)\n",
+                    (unsigned long)(millis()-gps_wake_requested_at),pending);
+                gps_wake_requested_at=0;
+            }
+        }
+        static uint32_t last_power_probe=0;
+        if(gps_command_sleeping&&gps_sleep_requested_at&&millis()-last_power_probe>=5000){
+            last_power_probe=millis();
+            T5_TRACE("gps probe: %lums after sleep request, UART bytes observed=%lu, pending=%d; %s\n",
+                (unsigned long)(millis()-gps_sleep_requested_at),(unsigned long)gps_sleep_bytes_after,pending,
+                gps_sleep_bytes_after?"receiver still talking (not asleep)":"UART quiet (sleep plausible, not electrical proof)");
+        }
 #endif
         // MeshCore's provider may call RTCClock::setCurrentTime whenever it sees
         // valid GPS time. Only mark a GPS write as trusted when the RTC is
