@@ -29,7 +29,7 @@ MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro**, using its 4.7-inch 5
 
 ## Installing
 
-Download the latest release from the [MeshInk Releases](https://github.com/samo-nz/meshcore-t5-paper/releases) page. Releases contain only the unified MeshInk firmware:
+Download the latest release from the [MeshInk Releases](https://github.com/samo-nz/mesh-ink/releases) page. Releases contain only the unified MeshInk firmware:
 
 - **`meshink-VERSION-update.bin`** — use this when MeshInk is already installed. Flash it at **0x10000**. It updates the application and leaves the rest of flash alone.
 - **`meshink-VERSION-full-wipe.bin`** — use this for a new device or a completely clean reinstall. Flash it at **0x0**. This image is padded to the full 16 MB flash, so it overwrites old settings, messages and other stored data.
@@ -132,7 +132,7 @@ On first setup, choose a node name and radio preset. MeshInk then opens into the
 
 The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. From More you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode.
 
-A long press of the BOOT button enters or leaves standby. A short press forces a clean e-paper redraw.
+A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
 
 ## Building from source
 

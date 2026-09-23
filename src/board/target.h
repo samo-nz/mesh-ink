@@ -31,6 +31,7 @@ extern CustomSX1262Wrapper radio_driver;
 extern T5RTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;
 SPIClass& t5_shared_spi();
+void t5_gps_power_probe_tick();
 
 bool radio_init();
 mesh::LocalIdentity radio_new_identity();

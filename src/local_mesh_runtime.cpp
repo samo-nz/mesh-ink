@@ -449,7 +449,9 @@ void local_mesh_loop(){
         sensors.setSettingValue("gps","0");gps_duty_sleeping=true;
         Serial.printf("[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
     }
-    sensors.loop();rtc_clock.tick();
+    sensors.loop();
+    t5_gps_power_probe_tick(); // executes even when MeshCore has stopped the GPS provider
+    rtc_clock.tick();
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.stage);advance_info();}
     if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
         if(pending_direct.retry>=5){provider.update_message(pending_direct.sequence,UiMessageState::Failed);Serial.printf("[T5-MESH] direct failed after 5 retries sequence=%lu\n",(unsigned long)pending_direct.sequence);pending_direct.active=false;}

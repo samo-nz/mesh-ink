@@ -91,13 +91,17 @@ jobs:
             meshink-*-full-wipe.bin
             SHA256SUMS.txt
 
+      # An explicit release commit can publish directly after a successful main
+      # build. gh release create makes the matching tag at GITHUB_SHA; a tag
+      # created by GITHUB_TOKEN does not spawn another workflow run.
       - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-release]'))
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-          TAG: ${{ github.ref_name }}
+          TAG: v${{ steps.version.outputs.version }}
         run: |
+          test "${GITHUB_REF_TYPE}" != "tag" || test "${GITHUB_REF_NAME}" = "${TAG}"
           cat > release-notes.md <<EOF
           ## MeshInk $VERSION
 
@@ -108,10 +112,16 @@ jobs:
           See the README for Windows, macOS and Linux flashing instructions.
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
+
+          This pre-release adds GPS-off UART diagnostics and wake-to-fix timing.
+          PMTK161 standby on the L76K remains experimental: quiet NMEA output
+          does not by itself establish a lower GPS power draw.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
             "meshink-$VERSION-full-wipe.bin" \
             SHA256SUMS.txt \
-            --title "MeshInk $VERSION" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "MeshInk $VERSION (pre-release)" \
             --notes-file release-notes.md
