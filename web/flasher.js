@@ -10,8 +10,6 @@ const progress = $("progress");
 const progressLabel = $("progress-label");
 const logArea = $("log");
 const siteStatus = $("site-status");
-const wipeConfirm = $("wipe-confirm");
-const wipeWord = $("wipe-word");
 const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
 let manifest = null;
 let busy = false;
@@ -25,29 +23,25 @@ function selectedMode() {
 }
 function ready() {
   if (!manifest || busy || !navigator.serial || !window.isSecureContext) return false;
-  return selectedMode() === "update" || wipeWord.value.trim() === "ERASE";
+  return true;
 }
 function updateControls() {
   const wipe = selectedMode() === "wipe";
-  wipeConfirm.hidden = !wipe;
   button.classList.toggle("wipe", wipe);
   button.textContent = busy ? "Flashing — do not disconnect" :
-    !manifest ? "Loading firmware…" : wipe ? "Erase device and install MeshInk" : "Update MeshInk (keep settings)";
+    !manifest ? "Loading firmware…" : wipe ? "Install MeshInk" : "Update MeshInk";
   button.disabled = !ready();
-  wipeWord.disabled = busy;
   for (const input of modeInputs) input.disabled = busy;
   detail.textContent = !navigator.serial || !window.isSecureContext ?
     "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
-    wipe ? "Full wipe · writes the 16 MB image at 0x0 · ALL saved data is removed" :
-           "App-only update · writes at 0x10000 · no full-flash erase";
+    wipe ? "For a new device or a fresh start." :
+           "For a device that already has MeshInk installed.";
 }
 for (const input of modeInputs) input.addEventListener("change", () => {
-  wipeWord.value = "";
   progress.hidden = true;
   progressLabel.textContent = "";
   updateControls();
 });
-wipeWord.addEventListener("input", updateControls);
 
 async function sha256(bytes) {
   const hash = await crypto.subtle.digest("SHA-256", bytes);
@@ -79,7 +73,7 @@ async function loadLatest() {
     if (!response.ok) throw new Error(`Firmware manifest unavailable (HTTP ${response.status}).`);
     manifest = checkManifest(await response.json());
     siteStatus.textContent = `Ready · MeshInk v${manifest.version}`;
-    logArea.textContent = `Ready to flash MeshInk v${manifest.version}.\nSelect Update to keep your settings, or explicitly select Full wipe for a clean installation.`;
+    logArea.textContent = `Ready to flash MeshInk v${manifest.version}.\nChoose Update for a newer version, or Install for the first time.`;
   } catch (error) {
     siteStatus.textContent = "Firmware not available";
     log(`ERROR: ${error.message}`);
@@ -93,7 +87,7 @@ async function flash() {
   const wipe = mode === "wipe";
   const activeManifest = manifest;
   if (wipe && !window.confirm(
-    "FINAL CONFIRMATION: Erase the ENTIRE 16 MB flash? This permanently deletes your MeshCore identity, radio settings, contacts, messages and all stored data."
+    "Install MeshInk for the first time? This will reset any existing data on the device."
   )) return;
   busy = true;
   updateControls();

@@ -14,24 +14,19 @@
       <div class="brand-icon" aria-hidden="true">M</div>
       <div><p class="eyebrow">LILYGO T5 E-PAPER S3 PRO · ESP32-S3</p><h1>MeshInk <span>Web Flasher</span></h1></div>
     </header>
-    <p class="intro">Install MeshInk directly from your computer using a USB data cable. Choose an update to keep your existing node identity, radio presets, contacts and messages—or explicitly choose a fresh installation.</p>
+    <p class="intro">Connect your T5 with a USB data cable, then choose whether you’re updating MeshInk or installing it for the first time.</p>
     <div class="status-line" id="site-status" role="status">Checking the latest GitHub release…</div>
     <section class="panel" aria-labelledby="flash-heading">
-      <h2 id="flash-heading">Choose how to flash</h2>
+      <h2 id="flash-heading">What would you like to do?</h2>
       <div class="choices" role="radiogroup" aria-label="Flashing mode">
         <label class="option" id="update-choice">
           <input type="radio" name="mode" value="update" checked>
-          <span><strong>Update MeshInk</strong><small>Recommended for an existing MeshInk installation. Writes only the app at <code>0x10000</code>. Existing settings and messages are not intentionally erased.</small></span>
+          <span><strong>Update MeshInk</strong><small>Choose this to update to a newer version of MeshInk.</small></span>
         </label>
-        <label class="option destructive" id="wipe-choice">
+        <label class="option" id="wipe-choice">
           <input type="radio" name="mode" value="wipe">
-          <span><strong>Fresh installation · FULL WIPE</strong><small>For a new board or an intentional factory reset. Erases ALL 16 MB of flash, including node identity, presets, contacts, messages and stored data.</small></span>
+          <span><strong>Install MeshInk</strong><small>Choose this to install MeshInk for the first time.</small></span>
         </label>
-      </div>
-      <div id="wipe-confirm" class="wipe-confirm" hidden>
-        <label for="wipe-word">To unlock a full wipe, type <strong>ERASE</strong>:</label>
-        <input id="wipe-word" type="text" autocomplete="off" spellcheck="false" placeholder="Type ERASE" maxlength="5">
-        <p class="warning">This cannot be undone. Make a backup of anything you need to keep before proceeding.</p>
       </div>
       <div class="actions">
         <button id="flash-button" type="button" disabled>Loading firmware…</button>
@@ -48,7 +43,7 @@
         <li>If the flasher cannot connect, hold <strong>BOOT</strong>, briefly press <strong>RESET</strong>, then release BOOT and try again.</li>
         <li>Keep USB connected until flashing completes. Press RESET if the board does not restart automatically.</li>
       </ol>
-      <p>Update is intended for boards already running MeshInk with its existing partition layout. For a blank board or a different firmware/partition layout, choose Fresh installation, which erases stored data.</p>
+      <p>Installing for the first time resets any data already on the device. Updating is for devices that already have MeshInk installed.</p>
     </section>
     <section class="panel" aria-labelledby="log-heading">
       <h2 id="log-heading">Flashing status</h2>
