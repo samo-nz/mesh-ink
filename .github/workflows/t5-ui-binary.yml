@@ -113,13 +113,13 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          This recovery pre-release removes the experimental PCAS12 timed
-          standby command after hardware logs showed no GPS-off UART quiet
-          period and loss of fixes after enabling GPS. It also removes the
-          ineffective PMTK161 standby request. UART diagnostics remain active.
-          IMPORTANT: GPS OFF stops the software provider but does not power
-          down the L76K on the shared LoRa/GPS supply. GPS acquisition and
-          the receiver low-power mechanism require further hardware testing.
+          This pre-release makes the GPS status icon easier to see and
+          shows the receiver-reported satellite count beside the icon
+          when GPS is enabled. E-paper updates for count changes are
+          rate-limited. The count is hidden when GPS is OFF.
+          GPS power control and GNSS constellation settings are unchanged.
+          GPS OFF stops the software provider but does not power down
+          the L76K on the shared LoRa/GPS supply.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
