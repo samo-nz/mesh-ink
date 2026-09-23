@@ -134,21 +134,23 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
 
-### GPS standby diagnostic (v1.4.5 pre-release)
+### GPS power behaviour (v1.4.6 recovery pre-release)
 
-This test build sends **one experimental `$PCAS12,10*2F`** command to an
-L76K when GPS is stopped, and reports UART traffic every five seconds while
-the MeshCore GPS provider is OFF. The generic CASIC protocol documents PCAS12
-for certain low-power receivers; **support on Quectel L76K is unconfirmed**.
-If accepted, the receiver automatically wakes about 10 seconds later, even
-if the GPS setting still says OFF. Thus this build does **not** provide
-persistent GPS-off power savings. A quiet UART also does not establish reduced
-electrical current; measure power before enabling any production duty cycle.
+The experimental PCAS12 timed-standby command from v1.4.5 was removed after
+hardware testing showed continuous UART traffic while GPS was OFF and the
+receiver stopped providing fixes after GPS was re-enabled. The earlier
+ineffective PMTK161 command is also removed. No unverified GPS sleep or wake
+commands are sent by this release.
 
-To test: run the serial monitor, enable GPS and wait for a fix, then disable
-GPS in Settings. Keep the monitor running for at least 25 seconds and compare
-the `gps probe: OFF +5s`, `+10s`, `+15s`, and `+20s` UART reports.
-LoRa/GPS shared-rail power is not toggled by this test.
+**GPS OFF stops the MeshCore software provider but does not remove GPS power.**
+The L76K still shares its 3.3 V supply with LoRa. Timed GPS settings are not
+yet verified to reduce receiver power; the OFF-state UART diagnostic remains
+available to measure GPS output while the software provider is stopped.
+Do not interpret a quiet UART alone as proof of electrical sleep.
+
+If upgrading from the v1.4.5 diagnostic firmware, use the normal update image
+and reboot. If GPS still fails to provide a fix, power-cycle the device and
+test with GPS set to Continuous under open sky before further sleep experiments.
 
 ## Building from source
 
