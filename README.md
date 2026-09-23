@@ -56,6 +56,31 @@ still share their power rail, and receiver current is not reduced merely
 by disabling serial debug logs. Boot-time ESP-IDF/EPDiy warnings may still
 print independently of MeshInk's log settings.
 
+## Radio presets and clean-install setup (v1.5.6)
+
+On a clean/full-wipe installation, MeshCore's compiled radio defaults can
+differ from the preset displayed on the welcome screen. Before the first
+interactive setup screen, MeshInk now applies the selected preset to MeshCore
+(including frequency, spreading factor, bandwidth, coding rate and path-hash
+size). The default welcome-screen preset is **NZ NARROW** (917.375 MHz,
+SF7, BW62.5 kHz, CR5, 2-byte path hash). Other presets apply their own
+displayed parameters when selected. **KEEP CURRENT** deliberately makes no
+radio changes.
+
+Radio presets have explicit numeric settings rather than parsing their UI
+description strings. `python tools/check_radio_presets.py` verifies all 28
+entries (27 configured presets and KEEP CURRENT), including each displayed
+frequency, bandwidth, SF, CR and path-hash size; the release build runs
+this check automatically. A preset that fails to apply is not selected or
+saved. Normal boots after setup is complete do not override the existing
+saved radio configuration.
+
+These checks validate firmware values, not regional legal requirements,
+over-the-air compatibility or measured LoRa performance. For communication,
+other nodes still need compatible RF parameters and matching public-channel
+settings. Use the **update** firmware to retain your existing MeshCore
+settings/messages; the full-wipe image clears them.
+
 ## Features
 
 - Direct messages and channel messaging
