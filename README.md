@@ -8,6 +8,17 @@
 
 It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
+## Boot and first-time storage initialization (v1.5.1)
+
+The boot splash displays **INITIALISING STORAGE...** below the MeshInk logo
+while the radio, MeshCore and persistent message store initialize. After a
+full-flash install, the first SPIFFS mount can take around 20 seconds to
+format an empty filesystem; subsequent ordinary boots should be faster.
+The setup/home screen and touch sampler now start only after initialization,
+so taps made during the splash cannot be replayed into the name keyboard.
+A radio startup failure still displays the existing error screen. This does
+not change or erase existing saved data.
+
 ## Features
 
 - Direct messages and channel messaging
