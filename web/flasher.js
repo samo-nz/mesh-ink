@@ -205,8 +205,8 @@ async function flash() {
       `MeshInk v${activeManifest.version} flashed · press RESET to restart`;
     progressLabel.textContent = "100% · firmware flashed";
     log(sent ?
-      "If the T5 does not restart, click Restart device below or press RESET on the T5." :
-      "Automatic restart was not confirmed. Click Restart device below or press RESET on the T5.");
+      "If the T5 does not restart, click Restart device above or press RESET on the T5." :
+      "Automatic restart was not confirmed. Click Restart device above or press RESET on the T5.");
   } catch (error) {
     if (!completed) {
       siteStatus.textContent = "Flashing did not complete";
