@@ -88,6 +88,20 @@ int main() {
     assert(!pmtiles_find_png("/maps/vector.pmtiles",1,0,0,range));
     assert(!pmtiles_find_png("/maps/wrapped.pmtiles",1,0,0,range));
     assert_range("/maps/plain.pmtiles",1,1,0); // archive cache switching
+    // One map frame reuses an open archive while alternating nearby tile
+    // lookups, and a removed/missing archive must be reported as I/O failure.
+    pmtiles_begin_frame();
+    assert_range("/maps/gzip.pmtiles",1,1,0);
+    assert_range("/maps/gzip.pmtiles",1,0,0);
+    assert(!pmtiles_had_io_error());
+    pmtiles_end_frame();
+    PmtilesPngRange disconnected{};
+    pmtiles_begin_frame();
+    assert(!pmtiles_find_png("/maps/disconnected.pmtiles",1,0,0,disconnected));
+    assert(pmtiles_had_io_error());
+    pmtiles_end_frame();
+    pmtiles_reset();
+    assert_range("/maps/gzip.pmtiles",1,1,0); // directory rebuilt after remount
     std::cout << "PMTiles plain/gzip root+leaf, run ranges, omissions,"
                  " unsupported formats and archive switching: PASS\n";
 }
