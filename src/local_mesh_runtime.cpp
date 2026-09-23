@@ -22,9 +22,10 @@ constexpr uint16_t STORE_VERSION=1;
 constexpr char STORE_PATH[]="/ui_messages.bin";
 
 // gps_interval in upstream MeshCore controls how often coordinates are copied,
-// not receiver power. MeshInk additionally duty-cycles the LocationProvider:
-// interval=0 stays continuous; timed modes sleep after a fix and wake for the
-// next acquisition. On the T5 L76K, stop()/begin() maps to PMTK standby/wake.
+// not receiver power. Timed modes here pause the SOFTWARE GPS provider after
+// a fix; the L76K stays powered because LoRa shares its supply. No physical
+// GNSS standby is implemented or claimed. Opt-in PCAS03/04 receiver tuning
+// is independent of this historical software-only duty cycle.
 static bool gps_duty_sleeping=false;
 static uint32_t gps_duty_next_wake=0;
 static uint32_t gps_duty_awake_since=0;
@@ -476,6 +477,11 @@ void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_
 bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
 uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval;}
 bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
+uint8_t local_mesh_gps_constellation_mode(){return t5_gps_constellation_mode();}
+bool local_mesh_gps_compact_nmea(){return t5_gps_compact_nmea();}
+bool local_mesh_gps_set_constellation_mode(uint8_t mode){return t5_gps_set_constellation_mode(mode);}
+bool local_mesh_gps_set_compact_nmea(bool compact){return t5_gps_set_compact_nmea(compact);}
+
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=t5_mesh().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
 void local_mesh_toggle_gps_advert_location(){auto* p=t5_mesh().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;t5_mesh().savePrefs();}
 uint32_t local_mesh_current_time(){return rtc_clock.getCurrentTime();}

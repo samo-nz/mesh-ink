@@ -20,6 +20,11 @@ bool local_mesh_gps_fix();
 uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();
 void local_mesh_cycle_gps_interval();
+uint8_t local_mesh_gps_constellation_mode();
+bool local_mesh_gps_compact_nmea();
+bool local_mesh_gps_set_constellation_mode(uint8_t mode);
+bool local_mesh_gps_set_compact_nmea(bool compact);
+
 void local_mesh_toggle_gps_advert_location();
 uint32_t local_mesh_current_time();
 bool local_mesh_time_valid();

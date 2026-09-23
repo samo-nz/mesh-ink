@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <Preferences.h>
 #include <epdiy.h>
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
@@ -126,6 +127,86 @@ static GpsModule detected_gps_module = GpsModule::Unknown;
 // switched off: LoRa and GPS share the same power rail.
 static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
+
+// The receiver is shared with LoRa on VCC3V3. These opt-in settings reduce
+// constellation workload and host UART parsing, not receiver power-off.
+// 0 retains the existing receiver constellation; 1/3/5/7 are Quectel PCAS04
+// modes. Do not alter the known-working radio/GPS UART or positioning rate.
+static uint8_t gps_constellation_mode=0;
+static bool gps_compact_nmea=false;
+static bool gps_tuning_loaded=false;
+static bool gps_constellation_dirty=false;
+static bool gps_nmea_dirty=false;
+
+static void gps_load_tuning(){
+    if(gps_tuning_loaded)return;
+    gps_tuning_loaded=true;
+    Preferences pref;
+    if(!pref.begin("t5-gnss",true))return;
+    const uint8_t mode=pref.getUChar("constellation",0);
+    gps_constellation_mode=(mode==1||mode==3||mode==5||mode==7)?mode:0;
+    gps_compact_nmea=pref.getBool("compact",false);
+    pref.end();
+    // Only an explicitly saved opt-in may change receiver configuration.
+    gps_constellation_dirty=gps_constellation_mode!=0;
+    gps_nmea_dirty=gps_compact_nmea;
+}
+static void gps_send_pcas(const char* payload) {
+    uint8_t checksum=0;
+    for(const char* p=payload;*p;++p)checksum^=(uint8_t)*p;
+    Serial1.printf("$%s*%02X\r\n",payload,checksum);
+    Serial1.flush();
+    T5_TRACE("gps tuning: TX $%s*%02X (receiver acceptance not confirmed)\n",payload,checksum);
+}
+static void gps_apply_tuning(){
+    if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
+    if(gps_constellation_dirty){
+        gps_constellation_dirty=false;
+        if(gps_constellation_mode){
+            char payload[16];
+            snprintf(payload,sizeof(payload),"PCAS04,%u",(unsigned)gps_constellation_mode);
+            gps_send_pcas(payload);
+        }
+        // "UNCHANGED" does not restore factory configuration; it sends nothing.
+    }
+    if(gps_nmea_dirty){
+        gps_nmea_dirty=false;
+        gps_send_pcas(gps_compact_nmea?
+            "PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0":
+            "PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0");
+    }
+}
+uint8_t t5_gps_constellation_mode(){gps_load_tuning();return gps_constellation_mode;}
+bool t5_gps_compact_nmea(){gps_load_tuning();return gps_compact_nmea;}
+bool t5_gps_set_constellation_mode(uint8_t mode){
+    if(mode!=0&&mode!=1&&mode!=3&&mode!=5&&mode!=7)return false;
+    gps_load_tuning();
+    if(gps_constellation_mode==mode)return true;
+    Preferences pref;
+    if(!pref.begin("t5-gnss",false))return false;
+    const bool saved=pref.putUChar("constellation",mode)==1;
+    pref.end();
+    if(!saved)return false;
+    gps_constellation_mode=mode;
+    gps_constellation_dirty=mode!=0;
+    if(mode==0)T5_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
+    else gps_apply_tuning();
+    return true;
+}
+bool t5_gps_set_compact_nmea(bool compact){
+    gps_load_tuning();
+    if(gps_compact_nmea==compact)return true;
+    Preferences pref;
+    if(!pref.begin("t5-gnss",false))return false;
+    const bool saved=pref.putBool("compact",compact)==1;
+    pref.end();
+    if(!saved)return false;
+    gps_compact_nmea=compact;
+    gps_nmea_dirty=true;
+    gps_apply_tuning();
+    return true;
+}
+
 static uint32_t gps_sleep_requested_at = 0;
 static uint32_t gps_sleep_bytes_after = 0;
 static uint32_t gps_sleep_window_bytes = 0;
@@ -248,6 +329,8 @@ public:
         gps_wake_command();
         MicroNMEALocationProvider::begin();
         active = true;
+        gps_load_tuning();
+        gps_apply_tuning();
         next_baud_retry = millis() + 6000;
         T5_TRACE("gps: enabled by MeshCore sensor setting\n");
     }
@@ -308,6 +391,7 @@ public:
             detected_gps_baud = Serial1.baudRate();
             detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
             T5_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
+            gps_apply_tuning();
         } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
             detected_gps_baud = Serial1.baudRate() == 9600 ? 38400 : 9600;
             Serial1.updateBaudRate(detected_gps_baud);

@@ -147,7 +147,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu,
-    Settings, RadioSettings, GpsSettings, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
+    Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
 };
 static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
@@ -363,7 +363,7 @@ static void draw_status_bar(bool standby_quantized=false) {
     else draw_search_icon(6,9);
     int left=46;
     // Show receiver-reported satellite count only while GPS is enabled.
-    if(status_gps_enabled) {
+    if(!standby_active&&!standby_quantized&&status_gps_enabled&&status_gps_fix) {
         char satellites[4];
         snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites)));
         text(satellites,43,13,3,0,true);
@@ -796,7 +796,26 @@ static void draw_gps_settings() {
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
     settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
-    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,710);
+    settings_row("GPS POWER SAVING","CONSTELLATIONS, NMEA, TIMEZONE",710);
+}
+
+static const char* gps_constellation_label(){
+    switch(local_mesh_gps_constellation_mode()){
+        case 1:return "GPS ONLY (TEST LOWER POWER)";
+        case 3:return "GPS + BEIDOU";
+        case 5:return "GPS + GLONASS";
+        case 7:return "GPS + BEIDOU + GLONASS";
+        default:return "UNCHANGED (CURRENT MODE)";
+    }
+}
+static void draw_gps_tuning(){
+    draw_app_header("GPS POWER SAVING",true);
+    settings_row("CONSTELLATIONS",gps_constellation_label(),120);
+    settings_row("NMEA SENTENCES",local_mesh_gps_compact_nmea()?
+        "COMPACT: RMC + GGA ONLY":"FULL: ALL STANDARD SENTENCES",238);
+    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
+    draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",24,515,45,2,0,true,5);
+    draw_wrapped("COMPACT NMEA REDUCES UART AND PARSING. NEITHER SETTING POWERS OFF GPS. L76K ONLY; POWER SAVINGS UNMEASURED.",24,700,45,2,0,true,4);
 }
 
 static void draw_timezone(){draw_app_header("TIMEZONE",true);for(uint8_t i=0;i<TIMEZONE_COUNT;++i){const int y=118+i*102;box(12,y,516,92,i==timezone_index);const uint8_t c=i==timezone_index?0xFF:0;text(TIMEZONES[i].label,28,y+10,3,c,true);text(TIMEZONES[i].detail,28,y+54,2,c,true);}}
@@ -895,10 +914,10 @@ static void draw_screen() {
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
-        case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::Timezone:draw_timezone();break;
+        case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;case Screen::Timezone:draw_timezone();break;
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::About;
     if(screen==Screen::ContactDetails)draw_bottom_nav(details_from_discovery?3:0);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
@@ -1236,9 +1255,22 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(status_gps_fix&&hit(x,y,12,356,516,112)){map_latitude=status_gps_latitude/1000000.0;map_longitude=status_gps_longitude/1000000.0;open_screen(Screen::Maps);return true;}
             if(hit(x,y,12,474,516,112)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,592,516,112)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MODE_DU);return true;}
-            if(hit(x,y,12,710,516,112)){open_screen(Screen::Timezone);return true;}break;
-        case Screen::Timezone:
+            if(hit(x,y,12,710,516,112)){open_screen(Screen::GpsTuning);return true;}break;
+        case Screen::GpsTuning:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::GpsSettings);return true;}
+            if(hit(x,y,12,120,516,112)){
+                const uint8_t mode=local_mesh_gps_constellation_mode();
+                const uint8_t next=mode==0?1:mode==1?5:mode==5?3:mode==3?7:1;
+                show_toast(local_mesh_gps_set_constellation_mode(next)?"MODE SAVED":"SAVE FAILED");
+                draw_screen();refresh(MODE_DU);return true;
+            }
+            if(hit(x,y,12,238,516,112)){
+                show_toast(local_mesh_gps_set_compact_nmea(!local_mesh_gps_compact_nmea())?"NMEA MODE SAVED":"SAVE FAILED");
+                draw_screen();refresh(MODE_DU);return true;
+            }
+            if(hit(x,y,12,356,516,112)){open_screen(Screen::Timezone);return true;}break;
+        case Screen::Timezone:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::GpsTuning);return true;}
             for(uint8_t i=0;i<TIMEZONE_COUNT;++i)if(hit(x,y,12,118+i*102,516,92)){timezone_index=i;apply_timezone();prefs.begin("t5-ui",false);prefs.putUChar("timezone",timezone_index);prefs.end();show_toast("TIMEZONE SAVED");draw_screen();refresh(MODE_GL16);return true;}break;
         case Screen::PrivacySettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
@@ -1471,7 +1503,7 @@ void ui_status_set_channel_unread(uint16_t count) {
 void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp) {
     const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
-    const bool satellites_changed=enabled&&status_gps_satellites!=satellites;
+    const bool satellites_changed=enabled&&has_fix&&!standby_active&&status_gps_satellites!=satellites;
     if(state_changed)Serial.printf("[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
     status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
     static uint32_t last_detail_refresh=0;
