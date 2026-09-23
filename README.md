@@ -147,10 +147,13 @@ A long press of the BOOT button enters or leaves standby. A short press refreshe
 
 MeshInk reads 256×256 raster PNG map tiles from the SD card. Either put loose
 tiles in `/maps/Z/X/Y.png`, or copy a **PMTiles v3 raster PNG** archive to
-`/maps/your-map.pmtiles`. MeshInk discovers up to eight `.pmtiles` files in
-that folder and looks in them when a loose PNG tile is not available. Loose
-tiles take priority; archives are checked in SD-directory order. The normal
-parent-zoom fallback and RAM tile cache still apply.
+`/maps/osm-bright/osm-bright.pmtiles`, matching the tile downloader's suggested
+SD-card layout. Any other `/maps/<name>/<file>.pmtiles` or
+`/maps/<file>.pmtiles` layout is also supported. MeshInk discovers up to eight
+archives in the maps folder and its immediate subfolders, checking them when
+a loose PNG tile is unavailable. Loose tiles take priority; archives are
+checked in SD-directory order. The normal parent-zoom fallback and RAM tile
+cache still apply.
 
 PMTiles directories may be uncompressed or gzip-compressed. The embedded reader
 retrieves only the requested tile bytes from SD rather than unpacking the whole
