@@ -7,6 +7,7 @@
 #include <math.h>
 #include <string.h>
 #include "map_tiles.h"
+#include "pmtiles_reader.h"
 #include "board/target.h"
 
 namespace {
@@ -35,16 +36,75 @@ uint8_t* decode_bits=nullptr;
 struct DrawContext {int dx,dy,crop_x,crop_y,crop_size,tile_x,tile_y;};
 DrawContext ctx{};
 bool cache_memory_warning=false;
+// Loose PNGs take priority. Archives are discovered once per SD mount.
+constexpr size_t MAX_ARCHIVES=8;
+constexpr size_t SOURCE_PATH_BYTES=160;
+char archive_paths[MAX_ARCHIVES][SOURCE_PATH_BYTES]{};
+size_t archive_count=0;
+bool archives_discovered=false;
+bool png_range_active=false;
+uint32_t png_range_start=0,png_range_length=0;
+void discover_archives() {
+    if(archives_discovered)return;
+    archives_discovered=true;
+    File directory=SD.open("/maps");
+    if(!directory||!directory.isDirectory())return;
+    File candidate=directory.openNextFile();
+    while(candidate) {
+        const char* name=candidate.name();
+        if(!candidate.isDirectory()&&name) {
+            const size_t len=strlen(name);
+            if(len>=8&&!strcasecmp(name+len-8,".pmtiles") &&
+               archive_count<MAX_ARCHIVES) {
+                char* dst=archive_paths[archive_count];
+                const int written=name[0]=='/'?
+                    snprintf(dst,SOURCE_PATH_BYTES,"%s",name):
+                    snprintf(dst,SOURCE_PATH_BYTES,"/maps/%s",name);
+                if(written>0&&written<SOURCE_PATH_BYTES)++archive_count;
+            }
+        }
+        candidate.close();
+        candidate=directory.openNextFile();
+    }
+    directory.close();
+    if(archive_count)
+        Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
+                      (unsigned)archive_count);
+}
+
 
 void* png_open(const char* name,int32_t* size) {
     file=SD.open(name,FILE_READ);
     if(!file)return nullptr;
-    *size=file.size();
+    if(png_range_active) {
+        if(!png_range_length||png_range_length>INT32_MAX||
+           !file.seek(png_range_start)) {
+            file.close();
+            return nullptr;
+        }
+        *size=(int32_t)png_range_length;
+    } else *size=file.size();
     return &file;
 }
 void png_close(void*) {if(file)file.close();}
-int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {return file.read(data,length);}
-int32_t png_seek(PNGFILE*,int32_t position) {return file.seek(position)?position:-1;}
+int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
+    if(length<=0)return 0;
+    if(png_range_active) {
+        const uint32_t pos=file.position();
+        const uint64_t end=(uint64_t)png_range_start+png_range_length;
+        if(pos<png_range_start||pos>=end)return 0;
+        length=(int32_t)min((uint64_t)length,end-pos);
+    }
+    return file.read(data,length);
+}
+int32_t png_seek(PNGFILE*,int32_t position) {
+    if(position<0 || (png_range_active &&
+       (uint32_t)position>png_range_length))return -1;
+    const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
+                            (uint32_t)position;
+    if(absolute>UINT32_MAX||!file.seek((uint32_t)absolute))return -1;
+    return position;
+}
 
 // Keep source brightness in the 4-bit RAM cache, independent of how the
 // panel is driven. Compose a consistent binary map from that brightness.
@@ -166,15 +226,36 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     output=find_cached(z,x,y);
     if(output){++result.ram_hits;return true;}
     if(previously_absent(z,x,y))return false;
-    char path[64];
+    char path[SOURCE_PATH_BYTES];
     snprintf(path,sizeof(path),"/maps/%d/%d/%d.png",z,x,y);
     ++result.sd_checks;
-    if(!SD.exists(path)){mark_absent(z,x,y);return false;}
-    if(png.open(path,png_open,png_close,png_read,png_seek,png_draw)!=PNG_SUCCESS)
+    PmtilesPngRange range{};
+    if(!SD.exists(path)) {
+        discover_archives();
+        bool found=false;
+        for(size_t i=0;i<archive_count;++i) {
+            ++result.sd_checks;
+            if(pmtiles_find_png(archive_paths[i],z,x,y,range)) {
+                snprintf(path,sizeof(path),"%s",archive_paths[i]);
+                found=true;
+                break;
+            }
+        }
+        if(!found){mark_absent(z,x,y);return false;}
+    }
+    png_range_active=range.length!=0;
+    png_range_start=range.offset;
+    png_range_length=range.length;
+    const int open_status=png.open(path,png_open,png_close,
+                                  png_read,png_seek,png_draw);
+    if(open_status!=PNG_SUCCESS) {
+        png_range_active=false;
         return false;
+    }
     if(png.getWidth()!=TILE_SIZE||png.getHeight()!=TILE_SIZE) {
         Serial.printf("[T5-MAP] wrong PNG size: %s\n",path);
         png.close();
+        png_range_active=false;
         return false;
     }
     Tile* slot=acquire_slot();
@@ -182,6 +263,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     decode_bits=slot?slot->bits:nullptr;
     const int decode_status=png.decode(nullptr,0);
     png.close();
+    png_range_active=false;
     decode_bits=nullptr;
     if(decode_status!=PNG_SUCCESS) {
         if(slot)slot->valid=false;
