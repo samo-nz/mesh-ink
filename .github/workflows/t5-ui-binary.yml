@@ -113,13 +113,14 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.4 displays "STARTING UP..." beneath the original PNG
-          logo on normal boots. It changes to "INITIALISING STORAGE..." only
-          when the SPIFFS filesystem fails a non-formatting mount check and
-          the existing first-boot initialization/recovery is needed. The
-          setup/home screen and touch input remain disabled until the mesh
-          and storage are ready. Existing messages and settings are preserved
-          by the update image; GPS and radio behaviour are unchanged.
+          MeshInk 1.5.5 defaults to concise serial startup/error logging.
+          Normal touch, UI/EPD, GPS, mesh and power traces and periodic
+          diagnostic polling are disabled to avoid unnecessary CPU and
+          serial work. The GPS data watchdog and OFF-state UART draining
+          remain active. Diagnostics can be re-enabled at build time using
+          T5_DIAGNOSTICS=1 or an individual T5_LOG_* feature flag (README).
+          The radio/GPS power rail is unchanged; no measured battery-life
+          improvement is claimed.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

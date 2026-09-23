@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "t5_logging.h"
 #include <SD.h>
 #include <PNGdec.h>
 #include <epdiy.h>
@@ -265,7 +266,8 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         attempted=true;
         pinMode(12,OUTPUT);digitalWrite(12,HIGH);
         ready=SD.begin(12,t5_shared_spi(),10000000);
-        Serial.printf("[T5-MAP] SD init=%d\n",ready);
+        if(!ready)Serial.println("[T5-MAP] WARNING: SD initialization failed");
+        else T5_DEBUGLN(T5_LOG_MAP,"[T5-MAP] SD initialized");
     }
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -283,7 +285,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
-    Serial.printf("[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
+    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
                   result.ram_hits,result.disk_decodes,result.sd_checks,lat,lon);
