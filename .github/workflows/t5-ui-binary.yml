@@ -113,12 +113,12 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.2 replaces the hand-drawn logo on the boot splash and
-          About screen with the actual original PNG artwork in docs/. The
-          image is resized and converted to embedded 2-bit grayscale during
-          the firmware build, so the device needs no PNG decoder at boot.
-          The existing "INITIALISING STORAGE..." message remains below the
-          splash artwork, and the startup/touch and GPS behaviour are unchanged.
+          MeshInk 1.5.3 uses the original MeshInk PNG artwork on the boot
+          splash and About screen, replacing the hand-drawn approximation.
+          Its build-time generated, flash-resident 2-bit grayscale bitmap
+          is rendered directly to e-paper, with no PNG decoder needed at boot.
+          The existing "INITIALISING STORAGE..." message remains underneath
+          the logo. Storage, touch, radio and GPS behaviour are unchanged.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

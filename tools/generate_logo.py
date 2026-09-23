@@ -5,6 +5,9 @@ Install Pillow in the Python environment that runs PlatformIO.
 """
 from pathlib import Path
 
+# PlatformIO executes extra_scripts through SCons, where __file__ is unset.
+Import("env")
+
 try:
     from PIL import Image
 except ImportError as exc:
@@ -12,7 +15,7 @@ except ImportError as exc:
         "Building MeshInk requires Pillow: python -m pip install Pillow"
     ) from exc
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(env.subst("$PROJECT_DIR")).resolve()
 SOURCE = ROOT / "docs" / "file_00000000248c820a81311144dc2df47d.png"
 OUTPUT = ROOT / "src" / "meshink_logo_bitmap.h"
 WIDTH, HEIGHT = 520, 347
