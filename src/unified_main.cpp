@@ -45,7 +45,11 @@ void setup() {
     Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
                   companion_mode ? "BT companion" : "local UI");
     if (companion_mode) companion_setup();
-    else { ui_setup(); local_mesh_setup(); }
+    else {
+        ui_setup();           // show boot logo with INITIALISING STORAGE...
+        local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        ui_finish_startup();  // only now show a tappable setup/home screen
+    }
 }
 
 void loop() {

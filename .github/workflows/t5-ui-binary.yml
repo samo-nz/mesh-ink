@@ -113,16 +113,13 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.0 finalizes GPS UI and receiver configuration work.
-          Compact GGA+RMC output now applies automatically to the 9600-baud
-          L76K, with a compile-time full-NMEA option for diagnostics only.
-          Constellation choice remains user-selectable. The status-bar
-          satellite count is shown only when awake and with a valid fix.
-          IMPORTANT: The L76K remains powered while LoRa uses the shared
-          power rail. Constellation current savings have not been measured;
-          no GPS electrical standby or GPS-specific power-off is claimed.
-          The GPS receiver, LoRa power, and position interval are otherwise
-          unchanged by this release.
+          MeshInk 1.5.1 keeps the boot splash visible during storage and
+          MeshCore initialization. "INITIALISING STORAGE..." appears below
+          the MeshInk logo while a first-boot SPIFFS format may be running.
+          The setup/home screen and touch sampler start only after the mesh
+          startup completes, preventing delayed taps from being replayed
+          into setup controls. This is a UI/boot-flow patch; the receiver
+          configuration, radio and persistent data format are unchanged.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

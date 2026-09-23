@@ -1419,10 +1419,25 @@ void ui_setup() {
     update_status_hardware();
     epd_hl_set_all_white(&display);
     draw_meshink_logo(160,false);
+    // Keep the logo visible throughout MeshCore startup. A blank SPIFFS
+    // partition may take ~20 seconds to format on its first boot.
+    // The UI and touch queue only start after storage and the mesh are ready.
+    centred("INITIALISING STORAGE...",716,3,0,true);
     if(node_name[0])centred(node_name,830,3,0,true);
     centred(UI_VERSION,885,2,0,true);
-    epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);delay(700);
+    epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);
+    Serial.println("[T5-BOOT] splash visible; waiting for storage and mesh initialization");
+}
+
+void ui_finish_startup() {
+    if(hardware_failure)return;
+    // Drop any touch points that accumulated during the non-interactive
+    // splash, then show the correct initial setup or existing-user screen.
+    clear_touch();
     draw_screen();refresh(MODE_GL16);
+    // The first interactive frame already includes the MeshCore status
+    // populated during startup; don't immediately refresh it a second time.
+    status_dirty=false;
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)Serial.println("[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
@@ -1565,6 +1580,6 @@ void ui_use_data_provider(UiDataProvider* provider) {
     if (!provider) return;
     ui_data=provider;
     Serial.println("[T5-UI] live MeshCore data provider attached");
-    draw_screen();
-    refresh(MODE_GL16);
+    // ui_finish_startup() presents the first interactive screen only after
+    // the blocking storage / MeshCore boot sequence has completed.
 }
