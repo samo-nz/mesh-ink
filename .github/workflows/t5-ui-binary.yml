@@ -113,21 +113,21 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          This experimental pre-release hides the satellite number in standby
-          and whenever GPS has no fix. The bold status icon remains visible.
-          The GPS settings now offer opt-in L76K constellation selection
-          (GPS-only, GPS+GLONASS, GPS+BeiDou, or all three) and compact
-          GGA+RMC NMEA output to reduce host UART/parsing workload.
-          Current receiver settings are left unchanged until the user opts in.
-          These commands are documented for L76K but are untested on this unit.
-          GPS remains physically powered while LoRa is on; lower receiver
-          current and battery-life improvement are NOT verified.
+          MeshInk 1.5.0 finalizes GPS UI and receiver configuration work.
+          Compact GGA+RMC output now applies automatically to the 9600-baud
+          L76K, with a compile-time full-NMEA option for diagnostics only.
+          Constellation choice remains user-selectable. The status-bar
+          satellite count is shown only when awake and with a valid fix.
+          IMPORTANT: The L76K remains powered while LoRa uses the shared
+          power rail. Constellation current savings have not been measured;
+          no GPS electrical standby or GPS-specific power-off is claimed.
+          The GPS receiver, LoRa power, and position interval are otherwise
+          unchanged by this release.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
             "meshink-$VERSION-full-wipe.bin" \
             SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "MeshInk $VERSION (pre-release)" \
+            --title "MeshInk $VERSION" \
             --notes-file release-notes.md

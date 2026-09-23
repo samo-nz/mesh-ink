@@ -128,28 +128,31 @@ static GpsModule detected_gps_module = GpsModule::Unknown;
 static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
 
-// The receiver is shared with LoRa on VCC3V3. These opt-in settings reduce
-// constellation workload and host UART parsing, not receiver power-off.
-// 0 retains the existing receiver constellation; 1/3/5/7 are Quectel PCAS04
-// modes. Do not alter the known-working radio/GPS UART or positioning rate.
+// LoRa and GPS share VCC3V3. Constellation selection remains user-controlled;
+// compact GGA+RMC NMEA output is always configured on the inferred L76K.
+// Neither setting shuts down receiver power or changes the 1 Hz fix rate.
+// 0 leaves the receiver constellation unchanged; 1/3/5/7 are PCAS04 modes.
+#ifndef T5_GPS_FULL_NMEA_DIAGNOSTIC
+#define T5_GPS_FULL_NMEA_DIAGNOSTIC 0
+#endif
 static uint8_t gps_constellation_mode=0;
-static bool gps_compact_nmea=false;
 static bool gps_tuning_loaded=false;
 static bool gps_constellation_dirty=false;
-static bool gps_nmea_dirty=false;
+static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 
 static void gps_load_tuning(){
     if(gps_tuning_loaded)return;
     gps_tuning_loaded=true;
     Preferences pref;
-    if(!pref.begin("t5-gnss",true))return;
-    const uint8_t mode=pref.getUChar("constellation",0);
-    gps_constellation_mode=(mode==1||mode==3||mode==5||mode==7)?mode:0;
-    gps_compact_nmea=pref.getBool("compact",false);
-    pref.end();
-    // Only an explicitly saved opt-in may change receiver configuration.
+    if(pref.begin("t5-gnss",true)){
+        const uint8_t mode=pref.getUChar("constellation",0);
+        gps_constellation_mode=(mode==1||mode==3||mode==5||mode==7)?mode:0;
+        pref.end();
+    }
+    // Ignore the pre-1.5.0 "compact" preference: full output is now a
+    // developer-only diagnostic build option, not an on-device toggle.
     gps_constellation_dirty=gps_constellation_mode!=0;
-    gps_nmea_dirty=gps_compact_nmea;
+    gps_nmea_dirty=true;
 }
 static void gps_send_pcas(const char* payload) {
     uint8_t checksum=0;
@@ -171,13 +174,14 @@ static void gps_apply_tuning(){
     }
     if(gps_nmea_dirty){
         gps_nmea_dirty=false;
-        gps_send_pcas(gps_compact_nmea?
-            "PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0":
-            "PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+        gps_send_pcas("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0");
+#else
+        gps_send_pcas("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0");
+#endif
     }
 }
 uint8_t t5_gps_constellation_mode(){gps_load_tuning();return gps_constellation_mode;}
-bool t5_gps_compact_nmea(){gps_load_tuning();return gps_compact_nmea;}
 bool t5_gps_set_constellation_mode(uint8_t mode){
     if(mode!=0&&mode!=1&&mode!=3&&mode!=5&&mode!=7)return false;
     gps_load_tuning();
@@ -191,19 +195,6 @@ bool t5_gps_set_constellation_mode(uint8_t mode){
     gps_constellation_dirty=mode!=0;
     if(mode==0)T5_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
     else gps_apply_tuning();
-    return true;
-}
-bool t5_gps_set_compact_nmea(bool compact){
-    gps_load_tuning();
-    if(gps_compact_nmea==compact)return true;
-    Preferences pref;
-    if(!pref.begin("t5-gnss",false))return false;
-    const bool saved=pref.putBool("compact",compact)==1;
-    pref.end();
-    if(!saved)return false;
-    gps_compact_nmea=compact;
-    gps_nmea_dirty=true;
-    gps_apply_tuning();
     return true;
 }
 
