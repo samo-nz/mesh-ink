@@ -56,6 +56,33 @@ still share their power rail, and receiver current is not reduced merely
 by disabling serial debug logs. Boot-time ESP-IDF/EPDiy warnings may still
 print independently of MeshInk's log settings.
 
+## Touch, display and maps refinements (v1.5.8)
+
+A short press of the physical **BOOT** button refreshes the *current* screen
+without changing navigation or keyboard state. A capacitive **Home** press
+returns to Contacts (or Welcome during unfinished setup), clears pending
+touches, and prevents the Home release from being replayed as an ordinary
+tap. Holding BOOT for two seconds still enters/leaves standby.
+
+The disabled-GPS slash and message-envelope strokes are thicker. Maps
+has 66×66 zoom and **ME** locate buttons (previously 44×44), with matching
+touch areas and a visible black-on-white locate icon. Opening Maps from its
+tab centres on the device's current GPS location if valid, or the last
+verified location if available. Last verified coordinates are retained in
+local preferences, with infrequent writes for battery and flash life; they
+are a map-navigation fallback only, never represented as a live GPS fix.
+Opening a *specific contact's* position on the map does not override that
+explicit centre. The own-device map marker uses the same thick target icon
+as the GPS-fix status indicator.
+
+New/erased devices default to **30% frontlight brightness**. Firmware updates
+do **not** overwrite an existing saved brightness level; change that in
+Settings → Display & Power if you want 30% on an already-configured device.
+
+The firmware build also runs `python tools/check_ui_regressions.py` to guard
+the key screen state and map-button geometry. These source-level checks and
+the compile do not replace a touch, e-paper, or GPS test on physical hardware.
+
 ## Radio presets and clean-install setup (v1.5.7)
 
 On a clean/full-wipe installation, MeshCore's compiled radio defaults can
