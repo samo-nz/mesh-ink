@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_random.h>
 #include <Preferences.h>
 #include <epdiy.h>
 #include <driver/i2c.h>
@@ -87,7 +88,7 @@ static constexpr Glyph FONT[] = {
 static EpdiyHighlevelState display;
 static uint8_t* fb = nullptr;
 static Preferences prefs;
-static char node_name[21] = "MY T5";
+static char node_name[21] = "MeshInk-";
 static uint8_t selected_preset = 17;
 static bool saved = false;
 static bool was_pressed = false;
@@ -533,7 +534,6 @@ static void draw_welcome() {
     centred("BLUETOOTH COMPANION MODE",418,2,0,true);
     if(keyboard_visible){centred("ENTER A NAME",586,2,0,true);draw_keyboard();}
     else {box(30,840,480,64);centred("SHOW KEYBOARD",861,3,0,true);}
-    if(saved&&!keyboard_visible)centred("SETTINGS SAVED",760,2,0,true);
 }
 
 static void draw_presets() {
@@ -1278,6 +1278,24 @@ static void save_node_name(){
     if(mesh_is_ready)local_mesh_apply_name(node_name);
     saved=true;setup_complete=true;
 }
+
+// A full redraw of the first Contacts screen removes the initial setup
+// frame cleanly; do not briefly show a saved toast on the old keyboard.
+static void show_contacts_after_setup(){
+    if(keyboard_landscape){
+        keyboard_landscape=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
+    keyboard_visible=false;keyboard_message_mode=false;
+    replace_name_on_type=false;
+    text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
+    status_dirty=false;status_wake_light=false;
+    if(touch_queue)xQueueReset(touch_queue);
+    clear_touch();
+    screen=Screen::Contacts;
+    draw_screen();
+    fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);
+}
 static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(!keyboard_landscape)return false;
     const int16_t x=raw_y,y=539-raw_x;
@@ -1302,8 +1320,13 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         if(x<707){append(' ');queue_text_refresh();return true;}
         if(keyboard_message_mode){
             if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;
-        }else save_node_name();
-        keyboard_visible=true;set_keyboard_orientation(false);return true;
+            keyboard_visible=true;set_keyboard_orientation(false);return true;
+        }
+        const bool was_setup=screen==Screen::Welcome;
+        save_node_name();
+        if(was_setup)show_contacts_after_setup();
+        else{keyboard_visible=true;set_keyboard_orientation(false);}
+        return true;
     }
     return true;
 }
@@ -1355,10 +1378,16 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
         if(x<116){set_keyboard_orientation(true);return true;}
         if(x<314)return true; // node names cannot contain spaces
         if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-        save_node_name();keyboard_visible=false;
-        toast_opens_main=screen==Screen::Welcome;
-        show_toast(screen==Screen::Welcome?"SETTINGS SAVED":"IDENTITY SAVED");
-        draw_screen();refresh(MODE_DU);return true;
+        const bool was_setup=screen==Screen::Welcome;
+        save_node_name();
+        if(was_setup){
+            show_contacts_after_setup();
+        }else{
+            keyboard_visible=false;
+            show_toast("IDENTITY SAVED");
+            draw_screen();refresh(MODE_DU);
+        }
+        return true;
     }
     return true;
 }
@@ -1633,6 +1662,19 @@ void ui_setup() {
         size_t out=0;
         for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else Serial.printf("[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
         node_name[out]=0;
+    }else if(!setup_complete){
+        // Generate once per new device and persist immediately: rebooting
+        // before pressing SAVE must not change the displayed MeshInk ID.
+        static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        memcpy(node_name,"MeshInk-",8);
+        for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];
+        node_name[12]=0;
+        Preferences initial_name;
+        if(initial_name.begin("t5-ui",false)){
+            initial_name.putString("name",node_name);
+            initial_name.end();
+        }
+        Serial.printf("[T5-BOOT] generated first-setup device name: %s\n",node_name);
     }
     if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
     update_status_hardware();
@@ -1663,7 +1705,11 @@ void ui_finish_startup() {
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     clear_touch();
-    draw_screen();refresh(MODE_GL16);
+    draw_screen();
+    if(screen==Screen::Welcome)
+        fast_full_redraw("FIRST_SETUP_SCREEN",false);
+    else
+        refresh(MODE_GL16);
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;
