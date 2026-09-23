@@ -8,6 +8,22 @@
 
 It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
+## First-time setup and device names (v1.6.1)
+
+On a new or full-wipe installation, the setup screen proposes a default
+device name in the form `MeshInk-XXXX`, where each of the four characters
+is randomly selected from A–Z and 0–9. The generated name is saved as soon
+as it is created, so rebooting before completing setup does not change it.
+You can replace it using the setup keyboard. Existing saved names are not
+replaced by a firmware update.
+
+The redundant **SETTINGS SAVED** text below the keyboard is removed.
+After the first setup screen is drawn, MeshInk forces a full e-paper redraw
+for a clean first appearance. Saving setup from portrait or landscape goes
+straight to Contacts and forces a full redraw of that first Contacts screen.
+Subsequent text entry and normal navigation retain their normal incremental
+refreshes, avoiding unnecessary full e-paper refreshes.
+
 ## Boot artwork and storage initialization (v1.5.4)
 
 The splash and About screens use the original

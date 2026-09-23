@@ -13,6 +13,21 @@ source = (Path(__file__).resolve().parents[1] / "src" / "ui_onboarding.cpp").rea
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
 
+# First-install identity, setup text and guaranteed e-paper transitions.
+contains('#include <esp_random.h>', "hardware-generated first-install identity")
+contains('static char node_name[21] = "MeshInk-";', "default MeshInk identity prefix")
+contains('static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";', "new ID alphabet")
+contains('for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];', "four randomized characters")
+contains('node_name[12]=0;', "generated name termination")
+contains('initial_name.putString("name",node_name);', "generated name persisted before setup save")
+contains('}else if(!setup_complete){', "existing completed identity is preserved")
+assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved line below setup keyboard"
+assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
+contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
+contains('fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);', "full e-paper redraw on first Contacts")
+assert source.count('if(was_setup)show_contacts_after_setup();')==1, "landscape setup completion must show Contacts"
+contains('if(was_setup){\n            show_contacts_after_setup();', "portrait setup completion must show Contacts")
+
 contains("frontlight_brightness=30;", "new-device frontlight default")
 contains('prefs.getUChar("light_level",30)', "first-install brightness load")
 contains('if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=30', "brightness fallback")
