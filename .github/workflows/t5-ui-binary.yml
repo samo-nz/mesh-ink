@@ -33,6 +33,10 @@ jobs:
         run: python tools/check_radio_presets.py
       - name: Check UI interaction regressions
         run: python tools/check_ui_regressions.py
+      - name: Verify portrait and landscape keyboard hitboxes
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -Isrc tools/test_keyboard_geometry.cpp -o /tmp/meshink-keyboard-test
+          /tmp/meshink-keyboard-test
       - run: python -m platformio run -e t5-unified
 
       - name: Read firmware version
@@ -117,16 +121,14 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.8 addresses touch and map UI regressions: a short
-          physical BOOT press refreshes the current screen, while capacitive
-          Home consistently returns to Contacts without replaying stale taps.
-          The GPS-off indicator and message envelope use thicker strokes.
-          Map zoom and locate controls are 1.5x larger with matching touch
-          areas; ME is visibly labeled. Opening Maps centres on the device's
-          current GPS fix or a retained last-known fix (when available).
-          The device marker uses the same bold GPS target icon. New installs
-          default to 30% frontlight brightness; existing saved brightness
-          settings are preserved. Radio presets and MeshCore are unchanged.
+          MeshInk 1.5.9 corrects shifted keyboard letter hitboxes in both
+          portrait and landscape, for name and message entry. Every number
+          and character now uses the exact same key geometry for drawing and
+          touch handling, with gaps divided equally between neighboring keys.
+          The eight-character symbol row is resized to fit without covering
+          the mode or Delete buttons. Edge, number, symbol and action-key
+          hitboxes are tested in the CI build. LoRa, GPS and saved settings
+          are unchanged from 1.5.8.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

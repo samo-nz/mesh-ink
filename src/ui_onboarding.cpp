@@ -15,6 +15,7 @@
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
 #include "t5_logging.h"
+#include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
@@ -337,13 +338,23 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
 
 static void draw_keyboard() {
     const char* numbers="1234567890";
-    for(int i=0;numbers[i];++i){char label[2]={numbers[i],0};key(label,15+i*52,618,49);}
+    const auto digits=meshink_keyboard::numbers(false);
+    for(int i=0;numbers[i];++i){
+        char label[2]={numbers[i],0};
+        key(label,digits.start+i*digits.pitch,618,digits.width);
+    }
     const char* letter_rows_upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
     const char* letter_rows_lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbol_rows[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};
     const char** rows=keyboard_symbols?symbol_rows:(keyboard_upper?letter_rows_upper:letter_rows_lower);
-    const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char label[2]={rows[r][i],0};key(label,starts[r]+i*52,ys[r],49);}
+    const int ys[]={688,758,828};
+    for(int r=0;r<3;++r){
+        const auto layout=meshink_keyboard::letters(false,r,(int)strlen(rows[r]));
+        for(int i=0;rows[r][i];++i){
+            char label[2]={rows[r][i],0};
+            key(label,layout.start+i*layout.pitch,ys[r],layout.width);
+        }
+    }
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
     key("DEL",460,828,68);
     key("LAND",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_message_mode?"SEND":"SAVE",426,898,102);
@@ -365,13 +376,47 @@ static void draw_landscape_keyboard(){
     EpdRect entry={16,14,928,112};epd_draw_rect(entry,0,fb);
     draw_wrapped(value[0]?value:"ENTER TEXT",32,30,48,4,0,true,2);
     const char* numbers="1234567890";
-    for(int i=0;i<10;++i){char s[2]={numbers[i],0};landscape_key(s,15+i*93,145,88);}
-    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={215,285,355};
-    for(int r=0;r<3;++r)for(int i=0;rows[r][i];++i){char s[2]={rows[r][i],0};landscape_key(s,starts[r]+i*93,ys[r],88);}
+    const auto digits=meshink_keyboard::numbers(true);
+    for(int i=0;i<10;++i){
+        char s[2]={numbers[i],0};
+        landscape_key(s,digits.start+i*digits.pitch,145,digits.width);
+    }
+    const char** rows=active_keyboard_rows();const int ys[]={215,285,355};
+    for(int r=0;r<3;++r){
+        const auto layout=meshink_keyboard::letters(true,r,(int)strlen(rows[r]));
+        for(int i=0;rows[r][i];++i){
+            char s[2]={rows[r][i],0};
+            landscape_key(s,layout.start+i*layout.pitch,ys[r],layout.width);
+        }
+    }
     landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),15,355,130);
     landscape_key("DEL",812,355,133);
     landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
     landscape_key(keyboard_message_mode?"SEND":"SAVE",711,425,234);
+}
+
+// The number and letter hitboxes are calculated from the EXACT geometry used
+// when drawing them. This also divides gaps at the midpoint and prevents
+// symbols in the 8-key bottom row overlapping the mode / Delete buttons.
+static bool keyboard_character_at(int x,int y,bool landscape,char& character){
+    const int number_top=landscape?145:618;
+    if(meshink_keyboard::in_row(y,number_top)){
+        const int i=meshink_keyboard::key_index(meshink_keyboard::numbers(landscape),x);
+        if(i<0)return false;
+        character="1234567890"[i];
+        return true;
+    }
+    const char** rows=active_keyboard_rows();
+    const int top=landscape?215:688;
+    for(int r=0;r<3;++r){
+        if(!meshink_keyboard::in_row(y,top+r*70))continue;
+        const int i=meshink_keyboard::key_index(
+            meshink_keyboard::letters(landscape,r,(int)strlen(rows[r])),x);
+        if(i<0)return false;
+        character=rows[r][i];
+        return true;
+    }
+    return false;
 }
 
 static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
@@ -1223,16 +1268,27 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(!keyboard_landscape)return false;
     const int16_t x=raw_y,y=539-raw_x;
     T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
-    const char* numbers="1234567890";if(y>=141&&y<211){append(numbers[min(9,max(0,(x-1)/96))]);queue_text_refresh();return true;}
-    const char** rows=active_keyboard_rows();const int starts[]={15,60,153};const int ys[]={215,285,355};
-    for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+46)/93));if(r!=2||!(x<148||x>=808)){append(rows[r][i]);queue_text_refresh();return true;}}
-    if(hit(x,y,15,355,130,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,812,355,133,62)){char* value=keyboard_message_mode?compose_text:node_name;size_t n=strlen(value);if(n)value[n-1]=0;queue_text_refresh();return true;}
-    if(hit(x,y,15,425,180,62)){set_keyboard_orientation(false);return true;}
-    if(hit(x,y,203,425,500,62)){append(' ');queue_text_refresh();return true;}
-    if(hit(x,y,711,425,234,62)){
-        if(keyboard_message_mode){if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;}
-        else save_node_name();
+    // Give the mode and Delete buttons the full third-row edge areas.
+    if(meshink_keyboard::in_row(y,355)){
+        if(x<149){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+        if(x>=805){
+            char* value=keyboard_message_mode?compose_text:node_name;
+            const size_t n=strlen(value);
+            if(n)value[n-1]=0;
+            if(!keyboard_message_mode)saved=false;
+            queue_text_refresh();return true;
+        }
+    }
+    char character=0;
+    if(keyboard_character_at(x,y,true,character)){
+        append(character);queue_text_refresh();return true;
+    }
+    if(meshink_keyboard::in_row(y,425)){
+        if(x<199){set_keyboard_orientation(false);return true;}
+        if(x<707){append(' ');queue_text_refresh();return true;}
+        if(keyboard_message_mode){
+            if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;
+        }else save_node_name();
         keyboard_visible=true;set_keyboard_orientation(false);return true;
     }
     return true;
@@ -1240,31 +1296,56 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
-    const char* numbers="1234567890";if(y>=614&&y<684){append(numbers[min(9,max(0,(int)x*10/540))]);queue_text_refresh();return true;}
-    const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};const char* lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
-    const char* symbols[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};const char** rows=keyboard_symbols?symbols:(keyboard_upper?upper:lower);
-    const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+26)/52));if(r!=2||!(x<90||x>=455)){append(rows[r][i]);queue_text_refresh();return true;}}
-    if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,460,828,68,62)){size_t n=strlen(compose_text);if(n)compose_text[n-1]=0;queue_text_refresh();return true;}
-    if(hit(x,y,12,898,100,62)){set_keyboard_orientation(true);return true;}
-    if(hit(x,y,110,894,210,66)){append(' ');queue_text_refresh();return true;}
-    if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-    if(hit(x,y,426,898,102,62)){if(compose_text[0]){const bool ok=local_mesh_send_active(compose_text);if(ok){compose_text[0]=0;keyboard_visible=false;}draw_screen();refresh(MODE_DU);}return true;}
+    if(meshink_keyboard::in_row(y,828)){
+        if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+        if(x>=457){
+            const size_t n=strlen(compose_text);
+            if(n)compose_text[n-1]=0;
+            queue_text_refresh();return true;
+        }
+    }
+    char character=0;
+    if(keyboard_character_at(x,y,false,character)){
+        append(character);queue_text_refresh();return true;
+    }
+    if(y>=894&&y<960){
+        // Extend each action into half of its neighbouring gap.
+        if(x<116){set_keyboard_orientation(true);return true;}
+        if(x<314){append(' ');queue_text_refresh();return true;}
+        if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        if(compose_text[0]){
+            const bool ok=local_mesh_send_active(compose_text);
+            if(ok){compose_text[0]=0;keyboard_visible=false;}
+            draw_screen();refresh(MODE_DU);
+        }
+        return true;
+    }
     return true;
 }
 
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
-    const char* numbers="1234567890";if(y>=614&&y<684){append(numbers[min(9,max(0,(int)x*10/540))]);queue_text_refresh();return true;}
-    const char** rows=active_keyboard_rows();const int starts[]={15,41,93};const int ys[]={688,758,828};
-    for(int r=0;r<3;++r)if(y>=ys[r]-4&&y<ys[r]+66){const int count=strlen(rows[r]);int i=min(count-1,max(0,(x-starts[r]+26)/52));if(r!=2||!(x<90||x>=455)){append(rows[r][i]);queue_text_refresh();return true;}}
-    if(hit(x,y,12,828,76,62)){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
-    if(hit(x,y,460,828,68,62)){size_t n=strlen(node_name);if(n)node_name[n-1]=0;saved=false;queue_text_refresh();return true;}
-    if(hit(x,y,12,898,100,62)){set_keyboard_orientation(true);return true;}
-    if(hit(x,y,120,898,190,62))return true;
-    if(hit(x,y,318,898,100,62)){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-    if(hit(x,y,426,898,102,62)){save_node_name();keyboard_visible=false;toast_opens_main=screen==Screen::Welcome;show_toast(screen==Screen::Welcome?"SETTINGS SAVED":"IDENTITY SAVED");draw_screen();refresh(MODE_DU);return true;}
+    if(meshink_keyboard::in_row(y,828)){
+        if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+        if(x>=457){
+            const size_t n=strlen(node_name);
+            if(n)node_name[n-1]=0;
+            saved=false;queue_text_refresh();return true;
+        }
+    }
+    char character=0;
+    if(keyboard_character_at(x,y,false,character)){
+        append(character);queue_text_refresh();return true;
+    }
+    if(y>=894&&y<960){
+        if(x<116){set_keyboard_orientation(true);return true;}
+        if(x<314)return true; // node names cannot contain spaces
+        if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        save_node_name();keyboard_visible=false;
+        toast_opens_main=screen==Screen::Welcome;
+        show_toast(screen==Screen::Welcome?"SETTINGS SAVED":"IDENTITY SAVED");
+        draw_screen();refresh(MODE_DU);return true;
+    }
     return true;
 }
 
