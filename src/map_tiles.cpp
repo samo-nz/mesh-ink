@@ -94,7 +94,10 @@ bool media_ready(bool probe=true) {
         if(archives_discovered&&archive_count) {
             File check=SD.open(archive_paths[0],FILE_READ);
             const uint32_t length=check?check.size():0;
-            const uint32_t sectors=length/512;
+            // Limit probes to the first 8 KiB: seeking a random sector
+            // deep inside a fragmented 200 MB FAT file would add avoidable
+            // work every time the user pans or a status refresh occurs.
+            const uint32_t sectors=min((uint32_t)16,length/512U);
             const uint32_t offset=sectors
                 ? ((millis()/2000U)%sectors)*512U : 0;
             const bool ok=check&&length&&check.seek(offset)&&check.read()>=0;
