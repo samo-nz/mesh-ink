@@ -113,9 +113,13 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          This pre-release adds GPS-off UART diagnostics and wake-to-fix timing.
-          PMTK161 standby on the L76K remains experimental: quiet NMEA output
-          does not by itself establish a lower GPS power draw.
+          This diagnostic pre-release sends one experimental $PCAS12,10*2F
+          command to the L76K when GPS is stopped, and probes UART activity
+          while the MeshCore GPS provider is OFF. If supported, PCAS12 requests
+          10 seconds of timed standby with automatic wake.
+          IMPORTANT: This is not permanent GPS OFF or proven power savings.
+          Quectel has not confirmed PCAS12 support on L76K; test on hardware
+          and measure power before treating it as working GPS sleep.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

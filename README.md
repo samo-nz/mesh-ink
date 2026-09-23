@@ -134,6 +134,22 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
 
+### GPS standby diagnostic (v1.4.5 pre-release)
+
+This test build sends **one experimental `$PCAS12,10*2F`** command to an
+L76K when GPS is stopped, and reports UART traffic every five seconds while
+the MeshCore GPS provider is OFF. The generic CASIC protocol documents PCAS12
+for certain low-power receivers; **support on Quectel L76K is unconfirmed**.
+If accepted, the receiver automatically wakes about 10 seconds later, even
+if the GPS setting still says OFF. Thus this build does **not** provide
+persistent GPS-off power savings. A quiet UART also does not establish reduced
+electrical current; measure power before enabling any production duty cycle.
+
+To test: run the serial monitor, enable GPS and wait for a fix, then disable
+GPS in Settings. Keep the monitor running for at least 25 seconds and compare
+the `gps probe: OFF +5s`, `+10s`, `+15s`, and `+20s` UART reports.
+LoRa/GPS shared-rail power is not toggled by this test.
+
 ## Building from source
 
 The main firmware environment is:
