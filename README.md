@@ -56,6 +56,22 @@ still share their power rail, and receiver current is not reduced merely
 by disabling serial debug logs. Boot-time ESP-IDF/EPDiy warnings may still
 print independently of MeshInk's log settings.
 
+## Keyboard touch alignment (v1.5.9)
+
+The on-screen keyboard now uses one shared geometry definition for both
+drawing and touch hitboxes in portrait and landscape. Each number and letter
+receives its full visible rectangle and half the gap to the next character;
+tapping the right side of **T** no longer types **Y**. Name entry and public
+or direct-message composition share this mapping. The eight-symbol bottom
+row is resized to fit between the mode and Delete buttons without overlap,
+and the mode, Delete, Space and other action hitboxes extend into the
+adjacent gaps. The firmware's CI build executes a host-side C++ test of all
+visible key pixels and gap boundaries in both orientations.
+
+This is a touch-layout-only change: radio, GPS, stored settings and messages
+are not modified. The firmware build test does not substitute for physical
+GT911 touchscreen testing.
+
 ## Touch, display and maps refinements (v1.5.8)
 
 A short press of the physical **BOOT** button refreshes the *current* screen
