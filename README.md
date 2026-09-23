@@ -134,7 +134,15 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
 
-### GPS power behaviour (v1.4.6 recovery pre-release)
+### GPS status and power behaviour (v1.4.7 pre-release)
+
+The GPS status bar displays a thicker OFF/searching/fixed icon and a
+satellite count while GPS is enabled. Satellite count display updates
+are rate-limited to avoid redrawing the e-paper every GPS sample. The
+number is hidden when GPS is OFF. No receiver or constellation settings
+are changed by this UI update.
+
+The GPS power-recovery changes introduced in v1.4.6 remain active.
 
 The experimental PCAS12 timed-standby command from v1.4.5 was removed after
 hardware testing showed continuous UART traffic while GPS was OFF and the

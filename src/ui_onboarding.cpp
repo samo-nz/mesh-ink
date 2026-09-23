@@ -320,13 +320,24 @@ static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
 }
 
 static void draw_target_icon(int x,int y,bool disabled) {
-    epd_draw_rect({x+5,y+5,20,20},0,fb);epd_draw_rect({x+9,y+9,12,12},0,fb);
-    epd_fill_rect({x+13,y+13,4,4},0,fb);line(x,y+15,x+29,y+15);line(x+15,y,x+15,y+29);
-    if(disabled){for(int d=-1;d<=1;++d)line(x+2,y+2+d,x+28,y+28+d);}
+    // Three-pixel strokes for a clearly visible status-bar GPS icon.
+    epd_fill_rect({x+4,y+4,22,3},0,fb);
+    epd_fill_rect({x+4,y+23,22,3},0,fb);
+    epd_fill_rect({x+4,y+4,3,22},0,fb);
+    epd_fill_rect({x+23,y+4,3,22},0,fb);
+    epd_fill_rect({x+12,y+12,6,6},0,fb);
+    epd_fill_rect({x,y+14,30,3},0,fb);
+    epd_fill_rect({x+14,y,3,30},0,fb);
+    if(disabled) {
+        for(int d=-1;d<=1;++d)line(x+2,y+2+d,x+27,y+27+d);
+    }
 }
 
 static void draw_search_icon(int x,int y) {
-    epd_draw_rect({x+3,y+3,19,19},0,fb);epd_draw_rect({x+7,y+7,11,11},0,fb);
+    epd_fill_rect({x+3,y+3,20,3},0,fb);
+    epd_fill_rect({x+3,y+20,20,3},0,fb);
+    epd_fill_rect({x+3,y+3,3,20},0,fb);
+    epd_fill_rect({x+20,y+3,3,20},0,fb);
     for(int d=-1;d<=1;++d)line(x+20,y+20+d,x+29,y+29+d);
 }
 
@@ -351,6 +362,13 @@ static void draw_status_bar(bool standby_quantized=false) {
     else if(status_gps_fix)draw_target_icon(6,9,false);
     else draw_search_icon(6,9);
     int left=46;
+    // Show receiver-reported satellite count only while GPS is enabled.
+    if(status_gps_enabled) {
+        char satellites[4];
+        snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites)));
+        text(satellites,43,13,3,0,true);
+        left=43+(int)strlen(satellites)*18+12;
+    }
     if(status_unread){draw_envelope_icon(left,9);left+=36;char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,13,3,0,true);left+=(int)strlen(count)*18+12;}
     if(status_channel_unread){text("#",left,13,3,0,true);left+=22;char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,13,3,0,true);}
     char clock_text[8];
@@ -1453,10 +1471,15 @@ void ui_status_set_channel_unread(uint16_t count) {
 void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp) {
     const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
+    const bool satellites_changed=enabled&&status_gps_satellites!=satellites;
     if(state_changed)Serial.printf("[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
     status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
     static uint32_t last_detail_refresh=0;
+    static uint32_t last_satellite_refresh=0;
     const uint32_t now=millis();
+    const bool satellites_refresh=satellites_changed&&
+        now-last_satellite_refresh>=(standby_active?60000UL:15000UL);
+    if(satellites_refresh)last_satellite_refresh=now;
     bool marker_moved=false;
     // Keep the own-position marker reasonably current while travelling,
     // but avoid expensive e-paper updates for every 1 Hz GPS sample.
@@ -1473,7 +1496,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         }
         if(marker_moved)last_marker_refresh=now;
     }
-    if(state_changed||(detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000)||marker_moved){
+    if(state_changed||satellites_refresh||(detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000)||marker_moved){
         last_detail_refresh=now;
         status_dirty=true;
         Serial.println(marker_moved?"[T5-UI] refresh queued reason=map-own-position":
