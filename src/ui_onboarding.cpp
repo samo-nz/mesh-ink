@@ -217,29 +217,59 @@ static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     return accepted&&actual==mhz;
 }
 
-struct Preset { const char* title; const char* detail; };
+struct Preset {
+    const char* title;
+    const char* detail;
+    uint32_t frequency_khz;  // integer kHz avoids parsing and rounding displayed MHz
+    float bandwidth_khz;
+    uint8_t spreading_factor;
+    uint8_t coding_rate;
+    uint8_t path_hash_bytes;  // 0 only for KEEP CURRENT, otherwise 1..3
+};
 static constexpr Preset PRESETS[] = {
- {"KEEP CURRENT","NO RADIO CHANGES"},{"AUSTRALIA","915.800 / SF10 / BW250 / CR5"},
- {"AUSTRALIA NARROW","916.575 / SF7 / BW62.5 / CR8"},{"AUSTRALIA MID","915.075 / SF9 / BW125 / CR5"},
- {"AUSTRALIA SA WA","923.125 / SF8 / BW62.5 / CR8"},{"AUSTRALIA QLD","923.125 / SF8 / BW62.5 / CR5"},
- {"BRAZIL","923.125 / SF8 / BW62.5 / CR8"},{"CANADA","910.525 / SF7 / BW62.5 / CR5 / 3B"},
- {"COSTA RICA","910.525 / SF11 / BW125 / CR5"},{"EU UK NARROW","869.618 / SF8 / BW62.5 / CR8"},
- {"EU UK DEPRECATED","869.525 / SF11 / BW250 / CR5"},{"CZECH NARROW","869.432 / SF7 / BW62.5 / CR5"},
- {"EU 433 LONG RANGE","433.650 / SF11 / BW250 / CR5"},{"EU 433 NARROW","433.650 / SF8 / BW62.5 / CR8"},
- {"HUNGARY","869.618 / SF7 / BW62.5 / CR5 / 2B"},{"NETHERLANDS","869.618 / SF7 / BW62.5 / CR5"},
- {"NL LIMBURG","869.618 / SF8 / BW62.5 / CR8 / 2B"},{"NZ NARROW","917.375 / SF7 / BW62.5 / CR5 / 2B"},
- {"NZ GISBORNE","917.375 / SF11 / BW250 / CR5 / 1B"},{"PORTUGAL 433","433.375 / SF9 / BW62.5 / CR6"},
- {"PORTUGAL 868","869.618 / SF7 / BW62.5 / CR6"},{"SLOVAKIA","869.618 / SF7 / BW62.5 / CR5 / 2B"},
- {"SWITZERLAND","869.618 / SF8 / BW62.5 / CR8"},{"USA","910.525 / SF7 / BW62.5 / CR5"},
- {"USA PHILLYMESH","902.250 / SF11 / BW500 / CR5 / 2B"},{"USA SOCAL","927.875 / SF7 / BW62.5 / CR5 / 3B"},
- {"VIETNAM NARROW","920.250 / SF8 / BW62.5 / CR5"},{"VIETNAM DEPRECATED","920.250 / SF11 / BW250 / CR5"}
+    {"KEEP CURRENT","NO RADIO CHANGES",0,0f,0,0,0},
+    {"AUSTRALIA","915.800 / SF10 / BW250 / CR5",915800,250f,10,5,1},
+    {"AUSTRALIA NARROW","916.575 / SF7 / BW62.5 / CR8",916575,62.5f,7,8,1},
+    {"AUSTRALIA MID","915.075 / SF9 / BW125 / CR5",915075,125f,9,5,1},
+    {"AUSTRALIA SA WA","923.125 / SF8 / BW62.5 / CR8",923125,62.5f,8,8,1},
+    {"AUSTRALIA QLD","923.125 / SF8 / BW62.5 / CR5",923125,62.5f,8,5,1},
+    {"BRAZIL","923.125 / SF8 / BW62.5 / CR8",923125,62.5f,8,8,1},
+    {"CANADA","910.525 / SF7 / BW62.5 / CR5 / 3B",910525,62.5f,7,5,3},
+    {"COSTA RICA","910.525 / SF11 / BW125 / CR5",910525,125f,11,5,1},
+    {"EU UK NARROW","869.618 / SF8 / BW62.5 / CR8",869618,62.5f,8,8,1},
+    {"EU UK DEPRECATED","869.525 / SF11 / BW250 / CR5",869525,250f,11,5,1},
+    {"CZECH NARROW","869.432 / SF7 / BW62.5 / CR5",869432,62.5f,7,5,1},
+    {"EU 433 LONG RANGE","433.650 / SF11 / BW250 / CR5",433650,250f,11,5,1},
+    {"EU 433 NARROW","433.650 / SF8 / BW62.5 / CR8",433650,62.5f,8,8,1},
+    {"HUNGARY","869.618 / SF7 / BW62.5 / CR5 / 2B",869618,62.5f,7,5,2},
+    {"NETHERLANDS","869.618 / SF7 / BW62.5 / CR5",869618,62.5f,7,5,1},
+    {"NL LIMBURG","869.618 / SF8 / BW62.5 / CR8 / 2B",869618,62.5f,8,8,2},
+    {"NZ NARROW","917.375 / SF7 / BW62.5 / CR5 / 2B",917375,62.5f,7,5,2},
+    {"NZ GISBORNE","917.375 / SF11 / BW250 / CR5 / 1B",917375,250f,11,5,1},
+    {"PORTUGAL 433","433.375 / SF9 / BW62.5 / CR6",433375,62.5f,9,6,1},
+    {"PORTUGAL 868","869.618 / SF7 / BW62.5 / CR6",869618,62.5f,7,6,1},
+    {"SLOVAKIA","869.618 / SF7 / BW62.5 / CR5 / 2B",869618,62.5f,7,5,2},
+    {"SWITZERLAND","869.618 / SF8 / BW62.5 / CR8",869618,62.5f,8,8,1},
+    {"USA","910.525 / SF7 / BW62.5 / CR5",910525,62.5f,7,5,1},
+    {"USA PHILLYMESH","902.250 / SF11 / BW500 / CR5 / 2B",902250,500f,11,5,2},
+    {"USA SOCAL","927.875 / SF7 / BW62.5 / CR5 / 3B",927875,62.5f,7,5,3},
+    {"VIETNAM NARROW","920.250 / SF8 / BW62.5 / CR5",920250,62.5f,8,5,1},
+    {"VIETNAM DEPRECATED","920.250 / SF11 / BW250 / CR5",920250,250f,11,5,1},
 };
 static constexpr uint8_t PRESET_COUNT = sizeof(PRESETS)/sizeof(PRESETS[0]);
 
-static bool apply_selected_preset(){
-    if(selected_preset==0)return true;float freq=0,bw=0;unsigned sf=0,cr=0,bytes=1;
-    const int fields=sscanf(PRESETS[selected_preset].detail,"%f / SF%u / BW%f / CR%u / %uB",&freq,&sf,&bw,&cr,&bytes);
-    if(fields<4)return false;return local_mesh_apply_radio(freq,bw,(uint8_t)sf,(uint8_t)cr,(uint8_t)(max(1u,min(3u,bytes))-1));
+static bool apply_selected_preset() {
+    if(selected_preset>=PRESET_COUNT)return false;
+    const Preset& preset=PRESETS[selected_preset];
+    if(preset.path_hash_bytes==0)return true; // KEEP CURRENT never alters the radio
+    // Apply the *same typed values* displayed by the preset selector.
+    // The MeshCore property uses 0/1/2 for a 1/2/3-byte path hash.
+    const bool applied=local_mesh_apply_radio(preset.frequency_khz/1000.0f,
+        preset.bandwidth_khz,preset.spreading_factor,preset.coding_rate,
+        preset.path_hash_bytes-1);
+    if(!applied)Serial.printf("[T5-ERROR] radio preset '%s' could not be applied\n",preset.title);
+    else T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset '%s' applied\n",preset.title);
+    return applied;
 }
 static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BYTES","3 BYTES"};return labels[min((uint8_t)2,local_mesh_path_hash_mode())];}
 
@@ -1292,7 +1322,26 @@ static void handle_tap(int16_t x,int16_t y) {
     if(screen==Screen::Presets) {
         if(y>=48&&y<132){screen=preset_return_screen;draw_screen();refresh(MODE_GL16);return;}
         for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,12,132+row*128,516,112)){
-            const int index=preset_page*PRESETS_PER_PAGE+row;if(index<PRESET_COUNT){selected_preset=index;saved=false;const bool applied=!mesh_is_ready||apply_selected_preset();prefs.begin("t5-ui",false);prefs.putUChar("preset_v2",selected_preset);prefs.end();screen=preset_return_screen;show_toast(applied?"RADIO PRESET APPLIED":"PRESET FAILED");draw_screen();refresh(MODE_GL16);}return;
+            const int index=preset_page*PRESETS_PER_PAGE+row;
+            if(index<PRESET_COUNT){
+                const uint8_t previous=selected_preset;
+                selected_preset=index;
+                const bool applied=!mesh_is_ready||apply_selected_preset();
+                if(applied){
+                    saved=false;
+                    if(prefs.begin("t5-ui",false)){
+                        prefs.putUChar("preset_v2",selected_preset);
+                        prefs.end();
+                    }
+                }else{
+                    // Do not highlight or persist a radio preset that failed.
+                    selected_preset=previous;
+                }
+                screen=preset_return_screen;
+                show_toast(applied?(selected_preset==0?"RADIO KEPT UNCHANGED":"RADIO PRESET APPLIED"):"PRESET FAILED");
+                draw_screen();refresh(MODE_GL16);
+            }
+            return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
         if(hit(x,y,24,800,180,62)&&preset_page>0){preset_page--;draw_screen();refresh(MODE_GL16);return;}
@@ -1569,6 +1618,24 @@ void ui_notify_node_position_unavailable(){
 
 void ui_request_data_refresh(const char* reason){
     status_dirty=true;T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh queued reason=%s\n",reason?reason:"data");
+}
+
+void ui_apply_initial_radio_preset(){
+    // On a clean install the UI defaults to NZ NARROW, while MeshCore's
+    // compiled defaults use SF8. Apply the displayed selection immediately
+    // after MeshCore has loaded its prefs, before the UI becomes interactive.
+    // Do not override a completed installation's stored radio configuration,
+    // and honour KEEP CURRENT as a deliberate no-change selection.
+    if(setup_complete||selected_preset==0)return;
+    if(apply_selected_preset()){
+        const Preset& preset=PRESETS[selected_preset];
+        Serial.printf("[T5-BOOT] initial radio preset %s: %lu.%03lu MHz SF%u BW%.1f CR%u %uB\n",
+            preset.title,(unsigned long)(preset.frequency_khz/1000),
+            (unsigned long)(preset.frequency_khz%1000),preset.spreading_factor,
+            (double)preset.bandwidth_khz,preset.coding_rate,preset.path_hash_bytes);
+    }else{
+        Serial.println("[T5-ERROR] first-time radio preset failed; select a radio preset in setup");
+    }
 }
 
 void ui_mesh_ready(){

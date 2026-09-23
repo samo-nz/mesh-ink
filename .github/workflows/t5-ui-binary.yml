@@ -29,6 +29,8 @@ jobs:
           key: meshink-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: meshink-pio-${{ runner.os }}-
       - run: python -m pip install platformio Pillow
+      - name: Validate all radio presets
+        run: python tools/check_radio_presets.py
       - run: python -m platformio run -e t5-unified
 
       - name: Read firmware version
@@ -113,14 +115,15 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.5.5 defaults to concise serial startup/error logging.
-          Normal touch, UI/EPD, GPS, mesh and power traces and periodic
-          diagnostic polling are disabled to avoid unnecessary CPU and
-          serial work. The GPS data watchdog and OFF-state UART draining
-          remain active. Diagnostics can be re-enabled at build time using
-          T5_DIAGNOSTICS=1 or an individual T5_LOG_* feature flag (README).
-          The radio/GPS power rail is unchanged; no measured battery-life
-          improvement is claimed.
+          MeshInk 1.5.6 fixes a fresh-install radio mismatch: the displayed
+          default NZ NARROW preset is applied to MeshCore before the first
+          interactive setup screen, instead of leaving the radio at SF8.
+          All 28 preset options use typed RF parameters rather than parsing
+          their UI descriptions. The build checks every displayed frequency,
+          spreading factor, bandwidth, coding rate and path-hash size against
+          the applied values. Explicit KEEP CURRENT and completed setups
+          retain their stored radio configuration. Radio selection only
+          persists when it applies successfully.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \

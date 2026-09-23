@@ -103,6 +103,7 @@ void local_mesh_setup() {
     local_mesh_runtime_begin();
     ui_use_data_provider(local_mesh_provider());
     ui_mesh_ready();
+    ui_apply_initial_radio_preset(); // fix first boot's displayed-vs-active radio mismatch
     local_runtime_ready=true;
     Serial.printf("[T5-BOOT] MeshCore ready: contacts=%d\n",the_mesh.getNumContacts());
     T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
