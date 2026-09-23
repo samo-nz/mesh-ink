@@ -285,10 +285,6 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     png_range_active=range.length!=0;
     png_range_start=range.offset;
     png_range_length=range.length;
-    if(png_range_active)
-        Serial.printf("[T5-MAP] PNG z=%d x=%d y=%d at=%lu length=%lu\\n",
-                      z,x,y,(unsigned long)range.offset,
-                      (unsigned long)range.length);
     const int open_status=png.open(path,png_open,png_close,
                                   png_read,png_seek,png_draw);
     if(open_status!=PNG_SUCCESS) {
@@ -305,12 +301,6 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
     const int decode_status=png.decode(nullptr,0);
-    if(!heap_caps_check_integrity_all(false)) {
-        Serial.printf("[T5-MAP] HEAP DAMAGED after PNG decode z=%d x=%d y=%d status=%d\\n",
-                      z,x,y,decode_status);
-        heap_caps_check_integrity_all(true);
-        abort();
-    }
     png.close();
     png_range_active=false;
     decode_bits=nullptr;
