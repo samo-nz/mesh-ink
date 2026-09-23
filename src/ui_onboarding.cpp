@@ -796,7 +796,7 @@ static void draw_gps_settings() {
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
     settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
-    settings_row("GPS POWER SAVING","CONSTELLATIONS, NMEA, TIMEZONE",710);
+    settings_row("GPS POWER SAVING","CONSTELLATIONS, TIMEZONE",710);
 }
 
 static const char* gps_constellation_label(){
@@ -811,11 +811,12 @@ static const char* gps_constellation_label(){
 static void draw_gps_tuning(){
     draw_app_header("GPS POWER SAVING",true);
     settings_row("CONSTELLATIONS",gps_constellation_label(),120);
-    settings_row("NMEA SENTENCES",local_mesh_gps_compact_nmea()?
-        "COMPACT: RMC + GGA ONLY":"FULL: ALL STANDARD SENTENCES",238);
+    // Informational only: output is configured automatically, not selectable.
+    box(12,238,516,112);text("NMEA OUTPUT",28,252,3,0,true);
+    text("RMC + GGA (AUTOMATIC)",28,296,2,0,true);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
     draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",24,515,45,2,0,true,5);
-    draw_wrapped("COMPACT NMEA REDUCES UART AND PARSING. NEITHER SETTING POWERS OFF GPS. L76K ONLY; POWER SAVINGS UNMEASURED.",24,700,45,2,0,true,4);
+    draw_wrapped("COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.",24,700,45,2,0,true,4);
 }
 
 static void draw_timezone(){draw_app_header("TIMEZONE",true);for(uint8_t i=0;i<TIMEZONE_COUNT;++i){const int y=118+i*102;box(12,y,516,92,i==timezone_index);const uint8_t c=i==timezone_index?0xFF:0;text(TIMEZONES[i].label,28,y+10,3,c,true);text(TIMEZONES[i].detail,28,y+54,2,c,true);}}
@@ -1264,10 +1265,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 show_toast(local_mesh_gps_set_constellation_mode(next)?"MODE SAVED":"SAVE FAILED");
                 draw_screen();refresh(MODE_DU);return true;
             }
-            if(hit(x,y,12,238,516,112)){
-                show_toast(local_mesh_gps_set_compact_nmea(!local_mesh_gps_compact_nmea())?"NMEA MODE SAVED":"SAVE FAILED");
-                draw_screen();refresh(MODE_DU);return true;
-            }
+            // NMEA output is automatic; this informational row has no action.
             if(hit(x,y,12,356,516,112)){open_screen(Screen::Timezone);return true;}break;
         case Screen::Timezone:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::GpsTuning);return true;}

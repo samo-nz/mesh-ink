@@ -134,55 +134,32 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press returns to Contacts (Home).
 
-### GPS status and receiver tuning (v1.4.8 experimental pre-release)
+### GPS status and configuration (v1.5.0)
 
-The GPS status icon is shown in normal and standby views, but the satellite
-count is displayed **only while awake and with a GPS fix**. No cached count
-appears in standby or while searching.
+The bold GPS status icon indicates OFF, searching or fixed. Its satellite
+count is shown **only when the device is awake and has a current fix**.
+The number is hidden in standby and while GPS is OFF or searching.
 
-The on-device **GPS POWER SAVING** screen provides two independent, opt-in
-L76K configuration settings. **CONSTELLATIONS** cycles from the existing
-receiver setting (untouched) through GPS-only, GPS+GLONASS, GPS+BeiDou, and
-GPS+BeiDou+GLONASS. GPS-only may reduce receiver workload but can make
-acquisition less reliable; select a multi-constellation mode if necessary.
-**NMEA SENTENCES** toggles full standard output versus compact GGA+RMC
-at the existing 1 Hz positioning rate. Compact mode reduces UART traffic
-and ESP32 parsing, but receiver battery-current savings are unverified.
+On the 9600-baud L76K, MeshInk automatically requests compact **RMC + GGA**
+NMEA output at the unchanged positioning rate whenever the GPS provider
+starts. The former NMEA settings toggle and its saved preference are ignored.
+For receiver troubleshooting, developers can compile with
+`-DT5_GPS_FULL_NMEA_DIAGNOSTIC=1` to request full standard NMEA output
+instead; this option is not present in the on-device settings.
+The MIA-M10Q receiver is not sent these PCAS commands.
 
-The settings are stored locally and applied only to the 9600-baud L76K
-target (not the MIA-M10Q receiver); no PCAS sleep commands or shared power
-rail switches are used. The initial setting is unchanged to preserve the
-working GPS configuration until users explicitly select a tuning mode.
-When testing, leave GPS in continuous mode and compare satellite acquisition,
-fix stability, UART bytes, and actual current if a meter is available.
-The **UNCHANGED** choice means no constellation override is sent; after
-selecting a mode, pick GPS+GLONASS to restore LilyGO's reference combination.
+The **GPS POWER SAVING** screen retains a user-selectable constellation
+setting: unchanged (no constellation command), GPS only, GPS + GLONASS,
+GPS + BeiDou or all three. The choice is stored locally. GPS-only can
+reduce receiver workload but may degrade reception in obstructed locations.
+Compact NMEA reduces UART and host parsing workload. Neither change has
+a verified measured effect on receiver current or battery life.
 
-
-
-The GPS status bar displays a thicker OFF/searching/fixed icon and a
-satellite count while GPS is enabled. Satellite count display updates
-are rate-limited to avoid redrawing the e-paper every GPS sample. The
-number is hidden when GPS is OFF. No receiver or constellation settings
-are changed by this UI update.
-
-The GPS power-recovery changes introduced in v1.4.6 remain active.
-
-The experimental PCAS12 timed-standby command from v1.4.5 was removed after
-hardware testing showed continuous UART traffic while GPS was OFF and the
-receiver stopped providing fixes after GPS was re-enabled. The earlier
-ineffective PMTK161 command is also removed. No unverified GPS sleep or wake
-commands are sent by this release.
-
-**GPS OFF stops the MeshCore software provider but does not remove GPS power.**
-The L76K still shares its 3.3 V supply with LoRa. Timed GPS settings are not
-yet verified to reduce receiver power; the OFF-state UART diagnostic remains
-available to measure GPS output while the software provider is stopped.
-Do not interpret a quiet UART alone as proof of electrical sleep.
-
-If upgrading from the v1.4.5 diagnostic firmware, use the normal update image
-and reboot. If GPS still fails to provide a fix, power-cycle the device and
-test with GPS set to Continuous under open sky before further sleep experiments.
+**GPS OFF and timed position intervals stop the MeshCore software GPS
+provider; they do not electrically power down the receiver.** LoRa and
+GPS share a switched 3.3 V supply, so MeshInk never disables it to turn
+off GPS. The previously unsuccessful PCAS12 and PMTK161 standby
+experiments are not used. The radio remains active in normal standby.
 
 ## Building from source
 
