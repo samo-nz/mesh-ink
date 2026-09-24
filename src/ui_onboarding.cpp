@@ -1063,7 +1063,7 @@ static void draw_screen() {
     draw_toast();
 }
 
-static void refresh(EpdDrawMode mode,bool wake_light=true) {
+static void refresh(EpdDrawMode mode,bool wake_light=true,bool settle_map=true) {
     if(wake_light&&!standby_active)frontlight_event();
     // Maps contains only black and white pixels. Use the direct DU waveform
     // for normal updates; the 1.3.24 device test confirmed it prevents the
@@ -1076,7 +1076,7 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
     // Six seconds of powered settling did not improve the fading; return to
     // the short Maps delay. Other screens, alerts and standby remain untouched.
-    const unsigned map_settle_ms=active_map?500U:0U;
+    const unsigned map_settle_ms=active_map&&settle_map?500U:0U;
     if(map_settle_ms)delay(map_settle_ms);
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
@@ -1149,7 +1149,7 @@ static void load_map_with_feedback(bool already_on_map) {
     // map visible through all tile I/O; the black preparation is only after
     // the next frame is completely ready.
     epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
-    refresh(MODE_DU,false);   // refresh() powers the panel off afterwards
+    refresh(MODE_DU,false,false); // black prep: no 500 ms hold; still power off
     // draw_screen() reuses the fully decoded map_base_cache for this same
     // view (including map overlays); no second PNG/PMTiles decode occurs.
     draw_screen();
