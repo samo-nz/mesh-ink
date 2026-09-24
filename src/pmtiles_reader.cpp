@@ -359,6 +359,13 @@ void pmtiles_end_frame() {
     frame_active = false;
 }
 
+File* pmtiles_frame_file(const char* path) {
+    // Only lend the handle for the same archive that was just indexed.
+    // Never reopen, reassign or close it while PNGdec is using it.
+    return frame_active && frame_file && path &&
+           strcmp(frame_path,path)==0 ? &frame_file : nullptr;
+}
+
 bool pmtiles_had_io_error() { return io_failed; }
 
 void pmtiles_reset() {
