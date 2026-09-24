@@ -91,10 +91,20 @@ int main() {
     // One map frame reuses an open archive while alternating nearby tile
     // lookups, and a removed/missing archive must be reported as I/O failure.
     pmtiles_begin_frame();
-    assert_range("/maps/gzip.pmtiles",1,1,0);
-    assert_range("/maps/gzip.pmtiles",1,0,0);
+    PmtilesPngRange shared{};
+    assert(pmtiles_find_png("/maps/gzip.pmtiles",1,1,0,shared));
+    File* archive_file=pmtiles_frame_file("/maps/gzip.pmtiles");
+    assert(archive_file);
+    assert(!pmtiles_frame_file("/maps/plain.pmtiles"));
+    assert(archive_file->seek(shared.offset));
+    uint8_t signature[8]{};
+    assert(archive_file->read(signature,sizeof(signature))==sizeof(signature));
+    assert(signature[0]==0x89&&signature[1]=='P'); // borrowed PNG range
+    assert_range("/maps/gzip.pmtiles",1,0,0); // file remains owned by reader
+    assert(pmtiles_frame_file("/maps/gzip.pmtiles")==archive_file);
     assert(!pmtiles_had_io_error());
     pmtiles_end_frame();
+    assert(!pmtiles_frame_file("/maps/gzip.pmtiles"));
     PmtilesPngRange disconnected{};
     pmtiles_begin_frame();
     assert(!pmtiles_find_png("/maps/disconnected.pmtiles",1,0,0,disconnected));
