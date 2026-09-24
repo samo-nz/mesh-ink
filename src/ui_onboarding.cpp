@@ -1141,15 +1141,11 @@ static void load_map_with_feedback(bool already_on_map) {
                   (unsigned long)(millis()-map_render_started),
                   (unsigned long)getCpuFrequencyMhz());
 
-    // First show the completed map and remove the toast with a normal DU
-    // transition. Pixels under the toast get a strong white-to-map update;
-    // unchanged terrain elsewhere can remain lighter after just this pass.
-    refresh(MODE_DU,false);
-
-    // Then give ALL map pixels the additional forced DU pass that the user
-    // previously got by manually short-pressing BOOT. refresh() already
-    // includes the map's 500 ms panel-settle period, so no extra delay or
-    // full-screen white clear is needed between the two updates.
+    // Replace the loading toast and old terrain with a single forced DU
+    // frame. Unlike the earlier normal-DU + forced-DU sequence, this avoids
+    // an extra full-panel update while still driving every map pixel, just
+    // like short-pressing BOOT on Maps. Preserve the initial loading-toast
+    // update above; do not add an epd_clear() or a white-screen transition.
     fast_full_redraw("MAP_LOAD_COMPLETE",false);
 }
 
