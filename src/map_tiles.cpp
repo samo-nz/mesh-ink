@@ -86,7 +86,7 @@ bool media_ready(bool probe=true) {
         sd_mounted=true;
         reset_sd_caches();
         ++sd_media_epoch;
-        Serial.printf("[T5-MAP] SD mounted; experimental SPI clock requested=%lu MHz\\n",
+        Serial.printf("[T5-MAP] SD mounted; experimental SPI clock requested=%lu MHz\n",
                       (unsigned long)(MAP_SD_SPI_HZ/1000000));
     }
     if(probe) {
