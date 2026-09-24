@@ -14,10 +14,9 @@
 namespace {
 constexpr int TILE_SIZE=256;
 constexpr size_t TILE_BYTES=TILE_SIZE*TILE_SIZE/2;
-// 48 native 4-bit grayscale source tiles = 1.5 MiB of PSRAM.
-// At native zoom the 540x782
-// map viewport spans at most 4x5 tiles, leaving room to pan in both directions.
-constexpr size_t CACHE_SLOTS=48;
+// Experimental wider pan/zoom cache: 96 native 4-bit source tiles can
+// occupy up to 3 MiB PSRAM. A failed allocation falls back to direct decode.
+constexpr size_t CACHE_SLOTS=96;
 constexpr size_t ABSENT_SLOTS=128;
 struct Tile {
     uint8_t* bits;
@@ -50,6 +49,8 @@ bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
+// Experimental SD clock: the verified firmware used 10 MHz. No map writes.
+constexpr uint32_t MAP_SD_SPI_HZ=25000000;
 void reset_sd_caches() {
     for(auto& tile:tile_cache)tile.valid=false;
     memset(absent_tiles,0,sizeof(absent_tiles));
@@ -78,14 +79,15 @@ bool media_ready(bool probe=true) {
         if((int32_t)(millis()-sd_retry_after)<0)return false;
         pinMode(12,OUTPUT);digitalWrite(12,HIGH);
         SD.end();
-        if(!SD.begin(12,t5_shared_spi(),10000000)) {
+        if(!SD.begin(12,t5_shared_spi(),MAP_SD_SPI_HZ)) {
             sd_retry_after=millis()+SD_RETRY_MS;
             return false;
         }
         sd_mounted=true;
         reset_sd_caches();
         ++sd_media_epoch;
-        Serial.println("[T5-MAP] SD mounted; map caches reset");
+        Serial.printf("[T5-MAP] SD mounted; experimental SPI clock requested=%lu MHz\n",
+                      (unsigned long)(MAP_SD_SPI_HZ/1000000));
     }
     if(probe) {
         // Do not use SD.readRAW() as a card-presence oracle: an otherwise
@@ -217,7 +219,9 @@ void* png_open(const char* name,int32_t* size) {
     }
     if(png_range_active) {
         const bool valid_range=png_range_length&&png_range_length<=INT32_MAX;
-        const bool range_seek_ok=valid_range&&png_file->seek(png_range_start);
+        const bool range_seek_ok=valid_range&&
+            (png_file->position()==png_range_start ||
+             png_file->seek(png_range_start));
         if(!range_seek_ok){
             if(png_file==&file&&file)file.close();
             png_file=nullptr;
@@ -265,7 +269,9 @@ int32_t png_seek(PNGFILE*,int32_t position) {
        (uint32_t)position>png_range_length))return -1;
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
-    const bool seek_ok=absolute<=UINT32_MAX&&png_file->seek((uint32_t)absolute);
+    const bool seek_ok=absolute<=UINT32_MAX&&
+        (png_file->position()==(uint32_t)absolute ||
+         png_file->seek((uint32_t)absolute));
     if(!seek_ok){
         Serial.printf("[T5-MAP] tile seek failed: position=%ld range=%lu\n",
                       (long)position,(unsigned long)png_range_length);
@@ -571,6 +577,7 @@ uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
+    const uint32_t started=millis(); // experimental A/B measurement only
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -602,5 +609,9 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
+    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u missing=%u\n",
+                  (unsigned)zoom,(unsigned long)(millis()-started),
+                  (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
+                  (unsigned)result.tiles,(unsigned)result.missing);
     return result;
 }
