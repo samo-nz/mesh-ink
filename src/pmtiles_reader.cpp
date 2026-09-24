@@ -315,9 +315,6 @@ bool prepare(File& file, const char* path) {
         !within(archive.leaf_offset, archive.leaf_length, archive.file_size) ||
         !within(archive.tile_offset, archive.tile_length, archive.file_size))
         return false;
-    Serial.printf("[T5-PMT] open %s root=%llu bytes compression=%u\n",
-                  path, (unsigned long long)archive.root_length,
-                  (unsigned)archive.compression);
     archive.supported = parse_directory(file, archive.root_offset,
                                         archive.root_length, root);
     return archive.supported;
@@ -449,9 +446,6 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             clear_directory(slot->directory);
             slot->offset = UINT64_MAX;
             slot->length = 0;
-            Serial.printf("[T5-PMT] leaf offset=%llu length=%u\n",
-                          (unsigned long long)entry->offset,
-                          (unsigned)entry->length);
             if (!parse_directory(*file, archive.leaf_offset + entry->offset,
                                  entry->length, slot->directory))
                 break;
