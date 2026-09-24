@@ -261,20 +261,32 @@ uint8_t gray_level(uint16_t colour) {
                                ((colour>>5)&63)*75+(colour&31)*29)>>5));
     return (uint8_t)min(15U,(raw+8U)/17U);
 }
-// Dither against WORLD pixel coordinates, not screen coordinates: an unchanged
-// map feature must keep the same black/white pattern after a small pan.
+// Dither against WORLD pixel coordinates, not screen coordinates.
+// This lookup reproduces the existing 16 brightness levels and all 16
+// Bayer phases exactly, but avoids repeating the darkness calculation for
+// every framebuffer pixel.
+const uint16_t* map_black_masks() {
+    static uint16_t masks[16]{};
+    static bool ready=false;
+    if(!ready) {
+        static constexpr uint8_t bayer4[16]={
+            0, 8, 2,10,12, 4,14, 6, 3,11, 1, 9,15, 7,13, 5
+        };
+        for(unsigned level=0;level<16;++level) {
+            const unsigned brightness=level*17U;
+            const unsigned darkness=min(255U,((255U-brightness)*5U+1U)/2U);
+            for(unsigned phase=0;phase<16;++phase)
+                if(darkness>16U*bayer4[phase]+8U)
+                    masks[level]|=(uint16_t)(1U<<phase);
+        }
+        ready=true;
+    }
+    return masks;
+}
 bool map_black(uint8_t level,int world_x,int world_y) {
-    static constexpr uint8_t bayer4[16]={
-        0, 8, 2,10,12, 4,14, 6, 3,11, 1, 9,15, 7,13, 5
-    };
-    const unsigned brightness=(unsigned)level*17U;
-    // Moderately stronger terrain contrast than the 2x baseline, without
-    // returning to the 7x setting that made enlarged map areas too dark.
-    // Preserve binary, world-anchored dithering and the proven DU waveform.
-    const unsigned darkness=min(255U,((255U-brightness)*5U+1U)/2U);
-    const unsigned threshold=16U*bayer4[((unsigned)world_y&3U)*4U+
-                                      ((unsigned)world_x&3U)]+8U;
-    return darkness>threshold;
+    const unsigned phase=(((unsigned)world_y&3U)<<2)|
+                          ((unsigned)world_x&3U);
+    return (map_black_masks()[level]&(1U<<phase))!=0;
 }
 uint8_t tile_level(const Tile& tile,int sx,int sy) {
     const size_t offset=(size_t)sy*TILE_SIZE+(size_t)sx;
@@ -453,23 +465,33 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     return true;
 }
 void draw_cached(const Tile& tile,const DrawContext& draw) {
-    // Compose at actual panel-pixel resolution. Sampling/dithering once per
-    // enlarged SOURCE pixel would turn one 2x/4x/8x block all black or all
-    // white depending on a single changing threshold phase.
+    // Keep the exact same WORLD-anchored dithering and panel-pixel sampling.
+    // crop_size is always 256 / 2^depth: use a shift rather than a source
+    // coordinate division for every pixel, and reuse the packed source row.
     const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
     const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
     if(x0>=x1||y0>=y1)return;
+    unsigned shift=0;
+    while((TILE_SIZE>>shift)>draw.crop_size)++shift;
+    const uint16_t* masks=map_black_masks();
+    const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
     for(int py=y0;py<y1;++py) {
-        const int sy=draw.crop_y+(py-draw.dy)*draw.crop_size/TILE_SIZE;
+        const int sy=draw.crop_y+((py-draw.dy)>>shift);
+        const uint8_t* source_row=tile.bits+(size_t)sy*(TILE_SIZE/2);
         const int world_y=draw.tile_y*TILE_SIZE+py-draw.dy;
+        const unsigned row_phase=((unsigned)world_y&3U)<<2;
+        const auto is_black=[&](int px)->bool {
+            const int sx=draw.crop_x+((px-draw.dx)>>shift);
+            const uint8_t packed=source_row[sx>>1];
+            const unsigned level=(sx&1)?(packed&0x0FU):(packed>>4);
+            const unsigned phase=row_phase|
+                                 ((unsigned)(world_x_base+px)&3U);
+            return (masks[level]&(1U<<phase))!=0;
+        };
         int run_x=x0;
-        int sx=draw.crop_x+(x0-draw.dx)*draw.crop_size/TILE_SIZE;
-        bool black=map_black(tile_level(tile,sx,sy),
-                             draw.tile_x*TILE_SIZE+x0-draw.dx,world_y);
+        bool black=is_black(x0);
         for(int px=x0+1;px<x1;++px) {
-            sx=draw.crop_x+(px-draw.dx)*draw.crop_size/TILE_SIZE;
-            const bool next_black=map_black(tile_level(tile,sx,sy),
-                draw.tile_x*TILE_SIZE+px-draw.dx,world_y);
+            const bool next_black=is_black(px);
             if(next_black!=black) {
                 epd_fill_rect({run_x,py,px-run_x,1},
                               black?0x00:0xFF,target);
