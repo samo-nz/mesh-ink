@@ -1,0 +1,48 @@
+name: PMTiles map build check
+
+on:
+  pull_request:
+    paths:
+      - 'src/pmtiles_reader.*'
+      - 'src/map_tiles.cpp'
+      - 'platformio.ini'
+      - '.github/workflows/pmtiles-pr-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install platformio Pillow
+      - name: Host PMTiles reader tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
+            src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
+            -lz -o /tmp/pmtiles-test
+          /tmp/pmtiles-test
+      - run: python -m platformio run -e t5-unified
+      - name: Prepare test update firmware
+        run: |
+          test -s .pio/build/t5-unified/firmware.bin
+          cp .pio/build/t5-unified/firmware.bin meshink-pmtiles-test-update.bin
+          cp .pio/build/t5-unified/firmware.elf meshink-pmtiles-test.elf
+          sha256sum meshink-pmtiles-test-update.bin > meshink-pmtiles-test-SHA256.txt
+      - name: Downloadable PMTiles test firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshink-pmtiles-test-firmware
+          path: |
+            meshink-pmtiles-test-update.bin
+            meshink-pmtiles-test.elf
+            meshink-pmtiles-test-SHA256.txt
+          if-no-files-found: error
+          retention-days: 14

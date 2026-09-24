@@ -181,6 +181,7 @@ static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
 static MapRenderResult map_base_result{false,0,0,0,0,0,0};
+static uint32_t map_base_media_epoch=0;
 // The own-position bullseye is drawn over the map, never stored in the
 // raster base cache. The last drawn screen position supports low-rate GPS
 // marker updates without refreshing the e-paper for every GPS sample.
@@ -504,12 +505,16 @@ static void draw_status_bar(bool standby_quantized=false) {
     text(battery,battery_x,13,3,0,true);
 }
 
-static void draw_toast() {
-    if(!toast_visible)return;
-    const int scale=3,w=max(300,(int)strlen(toast_message)*6*scale+48),h=72,x=(540-w)/2,y=640,r=12;
+// Share the same small black notification style between ordinary settings
+// toasts and the synchronous Maps loading message (which has no timeout).
+static void draw_toast_message(const char* message) {
+    const int scale=3,w=max(300,(int)strlen(message)*6*scale+48),h=72,x=(540-w)/2,y=640,r=12;
     epd_fill_rect({x+r,y,w-2*r,h},0,fb);epd_fill_rect({x,y+r,w,h-2*r},0,fb);
     epd_fill_rect({x+5,y+5,w-10,h-10},0,fb);
-    text(toast_message,x+(w-(int)strlen(toast_message)*6*scale)/2,y+25,scale,0xFF,true);
+    text(message,x+(w-(int)strlen(message)*6*scale)/2,y+25,scale,0xFF,true);
+}
+static void draw_toast() {
+    if(toast_visible)draw_toast_message(toast_message);
 }
 
 static void show_toast(const char* message) {
@@ -749,8 +754,15 @@ static void pan_map_by_pixels(int dx,int dy) {
     map_latitude=atan(sinh(PI*(1.0-2.0*y/world)))*180.0/PI;
 }
 static void draw_maps() {
-    MapRenderResult result{true,0,0,0,0,map_zoom,map_zoom};
-    if(map_cache_hit()) {
+    // Even a perfect framebuffer cache is stale after SD removal/remount.
+    const bool media_ready=map_tiles_media_ready();
+    const uint32_t media_epoch=map_tiles_media_epoch();
+    if(!media_ready||map_base_media_epoch!=media_epoch) {
+        map_base_valid=false;
+        map_base_media_epoch=media_epoch;
+    }
+    MapRenderResult result{media_ready,0,0,0,0,map_zoom,map_zoom};
+    if(media_ready&&map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar(); // clock, battery and unread counts are live.
@@ -761,6 +773,12 @@ static void draw_maps() {
         draw_status_bar();
         result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,
                                 map_latitude,map_longitude,map_zoom);
+        if(!result.sd_ready||map_base_media_epoch!=map_tiles_media_epoch()) {
+            map_base_valid=false;
+            map_base_media_epoch=map_tiles_media_epoch();
+            if(!result.sd_ready)
+                epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0xFF,fb);
+        }
         // 4 bits per pixel in the high-level EPD framebuffer. A full base
         // snapshot also preserves exact panel row ordering and rotation.
         if(result.sd_ready&&result.tiles) {
@@ -1056,14 +1074,12 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
-    // Six seconds of powered settling did not improve the fading; return to
-    // the short Maps delay. Other screens, alerts and standby remain untouched.
-    const unsigned map_settle_ms=active_map?500U:0U;
-    if(map_settle_ms)delay(map_settle_ms);
+    // The map stays clear when the panel is powered down as soon as EPDiy's
+    // synchronous DU waveform completes. Do not reintroduce a powered hold.
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
-    T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d map_settle_ms=%u name='%s' preset=%s cpu=%luMHz\n",
-        err,(int)mode,(int)requested_mode,(int)screen,map_settle_ms,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
+        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
 static void invalidate_display_back_buffer() {
@@ -1089,6 +1105,49 @@ static void fast_full_redraw(const char* reason,bool wake_light=false) {
     }
     T5_DEBUGF(T5_LOG_UI,"[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
     force_redraw(MODE_GL16,reason,wake_light);
+}
+
+// Display the saved previous map underneath the same toast used for saved
+// settings. Never decode the requested tiles before the progress notification
+// has appeared on the physical e-paper screen.
+static void load_map_with_feedback(bool already_on_map) {
+    if(!already_on_map) {
+        // Opening Maps from another tab: restore the previously rendered
+        // terrain if available. On first-ever entry show the Maps shell
+        // rather than leaving Contacts/Settings underneath the notification.
+        if(map_base_valid&&map_base_cache&&map_base_bytes)
+            memcpy(fb,map_base_cache,map_base_bytes);
+        else
+            epd_hl_set_all_white(&display);
+        draw_status_bar();
+        draw_bottom_nav(2);
+    }
+    // When panning or zooming, fb still holds the visible previous map.
+    // This overlay does not invalidate or replace the cached map background.
+    draw_toast_message("Loading..");
+    refresh(MODE_DU);
+
+    // The previous map and toast stay on the panel while all tile I/O and
+    // PNG decoding run synchronously. Refreshing the loading toast lowered
+    // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
+    // display-performance setting for the CPU-heavy raster render. The
+    // subsequent refresh restores 160 MHz through its normal power path.
+    set_cpu_target(240,"map-render",false);
+    draw_screen();
+
+    // The old map under the dark toast retained balanced contrast, while
+    // unchanged terrain became progressively too dark after repeated forced
+    // map-to-map DU passes. Prepare the complete terrain with the SAME
+    // black-to-map transition as the toast, then reveal the finished map with
+    // one short-BOOT-style forced DU redraw. Keep the loading toast and old
+    // map visible through all tile I/O; the black preparation is only after
+    // the next frame is completely ready.
+    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
+    refresh(MODE_DU,false); // transient black prep; waveform completes, then power off
+    // draw_screen() reuses the fully decoded map_base_cache for this same
+    // view (including map overlays); no second PNG/PMTiles decode occurs.
+    draw_screen();
+    fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
 }
 
 static void full_display_clean(const char* reason) {
@@ -1257,11 +1316,12 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     // and therefore does not get unexpectedly re-centred on the device.
     if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)
         centre_map_on_device();
+    const bool already_on_map=screen==Screen::Maps;
     keyboard_visible=false;keyboard_message_mode=false;screen=next;
-    // The complete-screen cache still handles unchanged views. When the map
-    // centre changes, render immediately from cached source tiles, decoding
-    // only newly encountered PNGs. Avoid an extra slow GC16 "LOADING MAP"
-    // refresh on every small pan or jump to a nearby node.
+    if(next==Screen::Maps) {
+        load_map_with_feedback(already_on_map);
+        return;
+    }
     draw_screen();refresh(MODE_GL16);
 }
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
@@ -1424,15 +1484,19 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }}break;
         case Screen::Maps:
             // Controls take priority over map markers near the right edge.
-            if(hit(x,y,462,58,66,66)){if(map_zoom<18)map_zoom++;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,462,133,66,66)){if(map_zoom>8)map_zoom--;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,462,58,66,66)){if(map_zoom<18){map_zoom++;open_screen(Screen::Maps);}return true;}
+            if(hit(x,y,462,133,66,66)){if(map_zoom>8){map_zoom--;open_screen(Screen::Maps);}return true;}
             if(hit(x,y,462,208,66,66)){
                 long latitude=0,longitude=0;bool current_fix=false;
                 if(map_device_position(latitude,longitude,current_fix)){
                     centre_map_on_device();
                     show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX");
-                }else show_toast("NO KNOWN GPS LOCATION");
-                draw_screen();refresh(MODE_GL16);return true;
+                    open_screen(Screen::Maps);
+                }else{
+                    show_toast("NO KNOWN GPS LOCATION");
+                    draw_screen();refresh(MODE_DU);
+                }
+                return true;
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
@@ -1725,6 +1789,20 @@ void ui_loop() {
         delay(100);return;
     }
     service_boot_button();
+    // Hot card removal/insertion is checked even when the user is not
+    // touching Maps. The generation changes on a failed read/remount, so
+    // discard the old viewport and show the unavailable or new map promptly.
+    static uint32_t last_map_media_poll=0;
+    if(screen==Screen::Maps&&!standby_active&&!message_alert_active&&
+       millis()-last_map_media_poll>=3000) {
+        last_map_media_poll=millis();
+        const uint32_t previous_epoch=map_tiles_media_epoch();
+        map_tiles_media_ready();
+        if(map_tiles_media_epoch()!=previous_epoch) {
+            map_base_valid=false;
+            load_map_with_feedback(true);
+        }
+    }
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
     if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};

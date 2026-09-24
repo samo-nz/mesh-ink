@@ -22,3 +22,10 @@ struct MapRenderResult {
 };
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,
                                  double latitude,double longitude,uint8_t zoom);
+
+// Probes a removable card and retries a failed mount without rebooting.
+// Call before reusing a cached map framebuffer or periodically while on Maps.
+bool map_tiles_media_ready();
+// Changes whenever the old card is unmounted or a new mount succeeds.
+// UI must discard cached map images when this value changes.
+uint32_t map_tiles_media_epoch();
