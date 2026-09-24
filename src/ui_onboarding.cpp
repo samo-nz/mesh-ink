@@ -247,12 +247,18 @@ static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",
 // Keep the original five-field single-touch event compatible with all UI
 // screens. Maps alone can add a completed two-finger gesture and tap timing.
 struct QueuedTap{
-    int16_t x,y,dx,dy;
-    bool home;
+    int16_t x=0,y=0,dx=0,dy=0;
+    bool home=false;
     uint8_t map_pinch=0;
     int8_t zoom_steps=0;
     uint16_t hold_ms=0;
     uint8_t map_sampled=0;
+    QueuedTap()=default;
+    // Arduino's C++11 toolchain requires an explicit constructor here once
+    // the map-only fields have default initializers. Preserve all existing
+    // five-argument single-touch event construction unchanged.
+    QueuedTap(int16_t px,int16_t py,int16_t pdx,int16_t pdy,bool is_home):
+        x(px),y(py),dx(pdx),dy(pdy),home(is_home) {}
 };
 struct MapTapSequence{
     uint8_t count=0;
@@ -1398,7 +1404,7 @@ static void touch_sampler_task(void*){
                 held=false;
                 QueuedTap tap{last_x,last_y,
                     (int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
-                tap.hold_ms=(uint16_t)min((uint32_t)65535,millis()-pressed_at);
+                tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                 tap.map_sampled=1;
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
                     Serial.println("[T5-TOUCH] input queue full; tap discarded");
