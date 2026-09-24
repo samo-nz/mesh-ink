@@ -15,6 +15,7 @@
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
+#include "map_gestures.h"
 #include "t5_logging.h"
 #include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
@@ -243,7 +244,22 @@ static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false)
 static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
-struct QueuedTap{int16_t x;int16_t y;int16_t dx;int16_t dy;bool home;};
+// Keep the original five-field single-touch event compatible with all UI
+// screens. Maps alone can add a completed two-finger gesture and tap timing.
+struct QueuedTap{
+    int16_t x,y,dx,dy;
+    bool home;
+    uint8_t map_pinch=0;
+    int8_t zoom_steps=0;
+    uint16_t hold_ms=0;
+};
+struct MapTapSequence{
+    uint8_t count=0;
+    int16_t first_x=0,first_y=0;
+    int16_t last_x=0,last_y=0;
+    uint32_t last_at=0;
+};
+static MapTapSequence map_taps{};
 
 static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
@@ -1263,34 +1279,145 @@ static bool touch_point(int16_t& x, int16_t& y,bool& home) {
     clear_touch(); was_pressed=true; return true;
 }
 
+// Maps-only GT911 reader. Unlike touch_point() above, fetch BOTH of the
+// controller's eight-byte coordinate records from 0x814F when count=2.
+// No other screen or keyboard calls this function, and touch_point() remains
+// byte-for-byte identical to the previously tested single-finger reader.
+static bool map_touch_points(uint8_t& count,int16_t& x0,int16_t& y0,
+                             int16_t& x1,int16_t& y1,bool& home) {
+    static uint8_t last_count=0;
+    static int16_t last_x0=0,last_y0=0,last_x1=0,last_y1=0;
+    uint8_t status=0;
+    home=false;
+    if(!i2c_read(0x814E,&status,1))return false;
+    if(!(status&0x80)) {
+        count=last_count;x0=last_x0;y0=last_y0;
+        x1=last_x1;y1=last_y1;
+        return true; // no new frame; keep the previous press until release
+    }
+    if(status&0x10) {
+        home=true;last_count=0;count=0;clear_touch();return true;
+    }
+    const uint8_t reported=status&0x0F;
+    if(reported>5) {last_count=0;count=0;clear_touch();return true;}
+    if(reported==0) {last_count=0;count=0;clear_touch();return true;}
+    if(reported>2) {
+        // Multi-contact outside supported two-point gesture: suppress any
+        // accidental tap or pan until ALL fingers are lifted.
+        last_count=3;count=3;clear_touch();return true;
+    }
+    uint8_t points[16]{};
+    if(!i2c_read(0x814F,points,reported*8))return false;
+    last_x0=(int16_t)(points[1]|((uint16_t)points[2]<<8));
+    last_y0=(int16_t)(points[3]|((uint16_t)points[4]<<8));
+    if(reported==2) {
+        last_x1=(int16_t)(points[9]|((uint16_t)points[10]<<8));
+        last_y1=(int16_t)(points[11]|((uint16_t)points[12]<<8));
+    }
+    last_count=reported;count=reported;
+    x0=last_x0;y0=last_y0;x1=last_x1;y1=last_y1;
+    clear_touch();
+    return true;
+}
+
 static void touch_sampler_task(void*){
-    bool held=false,home_held=false;int16_t start_x=0,start_y=0,last_x=0,last_y=0;
+    bool held=false,home_held=false,map_previous=false;
+    bool map_multi=false,map_pinch_allowed=false;
+    int16_t start_x=0,start_y=0,last_x=0,last_y=0;
+    int16_t pinch_x=0,pinch_y=0;
+    int32_t initial_distance=0,final_distance=0;
+    uint32_t pressed_at=0;
     for(;;){
         if(!touch_enabled){
-            held=false;home_held=false;
+            held=false;home_held=false;map_multi=false;map_previous=false;
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
             continue;
         }
-        int16_t x=0,y=0;bool home=false;
-        const bool pressed=touch_point(x,y,home);
-        if(home){
-            if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
-            home_held=true;
-            // A capacitive Home event must NEVER generate a subsequent touch
-            // release at the coordinates of the previous ordinary tap.
-            held=false;
-        }else if(home_held){
-            if(!pressed)home_held=false; // ignore contact until Home is released
-        }else if(pressed){
-            last_x=x;last_y=y;
-            if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
-        }else if(held){
-            held=false;
-            QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
-            if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                Serial.println("[T5-TOUCH] input queue full; tap discarded");
+        // Preserve the EXACT legacy single-touch parser and release-driven
+        // typing behaviour on all screens except Maps.
+        const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
+        if(on_map!=map_previous) {
+            held=false;home_held=false;map_multi=false;
+            was_pressed=false;
+            map_previous=on_map;
+        }
+        if(on_map) {
+            uint8_t count=0;int16_t x0=0,y0=0,x1=0,y1=0;
+            bool home=false;
+            if(!map_touch_points(count,x0,y0,x1,y1,home)) {
+                vTaskDelay(pdMS_TO_TICKS(8));continue;
+            }
+            if(home) {
+                if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+                home_held=true;held=false;map_multi=false;
+            } else if(home_held) {
+                if(count==0)home_held=false; // no phantom tap on Home release
+            } else if(count>=2) {
+                if(!held)frontlight_event();
+                held=true;
+                if(!map_multi) {
+                    map_multi=true;
+                    map_pinch_allowed=count==2 &&
+                        meshink_map_gestures::terrain_point(x0,y0) &&
+                        meshink_map_gestures::terrain_point(x1,y1);
+                    pinch_x=(int16_t)((x0+x1)/2);
+                    pinch_y=(int16_t)((y0+y1)/2);
+                    initial_distance=count==2 ?
+                        meshink_map_gestures::distance_squared(x0,y0,x1,y1):0;
+                    final_distance=initial_distance;
+                } else if(count==2) {
+                    final_distance=meshink_map_gestures::distance_squared(x0,y0,x1,y1);
+                } else map_pinch_allowed=false;
+            } else if(count==1) {
+                // If one finger of a previous pinch lifts first, suppress
+                // a false single tap or one-finger pan until all are released.
+                if(!map_multi) {
+                    last_x=x0;last_y=y0;
+                    if(!held) {
+                        held=true;start_x=x0;start_y=y0;
+                        pressed_at=millis();frontlight_event();
+                    }
+                }
+            } else if(map_multi) {
+                map_multi=false;held=false;
+                QueuedTap tap{pinch_x,pinch_y,0,0,false};
+                tap.map_pinch=1;
+                tap.zoom_steps=map_pinch_allowed ?
+                    (int8_t)meshink_map_gestures::pinch_zoom_steps(
+                        initial_distance,final_distance):0;
+                // Even a stationary two-finger gesture must cancel a pending
+                // single/double tap, without triggering a phantom pan.
+                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    Serial.println("[T5-TOUCH] input queue full; pinch discarded");
+            } else if(held) {
+                held=false;
+                QueuedTap tap{last_x,last_y,
+                    (int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
+                tap.hold_ms=(uint16_t)min((uint32_t)65535,millis()-pressed_at);
+                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+            }
+        } else {
+            // Original non-Maps sampling and release logic is unchanged.
+            int16_t x=0,y=0;bool home=false;
+            const bool pressed=touch_point(x,y,home);
+            if(home){
+                if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+                home_held=true;
+                held=false;
+            }else if(home_held){
+                if(!pressed)home_held=false;
+            }else if(pressed){
+                last_x=x;last_y=y;
+                if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
+            }else if(held){
+                held=false;
+                QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
+                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(8));
     }
