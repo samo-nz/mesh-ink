@@ -199,7 +199,12 @@ void discover_archives() {
 
 void* png_open(const char* name,int32_t* size) {
     file=SD.open(name,FILE_READ);
-    if(!file){map_io_failed=true;return nullptr;}
+    if(!file){
+        Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
+                      name,(unsigned)png_range_active);
+        map_io_failed=true;
+        return nullptr;
+    }
     if(png_range_active) {
         if(!png_range_length||png_range_length>INT32_MAX||
            !file.seek(png_range_start)) {
@@ -220,7 +225,11 @@ int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
         length=(int32_t)min((uint64_t)length,end-pos);
     }
     const int32_t n=file.read(data,length);
-    if(n!=length)map_io_failed=true;
+    if(n!=length){
+        Serial.printf("[T5-MAP] tile read short: got=%ld wanted=%ld pos=%lu\n",
+                      (long)n,(long)length,(unsigned long)file.position());
+        map_io_failed=true;
+    }
     return n;
 }
 int32_t png_seek(PNGFILE*,int32_t position) {
@@ -229,6 +238,8 @@ int32_t png_seek(PNGFILE*,int32_t position) {
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
     if(absolute>UINT32_MAX||!file.seek((uint32_t)absolute)){
+        Serial.printf("[T5-MAP] tile seek failed: position=%ld range=%lu\n",
+                      (long)position,(unsigned long)png_range_length);
         map_io_failed=true;
         return -1;
     }
@@ -384,7 +395,12 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 found=true;
                 break;
             }
-            if(pmtiles_had_io_error()){map_io_failed=true;return false;}
+            if(pmtiles_had_io_error()){
+                Serial.printf("[T5-MAP] archive lookup I/O failed: %s z=%d x=%d y=%d\n",
+                              archive_paths[i],z,x,y);
+                map_io_failed=true;
+                return false;
+            }
         }
         if(!found){mark_absent(z,x,y);return false;}
     }
@@ -518,9 +534,14 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     const bool failed=map_io_failed||pmtiles_had_io_error();
     pmtiles_end_frame();
     if(failed) {
-        mark_sd_unavailable();
-        result.sd_ready=false;
-        result.tiles=0;
+        // A failed *tile* operation is not proof the card was removed: an
+        // individual PNG/file may be absent, truncated or briefly unreadable.
+        // Check independent filesystem I/O before unmounting the entire card.
+        const bool storage_responds=media_ready(true);
+        Serial.printf("[T5-MAP] map tile read failed; SD witness=%s (no blind unmount)\n",
+                      storage_responds?"OK":"UNAVAILABLE");
+        result.sd_ready=storage_responds;
+        result.tiles=0; // partial frame must never become cached as complete
     }
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
