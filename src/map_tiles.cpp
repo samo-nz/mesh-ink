@@ -229,8 +229,10 @@ void* png_open(const char* name,int32_t* size) {
     return png_file;
 }
 void png_close(void*) {
-    // Never close the borrowed PMTiles archive handle.
-    if(png_file==&file&&file)file.close();
+    // 'file' owns only loose PNG handles. Always release it, including if
+    // PNGdec rejected a preopened loose PNG before invoking its open callback.
+    // A PMTiles archive handle is borrowed separately and is never closed here.
+    if(file)file.close();
     png_file=nullptr;
 }
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
