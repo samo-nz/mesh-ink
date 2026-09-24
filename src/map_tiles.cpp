@@ -49,6 +49,7 @@ bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t map_archive_lookup_ms=0,map_png_decode_ms=0,map_compose_ms=0;
 uint32_t map_png_open_ms=0,map_png_close_ms=0,map_png_io_ms=0;
+uint32_t map_png_range_seek_ms=0,map_png_init_ms=0;
 uint32_t map_path_check_ms=0,map_discover_ms=0;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
@@ -213,8 +214,11 @@ void* png_open(const char* name,int32_t* size) {
         return nullptr;
     }
     if(png_range_active) {
-        if(!png_range_length||png_range_length>INT32_MAX||
-           !file.seek(png_range_start)) {
+        const uint32_t range_seek_started=millis();
+        const bool valid_range=png_range_length&&png_range_length<=INT32_MAX;
+        const bool range_seek_ok=valid_range&&file.seek(png_range_start);
+        map_png_range_seek_ms+=millis()-range_seek_started;
+        if(!range_seek_ok) {
             file.close();
             return nullptr;
         }
@@ -450,8 +454,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     png_range_active=range.length!=0;
     png_range_start=range.offset;
     png_range_length=range.length;
+    const uint32_t png_init_started=millis();
     const int open_status=png.open(path,png_open,png_close,
                                   png_read,png_seek,png_draw);
+    map_png_init_ms+=millis()-png_init_started;
     if(open_status!=PNG_SUCCESS) {
         if(file)file.close();
         png_range_active=false;
@@ -574,6 +580,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     const uint32_t map_render_started=millis();
     map_archive_lookup_ms=map_png_decode_ms=map_compose_ms=0;
     map_png_open_ms=map_png_close_ms=map_png_io_ms=0;
+    map_png_range_seek_ms=map_png_init_ms=0;
     map_path_check_ms=map_discover_ms=0;
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
@@ -617,8 +624,10 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                   (unsigned)result.ram_hits,(unsigned)result.missing);
     // PNG callbacks run during png.open()/decode(); png_io is a component of
     // their timings, so do not add these categories as disjoint totals.
-    Serial.printf("[T5-MAP] io_timing: png_file_open=%lu png_file_close=%lu png_read_seek=%lu loose_path_checks=%lu archive_discovery=%lu ms\n",
+    Serial.printf("[T5-MAP] io_timing: png_init=%lu file_open=%lu range_seek=%lu file_close=%lu png_read_seek=%lu loose_path_checks=%lu archive_discovery=%lu ms\n",
+                  (unsigned long)map_png_init_ms,
                   (unsigned long)map_png_open_ms,
+                  (unsigned long)map_png_range_seek_ms,
                   (unsigned long)map_png_close_ms,
                   (unsigned long)map_png_io_ms,
                   (unsigned long)map_path_check_ms,
