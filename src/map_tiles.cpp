@@ -600,9 +600,5 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
-                  zoom,result.min_source_zoom,result.max_source_zoom,
-                  result.tiles,result.native,result.reused,result.missing,
-                  result.ram_hits,result.disk_decodes,result.sd_checks,lat,lon);
     return result;
 }
