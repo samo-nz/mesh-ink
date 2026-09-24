@@ -48,6 +48,8 @@ uint32_t png_range_start=0,png_range_length=0;
 bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t map_archive_lookup_ms=0,map_png_decode_ms=0,map_compose_ms=0;
+uint32_t map_png_open_ms=0,map_png_close_ms=0,map_png_io_ms=0;
+uint32_t map_path_check_ms=0,map_discover_ms=0;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
 void reset_sd_caches() {
@@ -154,6 +156,7 @@ bool is_zoom_folder(const char* name) {
 }
 void discover_archives() {
     if(archives_discovered)return;
+    const uint32_t started=millis();
     File directory=SD.open("/maps");
     if(!directory||!directory.isDirectory()) {
         if(directory)directory.close();
@@ -192,6 +195,7 @@ void discover_archives() {
         candidate=directory.openNextFile();
     }
     directory.close();
+    map_discover_ms+=millis()-started;
     if(archive_count)
         Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
                       (unsigned)archive_count);
@@ -199,7 +203,9 @@ void discover_archives() {
 
 
 void* png_open(const char* name,int32_t* size) {
+    const uint32_t opened_at=millis();
     file=SD.open(name,FILE_READ);
+    map_png_open_ms+=millis()-opened_at;
     if(!file){
         Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
                       name,(unsigned)png_range_active);
@@ -216,7 +222,11 @@ void* png_open(const char* name,int32_t* size) {
     } else *size=file.size();
     return &file;
 }
-void png_close(void*) {if(file)file.close();}
+void png_close(void*) {
+    const uint32_t close_started=millis();
+    if(file)file.close();
+    map_png_close_ms+=millis()-close_started;
+}
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     if(length<=0)return 0;
     // PNGdec may request a whole 2048-byte input buffer even when a PNG
@@ -232,7 +242,9 @@ int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     }
     if(pos>=end)return 0; // clean EOF for both loose PNGs and PMTiles ranges
     const int32_t allowed=(int32_t)min((uint64_t)length,end-pos);
+    const uint32_t read_started=millis();
     const int32_t n=file.read(data,allowed);
+    map_png_io_ms+=millis()-read_started;
     if(n!=allowed){
         Serial.printf("[T5-MAP] tile SD read failed: got=%ld expected=%ld pos=%lu end=%llu\n",
                       (long)n,(long)allowed,(unsigned long)file.position(),
@@ -246,7 +258,10 @@ int32_t png_seek(PNGFILE*,int32_t position) {
        (uint32_t)position>png_range_length))return -1;
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
-    if(absolute>UINT32_MAX||!file.seek((uint32_t)absolute)){
+    const uint32_t seek_started=millis();
+    const bool seek_ok=absolute<=UINT32_MAX&&file.seek((uint32_t)absolute);
+    map_png_io_ms+=millis()-seek_started;
+    if(!seek_ok){
         Serial.printf("[T5-MAP] tile seek failed: position=%ld range=%lu\n",
                       (long)position,(unsigned long)png_range_length);
         map_io_failed=true;
@@ -397,13 +412,17 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(z>=0&&z<25&&!zoom_folder_known[z]) {
         char folder[24];
         snprintf(folder,sizeof(folder),"/maps/%d",z);
+        const uint32_t check_started=millis();
         zoom_folder_present[z]=SD.exists(folder);
+        map_path_check_ms+=millis()-check_started;
         zoom_folder_known[z]=true;
         ++result.sd_checks;
     }
     bool loose_present=false;
     if(z>=0&&z<25&&zoom_folder_present[z]){
+        const uint32_t check_started=millis();
         loose_present=SD.exists(path);
+        map_path_check_ms+=millis()-check_started;
         ++result.sd_checks;
     }
     if(!loose_present) {
@@ -554,6 +573,8 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
     const uint32_t map_render_started=millis();
     map_archive_lookup_ms=map_png_decode_ms=map_compose_ms=0;
+    map_png_open_ms=map_png_close_ms=map_png_io_ms=0;
+    map_path_check_ms=map_discover_ms=0;
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -594,6 +615,14 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                   (unsigned long)map_compose_ms,
                   (unsigned)result.tiles,(unsigned)result.disk_decodes,
                   (unsigned)result.ram_hits,(unsigned)result.missing);
+    // PNG callbacks run during png.open()/decode(); png_io is a component of
+    // their timings, so do not add these categories as disjoint totals.
+    Serial.printf("[T5-MAP] io_timing: png_file_open=%lu png_file_close=%lu png_read_seek=%lu loose_path_checks=%lu archive_discovery=%lu ms\n",
+                  (unsigned long)map_png_open_ms,
+                  (unsigned long)map_png_close_ms,
+                  (unsigned long)map_png_io_ms,
+                  (unsigned long)map_path_check_ms,
+                  (unsigned long)map_discover_ms);
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
