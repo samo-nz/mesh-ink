@@ -577,6 +577,7 @@ uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
+    const uint32_t started=millis(); // experimental A/B measurement only
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -608,5 +609,9 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
+    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u missing=%u\n",
+                  (unsigned)zoom,(unsigned long)(millis()-started),
+                  (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
+                  (unsigned)result.tiles,(unsigned)result.missing);
     return result;
 }
