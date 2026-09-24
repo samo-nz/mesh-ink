@@ -1082,9 +1082,13 @@ static void log_map_panel_power(const char* phase) {
                       phase,(int)output_err,(int)input_err);
         return;
     }
-    Serial.printf("[T5-EPD] power %s OUT1=0x%02X EPD_CTRL=0x%02X PWRGOOD=%u (expected CTRL=0 after poweroff)\n",
+    const uint32_t light_remaining=frontlight_deadline &&
+        (int32_t)(frontlight_deadline-millis())>0
+        ? frontlight_deadline-millis() : 0U;
+    Serial.printf("[T5-EPD] power %s OUT1=0x%02X EPD_CTRL=0x%02X PWRGOOD=%u frontlight=%u light_remaining=%lu ms (expected CTRL=0 after poweroff)\n",
                   phase,output,(unsigned)(output&EPD_CONTROL_MASK),
-                  (unsigned)((input&PWRGOOD_MASK)!=0));
+                  (unsigned)((input&PWRGOOD_MASK)!=0),
+                  (unsigned)frontlight_lit,(unsigned long)light_remaining);
 }
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
