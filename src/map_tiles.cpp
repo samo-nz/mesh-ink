@@ -47,6 +47,7 @@ bool png_range_active=false;
 uint32_t png_range_start=0,png_range_length=0;
 bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
+uint32_t map_archive_lookup_ms=0,map_png_decode_ms=0,map_compose_ms=0;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
 void reset_sd_caches() {
@@ -410,7 +411,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         bool found=false;
         for(size_t i=0;i<archive_count;++i) {
             ++result.sd_checks;
-            if(pmtiles_find_png(archive_paths[i],z,x,y,range)) {
+            const uint32_t lookup_started=millis();
+            const bool found_in_archive=pmtiles_find_png(archive_paths[i],z,x,y,range);
+            map_archive_lookup_ms+=millis()-lookup_started;
+            if(found_in_archive) {
                 snprintf(path,sizeof(path),"%s",archive_paths[i]);
                 found=true;
                 break;
@@ -443,7 +447,9 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     Tile* slot=acquire_slot();
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
+    const uint32_t decode_started=millis();
     const int decode_status=png.decode(nullptr,0);
+    map_png_decode_ms+=millis()-decode_started;
     png.close();
     png_range_active=false;
     decode_bits=nullptr;
@@ -517,7 +523,11 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
         Tile* tile=nullptr;bool direct=false;
         if(!load_source(source_zoom,parent_x,parent_y,draw,result,tile,direct))
             continue;
-        if(tile)draw_cached(*tile,draw);
+        if(tile) {
+            const uint32_t compose_started=millis();
+            draw_cached(*tile,draw);
+            map_compose_ms+=millis()-compose_started;
+        }
         // A low-memory decode drew the same requested tile directly.
         ++result.tiles;
         if(depth)++result.reused;
@@ -542,6 +552,8 @@ uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
+    const uint32_t map_render_started=millis();
+    map_archive_lookup_ms=map_png_decode_ms=map_compose_ms=0;
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -573,6 +585,15 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
+    // On-device breakdown identifies whether further optimization should
+    // target archive lookup, PNG decode, or screen-pixel composition.
+    Serial.printf("[T5-MAP] render=%lu ms archive_lookup=%lu png_decode=%lu compose=%lu ms tiles=%u PNG=%u RAM=%u missing=%u\n",
+                  (unsigned long)(millis()-map_render_started),
+                  (unsigned long)map_archive_lookup_ms,
+                  (unsigned long)map_png_decode_ms,
+                  (unsigned long)map_compose_ms,
+                  (unsigned)result.tiles,(unsigned)result.disk_decodes,
+                  (unsigned)result.ram_hits,(unsigned)result.missing);
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
