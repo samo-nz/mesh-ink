@@ -1141,12 +1141,19 @@ static void load_map_with_feedback(bool already_on_map) {
                   (unsigned long)(millis()-map_render_started),
                   (unsigned long)getCpuFrequencyMhz());
 
-    // The single completion DU pass left unchanged terrain washed out,
-    // while the loading-toast footprint was dark and crisp. A second short-
-    // BOOT-style forced full-map DU pass reproduces the user's manual fix
-    // without a white-panel clear or changing the loading toast sequence.
-    fast_full_redraw("MAP_LOAD_COMPLETE",false);
-    fast_full_redraw("MAP_CONTRAST_FINISH",false);
+    // The old map under the dark toast retained balanced contrast, while
+    // unchanged terrain became progressively too dark after repeated forced
+    // map-to-map DU passes. Prepare the complete terrain with the SAME
+    // black-to-map transition as the toast, then reveal the finished map with
+    // one short-BOOT-style forced DU redraw. Keep the loading toast and old
+    // map visible through all tile I/O; the black preparation is only after
+    // the next frame is completely ready.
+    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
+    refresh(MODE_DU,false);   // refresh() powers the panel off afterwards
+    // draw_screen() reuses the fully decoded map_base_cache for this same
+    // view (including map overlays); no second PNG/PMTiles decode occurs.
+    draw_screen();
+    fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
 }
 
 static void full_display_clean(const char* reason) {
