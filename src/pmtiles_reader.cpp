@@ -46,9 +46,10 @@ struct Archive {
 };
 Archive archive;
 Directory root;
-// Nearby PMTiles requests frequently cross leaf boundaries. Keep four
-// decoded directory indexes in PSRAM instead of re-reading/gunzipping them.
-constexpr size_t LEAF_CACHE_SLOTS = 4;
+// Experimental larger leaf cache: the observed cold zoom traversed five
+// separate leaf directories. Retain eight to avoid re-reading/gunzipping
+// a recently crossed leaf when panning or returning to a nearby zoom.
+constexpr size_t LEAF_CACHE_SLOTS = 8;
 struct LeafSlot {
     Directory directory;
     uint64_t offset = UINT64_MAX, length = 0;
