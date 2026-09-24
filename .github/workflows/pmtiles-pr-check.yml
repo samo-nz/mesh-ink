@@ -5,6 +5,9 @@ on:
     paths:
       - 'src/pmtiles_reader.*'
       - 'src/map_tiles.cpp'
+      - 'src/ui_onboarding.cpp'
+      - 'src/map_gestures.h'
+      - 'tests/test_map_gestures.cpp'
       - 'platformio.ini'
       - '.github/workflows/pmtiles-pr-check.yml'
   workflow_dispatch:
@@ -29,6 +32,11 @@ jobs:
             src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
             -lz -o /tmp/pmtiles-test
           /tmp/pmtiles-test
+      - name: Maps-only gesture geometry regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_map_gestures.cpp -o /tmp/map-gestures-test
+          /tmp/map-gestures-test
       - run: python -m platformio run -e t5-unified
       - name: Prepare test update firmware
         run: |

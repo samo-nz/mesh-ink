@@ -15,6 +15,7 @@
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
+#include "map_gestures.h"
 #include "t5_logging.h"
 #include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
@@ -243,7 +244,29 @@ static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false)
 static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
-struct QueuedTap{int16_t x;int16_t y;int16_t dx;int16_t dy;bool home;};
+// Keep the original five-field single-touch event compatible with all UI
+// screens. Maps alone can add a completed two-finger gesture and tap timing.
+struct QueuedTap{
+    int16_t x=0,y=0,dx=0,dy=0;
+    bool home=false;
+    uint8_t map_pinch=0;
+    int8_t zoom_steps=0;
+    uint16_t hold_ms=0;
+    uint8_t map_sampled=0;
+    QueuedTap()=default;
+    // Arduino's C++11 toolchain requires an explicit constructor here once
+    // the map-only fields have default initializers. Preserve all existing
+    // five-argument single-touch event construction unchanged.
+    QueuedTap(int16_t px,int16_t py,int16_t pdx,int16_t pdy,bool is_home):
+        x(px),y(py),dx(pdx),dy(pdy),home(is_home) {}
+};
+struct MapTapSequence{
+    uint8_t count=0;
+    int16_t first_x=0,first_y=0;
+    int16_t last_x=0,last_y=0;
+    uint32_t last_at=0;
+};
+static MapTapSequence map_taps{};
 
 static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
@@ -1263,34 +1286,148 @@ static bool touch_point(int16_t& x, int16_t& y,bool& home) {
     clear_touch(); was_pressed=true; return true;
 }
 
+// Maps-only GT911 reader. Unlike touch_point() above, fetch BOTH of the
+// controller's eight-byte coordinate records from 0x814F when count=2.
+// No other screen or keyboard calls this function, and touch_point() remains
+// byte-for-byte identical to the previously tested single-finger reader.
+static uint8_t map_last_count=0;
+static int16_t map_last_x0=0,map_last_y0=0,map_last_x1=0,map_last_y1=0;
+static bool map_touch_points(uint8_t& count,int16_t& x0,int16_t& y0,
+                             int16_t& x1,int16_t& y1,bool& home) {
+    uint8_t status=0;
+    home=false;
+    if(!i2c_read(0x814E,&status,1))return false;
+    if(!(status&0x80)) {
+        count=map_last_count;x0=map_last_x0;y0=map_last_y0;
+        x1=map_last_x1;y1=map_last_y1;
+        return true; // no new frame; keep the previous press until release
+    }
+    if(status&0x10) {
+        home=true;map_last_count=0;count=0;clear_touch();return true;
+    }
+    const uint8_t reported=status&0x0F;
+    if(reported>5) {map_last_count=0;count=0;clear_touch();return true;}
+    if(reported==0) {map_last_count=0;count=0;clear_touch();return true;}
+    if(reported>2) {
+        // Multi-contact outside supported two-point gesture: suppress any
+        // accidental tap or pan until ALL fingers are lifted.
+        map_last_count=3;count=3;clear_touch();return true;
+    }
+    uint8_t points[16]{};
+    if(!i2c_read(0x814F,points,reported*8))return false;
+    map_last_x0=(int16_t)(points[1]|((uint16_t)points[2]<<8));
+    map_last_y0=(int16_t)(points[3]|((uint16_t)points[4]<<8));
+    if(reported==2) {
+        map_last_x1=(int16_t)(points[9]|((uint16_t)points[10]<<8));
+        map_last_y1=(int16_t)(points[11]|((uint16_t)points[12]<<8));
+    }
+    map_last_count=reported;count=reported;
+    x0=map_last_x0;y0=map_last_y0;x1=map_last_x1;y1=map_last_y1;
+    clear_touch();
+    return true;
+}
+
 static void touch_sampler_task(void*){
-    bool held=false,home_held=false;int16_t start_x=0,start_y=0,last_x=0,last_y=0;
+    bool held=false,home_held=false,map_previous=false;
+    bool map_multi=false,map_pinch_allowed=false;
+    int16_t start_x=0,start_y=0,last_x=0,last_y=0;
+    int16_t pinch_x=0,pinch_y=0;
+    int32_t initial_distance=0,final_distance=0;
+    uint32_t pressed_at=0;
     for(;;){
         if(!touch_enabled){
-            held=false;home_held=false;
+            held=false;home_held=false;map_multi=false;map_previous=false;
+            map_last_count=0;
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
             continue;
         }
-        int16_t x=0,y=0;bool home=false;
-        const bool pressed=touch_point(x,y,home);
-        if(home){
-            if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
-            home_held=true;
-            // A capacitive Home event must NEVER generate a subsequent touch
-            // release at the coordinates of the previous ordinary tap.
-            held=false;
-        }else if(home_held){
-            if(!pressed)home_held=false; // ignore contact until Home is released
-        }else if(pressed){
-            last_x=x;last_y=y;
-            if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
-        }else if(held){
-            held=false;
-            QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
-            if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                Serial.println("[T5-TOUCH] input queue full; tap discarded");
+        // Preserve the EXACT legacy single-touch parser and release-driven
+        // typing behaviour on all screens except Maps.
+        const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
+        if(on_map!=map_previous) {
+            held=false;home_held=false;map_multi=false;
+            was_pressed=false;map_last_count=0;
+            map_previous=on_map;
+        }
+        if(on_map) {
+            uint8_t count=0;int16_t x0=0,y0=0,x1=0,y1=0;
+            bool home=false;
+            if(!map_touch_points(count,x0,y0,x1,y1,home)) {
+                vTaskDelay(pdMS_TO_TICKS(8));continue;
+            }
+            if(home) {
+                if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+                home_held=true;held=false;map_multi=false;
+            } else if(home_held) {
+                if(count==0)home_held=false; // no phantom tap on Home release
+            } else if(count>=2) {
+                if(!held)frontlight_event();
+                held=true;
+                if(!map_multi) {
+                    map_multi=true;
+                    map_pinch_allowed=count==2 &&
+                        meshink_map_gestures::terrain_point(x0,y0) &&
+                        meshink_map_gestures::terrain_point(x1,y1);
+                    pinch_x=(int16_t)((x0+x1)/2);
+                    pinch_y=(int16_t)((y0+y1)/2);
+                    initial_distance=count==2 ?
+                        meshink_map_gestures::distance_squared(x0,y0,x1,y1):0;
+                    final_distance=initial_distance;
+                } else if(count==2) {
+                    final_distance=meshink_map_gestures::distance_squared(x0,y0,x1,y1);
+                } else map_pinch_allowed=false;
+            } else if(count==1) {
+                // If one finger of a previous pinch lifts first, suppress
+                // a false single tap or one-finger pan until all are released.
+                if(!map_multi) {
+                    last_x=x0;last_y=y0;
+                    if(!held) {
+                        held=true;start_x=x0;start_y=y0;
+                        pressed_at=millis();frontlight_event();
+                    }
+                }
+            } else if(map_multi) {
+                map_multi=false;held=false;
+                QueuedTap tap{pinch_x,pinch_y,0,0,false};
+                tap.map_pinch=1;
+                tap.map_sampled=1;
+                tap.zoom_steps=map_pinch_allowed ?
+                    (int8_t)meshink_map_gestures::pinch_zoom_steps(
+                        initial_distance,final_distance):0;
+                // Even a stationary two-finger gesture must cancel a pending
+                // single/double tap, without triggering a phantom pan.
+                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    Serial.println("[T5-TOUCH] input queue full; pinch discarded");
+            } else if(held) {
+                held=false;
+                QueuedTap tap{last_x,last_y,
+                    (int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
+                tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
+                tap.map_sampled=1;
+                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+            }
+        } else {
+            // Original non-Maps sampling and release logic is unchanged.
+            int16_t x=0,y=0;bool home=false;
+            const bool pressed=touch_point(x,y,home);
+            if(home){
+                if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+                home_held=true;
+                held=false;
+            }else if(home_held){
+                if(!pressed)home_held=false;
+            }else if(pressed){
+                last_x=x;last_y=y;
+                if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
+            }else if(held){
+                held=false;
+                QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
+                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(8));
     }
@@ -1317,6 +1454,7 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)
         centre_map_on_device();
     const bool already_on_map=screen==Screen::Maps;
+    map_taps={}; // prevent a pending map double tap from firing on another UI
     keyboard_visible=false;keyboard_message_mode=false;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
@@ -1324,6 +1462,25 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     }
     draw_screen();refresh(MODE_GL16);
 }
+// A zoom changes the map centre so the geographic location under the FIRST
+// tap / starting pinch midpoint stays under the same screen pixel. Display
+// update remains exclusively in the established one-shot Maps loading path.
+static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
+    if(screen!=Screen::Maps||standby_active||!steps||
+       !meshink_map_gestures::terrain_point(anchor_x,anchor_y))return;
+    const int next_zoom=max(meshink_map_gestures::MIN_ZOOM,
+                            min(meshink_map_gestures::MAX_ZOOM,
+                                (int)map_zoom+steps));
+    if(next_zoom==(int)map_zoom)return;
+    const auto centre=meshink_map_gestures::zoom_about(
+        map_latitude,map_longitude,map_zoom,next_zoom,anchor_x,anchor_y);
+    map_latitude=centre.latitude;
+    map_longitude=centre.longitude;
+    map_zoom=(uint8_t)next_zoom;
+    map_taps={};
+    open_screen(Screen::Maps);
+}
+
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
 static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=millis()+110;}
 static void set_keyboard_orientation(bool landscape){
@@ -1631,6 +1788,20 @@ static void handle_tap(int16_t x,int16_t y) {
     handle_name_keyboard(x,y);
 }
 
+// Only map-surface taps are delayed briefly to distinguish one, two and
+// three taps. Every typing/keypad/settings/contact tap bypasses this logic.
+static void finish_map_tap_sequence() {
+    if(!map_taps.count)return;
+    const MapTapSequence completed=map_taps;
+    map_taps={};
+    if(screen!=Screen::Maps||standby_active)return;
+    if(completed.count==2) {
+        zoom_map_around(+1,completed.first_x,completed.first_y);
+    } else if(completed.count==1) {
+        handle_tap(completed.first_x,completed.first_y);
+    }
+}
+
 static void set_touch_power(bool enabled){
     touch_enabled=false;delay(20);was_pressed=false;
     if(enabled){pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);clear_touch();touch_enabled=true;if(touch_task_handle)xTaskNotifyGive(touch_task_handle);T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] touch controller enabled");}
@@ -1789,6 +1960,10 @@ void ui_loop() {
         delay(100);return;
     }
     service_boot_button();
+    if(map_taps.count&&
+       (screen!=Screen::Maps||standby_active||
+        millis()-map_taps.last_at>=meshink_map_gestures::TAP_WINDOW_MS))
+        finish_map_tap_sequence();
     // Hot card removal/insertion is checked even when the user is not
     // touching Maps. The generation changes on a failed read/remount, so
     // discard the old viewport and show the unavailable or new map promptly.
@@ -1809,6 +1984,7 @@ void ui_loop() {
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         last_user_activity=millis();
         if(tap.home){
+            map_taps={};
             // Home changes the logical page, not just the e-paper frame.
             // Clear pending taps/refreshes so the previous page cannot be
             // redrawn immediately afterward.
@@ -1822,6 +1998,49 @@ void ui_loop() {
             details_page=0;details_from_discovery=false;chat_page=0;
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
             continue;
+        }
+        // An event sampled while Maps was visible must never become a
+        // keyboard/contact tap if navigation changed before it was handled.
+        if(tap.map_sampled&&screen!=Screen::Maps)continue;
+        if(screen==Screen::Maps&&tap.map_pinch) {
+            // A completed multi-contact gesture NEVER also sends a single
+            // tap or swipe, even when fingers moved too little to zoom.
+            map_taps={};
+            zoom_map_around(tap.zoom_steps,tap.x,tap.y);
+            continue;
+        }
+        if(screen==Screen::Maps&&tap.map_sampled) {
+            const int first_x=tap.x-tap.dx,first_y=tap.y-tap.dy;
+            const bool candidate=
+                meshink_map_gestures::terrain_point(first_x,first_y)&&
+                meshink_map_gestures::terrain_point(tap.x,tap.y)&&
+                meshink_map_gestures::tap_candidate(
+                    tap.dx,tap.dy,tap.hold_ms);
+            if(candidate) {
+                const uint32_t now=millis();
+                if(map_taps.count &&
+                   (now-map_taps.last_at>meshink_map_gestures::TAP_WINDOW_MS||
+                    !meshink_map_gestures::same_tap_area(
+                        map_taps.first_x,map_taps.first_y,first_x,first_y))) {
+                    finish_map_tap_sequence(); // unrelated/new tap
+                }
+                if(screen!=Screen::Maps)continue;
+                if(!map_taps.count) {
+                    map_taps.count=1;
+                    map_taps.first_x=first_x;map_taps.first_y=first_y;
+                } else if(++map_taps.count==3) {
+                    const int anchor_x=map_taps.first_x;
+                    const int anchor_y=map_taps.first_y;
+                    map_taps={};
+                    zoom_map_around(-1,anchor_x,anchor_y);
+                    continue;
+                }
+                map_taps.last_x=tap.x;map_taps.last_y=tap.y;
+                map_taps.last_at=now;
+                continue;
+            }
+            // Non-gesture movement and map-control taps are not delayed.
+            map_taps={};
         }
         if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
            tap.y>=MAP_TOP&&tap.y<MAP_BOTTOM&&tap.x>=0&&tap.x<540&&
