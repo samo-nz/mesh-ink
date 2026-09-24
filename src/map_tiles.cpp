@@ -31,7 +31,8 @@ AbsentTile absent_tiles[ABSENT_SLOTS]{};
 size_t absent_cursor=0;
 uint32_t cache_age=0;
 PNG png;
-File file;
+File file;                 // owns loose PNG file handles
+File* png_file=nullptr;    // borrows the already open PMTiles archive file
 uint8_t* target=nullptr;
 uint8_t* decode_bits=nullptr;
 struct DrawContext {int dx,dy,crop_x,crop_y,crop_size,tile_x,tile_y;};
@@ -67,6 +68,7 @@ void reset_sd_caches() {
 }
 void mark_sd_unavailable() {
     if(file)file.close();
+    png_file=nullptr;
     reset_sd_caches(); // close all archive handles before unmounting
     if(sd_mounted)SD.end();
     sd_mounted=false;
@@ -204,66 +206,78 @@ void discover_archives() {
 
 
 void* png_open(const char* name,int32_t* size) {
-    const uint32_t opened_at=millis();
-    file=SD.open(name,FILE_READ);
-    map_png_open_ms+=millis()-opened_at;
-    if(!file){
-        Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
-                      name,(unsigned)png_range_active);
-        map_io_failed=true;
-        return nullptr;
+    png_file=png_range_active ? pmtiles_frame_file(name) : nullptr;
+    if(!png_file) {
+        // Loose PNGs still use their own handle. PMTiles PNGs normally borrow
+        // the exact archive handle used by the preceding directory lookup,
+        // avoiding a second FAT open for every requested tile.
+        const uint32_t opened_at=millis();
+        file=SD.open(name,FILE_READ);
+        map_png_open_ms+=millis()-opened_at;
+        if(!file){
+            Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
+                          name,(unsigned)png_range_active);
+            map_io_failed=true;
+            return nullptr;
+        }
+        png_file=&file;
     }
     if(png_range_active) {
         const uint32_t range_seek_started=millis();
         const bool valid_range=png_range_length&&png_range_length<=INT32_MAX;
-        const bool range_seek_ok=valid_range&&file.seek(png_range_start);
+        const bool range_seek_ok=valid_range&&png_file->seek(png_range_start);
         map_png_range_seek_ms+=millis()-range_seek_started;
-        if(!range_seek_ok) {
-            file.close();
+        if(!range_seek_ok){
+            if(png_file==&file&&file)file.close();
+            png_file=nullptr;
+            map_io_failed=true;
             return nullptr;
         }
         *size=(int32_t)png_range_length;
-    } else *size=file.size();
-    return &file;
+    } else *size=png_file->size();
+    return png_file;
 }
 void png_close(void*) {
     const uint32_t close_started=millis();
-    if(file)file.close();
+    // Never close the PMTiles archive; its directory lookup needs it again.
+    if(png_file==&file&&file)file.close();
+    png_file=nullptr;
     map_png_close_ms+=millis()-close_started;
 }
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     if(length<=0)return 0;
-    // PNGdec may request a whole 2048-byte input buffer even when a PNG
-    // has fewer bytes remaining. Returning only the remaining bytes is the
-    // documented read-callback behaviour, NOT a failed SD transaction.
-    const uint64_t pos=file.position();
+    if(!png_file){map_io_failed=true;return 0;}
+    // PNGdec may request a 2048-byte buffer even at the end of a PNG.
+    // A partial final chunk is normal, not an SD failure.
+    const uint64_t pos=png_file->position();
     const uint64_t end=png_range_active
         ? (uint64_t)png_range_start+png_range_length
-        : (uint64_t)file.size();
+        : (uint64_t)png_file->size();
     if(png_range_active&&pos<png_range_start){
-        map_io_failed=true; // unexpected seek outside PMTiles tile range
+        map_io_failed=true;
         return 0;
     }
-    if(pos>=end)return 0; // clean EOF for both loose PNGs and PMTiles ranges
+    if(pos>=end)return 0;
     const int32_t allowed=(int32_t)min((uint64_t)length,end-pos);
     const uint32_t read_started=millis();
-    const int32_t n=file.read(data,allowed);
+    const int32_t n=png_file->read(data,allowed);
     map_png_io_ms+=millis()-read_started;
     if(n!=allowed){
         Serial.printf("[T5-MAP] tile SD read failed: got=%ld expected=%ld pos=%lu end=%llu\n",
-                      (long)n,(long)allowed,(unsigned long)file.position(),
+                      (long)n,(long)allowed,(unsigned long)png_file->position(),
                       (unsigned long long)end);
         map_io_failed=true;
     }
     return n;
 }
 int32_t png_seek(PNGFILE*,int32_t position) {
+    if(!png_file){map_io_failed=true;return -1;}
     if(position<0 || (png_range_active &&
        (uint32_t)position>png_range_length))return -1;
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
     const uint32_t seek_started=millis();
-    const bool seek_ok=absolute<=UINT32_MAX&&file.seek((uint32_t)absolute);
+    const bool seek_ok=absolute<=UINT32_MAX&&png_file->seek((uint32_t)absolute);
     map_png_io_ms+=millis()-seek_started;
     if(!seek_ok){
         Serial.printf("[T5-MAP] tile seek failed: position=%ld range=%lu\n",
@@ -459,7 +473,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                                   png_read,png_seek,png_draw);
     map_png_init_ms+=millis()-png_init_started;
     if(open_status!=PNG_SUCCESS) {
-        if(file)file.close();
+        png_close(nullptr); // only closes a loose-file handle, not PMTiles
         png_range_active=false;
         return false;
     }
