@@ -1284,39 +1284,39 @@ static bool touch_point(int16_t& x, int16_t& y,bool& home) {
 // controller's eight-byte coordinate records from 0x814F when count=2.
 // No other screen or keyboard calls this function, and touch_point() remains
 // byte-for-byte identical to the previously tested single-finger reader.
+static uint8_t map_last_count=0;
+static int16_t map_last_x0=0,map_last_y0=0,map_last_x1=0,map_last_y1=0;
 static bool map_touch_points(uint8_t& count,int16_t& x0,int16_t& y0,
                              int16_t& x1,int16_t& y1,bool& home) {
-    static uint8_t last_count=0;
-    static int16_t last_x0=0,last_y0=0,last_x1=0,last_y1=0;
     uint8_t status=0;
     home=false;
     if(!i2c_read(0x814E,&status,1))return false;
     if(!(status&0x80)) {
-        count=last_count;x0=last_x0;y0=last_y0;
-        x1=last_x1;y1=last_y1;
+        count=map_last_count;x0=map_last_x0;y0=map_last_y0;
+        x1=map_last_x1;y1=map_last_y1;
         return true; // no new frame; keep the previous press until release
     }
     if(status&0x10) {
-        home=true;last_count=0;count=0;clear_touch();return true;
+        home=true;map_last_count=0;count=0;clear_touch();return true;
     }
     const uint8_t reported=status&0x0F;
-    if(reported>5) {last_count=0;count=0;clear_touch();return true;}
-    if(reported==0) {last_count=0;count=0;clear_touch();return true;}
+    if(reported>5) {map_last_count=0;count=0;clear_touch();return true;}
+    if(reported==0) {map_last_count=0;count=0;clear_touch();return true;}
     if(reported>2) {
         // Multi-contact outside supported two-point gesture: suppress any
         // accidental tap or pan until ALL fingers are lifted.
-        last_count=3;count=3;clear_touch();return true;
+        map_last_count=3;count=3;clear_touch();return true;
     }
     uint8_t points[16]{};
     if(!i2c_read(0x814F,points,reported*8))return false;
-    last_x0=(int16_t)(points[1]|((uint16_t)points[2]<<8));
-    last_y0=(int16_t)(points[3]|((uint16_t)points[4]<<8));
+    map_last_x0=(int16_t)(points[1]|((uint16_t)points[2]<<8));
+    map_last_y0=(int16_t)(points[3]|((uint16_t)points[4]<<8));
     if(reported==2) {
-        last_x1=(int16_t)(points[9]|((uint16_t)points[10]<<8));
-        last_y1=(int16_t)(points[11]|((uint16_t)points[12]<<8));
+        map_last_x1=(int16_t)(points[9]|((uint16_t)points[10]<<8));
+        map_last_y1=(int16_t)(points[11]|((uint16_t)points[12]<<8));
     }
-    last_count=reported;count=reported;
-    x0=last_x0;y0=last_y0;x1=last_x1;y1=last_y1;
+    map_last_count=reported;count=reported;
+    x0=map_last_x0;y0=map_last_y0;x1=map_last_x1;y1=map_last_y1;
     clear_touch();
     return true;
 }
@@ -1331,6 +1331,7 @@ static void touch_sampler_task(void*){
     for(;;){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
+            map_last_count=0;
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
@@ -1341,7 +1342,7 @@ static void touch_sampler_task(void*){
         const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
         if(on_map!=map_previous) {
             held=false;home_held=false;map_multi=false;
-            was_pressed=false;
+            was_pressed=false;map_last_count=0;
             map_previous=on_map;
         }
         if(on_map) {
