@@ -1063,34 +1063,6 @@ static void draw_screen() {
     draw_toast();
 }
 
-// Read-only display power check. The V7 board drives EPD OE (bit 0),
-// PWRUP (bit 3), VCOM_CTRL (bit 4), and WAKEUP (bit 5) through PCA9555
-// output port 1 at I2C address 0x20. PWRGOOD is input port 1 bit 6.
-// Commanded-low outputs do not prove physical HV rails have discharged.
-static uint32_t map_panel_last_poweroff=0;
-static uint8_t map_panel_power_sample=0;
-static void log_map_panel_power(const char* phase) {
-    constexpr uint8_t EXPANDER=0x20,OUTPUT1=0x03,INPUT1=0x01;
-    constexpr uint8_t EPD_CONTROL_MASK=0x39,PWRGOOD_MASK=0x40;
-    uint8_t output=0,input=0;
-    const esp_err_t output_err=i2c_master_write_read_device(
-        I2C_NUM_0,EXPANDER,&OUTPUT1,1,&output,1,pdMS_TO_TICKS(30));
-    const esp_err_t input_err=i2c_master_write_read_device(
-        I2C_NUM_0,EXPANDER,&INPUT1,1,&input,1,pdMS_TO_TICKS(30));
-    if(output_err!=ESP_OK||input_err!=ESP_OK) {
-        Serial.printf("[T5-EPD] power %s expander-read FAILED output_err=%d input_err=%d\n",
-                      phase,(int)output_err,(int)input_err);
-        return;
-    }
-    const uint32_t light_remaining=frontlight_deadline &&
-        (int32_t)(frontlight_deadline-millis())>0
-        ? frontlight_deadline-millis() : 0U;
-    Serial.printf("[T5-EPD] power %s OUT1=0x%02X EPD_CTRL=0x%02X PWRGOOD=%u frontlight=%u light_remaining=%lu ms (expected CTRL=0 after poweroff)\n",
-                  phase,output,(unsigned)(output&EPD_CONTROL_MASK),
-                  (unsigned)((input&PWRGOOD_MASK)!=0),
-                  (unsigned)frontlight_lit,(unsigned long)light_remaining);
-}
-
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(wake_light&&!standby_active)frontlight_event();
     // Maps contains only black and white pixels. Use the direct DU waveform
@@ -1102,20 +1074,12 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
-    // EPDiy's update_screen() executes the entire waveform synchronously.
-    // Keeping EPD power enabled for another 500 ms after each Maps update
-    // did not improve contrast. Power off immediately to test whether that
-    // powered idle interval contributes to the slow panel-wide darkening.
-    const unsigned map_settle_ms=0U;
+    // The map stays clear when the panel is powered down as soon as EPDiy's
+    // synchronous DU waveform completes. Do not reintroduce a powered hold.
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
-    if(active_map) {
-        map_panel_last_poweroff=millis();
-        map_panel_power_sample=0;
-        log_map_panel_power("immediate");
-    }
-    T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d map_settle_ms=%u name='%s' preset=%s cpu=%luMHz\n",
-        err,(int)mode,(int)requested_mode,(int)screen,map_settle_ms,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
+        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
 static void invalidate_display_back_buffer() {
@@ -1169,11 +1133,7 @@ static void load_map_with_feedback(bool already_on_map) {
     // display-performance setting for the CPU-heavy raster render. The
     // subsequent refresh restores 160 MHz through its normal power path.
     set_cpu_target(240,"map-render",false);
-    const uint32_t map_render_started=millis();
     draw_screen();
-    Serial.printf("[T5-MAP] UI map render=%lu ms cpu=%lu MHz\n",
-                  (unsigned long)(millis()-map_render_started),
-                  (unsigned long)getCpuFrequencyMhz());
 
     // The old map under the dark toast retained balanced contrast, while
     // unchanged terrain became progressively too dark after repeated forced
@@ -1891,18 +1851,6 @@ void ui_loop() {
     }
     frontlight_service();
     service_message_alert();
-    // Sample power-control signals only while Maps sits idle, with NO panel
-    // updates or UI redraw. Each new display refresh resets this schedule.
-    if(screen==Screen::Maps&&!standby_active&&map_panel_last_poweroff) {
-        const uint32_t since_off=millis()-map_panel_last_poweroff;
-        const uint32_t samples_at_ms[]={3000,10000,30000};
-        const char* sample_names[]={"3s","10s","30s"};
-        if(map_panel_power_sample<3&&
-           since_off>=samples_at_ms[map_panel_power_sample]) {
-            log_map_panel_power(sample_names[map_panel_power_sample]);
-            ++map_panel_power_sample;
-        }
-    }
 #if T5_LOG_POWER
     static uint32_t power_report_at=0,loop_count=0;loop_count++;
     if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
