@@ -1141,12 +1141,12 @@ static void load_map_with_feedback(bool already_on_map) {
                   (unsigned long)(millis()-map_render_started),
                   (unsigned long)getCpuFrequencyMhz());
 
-    // Replace the loading toast and old terrain with a single forced DU
-    // frame. Unlike the earlier normal-DU + forced-DU sequence, this avoids
-    // an extra full-panel update while still driving every map pixel, just
-    // like short-pressing BOOT on Maps. Preserve the initial loading-toast
-    // update above; do not add an epd_clear() or a white-screen transition.
+    // The single completion DU pass left unchanged terrain washed out,
+    // while the loading-toast footprint was dark and crisp. A second short-
+    // BOOT-style forced full-map DU pass reproduces the user's manual fix
+    // without a white-panel clear or changing the loading toast sequence.
     fast_full_redraw("MAP_LOAD_COMPLETE",false);
+    fast_full_redraw("MAP_CONTRAST_FINISH",false);
 }
 
 static void full_display_clean(const char* reason) {
