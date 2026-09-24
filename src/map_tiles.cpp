@@ -218,16 +218,24 @@ void* png_open(const char* name,int32_t* size) {
 void png_close(void*) {if(file)file.close();}
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     if(length<=0)return 0;
-    if(png_range_active) {
-        const uint32_t pos=file.position();
-        const uint64_t end=(uint64_t)png_range_start+png_range_length;
-        if(pos<png_range_start||pos>=end)return 0;
-        length=(int32_t)min((uint64_t)length,end-pos);
+    // PNGdec may request a whole 2048-byte input buffer even when a PNG
+    // has fewer bytes remaining. Returning only the remaining bytes is the
+    // documented read-callback behaviour, NOT a failed SD transaction.
+    const uint64_t pos=file.position();
+    const uint64_t end=png_range_active
+        ? (uint64_t)png_range_start+png_range_length
+        : (uint64_t)file.size();
+    if(png_range_active&&pos<png_range_start){
+        map_io_failed=true; // unexpected seek outside PMTiles tile range
+        return 0;
     }
-    const int32_t n=file.read(data,length);
-    if(n!=length){
-        Serial.printf("[T5-MAP] tile read short: got=%ld wanted=%ld pos=%lu\n",
-                      (long)n,(long)length,(unsigned long)file.position());
+    if(pos>=end)return 0; // clean EOF for both loose PNGs and PMTiles ranges
+    const int32_t allowed=(int32_t)min((uint64_t)length,end-pos);
+    const int32_t n=file.read(data,allowed);
+    if(n!=allowed){
+        Serial.printf("[T5-MAP] tile SD read failed: got=%ld expected=%ld pos=%lu end=%llu\n",
+                      (long)n,(long)allowed,(unsigned long)file.position(),
+                      (unsigned long long)end);
         map_io_failed=true;
     }
     return n;
