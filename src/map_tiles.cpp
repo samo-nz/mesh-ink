@@ -48,10 +48,6 @@ bool png_range_active=false;
 uint32_t png_range_start=0,png_range_length=0;
 bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
-uint32_t map_archive_lookup_ms=0,map_png_decode_ms=0,map_compose_ms=0;
-uint32_t map_png_open_ms=0,map_png_close_ms=0,map_png_io_ms=0;
-uint32_t map_png_range_seek_ms=0,map_png_init_ms=0;
-uint32_t map_path_check_ms=0,map_discover_ms=0;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
 void reset_sd_caches() {
@@ -159,7 +155,6 @@ bool is_zoom_folder(const char* name) {
 }
 void discover_archives() {
     if(archives_discovered)return;
-    const uint32_t started=millis();
     File directory=SD.open("/maps");
     if(!directory||!directory.isDirectory()) {
         if(directory)directory.close();
@@ -198,7 +193,6 @@ void discover_archives() {
         candidate=directory.openNextFile();
     }
     directory.close();
-    map_discover_ms+=millis()-started;
     if(archive_count)
         Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
                       (unsigned)archive_count);
@@ -206,14 +200,13 @@ void discover_archives() {
 
 
 void* png_open(const char* name,int32_t* size) {
-    png_file=png_range_active ? pmtiles_frame_file(name) : nullptr;
+    // A loose PNG was already opened when its path was checked; reuse it
+    // rather than performing a second FAT directory lookup. Archive PNGs
+    // continue borrowing their reader's per-frame handle.
+    png_file=png_range_active ? pmtiles_frame_file(name)
+                              : (file ? &file : nullptr);
     if(!png_file) {
-        // Loose PNGs still use their own handle. PMTiles PNGs normally borrow
-        // the exact archive handle used by the preceding directory lookup,
-        // avoiding a second FAT open for every requested tile.
-        const uint32_t opened_at=millis();
         file=SD.open(name,FILE_READ);
-        map_png_open_ms+=millis()-opened_at;
         if(!file){
             Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
                           name,(unsigned)png_range_active);
@@ -223,10 +216,8 @@ void* png_open(const char* name,int32_t* size) {
         png_file=&file;
     }
     if(png_range_active) {
-        const uint32_t range_seek_started=millis();
         const bool valid_range=png_range_length&&png_range_length<=INT32_MAX;
         const bool range_seek_ok=valid_range&&png_file->seek(png_range_start);
-        map_png_range_seek_ms+=millis()-range_seek_started;
         if(!range_seek_ok){
             if(png_file==&file&&file)file.close();
             png_file=nullptr;
@@ -238,11 +229,9 @@ void* png_open(const char* name,int32_t* size) {
     return png_file;
 }
 void png_close(void*) {
-    const uint32_t close_started=millis();
-    // Never close the PMTiles archive; its directory lookup needs it again.
+    // Never close the borrowed PMTiles archive handle.
     if(png_file==&file&&file)file.close();
     png_file=nullptr;
-    map_png_close_ms+=millis()-close_started;
 }
 int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     if(length<=0)return 0;
@@ -259,9 +248,7 @@ int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     }
     if(pos>=end)return 0;
     const int32_t allowed=(int32_t)min((uint64_t)length,end-pos);
-    const uint32_t read_started=millis();
     const int32_t n=png_file->read(data,allowed);
-    map_png_io_ms+=millis()-read_started;
     if(n!=allowed){
         Serial.printf("[T5-MAP] tile SD read failed: got=%ld expected=%ld pos=%lu end=%llu\n",
                       (long)n,(long)allowed,(unsigned long)png_file->position(),
@@ -276,9 +263,7 @@ int32_t png_seek(PNGFILE*,int32_t position) {
        (uint32_t)position>png_range_length))return -1;
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
-    const uint32_t seek_started=millis();
     const bool seek_ok=absolute<=UINT32_MAX&&png_file->seek((uint32_t)absolute);
-    map_png_io_ms+=millis()-seek_started;
     if(!seek_ok){
         Serial.printf("[T5-MAP] tile seek failed: position=%ld range=%lu\n",
                       (long)position,(unsigned long)png_range_length);
@@ -430,17 +415,20 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(z>=0&&z<25&&!zoom_folder_known[z]) {
         char folder[24];
         snprintf(folder,sizeof(folder),"/maps/%d",z);
-        const uint32_t check_started=millis();
         zoom_folder_present[z]=SD.exists(folder);
-        map_path_check_ms+=millis()-check_started;
         zoom_folder_known[z]=true;
         ++result.sd_checks;
     }
     bool loose_present=false;
     if(z>=0&&z<25&&zoom_folder_present[z]){
-        const uint32_t check_started=millis();
-        loose_present=SD.exists(path);
-        map_path_check_ms+=millis()-check_started;
+        // Opening the file is itself a complete presence check. If present,
+        // PNGdec reuses this handle instead of opening the same path again.
+        file=SD.open(path,FILE_READ);
+        loose_present=(bool)file;
+        if(loose_present&&file.isDirectory()){
+            file.close();
+            loose_present=false;
+        }
         ++result.sd_checks;
     }
     if(!loose_present) {
@@ -448,9 +436,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         bool found=false;
         for(size_t i=0;i<archive_count;++i) {
             ++result.sd_checks;
-            const uint32_t lookup_started=millis();
             const bool found_in_archive=pmtiles_find_png(archive_paths[i],z,x,y,range);
-            map_archive_lookup_ms+=millis()-lookup_started;
             if(found_in_archive) {
                 snprintf(path,sizeof(path),"%s",archive_paths[i]);
                 found=true;
@@ -468,10 +454,8 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     png_range_active=range.length!=0;
     png_range_start=range.offset;
     png_range_length=range.length;
-    const uint32_t png_init_started=millis();
     const int open_status=png.open(path,png_open,png_close,
                                   png_read,png_seek,png_draw);
-    map_png_init_ms+=millis()-png_init_started;
     if(open_status!=PNG_SUCCESS) {
         png_close(nullptr); // only closes a loose-file handle, not PMTiles
         png_range_active=false;
@@ -486,9 +470,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     Tile* slot=acquire_slot();
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
-    const uint32_t decode_started=millis();
     const int decode_status=png.decode(nullptr,0);
-    map_png_decode_ms+=millis()-decode_started;
     png.close();
     png_range_active=false;
     decode_bits=nullptr;
@@ -562,11 +544,7 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
         Tile* tile=nullptr;bool direct=false;
         if(!load_source(source_zoom,parent_x,parent_y,draw,result,tile,direct))
             continue;
-        if(tile) {
-            const uint32_t compose_started=millis();
-            draw_cached(*tile,draw);
-            map_compose_ms+=millis()-compose_started;
-        }
+        if(tile)draw_cached(*tile,draw);
         // A low-memory decode drew the same requested tile directly.
         ++result.tiles;
         if(depth)++result.reused;
@@ -591,11 +569,6 @@ uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
-    const uint32_t map_render_started=millis();
-    map_archive_lookup_ms=map_png_decode_ms=map_compose_ms=0;
-    map_png_open_ms=map_png_close_ms=map_png_io_ms=0;
-    map_png_range_seek_ms=map_png_init_ms=0;
-    map_path_check_ms=map_discover_ms=0;
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -627,25 +600,6 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    // On-device breakdown identifies whether further optimization should
-    // target archive lookup, PNG decode, or screen-pixel composition.
-    Serial.printf("[T5-MAP] render=%lu ms archive_lookup=%lu png_decode=%lu compose=%lu ms tiles=%u PNG=%u RAM=%u missing=%u\n",
-                  (unsigned long)(millis()-map_render_started),
-                  (unsigned long)map_archive_lookup_ms,
-                  (unsigned long)map_png_decode_ms,
-                  (unsigned long)map_compose_ms,
-                  (unsigned)result.tiles,(unsigned)result.disk_decodes,
-                  (unsigned)result.ram_hits,(unsigned)result.missing);
-    // PNG callbacks run during png.open()/decode(); png_io is a component of
-    // their timings, so do not add these categories as disjoint totals.
-    Serial.printf("[T5-MAP] io_timing: png_init=%lu file_open=%lu range_seek=%lu file_close=%lu png_read_seek=%lu loose_path_checks=%lu archive_discovery=%lu ms\n",
-                  (unsigned long)map_png_init_ms,
-                  (unsigned long)map_png_open_ms,
-                  (unsigned long)map_png_range_seek_ms,
-                  (unsigned long)map_png_close_ms,
-                  (unsigned long)map_png_io_ms,
-                  (unsigned long)map_path_check_ms,
-                  (unsigned long)map_discover_ms);
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] mode=WORLD_DITHER_2P5X zoom=%u source_z=%u-%u tiles=%u native=%u reused=%u missing=%u RAM=%u PNG=%u SD_checks=%u centre=%.5f,%.5f\n",
                   zoom,result.min_source_zoom,result.max_source_zoom,
                   result.tiles,result.native,result.reused,result.missing,
