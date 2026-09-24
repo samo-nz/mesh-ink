@@ -1993,6 +1993,9 @@ void ui_loop() {
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
             continue;
         }
+        // An event sampled while Maps was visible must never become a
+        // keyboard/contact tap if navigation changed before it was handled.
+        if(tap.map_sampled&&screen!=Screen::Maps)continue;
         if(screen==Screen::Maps&&tap.map_pinch) {
             // A completed multi-contact gesture NEVER also sends a single
             // tap or swipe, even when fingers moved too little to zoom.
