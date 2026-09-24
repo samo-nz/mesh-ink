@@ -1130,8 +1130,16 @@ static void load_map_with_feedback(bool already_on_map) {
     refresh(MODE_DU);
 
     // The previous map and toast stay on the panel while all tile I/O and
-    // PNG decoding run synchronously. draw_screen() replaces both in fb.
+    // PNG decoding run synchronously. Refreshing the loading toast lowered
+    // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
+    // display-performance setting for the CPU-heavy raster render. The
+    // subsequent refresh restores 160 MHz through its normal power path.
+    set_cpu_target(240,"map-render",false);
+    const uint32_t map_render_started=millis();
     draw_screen();
+    Serial.printf("[T5-MAP] UI map render=%lu ms cpu=%lu MHz\n",
+                  (unsigned long)(millis()-map_render_started),
+                  (unsigned long)getCpuFrequencyMhz());
 
     // First show the completed map and remove the toast with a normal DU
     // transition. Pixels under the toast get a strong white-to-map update;
