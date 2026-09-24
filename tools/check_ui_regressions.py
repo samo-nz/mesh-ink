@@ -36,8 +36,20 @@ contains('prefs.getUChar("light_level",30)', "first-install brightness load")
 contains('if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=30', "brightness fallback")
 contains('draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);', "BOOT refresh without home navigation")
 assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
-contains("bool held=false,home_held=false;", "independent home touch latch")
-contains("held=false;\n        }else if(home_held)", "home must not become ordinary tap release")
+# Keep non-Maps typing and Home release on the original single-touch path.
+# Map gestures use a separate GT911 two-point parser and must not leak into
+# the keyboard or other app screens. The old one-branch sampler text check
+# predates the map-only split and would reject a working two-point sampler.
+contains("bool held=false,home_held=false,map_previous=false;", "independent home touch latch")
+contains("const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;", "map-only multitouch gate")
+contains("if(!map_touch_points(count,x0,y0,x1,y1,home))", "Maps reads two touch points")
+non_map_sampler = source.split("// Original non-Maps sampling and release logic is unchanged.", 1)[1].split(
+    "vTaskDelay(pdMS_TO_TICKS(8));", 1
+)[0]
+assert "const bool pressed=touch_point(x,y,home);" in non_map_sampler, "non-Maps must keep the original single-touch parser"
+assert "held=false;\n            }else if(home_held){\n                if(!pressed)home_held=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
+assert "QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};" in non_map_sampler, "ordinary non-Maps release-driven tap path must remain intact"
+contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
 contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
