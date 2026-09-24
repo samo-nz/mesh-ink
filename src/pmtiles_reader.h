@@ -17,6 +17,10 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
 // Always end a frame before unmounting an SD card.
 void pmtiles_begin_frame();
 void pmtiles_end_frame();
+// Borrow the archive file already opened for this render. Valid only until
+// pmtiles_end_frame()/pmtiles_reset(); the caller must NOT close this handle.
+class File;
+File* pmtiles_frame_file(const char* path);
 // SD seek/read/open failures must not be treated as permanently missing tiles.
 bool pmtiles_had_io_error();
 // Discard all file handles and directory indexes on media failure/remount.
