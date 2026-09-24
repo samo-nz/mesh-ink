@@ -1078,11 +1078,11 @@ static void log_map_panel_power(const char* phase) {
     const esp_err_t input_err=i2c_master_write_read_device(
         I2C_NUM_0,EXPANDER,&INPUT1,1,&input,1,pdMS_TO_TICKS(30));
     if(output_err!=ESP_OK||input_err!=ESP_OK) {
-        Serial.printf("[T5-EPD] power %s expander-read FAILED output_err=%d input_err=%d\\n",
+        Serial.printf("[T5-EPD] power %s expander-read FAILED output_err=%d input_err=%d\n",
                       phase,(int)output_err,(int)input_err);
         return;
     }
-    Serial.printf("[T5-EPD] power %s OUT1=0x%02X EPD_CTRL=0x%02X PWRGOOD=%u (expected CTRL=0 after poweroff)\\n",
+    Serial.printf("[T5-EPD] power %s OUT1=0x%02X EPD_CTRL=0x%02X PWRGOOD=%u (expected CTRL=0 after poweroff)\n",
                   phase,output,(unsigned)(output&EPD_CONTROL_MASK),
                   (unsigned)((input&PWRGOOD_MASK)!=0));
 }
