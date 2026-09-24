@@ -143,6 +143,12 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
 
+### Maps: controls and gestures
+
+Open **Maps** from the bottom navigation. Drag one finger to pan; use **+** and **−** to change zoom, or tap the **target** button to centre on your device's current or last known GPS position. Tap a map node marker to open its details. While **Maps** is displayed, pinch two fingers apart/together to zoom around their starting midpoint, **double-tap** the map to zoom in one level at the first tap's location, or **triple-tap** to zoom out one level at that location. These multi-touch and multi-tap zoom gestures apply **only on Maps**; typing and other screens retain their normal single-tap controls.
+
+Copy 256×256 raster PNG tiles to the SD card as `/maps/Z/X/Y.png` (for example, `/maps/12/4013/2546.png`), or put a **PMTiles v3 raster PNG** archive at `/maps/osm-bright/osm-bright.pmtiles`. Archives at `/maps/<name>/<file>.pmtiles` or directly in `/maps/<file>.pmtiles` also work. See [Offline map files](#offline-map-files) for supported formats and limitations.
+
 ## Offline map files
 
 MeshInk reads 256×256 raster PNG map tiles from the SD card. Either put loose
