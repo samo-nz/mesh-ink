@@ -1072,6 +1072,10 @@ static void draw_about() {
     text("CORE",24,780,2,0,true);text("MESHCORE",250,780,2);
 }
 
+static void draw_screen();
+static void refresh(EpdDrawMode mode,bool wake_light);
+static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh);
+
 static void draw_quick_panel() {
     epd_hl_set_all_white(&display);
     centred("QUICK SETTINGS",72,4,0,true);
@@ -1095,6 +1099,7 @@ static void draw_quick_panel() {
     box(24,742,492,82);
     centred("CLOSE",766,3,0,true);
     centred("SWIPE UP OR TAP CLOSE",850,2);
+    draw_toast();
 }
 
 static void close_quick_panel() {
@@ -1103,9 +1108,9 @@ static void close_quick_panel() {
     if(quick_panel_restore_landscape) {
         quick_panel_restore_landscape=false;
         keyboard_landscape=true;
-        epd_set_rotation(EPD_ROT_90);
+        epd_set_rotation(EPD_ROT_LANDSCAPE);
     }
-    draw_screen();refresh(MODE_GL16);
+    draw_screen();refresh(MODE_GL16,true);
 }
 
 static void open_quick_panel() {
@@ -1118,7 +1123,7 @@ static void open_quick_panel() {
     }
     quick_panel_active=true;
     draw_quick_panel();
-    refresh(MODE_GL16);
+    refresh(MODE_GL16,true);
 }
 
 static bool handle_quick_panel_tap(int16_t x,int16_t y) {
@@ -1143,7 +1148,7 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y) {
         quick_panel_active=false;quick_panel_restore_landscape=false;
         keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
         epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
-        screen=Screen::ShutdownConfirm;draw_screen();refresh(MODE_GL16);return true;
+        screen=Screen::ShutdownConfirm;draw_screen();refresh(MODE_GL16,true);return true;
     }
     if(hit(x,y,24,742,492,100)) { close_quick_panel();return true; }
     return true;
