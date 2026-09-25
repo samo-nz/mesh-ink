@@ -258,7 +258,7 @@ static void frontlight_preview(uint8_t level){
     frontlight_deadline=timeout?millis()+timeout:0;
 }
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
-static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
+static void frontlight_service(){if(message_alert_active||quick_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 // Keep the original five-field single-touch event compatible with all UI
@@ -1143,11 +1143,11 @@ static void draw_quick_panel() {
     centred(level,307,4,0,true);
 
     box(24,410,238,100,true);
-    centred("SEND ADVERT",435,2,0xFF,true);
-    centred("FLOOD",470,2,0xFF,true);
+    text("SEND ADVERT",24+(238-11*12)/2,435,2,0xFF,true);
+    text("FLOOD",24+(238-5*12)/2,470,2,0xFF,true);
     box(278,410,238,100);
-    centred("SHUT DOWN",435,2,0,true);
-    centred("POWER OFF",470,2,0,true);
+    text("SHUT DOWN",278+(238-9*12)/2,435,2,0,true);
+    text("POWER OFF",278+(238-9*12)/2,470,2,0,true);
 
     centred("TAP BELOW OR SWIPE UP TO CLOSE",560,2,0,true);
     draw_toast();
@@ -1203,8 +1203,8 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
         quick_set_brightness(value);
         return true;
     }
-    if(hit(x,y,24,290,112,70)) { quick_set_brightness((int)frontlight_brightness-10);return true; }
-    if(hit(x,y,404,290,112,70)) { quick_set_brightness((int)frontlight_brightness+10);return true; }
+    if(hit(x,y,24,290,112,70)) { quick_set_brightness((int)frontlight_brightness-1);return true; }
+    if(hit(x,y,404,290,112,70)) { quick_set_brightness((int)frontlight_brightness+1);return true; }
     if(hit(x,y,24,410,238,100)) {
         show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MODE_DU,true);return true;
