@@ -251,9 +251,8 @@ static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();co
 static void frontlight_preview(uint8_t level){
     // Live PWM feedback for the quick slider only. Do not alter the persisted
     // brightness or redraw the e-paper until the release event is handled.
-    frontlight_mode=FrontlightMode::On;
-    frontlight_lit=true;
-    const uint8_t duty=(uint8_t)max(1,((int)level*255)/100);
+    frontlight_lit=level>0;
+    const uint8_t duty=level?(uint8_t)max(1,((int)level*255)/100):0;
     ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);
     const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];
     frontlight_deadline=timeout?millis()+timeout:0;
@@ -1117,9 +1116,7 @@ static void draw_quick_panel() {
     epd_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
 
     centred("QUICK SETTINGS",34,4,0,true);
-    text("FRONT LIGHT",24,106,3,0,true);
-    char level[16];snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
-    text(level,432,106,3,0,true);
+    centred("FRONT LIGHT",106,3,0,true);
 
     // Full-width release-driven slider. The filled track and thumb show the
     // persisted brightness; dragging does not redraw until the finger lifts.
@@ -1132,13 +1129,18 @@ static void draw_quick_panel() {
         max(1,thumb_x-QUICK_SLIDER_LEFT),10},0x00,fb);
     epd_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
 
-    // Separate end controls below the slider, with labels drawn directly
-    // rather than through centred() so the glyphs cannot disappear.
-    box(24,270,112,70);
-    text("-",72,287,4,0,true);
-    box(404,270,112,70);
-    text("+",446,287,4,0,true);
-    centred("TAP ENDS OR DRAG SLIDER",358,2,0,true);
+    centred("TAP OR DRAG TO SELECT",255,2,0,true);
+
+    // End controls and the current value share one row beneath the slider.
+    box(24,290,112,70);
+    // Draw the symbols as primitives so their visual centres are exact and
+    // independent of font glyph metrics.
+    epd_fill_rect({61,323,38,4},0x00,fb);
+    box(404,290,112,70);
+    epd_fill_rect({441,323,38,4},0x00,fb);
+    epd_fill_rect({458,306,4,38},0x00,fb);
+    char level[16];snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
+    centred(level,307,4,0,true);
 
     box(24,410,238,100,true);
     centred("SEND ADVERT",435,2,0xFF,true);
@@ -1147,7 +1149,7 @@ static void draw_quick_panel() {
     centred("SHUT DOWN",435,2,0,true);
     centred("POWER OFF",470,2,0,true);
 
-    centred("TAP BELOW TO CLOSE",560,2,0,true);
+    centred("TAP BELOW OR SWIPE UP TO CLOSE",560,2,0,true);
     draw_toast();
 }
 
@@ -1176,10 +1178,11 @@ static void open_quick_panel() {
 }
 
 static void quick_set_brightness(int value) {
-    frontlight_mode=FrontlightMode::On;
-    frontlight_brightness=(uint8_t)max(5,min(100,value));
+    frontlight_brightness=(uint8_t)max(0,min(100,value));
+    frontlight_mode=frontlight_brightness?FrontlightMode::On:FrontlightMode::Off;
     save_frontlight_settings();
-    frontlight_event();
+    if(frontlight_brightness) frontlight_event();
+    else { frontlight_drive(false);frontlight_deadline=0; }
     draw_quick_panel();
     refresh(MODE_DU,false);
 }
@@ -1200,8 +1203,8 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
         quick_set_brightness(value);
         return true;
     }
-    if(hit(x,y,24,270,112,70)) { quick_set_brightness((int)frontlight_brightness-10);return true; }
-    if(hit(x,y,404,270,112,70)) { quick_set_brightness((int)frontlight_brightness+10);return true; }
+    if(hit(x,y,24,290,112,70)) { quick_set_brightness((int)frontlight_brightness-10);return true; }
+    if(hit(x,y,404,290,112,70)) { quick_set_brightness((int)frontlight_brightness+10);return true; }
     if(hit(x,y,24,410,238,100)) {
         show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MODE_DU,true);return true;
@@ -1577,7 +1580,7 @@ static void touch_sampler_task(void*){
                     const int value=((clamped-QUICK_SLIDER_LEFT)*100+
                         (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
                         (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
-                    quick_slider_preview=(uint8_t)max(5,min(100,value));
+                    quick_slider_preview=(uint8_t)max(0,min(100,value));
                     frontlight_preview(quick_slider_preview);
                 }
             }else if(held){
