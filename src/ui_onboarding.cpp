@@ -11,6 +11,9 @@
 #include <esp32-hal-cpu.h>
 #include <esp_sleep.h>
 #include <SPIFFS.h>
+#if T5_SCREENSHOT_CAPTURE
+#include <SD.h>
+#endif
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
@@ -22,6 +25,9 @@
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.3.0"
+#endif
+#ifndef T5_SCREENSHOT_CAPTURE
+#define T5_SCREENSHOT_CAPTURE 0
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -1105,6 +1111,87 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
 }
 
+#if T5_SCREENSHOT_CAPTURE
+static uint8_t screenshot_pixel(int x,int y) {
+    int px=x,py=y;
+    switch(epd_get_rotation()) {
+        case EPD_ROT_PORTRAIT: {
+            const int old_x=px;px=epd_width()-py-1;py=old_x;break;
+        }
+        case EPD_ROT_INVERTED_LANDSCAPE:
+            px=epd_width()-px-1;py=epd_height()-py-1;break;
+        case EPD_ROT_INVERTED_PORTRAIT: {
+            const int old_x=px;px=py;py=epd_height()-old_x-1;break;
+        }
+        case EPD_ROT_LANDSCAPE:
+        default: break;
+    }
+    if(px<0||px>=epd_width()||py<0||py>=epd_height())return 0xFF;
+    const uint8_t packed=fb[(size_t)py*(size_t)epd_width()/2U+(size_t)px/2U];
+    const uint8_t level=(px&1)?(uint8_t)(packed>>4):(uint8_t)(packed&0x0F);
+    return (uint8_t)(level*17U);
+}
+
+static void put_le16(uint8_t* p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
+static void put_le32(uint8_t* p,uint32_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);p[2]=(uint8_t)(v>>16);p[3]=(uint8_t)(v>>24);}
+
+static bool save_screenshot_bmp(char* saved_path,size_t saved_path_size) {
+    if(!fb||!saved_path||saved_path_size<32)return false;
+    // Reuse the map subsystem's SD mount so screenshots never reconfigure the
+    // shared SPI bus behind PMTiles.
+    if(!map_tiles_media_ready())return false;
+    if(!SD.exists("/screenshots")&&!SD.mkdir("/screenshots"))return false;
+
+    uint16_t sequence=1;
+    for(;sequence<10000;++sequence) {
+        snprintf(saved_path,saved_path_size,"/screenshots/meshink-%04u.bmp",(unsigned)sequence);
+        if(!SD.exists(saved_path))break;
+    }
+    if(sequence>=10000)return false;
+
+    File out=SD.open(saved_path,FILE_WRITE);
+    if(!out)return false;
+
+    const EpdRotation rotation=epd_get_rotation();
+    const bool portrait=rotation==EPD_ROT_PORTRAIT||rotation==EPD_ROT_INVERTED_PORTRAIT;
+    const uint32_t width=(uint32_t)(portrait?epd_height():epd_width());
+    const uint32_t height=(uint32_t)(portrait?epd_width():epd_height());
+    const uint32_t row_stride=(width+3U)&~3U;
+    const uint32_t pixel_offset=14U+40U+256U*4U;
+    const uint32_t file_size=pixel_offset+row_stride*height;
+
+    uint8_t file_header[14]={'B','M'};
+    put_le32(file_header+2,file_size);
+    put_le32(file_header+10,pixel_offset);
+    uint8_t dib[40]{};
+    put_le32(dib+0,40);
+    put_le32(dib+4,width);
+    put_le32(dib+8,height);
+    put_le16(dib+12,1);
+    put_le16(dib+14,8);
+    put_le32(dib+20,row_stride*height);
+    put_le32(dib+32,256);
+
+    bool ok=out.write(file_header,sizeof(file_header))==sizeof(file_header) &&
+            out.write(dib,sizeof(dib))==sizeof(dib);
+    uint8_t palette[4];
+    for(unsigned i=0;i<256&&ok;++i) {
+        palette[0]=palette[1]=palette[2]=(uint8_t)i;palette[3]=0;
+        ok=out.write(palette,sizeof(palette))==sizeof(palette);
+    }
+
+    uint8_t row[964]{};
+    for(int y=(int)height-1;y>=0&&ok;--y) {
+        for(uint32_t x=0;x<width;++x)row[x]=screenshot_pixel((int)x,y);
+        for(uint32_t x=width;x<row_stride;++x)row[x]=0xFF;
+        ok=out.write(row,row_stride)==row_stride;
+    }
+    out.flush();out.close();
+    if(!ok){SD.remove(saved_path);saved_path[0]=0;return false;}
+    return true;
+}
+#endif
+
 static void invalidate_display_back_buffer() {
     const size_t bytes=(size_t)epd_width()*epd_height()/2;
     for(size_t i=0;i<bytes;++i)display.back_fb[i]=(uint8_t)~display.front_fb[i];
@@ -1857,9 +1944,24 @@ static void service_boot_button(){
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
     if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){
+#if T5_SCREENSHOT_CAPTURE
+        // Screenshot branch: a short BOOT press captures the exact current
+        // framebuffer before drawing the confirmation toast. The 2-second
+        // hold keeps the normal standby behaviour.
+        char screenshot_path[64]{};
+        if(save_screenshot_bmp(screenshot_path,sizeof(screenshot_path))) {
+            Serial.printf("[T5-SHOT] saved %s\n",screenshot_path);
+            show_toast("SCREENSHOT SAVED");
+        } else {
+            Serial.println("[T5-SHOT] ERROR: screenshot save failed");
+            show_toast("SCREENSHOT FAILED");
+        }
+        draw_screen();refresh(MODE_DU,false);
+#else
         // Short BOOT refreshes the CURRENT screen without changing navigation,
         // keyboard, map centre, zoom or the open conversation.
         draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);
+#endif
     }pressed_at=0;handled=false;}
 }
 
