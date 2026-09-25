@@ -1142,7 +1142,7 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y) {
     }
     if(hit(x,y,24,390,492,112)) {
         show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
-        draw_quick_panel();refresh(MODE_DU);return true;
+        draw_quick_panel();refresh(MODE_DU,true);return true;
     }
     if(hit(x,y,24,550,492,112)) {
         quick_panel_active=false;quick_panel_restore_landscape=false;
