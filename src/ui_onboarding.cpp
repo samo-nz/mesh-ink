@@ -152,6 +152,8 @@ static uint8_t standby_timeout_index=1;
 static uint32_t last_user_activity=0;
 static bool status_wake_light=false;
 static bool message_alert_active=false;
+static bool quick_panel_active=false;
+static bool quick_panel_restore_landscape=false;
 static uint8_t message_alert_phase=0;
 static uint32_t message_alert_deadline=0;
 static uint32_t message_alert_cooldown_until=0;
@@ -1070,7 +1072,85 @@ static void draw_about() {
     text("CORE",24,780,2,0,true);text("MESHCORE",250,780,2);
 }
 
+static void draw_quick_panel() {
+    epd_hl_set_all_white(&display);
+    centred("QUICK SETTINGS",72,4,0,true);
+    text("SWIPE DOWN FROM TOP ANYWHERE",56,122,2);
+
+    box(24,190,492,150);
+    text("FRONT LIGHT",44,210,3,0,true);
+    char level[24];snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
+    box(44,264,120,58);centred("-",293,4,0,true);
+    box(188,264,164,58);centred(level,286,3,0,true);
+    box(376,264,120,58);centred("+",293,4,0,true);
+
+    box(24,390,492,112,true);
+    centred("SEND ADVERT",420,3,0xFF,true);
+    centred("FLOOD ACROSS THE MESH",462,2,0xFF,true);
+
+    box(24,550,492,112);
+    centred("SHUT DOWN",582,3,0,true);
+    centred("POWER OFF DEVICE",624,2,0,true);
+
+    box(24,742,492,82);
+    centred("CLOSE",766,3,0,true);
+    centred("SWIPE UP OR TAP CLOSE",850,2);
+}
+
+static void close_quick_panel() {
+    if(!quick_panel_active)return;
+    quick_panel_active=false;
+    if(quick_panel_restore_landscape) {
+        quick_panel_restore_landscape=false;
+        keyboard_landscape=true;
+        epd_set_rotation(EPD_ROT_90);
+    }
+    draw_screen();refresh(MODE_GL16);
+}
+
+static void open_quick_panel() {
+    if(quick_panel_active||standby_active)return;
+    map_taps={};
+    quick_panel_restore_landscape=keyboard_landscape;
+    if(keyboard_landscape) {
+        keyboard_landscape=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
+    quick_panel_active=true;
+    draw_quick_panel();
+    refresh(MODE_GL16);
+}
+
+static bool handle_quick_panel_tap(int16_t x,int16_t y) {
+    if(!quick_panel_active)return false;
+    if(hit(x,y,44,250,120,86)) {
+        frontlight_mode=FrontlightMode::On;
+        frontlight_brightness=(uint8_t)max(5,(int)frontlight_brightness-10);
+        save_frontlight_settings();frontlight_event();
+        draw_quick_panel();refresh(MODE_DU,false);return true;
+    }
+    if(hit(x,y,376,250,120,86)) {
+        frontlight_mode=FrontlightMode::On;
+        frontlight_brightness=(uint8_t)min(100,(int)frontlight_brightness+10);
+        save_frontlight_settings();frontlight_event();
+        draw_quick_panel();refresh(MODE_DU,false);return true;
+    }
+    if(hit(x,y,24,390,492,112)) {
+        show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
+        draw_quick_panel();refresh(MODE_DU);return true;
+    }
+    if(hit(x,y,24,550,492,112)) {
+        quick_panel_active=false;quick_panel_restore_landscape=false;
+        keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        screen=Screen::ShutdownConfirm;draw_screen();refresh(MODE_GL16);return true;
+    }
+    if(hit(x,y,24,742,492,100)) { close_quick_panel();return true; }
+    return true;
+}
+
 static void draw_screen() {
+    if(quick_panel_active){draw_quick_panel();return;}
     if(keyboard_landscape){draw_landscape_keyboard();return;}
     if(standby_active){draw_standby();return;}
     switch(screen){
@@ -1740,6 +1820,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
     T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] tap x=%d y=%d\n",x,y);
+    if(handle_quick_panel_tap(x,y))return;
     if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
@@ -1997,6 +2078,18 @@ void ui_loop() {
             }
             details_page=0;details_from_discovery=false;chat_page=0;
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
+            continue;
+        }
+        // A deliberate downward pull beginning at the top edge opens the
+        // CrossPoint-style quick panel before page-specific swipe handling.
+        const int first_y=tap.y-tap.dy;
+        if(!quick_panel_active&&first_y<=80&&tap.dy>=90&&abs(tap.dy)>abs(tap.dx)) {
+            open_quick_panel();
+            continue;
+        }
+        if(quick_panel_active) {
+            if(tap.dy<=-90&&abs(tap.dy)>abs(tap.dx)) close_quick_panel();
+            else handle_tap(tap.x,tap.y);
             continue;
         }
         // An event sampled while Maps was visible must never become a
