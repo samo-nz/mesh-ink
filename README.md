@@ -19,7 +19,7 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
   <tr>
     <td align="center"><img src="screenshots/discovered.webp" width="220"><br><sub>Discovered nodes</sub></td>
     <td align="center"><img src="screenshots/node-info1.webp" width="220"><br><sub>Node information</sub></td>
-    <td align="center"><img src="screenshots/mode-info2.webp" width="220"><br><sub>Node mode information</sub></td>
+    <td align="center"><img src="screenshots/node-info2.webp" width="220"><br><sub>Node information — page 2</sub></td>
   </tr>
   <tr>
     <td align="center"><img src="screenshots/maps-mylocation.webp" width="220"><br><sub>Map — my location</sub></td>
