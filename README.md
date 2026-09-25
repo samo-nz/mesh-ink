@@ -8,6 +8,36 @@
 
 It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="screenshots/contacts.webp" width="220"><br><sub>Contacts</sub></td>
+    <td align="center"><img src="screenshots/conversation.webp" width="220"><br><sub>Conversation</sub></td>
+    <td align="center"><img src="screenshots/channels.webp" width="220"><br><sub>Channels</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/discovered.webp" width="220"><br><sub>Discovered nodes</sub></td>
+    <td align="center"><img src="screenshots/node-info1.webp" width="220"><br><sub>Node information</sub></td>
+    <td align="center"><img src="screenshots/mode-info2.webp" width="220"><br><sub>Node mode information</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/maps-mylocation.webp" width="220"><br><sub>Map — my location</sub></td>
+    <td align="center"><img src="screenshots/maps-node.webp" width="220"><br><sub>Map — node location</sub></td>
+    <td align="center"><img src="screenshots/advertise.webp" width="220"><br><sub>Advertise</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/more.webp" width="220"><br><sub>More</sub></td>
+    <td align="center"><img src="screenshots/settings.webp" width="220"><br><sub>Settings</sub></td>
+    <td align="center"><img src="screenshots/settings-location.webp" width="220"><br><sub>Location settings</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/bt-companion.webp" width="220"><br><sub>Bluetooth companion mode</sub></td>
+    <td align="center"><img src="screenshots/about.webp" width="220"><br><sub>About</sub></td>
+    <td></td>
+  </tr>
+</table>
+
 ## Features
 
 - Direct messages and channel messaging
@@ -29,12 +59,13 @@ MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro**, using its 4.7-inch 5
 
 ## Web flasher
 
-The GitHub-hosted **[MeshInk Web Flasher](https://samo-nz.github.io/mesh-ink/)** installs the latest published release from a desktop browser using a USB data cable. It uses [Espressif's esptool-js](https://github.com/espressif/esptool-js) and Web Serial, so use a recent **Chrome or Edge** on a desktop computer and close any serial monitor first. If the device is not detected, hold BOOT, briefly press RESET, and then release BOOT.
+The easiest way to install or update MeshInk is with the **[MeshInk Web Flasher](https://samo-nz.github.io/mesh-ink/)**.
 
-- **Update (default):** verifies the release binary's SHA-256 before flashing the application at `0x10000`, with no whole-device erase. Use it only on an existing MeshInk installation; normal MeshCore settings, contacts, messages and identity are not intentionally overwritten.
-- **Install MeshInk:** choose this for a first-time installation or a fresh start. After a short confirmation, it erases the device and writes the complete 16 MB firmware image at `0x0`. Any existing data is reset.
-
-The web flasher source is under `web/`; `.github/workflows/web-flasher-pages.yml` publishes the site, a pinned, self-hosted copy of the browser flasher library, and the newest GitHub release binaries to GitHub Pages. Checksums are verified in GitHub Actions and again in the browser. The live flashing log is directly beneath the flash button and progress bar. After flashing, the page pulses the ESP32-S3 reset line; if a USB driver or board does not restart automatically, click **Restart device** to retry without reflashing, or press the board's physical RESET button. New successful firmware release builds trigger a Pages deployment. The repository administrator must **enable Settings → Pages → Build and deployment → Source: GitHub Actions** once before the site can go live. Physical USB flashing still needs to be verified on a T5; the build tests cannot validate the user's browser, USB cable or actual flash process.
+1. Open the flasher in a desktop version of **Chrome or Edge**.
+2. Connect the T5 with a **USB data cable**.
+3. Choose **Update** if MeshInk is already installed, or **Install MeshInk** for a new/clean installation.
+4. Select the T5's USB serial port when prompted and follow the on-screen instructions.
+5. If the device is not detected, hold **BOOT**, briefly press **RESET**, then release **BOOT** and try again.
 
 ## Installing
 
