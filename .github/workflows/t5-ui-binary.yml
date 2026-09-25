@@ -2,7 +2,7 @@ name: MeshInk build and release
 
 on:
   push:
-    branches: [main]
+    branches: [main, screenshots]
     tags: ['v*']
   workflow_dispatch:
 
