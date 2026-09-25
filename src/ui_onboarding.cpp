@@ -1105,6 +1105,14 @@ static void draw_quick_panel() {
     // Keep the previous page visible below the sheet. E-paper has no alpha,
     // so this is a normal redraw followed by an opaque top overlay.
     draw_underlying_screen();
+
+    // Visually disable the exposed page with a sparse 25% black dither.
+    // One pixel in each 2x2 cell is darkened, preserving the page beneath
+    // while making it clear that tapping it only dismisses quick settings.
+    for(int y=QUICK_PANEL_BOTTOM;y<960;++y)
+        for(int x=((y&1)?1:0);x<540;x+=2)
+            if((y&1)==0) epd_draw_pixel(x,y,0x00,fb);
+
     epd_fill_rect({0,0,540,QUICK_PANEL_BOTTOM},0xFF,fb);
     epd_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
 
