@@ -1143,11 +1143,9 @@ static void draw_quick_panel() {
     centred(level,307,4,0,true);
 
     box(24,410,238,100,true);
-    text("SEND ADVERT",24+(238-11*12)/2,435,2,0xFF,true);
-    text("FLOOD",24+(238-5*12)/2,470,2,0xFF,true);
+    text("ADVERT FLOOD",24+(238-12*12)/2,449,2,0xFF,true);
     box(278,410,238,100);
-    text("SHUT DOWN",278+(238-9*12)/2,435,2,0,true);
-    text("POWER OFF",278+(238-9*12)/2,470,2,0,true);
+    text("POWER OFF",278+(238-9*12)/2,449,2,0,true);
 
     centred("TAP BELOW OR SWIPE UP TO CLOSE",560,2,0,true);
     draw_toast();
