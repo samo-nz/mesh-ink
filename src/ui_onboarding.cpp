@@ -154,6 +154,10 @@ static bool status_wake_light=false;
 static bool message_alert_active=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
+static constexpr int QUICK_PANEL_BOTTOM=620;
+static constexpr int QUICK_SLIDER_LEFT=44;
+static constexpr int QUICK_SLIDER_RIGHT=496;
+static constexpr int QUICK_SLIDER_Y=224;
 static uint8_t message_alert_phase=0;
 static uint32_t message_alert_deadline=0;
 static uint32_t message_alert_cooldown_until=0;
@@ -1076,29 +1080,54 @@ static void draw_screen();
 static void refresh(EpdDrawMode mode,bool wake_light);
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh);
 
+static void draw_underlying_screen() {
+    // Render the current page normally, but without allowing its controls to
+    // receive events while the quick sheet is open.
+    const bool panel=quick_panel_active;
+    quick_panel_active=false;
+    draw_screen();
+    quick_panel_active=panel;
+}
+
 static void draw_quick_panel() {
-    epd_hl_set_all_white(&display);
-    centred("QUICK SETTINGS",72,4,0,true);
-    text("SWIPE DOWN FROM TOP ANYWHERE",56,122,2);
+    // Keep the previous page visible below the sheet. E-paper has no alpha,
+    // so this is a normal redraw followed by an opaque top overlay.
+    draw_underlying_screen();
+    epd_fill_rect({0,0,540,QUICK_PANEL_BOTTOM},0xFF,fb);
+    epd_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
 
-    box(24,190,492,150);
-    text("FRONT LIGHT",44,210,3,0,true);
-    char level[24];snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
-    box(44,264,120,58);centred("-",293,4,0,true);
-    box(188,264,164,58);centred(level,286,3,0,true);
-    box(376,264,120,58);centred("+",293,4,0,true);
+    centred("QUICK SETTINGS",34,4,0,true);
+    text("FRONT LIGHT",24,106,3,0,true);
+    char level[16];snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
+    text(level,432,106,3,0,true);
 
-    box(24,390,492,112,true);
-    centred("SEND ADVERT",420,3,0xFF,true);
-    centred("FLOOD ACROSS THE MESH",462,2,0xFF,true);
+    // Full-width release-driven slider. The filled track and thumb show the
+    // persisted brightness; dragging does not redraw until the finger lifts.
+    const int track_y=QUICK_SLIDER_Y;
+    const int track_w=QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT;
+    box(QUICK_SLIDER_LEFT,track_y-8,track_w,16);
+    const int thumb_x=QUICK_SLIDER_LEFT+
+        ((int)frontlight_brightness*track_w)/100;
+    epd_fill_rect({QUICK_SLIDER_LEFT,track_y-5,
+        max(1,thumb_x-QUICK_SLIDER_LEFT),10},0x00,fb);
+    epd_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
 
-    box(24,550,492,112);
-    centred("SHUT DOWN",582,3,0,true);
-    centred("POWER OFF DEVICE",624,2,0,true);
+    // Separate end controls below the slider, with labels drawn directly
+    // rather than through centred() so the glyphs cannot disappear.
+    box(24,270,112,70);
+    text("-",72,287,4,0,true);
+    box(404,270,112,70);
+    text("+",446,287,4,0,true);
+    centred("TAP ENDS OR DRAG SLIDER",358,2,0,true);
 
-    box(24,742,492,82);
-    centred("CLOSE",766,3,0,true);
-    centred("SWIPE UP OR TAP CLOSE",850,2);
+    box(24,410,238,100,true);
+    centred("SEND ADVERT",435,2,0xFF,true);
+    centred("FLOOD",470,2,0xFF,true);
+    box(278,410,238,100);
+    centred("SHUT DOWN",435,2,0,true);
+    centred("POWER OFF",470,2,0,true);
+
+    centred("TAP BELOW TO CLOSE",560,2,0,true);
     draw_toast();
 }
 
@@ -1126,31 +1155,43 @@ static void open_quick_panel() {
     refresh(MODE_GL16,true);
 }
 
-static bool handle_quick_panel_tap(int16_t x,int16_t y) {
+static void quick_set_brightness(int value) {
+    frontlight_mode=FrontlightMode::On;
+    frontlight_brightness=(uint8_t)max(5,min(100,value));
+    save_frontlight_settings();
+    frontlight_event();
+    draw_quick_panel();
+    refresh(MODE_DU,false);
+}
+
+static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_t start_y=-1) {
     if(!quick_panel_active)return false;
-    if(hit(x,y,44,250,120,86)) {
-        frontlight_mode=FrontlightMode::On;
-        frontlight_brightness=(uint8_t)max(5,(int)frontlight_brightness-10);
-        save_frontlight_settings();frontlight_event();
-        draw_quick_panel();refresh(MODE_DU,false);return true;
+    // Everything below the sheet is intentionally inert except dismissal.
+    if(y>=QUICK_PANEL_BOTTOM) { close_quick_panel();return true; }
+
+    const bool slider_release=
+        y>=180&&y<=260&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16&&
+        (start_y<0||(start_y>=180&&start_y<=260));
+    if(slider_release) {
+        const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
+        const int value=((clamped-QUICK_SLIDER_LEFT)*100+
+            (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
+            (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
+        quick_set_brightness(value);
+        return true;
     }
-    if(hit(x,y,376,250,120,86)) {
-        frontlight_mode=FrontlightMode::On;
-        frontlight_brightness=(uint8_t)min(100,(int)frontlight_brightness+10);
-        save_frontlight_settings();frontlight_event();
-        draw_quick_panel();refresh(MODE_DU,false);return true;
-    }
-    if(hit(x,y,24,390,492,112)) {
+    if(hit(x,y,24,270,112,70)) { quick_set_brightness((int)frontlight_brightness-10);return true; }
+    if(hit(x,y,404,270,112,70)) { quick_set_brightness((int)frontlight_brightness+10);return true; }
+    if(hit(x,y,24,410,238,100)) {
         show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MODE_DU,true);return true;
     }
-    if(hit(x,y,24,550,492,112)) {
+    if(hit(x,y,278,410,238,100)) {
         quick_panel_active=false;quick_panel_restore_landscape=false;
         keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
         epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
         screen=Screen::ShutdownConfirm;draw_screen();refresh(MODE_GL16,true);return true;
     }
-    if(hit(x,y,24,742,492,100)) { close_quick_panel();return true; }
     return true;
 }
 
@@ -2093,8 +2134,10 @@ void ui_loop() {
             continue;
         }
         if(quick_panel_active) {
+            const int quick_start_x=tap.x-tap.dx;
+            const int quick_start_y=tap.y-tap.dy;
             if(tap.dy<=-90&&abs(tap.dy)>abs(tap.dx)) close_quick_panel();
-            else handle_tap(tap.x,tap.y);
+            else handle_quick_panel_tap(tap.x,tap.y,quick_start_x,quick_start_y);
             continue;
         }
         // An event sampled while Maps was visible must never become a
