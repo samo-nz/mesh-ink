@@ -158,6 +158,8 @@ static constexpr int QUICK_PANEL_BOTTOM=620;
 static constexpr int QUICK_SLIDER_LEFT=44;
 static constexpr int QUICK_SLIDER_RIGHT=496;
 static constexpr int QUICK_SLIDER_Y=224;
+static volatile bool quick_slider_dragging=false;
+static volatile uint8_t quick_slider_preview=30;
 static uint8_t message_alert_phase=0;
 static uint32_t message_alert_deadline=0;
 static uint32_t message_alert_cooldown_until=0;
@@ -246,6 +248,16 @@ static const char* standby_timeout_name(){static const char* names[]={"5 MINUTES
 static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(status_hour*60+status_minute);return night_start_minutes<=night_end_minutes?(now>=night_start_minutes&&now<night_end_minutes):(now>=night_start_minutes||now<night_end_minutes);}
 static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
 static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();const uint8_t duty=frontlight_lit?(uint8_t)max(1,(frontlight_brightness*255)/100):0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);}
+static void frontlight_preview(uint8_t level){
+    // Live PWM feedback for the quick slider only. Do not alter the persisted
+    // brightness or redraw the e-paper until the release event is handled.
+    frontlight_mode=FrontlightMode::On;
+    frontlight_lit=true;
+    const uint8_t duty=(uint8_t)max(1,((int)level*255)/100);
+    ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);
+    const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];
+    frontlight_deadline=timeout?millis()+timeout:0;
+}
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
 static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
@@ -1547,9 +1559,22 @@ static void touch_sampler_task(void*){
                 if(!pressed)home_held=false;
             }else if(pressed){
                 last_x=x;last_y=y;
-                if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
+                if(!held){
+                    held=true;start_x=x;start_y=y;frontlight_event();
+                    quick_slider_dragging=quick_panel_active&&
+                        y>=180&&y<=260&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+                }
+                if(quick_slider_dragging) {
+                    const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
+                    const int value=((clamped-QUICK_SLIDER_LEFT)*100+
+                        (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
+                        (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
+                    quick_slider_preview=(uint8_t)max(5,min(100,value));
+                    frontlight_preview(quick_slider_preview);
+                }
             }else if(held){
                 held=false;
+                quick_slider_dragging=false;
                 QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
                     Serial.println("[T5-TOUCH] input queue full; tap discarded");
