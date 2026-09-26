@@ -182,7 +182,7 @@ static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
 enum class NodeInfoPage:uint8_t{Overview=0,Status,Telemetry,Path};
-static bool node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater;}
+static bool node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}
 static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}
 static NodeInfoPage node_info_page(uint8_t type,uint8_t page){
     if(page==0)return NodeInfoPage::Overview;
@@ -1018,6 +1018,8 @@ static void draw_contact_details() {
         return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
     };
     const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
+    const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
+    const bool login_required=repeater||room_server;
 
     if(page!=NodeInfoPage::Overview&&!node.saved_contact){
         text("ADD CONTACT FIRST",24,250,3,0,true);
@@ -1037,9 +1039,9 @@ static void draw_contact_details() {
         if(node.saved_contact){action_button("CHAT",24,808,240,70);action_button("DELETE",276,808,240,70);}
         else action_button("ADD CONTACT",24,808,492,70,true);
     } else if(page==NodeInfoPage::Status){
-        text("REPEATER STATUS",24,220,3,0,true);
+        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",24,220,3,0,true);
         if(!node.authenticated){
-            draw_wrapped("LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
+            draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
             if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",24,410,2,0,true);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
         }else{
@@ -1049,8 +1051,8 @@ static void draw_contact_details() {
         }
     } else if(page==NodeInfoPage::Telemetry){
         text("TELEMETRY / POSITION",24,220,3,0,true);
-        if(repeater&&!node.authenticated){
-            draw_wrapped("REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
+        if(login_required&&!node.authenticated){
+            draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
         }else{
             draw_wrapped(node.telemetry,24,270,39,2,0,false,4);
@@ -1987,12 +1989,14 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
                 const NodeInfoPage page=node_info_page(node.node_type,details_page);
                 const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
+                const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
+                const bool login_required=repeater||room_server;
                 if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,24,650,492,70)){
                     if(!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
                 if(node.saved_contact&&page==NodeInfoPage::Telemetry&&hit(x,y,24,650,492,70)){
-                    if(repeater&&!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
+                    if(login_required&&!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
                 if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
