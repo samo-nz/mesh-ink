@@ -8,11 +8,14 @@ idf_component_register(
         "t5_timing.cpp"
         "ui_onboarding.cpp"
         "unified_main.cpp"
+        "cache64_compat.cpp"
     INCLUDE_DIRS
         "."
         "board"
         "../include"
         "../lib/MeshCore/examples/companion_radio"
+    REQUIRES
+        bt
 )
 
 # The normal Arduino build does not promote these legacy-code warnings to
