@@ -1040,6 +1040,7 @@ static void draw_contact_details() {
         text("REPEATER STATUS",24,220,3,0,true);
         if(!node.authenticated){
             draw_wrapped("LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
+            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",24,410,2,0,true);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
         }else{
             text("LOGGED IN",24,258,2,0,true);
