@@ -681,12 +681,18 @@ static const char* node_role_label(uint8_t type){
         default:snprintf(unknown,sizeof(unknown),"TYPE %u",(unsigned)type);return unknown;
     }
 }
+static void thick_line(int x1,int y1,int x2,int y2){
+    for(int d=-1;d<=1;++d){line(x1+d,y1,x2+d,y2);line(x1,y1+d,x2,y2+d);}
+}
+static void thick_rect(int x,int y,int w,int h){
+    for(int d=0;d<3;++d)epd_draw_rect({x+d,y+d,w-2*d,h-2*d},0,fb);
+}
 static void draw_node_role_icon(uint8_t type,int x,int y){
-    if(type==(uint8_t)UiNodeRole::Chat){epd_draw_rect({x,y+3,28,20},0,fb);line(x+6,y+23,x+3,y+29);line(x+6,y+23,x+12,y+23);}
-    else if(type==(uint8_t)UiNodeRole::Repeater){epd_fill_rect({x+13,y+4,3,27},0,fb);line(x+14,y+4,x+7,y+14);line(x+14,y+4,x+21,y+14);line(x+5,y+7,x,y+14);line(x+23,y+7,x+28,y+14);epd_fill_rect({x+8,y+29,13,3},0,fb);}
-    else if(type==(uint8_t)UiNodeRole::Room){epd_draw_rect({x+2,y+2,25,29},0,fb);epd_fill_rect({x+8,y+8,4,4},0,fb);epd_fill_rect({x+17,y+8,4,4},0,fb);epd_draw_rect({x+9,y+18,11,13},0,fb);}
-    else if(type==(uint8_t)UiNodeRole::Sensor){epd_draw_rect({x+2,y+5,25,23},0,fb);epd_fill_rect({x+12,y+10,5,5},0,fb);line(x+14,y+15,x+7,y+23);line(x+14,y+15,x+22,y+20);}
-    else {epd_draw_rect({x+2,y+3,25,27},0,fb);text("?",x+8,y+8,2,0,true);}
+    if(type==(uint8_t)UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
+    else if(type==(uint8_t)UiNodeRole::Repeater){epd_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);epd_fill_rect({x+7,y+28,15,5},0,fb);}
+    else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);epd_fill_rect({x+8,y+8,5,5},0,fb);epd_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
+    else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);epd_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
+    else {thick_rect(x+2,y+3,25,27);text("?",x+8,y+8,2,0,true);}
 }
 static void draw_list_entry(const UiListEntry& item,int y) {
     box(12,y,516,142);
@@ -1047,8 +1053,8 @@ static void draw_contact_details() {
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
             text(login_text,24,258,2,0,true);
-            draw_wrapped(node.status,24,294,39,2,0,false,14);
-            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,650,492,70,true);
+            draw_wrapped(node.status,24,294,27,3,0,true,14);
+            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,808,492,70,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
         text("TELEMETRY / POSITION",24,220,3,0,true);
@@ -1056,17 +1062,17 @@ static void draw_contact_details() {
             draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
         }else{
-            draw_wrapped(node.telemetry,24,270,39,2,0,false,4);
-            text("POSITION",24,410,2,0,true);draw_wrapped(node.position,24,444,39,2,0,false,2);
-            draw_wrapped(node.position_source,24,496,39,2,0,false,1);
-            if(node.latitude||node.longitude){box(24,548,492,62);centred("OPEN POSITION ON MAP",569,2,0,true);}
-            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),24,650,492,70,true);
+            draw_wrapped(node.telemetry,24,270,27,3,0,true,4);
+            text("POSITION",24,420,2,0,true);draw_wrapped(node.position,24,454,27,3,0,true,2);
+            draw_wrapped(node.position_source,24,522,39,2,0,false,1);
+            if(node.latitude||node.longitude){box(24,590,492,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
+            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),24,808,492,70,true);
         }
     } else {
         text("DISCOVERED PATH",24,220,3,0,true);
-        draw_wrapped(node.path,24,270,39,2,0,false,5);
-        text("SAVED ROUTE",24,430,2,0,true);draw_wrapped(node.route,24,464,39,2,0,false,2);
-        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),24,650,492,70,true);
+        draw_wrapped(node.path,24,270,27,3,0,true,5);
+        text("SAVED ROUTE",24,458,2,0,true);draw_wrapped(node.route,24,492,27,3,0,true,2);
+        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),24,808,492,70,true);
     }
     draw_page_indicator(details_page,pages,770);
     if(keyboard_visible&&keyboard_password_mode){
@@ -1998,17 +2004,17 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
                 const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
                 const bool login_required=repeater||room_server;
-                if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,24,650,492,70)){
+                if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,24,808,492,70)){
                     if(!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
-                if(node.saved_contact&&page==NodeInfoPage::Telemetry&&hit(x,y,24,650,492,70)){
+                if(node.saved_contact&&page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)){
                     if(login_required&&!node.authenticated){if(!node.login_active){remote_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
-                if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
                 if(page==NodeInfoPage::Overview&&(node.latitude||node.longitude)&&hit(x,y,24,590,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
-                if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,24,548,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
+                if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,24,590,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
                 if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,276,808,240,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
                 if(page==NodeInfoPage::Overview&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
