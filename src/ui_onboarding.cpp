@@ -2003,11 +2003,15 @@ static void enter_standby(const char* reason){
     if(standby_active)return;
     // Standby owns the whole display. Dismiss transient quick settings first
     // so it cannot remain layered over, or reappear immediately after, standby.
+    // Preserve the view underneath Quick Settings before dismissing it.
+    // A panel opened over the landscape keyboard has already switched the
+    // physical display to portrait, so keyboard_landscape alone is not enough.
+    const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);
     quick_panel_active=false;quick_panel_restore_landscape=false;quick_slider_dragging=false;
     // Standby is always portrait, but remember a landscape keyboard so wake
     // returns to the exact editing view that was active before standby.
-    standby_restore_landscape=keyboard_landscape;
-    if(keyboard_landscape){
+    standby_restore_landscape=restore_landscape;
+    if(restore_landscape){
         keyboard_landscape=false;
         epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     }
@@ -2097,7 +2101,7 @@ void ui_setup() {
     map_saved_gps_longitude=map_last_gps_longitude;
     frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
-    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=30;
+    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness>100)frontlight_brightness=30;
     if(standby_timeout_index>3)standby_timeout_index=1;
     if(night_start_minutes>=1440)night_start_minutes=20*60;if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
