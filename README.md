@@ -204,13 +204,13 @@ Swipe **up** to close Quick Settings and return to the previous screen.
 
 ### Maps: controls and gestures
 
-Open **Maps** from the bottom navigation. Drag one finger to pan; use **+** and **−** to change zoom, or tap the **target** button to centre on your device's current or last known GPS position. 
-Tap a map node marker to open its details. While **Maps** is displayed, pinch two fingers apart/together to zoom around their starting midpoint, **double-tap** the map to zoom in one level at the first tap's location, or **triple-tap** to zoom out one level at that location.
+Open **Maps** from the bottom navigation. Drag one finger to pan; use **+** and **−** to change zoom, or tap the **target** button to centre on your device's current or last known GPS position. Tap a map node marker to open its details. While **Maps** is displayed, pinch two fingers apart/together to zoom around their starting midpoint, **double-tap** the map to zoom in one level at the first tap's location, or **triple-tap** to zoom out one level at that location.
 
 ## Offline map files
 
-MeshInk uses the same tiles as other Meshcore/Meshtastic devices, place them in a directory called "maps" in the root folder of the SD card. both raw PNG tiles in folders and the newer PMTiles files are supported.
-One good website to download these tiles is [Oxed's Map Tile Downloader](https://download.tiles.coalition.space/)
+MeshInk supports the same offline map tile formats used by MeshCore and Meshtastic devices. Place them in `/maps` on the SD card. Both raw PNG tiles in folders and newer PMTiles files are supported.
+
+A convenient way to download compatible map tiles is [Oxed's Map Tile Downloader](https://download.tiles.coalition.space/).
 
 <details>
 <summary><strong>View details on map tiles</strong></summary>
@@ -267,6 +267,6 @@ MeshInk is built on the work of several open-source projects. Many thanks to the
 - [MicroNMEA](https://github.com/stevemarple/MicroNMEA) — GPS/NMEA parsing.
 - [Adafruit BusIO](https://github.com/adafruit/Adafruit_BusIO) — hardware bus abstractions.
 - [base64](https://github.com/Densaugeo/base64_arduino) — Base64 encoding and decoding.
-- [Aurora](https://github.com/jetaudio/crosspoint-aurora) — Crosspoint Reader fork for the T5 paper - No code used but was very helpful with making a responsive display.
+- [Aurora](https://github.com/jetaudio/crosspoint-aurora) — CrossPoint Reader fork for the T5 E-Paper. No code is used directly, but the project was very helpful when developing MeshInk's responsive display handling.
 
 Thank you to everyone who develops and maintains these projects. MeshInk would not exist without their work.
