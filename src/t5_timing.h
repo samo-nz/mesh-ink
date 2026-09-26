@@ -12,6 +12,7 @@ void t5_timing_begin();
 void t5_timing_touch_reset();
 uint32_t t5_timing_touch_begin();
 void t5_timing_touch_end(uint32_t started_us);
+void t5_timing_note_touch_queue_drop();
 uint32_t t5_timing_cycle_begin();
 void t5_timing_cycle_end(uint32_t started_us);
 uint32_t t5_timing_section_begin(T5TimingSection section);
@@ -24,6 +25,7 @@ inline void t5_timing_begin(){}
 inline void t5_timing_touch_reset(){}
 inline uint32_t t5_timing_touch_begin(){return 0;}
 inline void t5_timing_touch_end(uint32_t){}
+inline void t5_timing_note_touch_queue_drop(){}
 inline uint32_t t5_timing_cycle_begin(){return 0;}
 inline void t5_timing_cycle_end(uint32_t){}
 inline uint32_t t5_timing_section_begin(T5TimingSection){return 0;}
