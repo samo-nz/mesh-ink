@@ -41,7 +41,7 @@ struct Event {
 Metric metrics[MetricCount]{};
 Event pending_event{};
 bool event_pending=false;
-uint32_t suppressed_events=0,replaced_events=0;
+uint32_t suppressed_events=0,replaced_events=0,touch_queue_drops=0,touch_queue_drops_window=0;
 uint32_t started_ms=0,last_summary_ms=0,last_serial_event_ms=0;
 uint32_t last_touch_start_us=0,last_cycle_start_us=0;
 bool learning=false;
@@ -208,7 +208,7 @@ static void finish_learning(){
 
 static void print_summary(){
     Metric snapshot[MetricCount]{};
-    uint32_t suppressed=0,replaced=0;
+    uint32_t suppressed=0,replaced=0,queue_drops=0;
     portENTER_CRITICAL(&timing_mux);
     for(uint8_t i=0;i<MetricCount;++i){
         snapshot[i]=metrics[i];
@@ -219,6 +219,7 @@ static void print_summary(){
     }
     suppressed=suppressed_events;suppressed_events=0;
     replaced=replaced_events;replaced_events=0;
+    queue_drops=touch_queue_drops_window;touch_queue_drops_window=0;
     portEXIT_CRITICAL(&timing_mux);
 
     Serial.print("[T5-TIMING] 60s: touch avg=");
@@ -230,8 +231,8 @@ static void print_summary(){
     Serial.print(" mesh=");print_ms_value(snapshot[MeshExec].window_max);
     Serial.print(" ui=");print_ms_value(snapshot[UiExec].window_max);
     Serial.print(" display=");print_ms_value(snapshot[DisplayExec].window_max);
-    Serial.printf(" suppressed=%lu replaced=%lu\n",
-        (unsigned long)suppressed,(unsigned long)replaced);
+    Serial.printf(" queue-drops=%lu suppressed=%lu replaced=%lu\n",
+        (unsigned long)queue_drops,(unsigned long)suppressed,(unsigned long)replaced);
 }
 } // namespace
 
@@ -239,7 +240,7 @@ void t5_timing_begin(){
     portENTER_CRITICAL(&timing_mux);
     for(uint8_t i=0;i<MetricCount;++i)metrics[i]=Metric{};
     pending_event=Event{};event_pending=false;
-    suppressed_events=0;replaced_events=0;
+    suppressed_events=0;replaced_events=0;touch_queue_drops=0;touch_queue_drops_window=0;
     started_ms=millis();last_summary_ms=started_ms;last_serial_event_ms=0;
     last_touch_start_us=0;last_cycle_start_us=0;
     learning=true;
@@ -267,6 +268,13 @@ uint32_t t5_timing_touch_begin(){
 
 void t5_timing_touch_end(uint32_t started_us){
     record_metric(TouchExec,(uint32_t)(micros()-started_us));
+}
+
+void t5_timing_note_touch_queue_drop(){
+    portENTER_CRITICAL(&timing_mux);
+    touch_queue_drops++;
+    touch_queue_drops_window++;
+    portEXIT_CRITICAL(&timing_mux);
 }
 
 uint32_t t5_timing_cycle_begin(){
