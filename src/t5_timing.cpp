@@ -335,6 +335,7 @@ void t5_timing_service(){
         Serial.printf("[T5-TIMING] EXCESS %s observed=",metric_name(event.metric));
         print_ms_value(event.observed_us);
         Serial.print(" normal=");print_ms_value(event.normal_us);
+        Serial.print(" over-normal=");print_ms_value(event.observed_us>event.normal_us?event.observed_us-event.normal_us:0);
         Serial.print(" limit=");print_ms_value(event.limit_us);
         Serial.printf(" main-section=%s",section_name(event.section));
         if(event.section!=T5TimingSection::Idle){
