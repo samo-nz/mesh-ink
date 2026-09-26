@@ -224,10 +224,10 @@ async function flash() {
       progress.hidden = true;
       connectionRetry = connectionFailure;
       siteStatus.textContent = cancelled ? "No serial port selected" :
-        connectionFailure ? "T5 not connected · hold BOOT + press RST" :
+        connectionFailure ? "T5 not connected" :
         "Flashing did not complete";
       progressLabel.textContent = cancelled ? "No serial port selected" :
-        connectionFailure ? "Hold BOOT, press RST, release both, then retry" :
+        connectionFailure ? "Connection failed" :
         "Flashing did not complete";
       log(`ERROR: ${message}`);
       if (cancelled) log("No serial port selected; no flash operation started.");
