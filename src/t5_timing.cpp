@@ -44,6 +44,8 @@ struct CycleDetail {
     uint32_t mesh_us=0;
     uint32_t ui_us=0;
     uint32_t draw_us=0;          // longest draw_screen() in this loop
+    uint32_t chat_history_us=0;
+    uint32_t keyboard_draw_us=0;
     uint32_t display_us=0;       // cumulative physical EPD time this loop
     uint32_t status_us=0;
     uint32_t text_wait_ms=0;
@@ -349,6 +351,8 @@ static void print_slow(const SlowCycleEvent& slow){
     Serial.print(" mesh=");print_ms_value(d.mesh_us);
     Serial.print(" ui=");print_ms_value(d.ui_us);
     Serial.print(" draw-max=");print_ms_value(d.draw_us);
+    Serial.print(" chat-history=");print_ms_value(d.chat_history_us);
+    Serial.print(" keyboard-draw=");print_ms_value(d.keyboard_draw_us);
     Serial.print(" display-sum=");print_ms_value(d.display_us);
     Serial.printf(" refreshes=%u mode=%u>%u",(unsigned)d.display_count,
         (unsigned)d.requested_mode,(unsigned)d.actual_mode);
@@ -475,6 +479,13 @@ void t5_timing_set_ui_action(T5UiAction action){
 void t5_timing_note_ui_draw(uint32_t elapsed_us){
     portENTER_CRITICAL(&timing_mux);
     if(elapsed_us>current_cycle.draw_us)current_cycle.draw_us=elapsed_us;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_chat_draw(uint32_t history_us,uint32_t keyboard_us){
+    portENTER_CRITICAL(&timing_mux);
+    if(history_us>current_cycle.chat_history_us)current_cycle.chat_history_us=history_us;
+    if(keyboard_us>current_cycle.keyboard_draw_us)current_cycle.keyboard_draw_us=keyboard_us;
     portEXIT_CRITICAL(&timing_mux);
 }
 
