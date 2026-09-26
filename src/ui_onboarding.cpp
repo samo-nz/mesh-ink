@@ -126,7 +126,9 @@ static char toast_message[32] = {};
 static bool setup_complete = false;
 static bool toast_opens_main = false;
 static bool keyboard_message_mode = false;
+static bool keyboard_password_mode = false;
 static char compose_text[49] = {};
+static char repeater_password[16] = {};
 static UiDataProvider* ui_data = nullptr;
 static size_t selected_contact = 0;
 static size_t selected_channel = 0;
@@ -179,7 +181,14 @@ static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
-static constexpr uint8_t NODE_INFO_PAGE_COUNT=4;
+enum class NodeInfoPage:uint8_t{Overview=0,Status,Telemetry,Path};
+static bool node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater;}
+static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}
+static NodeInfoPage node_info_page(uint8_t type,uint8_t page){
+    if(page==0)return NodeInfoPage::Overview;
+    if(node_has_status(type)){if(page==1)return NodeInfoPage::Status;return page==2?NodeInfoPage::Telemetry:NodeInfoPage::Path;}
+    return page==1?NodeInfoPage::Telemetry:NodeInfoPage::Path;
+}
 // Maps spans the screen between the compact 48-pixel status bar and
 // the 60-pixel bottom navigation; there is no extra title/header strip.
 static constexpr int MAP_TOP=48;
@@ -410,7 +419,7 @@ static void draw_keyboard() {
     }
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
     key("DEL",460,828,68);
-    key("LAND",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_message_mode?"SEND":"SAVE",426,898,102);
+    key("LAND",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"SAVE"),426,898,102);
 }
 
 static void landscape_key(const char* label,int x,int y,int w){
@@ -425,9 +434,10 @@ static const char** active_keyboard_rows(){
 }
 static void draw_landscape_keyboard(){
     epd_hl_set_all_white(&display);
-    const char* value=keyboard_message_mode?compose_text:node_name;
+    char masked[16]{};if(keyboard_password_mode){const size_t n=strlen(repeater_password);memset(masked,'*',n);masked[n]=0;}
+    const char* value=keyboard_password_mode?masked:(keyboard_message_mode?compose_text:node_name);
     EpdRect entry={16,14,928,112};epd_draw_rect(entry,0,fb);
-    draw_wrapped(value[0]?value:"ENTER TEXT",32,30,48,4,0,true,2);
+    draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),32,30,48,4,0,true,2);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(true);
     for(int i=0;i<10;++i){
@@ -445,7 +455,7 @@ static void draw_landscape_keyboard(){
     landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),15,355,130);
     landscape_key("DEL",812,355,133);
     landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
-    landscape_key(keyboard_message_mode?"SEND":"DONE",711,425,234);
+    landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),711,425,234);
 }
 
 // The number and letter hitboxes are calculated from the EXACT geometry used
@@ -633,10 +643,13 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
     const char* cursor=value;
     for(int row=0;row<max_lines&&*cursor;++row){
         while(*cursor==' ')++cursor;
-        int remaining=strlen(cursor),take=min(chars_per_line,remaining);
+        if(*cursor=='\n'){++cursor;continue;}
+        const char* newline=strchr(cursor,'\n');
+        int remaining=newline?(int)(newline-cursor):(int)strlen(cursor),take=min(chars_per_line,remaining);
         if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}
         char line_text[64]={};memcpy(line_text,cursor,min(take,63));
         text(line_text,x,y+row*(7*scale+8),scale,color,bold);cursor+=take;
+        if(*cursor=='\n')++cursor;
     }
 }
 
@@ -657,9 +670,27 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     if(action){box(470,58,58,48,true);text(action,470+(58-(int)strlen(action)*18)/2,70,3,0xFF,true);}
 }
 
+static const char* node_role_label(uint8_t type){
+    switch(type){
+        case (uint8_t)UiNodeRole::Chat:return "CHAT";
+        case (uint8_t)UiNodeRole::Repeater:return "REPEATER";
+        case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";
+        case (uint8_t)UiNodeRole::Sensor:return "SENSOR";
+        default:return "UNKNOWN";
+    }
+}
+static void draw_node_role_icon(uint8_t type,int x,int y){
+    if(type==(uint8_t)UiNodeRole::Chat){epd_draw_rect({x,y+3,28,20},0,fb);line(x+6,y+23,x+3,y+29);line(x+6,y+23,x+12,y+23);}
+    else if(type==(uint8_t)UiNodeRole::Repeater){epd_fill_rect({x+13,y+4,3,27},0,fb);line(x+14,y+4,x+7,y+14);line(x+14,y+4,x+21,y+14);line(x+5,y+7,x,y+14);line(x+23,y+7,x+28,y+14);epd_fill_rect({x+8,y+29,13,3},0,fb);}
+    else if(type==(uint8_t)UiNodeRole::Room){epd_draw_rect({x+2,y+2,25,29},0,fb);epd_fill_rect({x+8,y+8,4,4},0,fb);epd_fill_rect({x+17,y+8,4,4},0,fb);epd_draw_rect({x+9,y+18,11,13},0,fb);}
+    else if(type==(uint8_t)UiNodeRole::Sensor){epd_draw_rect({x+2,y+5,25,23},0,fb);epd_fill_rect({x+12,y+10,5,5},0,fb);line(x+14,y+15,x+7,y+23);line(x+14,y+15,x+22,y+20);}
+    else {epd_draw_rect({x+2,y+3,25,27},0,fb);text("?",x+8,y+8,2,0,true);}
+}
 static void draw_list_entry(const UiListEntry& item,int y) {
     box(12,y,516,142);
-    text(item.title,28,y+16,3,0,true);
+    const bool typed=item.node_type!=0;
+    if(typed)draw_node_role_icon(item.node_type,28,y+12);
+    text(item.title,typed?70:28,y+16,3,0,true);
     text(item.time,528-(int)strlen(item.time)*12-16,y+20,2,0,true);
     draw_wrapped(item.subtitle,28,y+60,36,2,0,false,2);
     if(item.unread){epd_fill_rect({482,y+94,20,20},0,fb);}
@@ -972,8 +1003,9 @@ static void draw_chat(bool channel) {
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",300,3,0,true);return;}
-    if(details_page>=NODE_INFO_PAGE_COUNT)details_page=NODE_INFO_PAGE_COUNT-1;
-    centred(node.name,126,4,0,true);
+    const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
+    const NodeInfoPage page=node_info_page(node.node_type,details_page);
+    centred(node.name,126,4,0,true);centred(node_role_label(node.node_type),174,2,0,true);
     auto action_button=[](const char* label,int x,int y,int w,int h,bool selected=false) {
         box(x,y,w,h,selected);
         const int scale=2;
@@ -983,40 +1015,52 @@ static void draw_contact_details() {
     auto request_label=[&](UiNodeInfoRequest request,const char* idle) {
         return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
     };
+    const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
 
-    if(details_page==0){
+    if(page==NodeInfoPage::Overview){
         text("OVERVIEW",24,206,3,0,true);
         text("LAST ADVERT",24,258,2,0,true);text(node.advert_age,230,258,2);
         text("ROUTE",24,326,2,0,true);text(node.route,230,326,2);
         text("POSITION",24,394,2,0,true);draw_wrapped(node.position,230,394,25,2,0,false,2);
-        // Source age and last-heard time differ: a successful info reply
-        // does not make an older saved coordinate a fresh GPS fix.
         draw_wrapped(node.position_source,230,438,25,2,0,false,1);
         text("LAST HEARD",24,480,2,0,true);draw_wrapped(node.last_seen,230,480,25,2,0,false,1);
         text("IDENTITY",24,526,2,0,true);text(node.identity,230,526,2);
         if(node.latitude||node.longitude){box(24,590,492,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
-        if(node.saved_contact){
-            action_button("CHAT",24,808,240,70);
-            action_button("DELETE",276,808,240,70);
-        } else action_button("ADD CONTACT",24,808,492,70,true);
-    } else if(details_page==1){
-        text("STATUS",24,220,3,0,true);
-        draw_wrapped(node.status,24,270,39,2,0,false,6);
-        action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,650,492,70,true);
-    } else if(details_page==2){
+        if(node.saved_contact){action_button("CHAT",24,808,240,70);action_button("DELETE",276,808,240,70);}
+        else action_button("ADD CONTACT",24,808,492,70,true);
+    } else if(page==NodeInfoPage::Status){
+        text("REPEATER STATUS",24,220,3,0,true);
+        if(!node.authenticated){
+            draw_wrapped("LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
+        }else{
+            text("LOGGED IN",24,258,2,0,true);
+            draw_wrapped(node.status,24,294,39,2,0,false,13);
+            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,650,492,70,true);
+        }
+    } else if(page==NodeInfoPage::Telemetry){
         text("TELEMETRY / POSITION",24,220,3,0,true);
-        draw_wrapped(node.telemetry,24,270,39,2,0,false,4);
-        text("POSITION",24,410,2,0,true);draw_wrapped(node.position,24,444,39,2,0,false,2);
-        draw_wrapped(node.position_source,24,496,39,2,0,false,1);
-        if(node.latitude||node.longitude){box(24,548,492,62);centred("OPEN POSITION ON MAP",569,2,0,true);}
-        action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),24,650,492,70,true);
+        if(repeater&&!node.authenticated){
+            draw_wrapped("REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
+        }else{
+            draw_wrapped(node.telemetry,24,270,39,2,0,false,4);
+            text("POSITION",24,410,2,0,true);draw_wrapped(node.position,24,444,39,2,0,false,2);
+            draw_wrapped(node.position_source,24,496,39,2,0,false,1);
+            if(node.latitude||node.longitude){box(24,548,492,62);centred("OPEN POSITION ON MAP",569,2,0,true);}
+            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),24,650,492,70,true);
+        }
     } else {
         text("DISCOVERED PATH",24,220,3,0,true);
         draw_wrapped(node.path,24,270,39,2,0,false,5);
         text("SAVED ROUTE",24,430,2,0,true);draw_wrapped(node.route,24,464,39,2,0,false,2);
         action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),24,650,492,70,true);
     }
-    draw_page_indicator(details_page,NODE_INFO_PAGE_COUNT,770);
+    draw_page_indicator(details_page,pages,770);
+    if(keyboard_visible&&keyboard_password_mode){
+        char masked[16]{};const size_t n=strlen(repeater_password);memset(masked,'*',n);masked[n]=0;
+        box(12,544,516,70);text(masked[0]?masked:"REPEATER PASSWORD",28,568,2,0,true);draw_keyboard();
+    }
 }
 
 static void settings_row(const char* title,const char* subtitle,int y);
@@ -1701,6 +1745,7 @@ static void cycle_keyboard_mode(){
     else keyboard_symbols=true;
 }
 static void append(char c) {
+    if(keyboard_password_mode){size_t n=strlen(repeater_password);if(n<15){repeater_password[n]=c;repeater_password[n+1]=0;}return;}
     if(keyboard_message_mode){size_t n=strlen(compose_text);if(n<48){compose_text[n]=c;compose_text[n+1]=0;}return;}
     if(!legal_name_character(c)){Serial.printf("[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
@@ -1716,7 +1761,7 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
         centre_map_on_device();
     const bool already_on_map=screen==Screen::Maps;
     map_taps={}; // prevent a pending map double tap from firing on another UI
-    keyboard_visible=false;keyboard_message_mode=false;screen=next;
+    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;repeater_password[0]=0;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
         return;
@@ -1782,10 +1827,10 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(meshink_keyboard::in_row(y,355)){
         if(x<149){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
         if(x>=805){
-            char* value=keyboard_message_mode?compose_text:node_name;
+            char* value=keyboard_password_mode?repeater_password:(keyboard_message_mode?compose_text:node_name);
             const size_t n=strlen(value);
             if(n)value[n-1]=0;
-            if(!keyboard_message_mode)saved=false;
+            if(!keyboard_message_mode&&!keyboard_password_mode)saved=false;
             queue_text_refresh();return true;
         }
     }
@@ -1796,6 +1841,12 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(meshink_keyboard::in_row(y,425)){
         if(x<199){set_keyboard_orientation(false);return true;}
         if(x<707){append(' ');queue_text_refresh();return true;}
+        if(keyboard_password_mode){
+            const bool ok=repeater_password[0]&&ui_data&&ui_data->login_active_node(repeater_password);
+            memset(repeater_password,0,sizeof(repeater_password));keyboard_password_mode=false;keyboard_visible=false;
+            keyboard_landscape=false;epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+            show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_GL16);return true;
+        }
         if(keyboard_message_mode){
             if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;
         }
@@ -1804,6 +1855,25 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         // the portrait SAVE button can persist the name and complete setup.
         keyboard_visible=true;set_keyboard_orientation(false);
         return true;
+    }
+    return true;
+}
+
+static bool handle_password_keyboard(int16_t x,int16_t y) {
+    if(!keyboard_visible||!keyboard_password_mode)return false;
+    if(meshink_keyboard::in_row(y,828)){
+        if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
+        if(x>=457){const size_t n=strlen(repeater_password);if(n)repeater_password[n-1]=0;queue_text_refresh();return true;}
+    }
+    char character=0;
+    if(keyboard_character_at(x,y,false,character)){append(character);queue_text_refresh();return true;}
+    if(y>=894&&y<960){
+        if(x<116){set_keyboard_orientation(true);return true;}
+        if(x<314){append(' ');queue_text_refresh();return true;}
+        if(x<422){memset(repeater_password,0,sizeof(repeater_password));keyboard_password_mode=false;keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        const bool ok=repeater_password[0]&&ui_data&&ui_data->login_active_node(repeater_password);
+        memset(repeater_password,0,sizeof(repeater_password));keyboard_password_mode=false;keyboard_visible=false;
+        show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_DU);return true;
     }
     return true;
 }
@@ -1873,6 +1943,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,48,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
     if(screen==Screen::ContactChat&&hit(x,y,450,48,90,70)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
+    if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
@@ -1905,14 +1976,22 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::ContactDetails:
             if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
-                if(details_page==1&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==2&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==3&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,590,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
-                if(details_page==2&&(node.latitude||node.longitude)&&hit(x,y,24,548,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
-                if(details_page==0&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
-                if(details_page==0&&node.saved_contact&&hit(x,y,276,808,240,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==0&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
+                const NodeInfoPage page=node_info_page(node.node_type,details_page);
+                const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
+                if(page==NodeInfoPage::Status&&hit(x,y,24,650,492,70)){
+                    if(!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
+                    show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
+                }
+                if(page==NodeInfoPage::Telemetry&&hit(x,y,24,650,492,70)){
+                    if(repeater&&!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
+                    show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
+                }
+                if(page==NodeInfoPage::Path&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(page==NodeInfoPage::Overview&&(node.latitude||node.longitude)&&hit(x,y,24,590,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
+                if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,24,548,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
+                if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
+                if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,276,808,240,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
+                if(page==NodeInfoPage::Overview&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
             }}break;
         case Screen::Maps:
             // Controls take priority over map markers near the right edge.
@@ -2393,12 +2472,13 @@ void ui_loop() {
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u/%u\n",chat_page+1,pages);
                 draw_screen();refresh(MODE_GL16);
             }
-        }else if(screen==Screen::ContactDetails&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+        }else if(screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            UiNodeDetails node{};const uint8_t pages=(ui_data&&ui_data->active_node_details(node))?node_info_page_count(node.node_type):1;
             int next=(int)details_page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=NODE_INFO_PAGE_COUNT)next=NODE_INFO_PAGE_COUNT-1;
+            if(next<0)next=0;if(next>=pages)next=pages-1;
             if((uint8_t)next!=details_page){
                 details_page=(uint8_t)next;
-                T5_DEBUGF(T5_LOG_UI,"[T5-UI] node-info page=%u/%u\n",details_page+1,NODE_INFO_PAGE_COUNT);
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] node-info page=%u/%u\n",details_page+1,pages);
                 draw_screen();refresh(MODE_GL16);
             }
         }else if(screen==Screen::Presets&&abs(tap.dy)>60){
