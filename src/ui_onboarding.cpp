@@ -1928,7 +1928,15 @@ static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
 }
 
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
-static void queue_text_refresh(){text_refresh_pending=true;text_refresh_queued_at=millis();text_refresh_after=text_refresh_queued_at+110;}
+static void queue_text_refresh(){
+    // Throttle/coalesce rather than debounce. The first character schedules
+    // the next paint; later characters join it instead of pushing it farther
+    // into the future. This caps visible typing latency during continuous input.
+    if(text_refresh_pending)return;
+    text_refresh_pending=true;
+    text_refresh_queued_at=millis();
+    text_refresh_after=text_refresh_queued_at+110;
+}
 static void set_keyboard_orientation(bool landscape){
     keyboard_landscape=landscape;
     epd_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
