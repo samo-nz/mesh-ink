@@ -14,3 +14,12 @@ idf_component_register(
         "../include"
         "../lib/MeshCore/examples/companion_radio"
 )
+
+# The normal Arduino build does not promote these legacy-code warnings to
+# errors. Match that policy for this experimental Arduino-as-IDF build.
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-error=class-memaccess
+    -Wno-error=misleading-indentation
+    -Wno-error=format-truncation
+    -Wno-error=reorder
+)
