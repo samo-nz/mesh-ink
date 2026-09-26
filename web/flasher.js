@@ -47,7 +47,7 @@ function updateControls() {
   for (const input of modeInputs) input.disabled = busy;
   detail.textContent = !navigator.serial || !window.isSecureContext ?
     "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
-    connectionRetry ? "Put the T5 into bootloader mode, then click Retry connection." :
+    connectionRetry ? "Hold BOOT, press RST, then release both buttons. Then click Retry connection." :
     wipe ? "For a new device or a fresh start." :
            "For a device that already has MeshInk installed.";
 }
@@ -222,14 +222,14 @@ async function flash() {
       progress.hidden = true;
       connectionRetry = connectionFailure;
       siteStatus.textContent = cancelled ? "No serial port selected" :
-        connectionFailure ? "T5 not connected · enter bootloader mode" :
+        connectionFailure ? "T5 not connected · hold BOOT + press RST" :
         "Flashing did not complete";
       progressLabel.textContent = cancelled ? "No serial port selected" :
-        connectionFailure ? "Enter bootloader mode, then retry" :
+        connectionFailure ? "Hold BOOT, press RST, release both, then retry" :
         "Flashing did not complete";
       log(`ERROR: ${message}`);
       if (cancelled) log("No serial port selected; no flash operation started.");
-      else if (connectionFailure) log("Could not connect to the T5. Put it into bootloader/download mode, then click Retry connection.");
+      else if (connectionFailure) log("Could not connect to the T5. Hold BOOT, press RST, then release both buttons and click Retry connection.");
       else log("If an update was interrupted during writing, do not assume the firmware is bootable. Reconnect and retry.");
     }
   } finally {
