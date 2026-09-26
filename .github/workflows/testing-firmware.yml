@@ -49,13 +49,6 @@ jobs:
       - name: UI interaction regression checks
         run: python tools/check_ui_regressions.py
       - run: python -m platformio run -e t5-unified
-      - name: Build cache64 experiment
-        run: python -m platformio run -e t5-unified-cache64
-      - name: Verify cache64 SDK config
-        run: |
-          test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
-          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE 64' .pio/build/t5-unified-cache64/config/sdkconfig.h
-          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_64B 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
       - name: Prepare test update firmware
         run: |
           test -s .pio/build/t5-unified/firmware.bin
@@ -70,12 +63,24 @@ jobs:
             meshink-testing-SHA256.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Build cache64 experiment
+        id: cache64_build
+        continue-on-error: true
+        run: python -m platformio run -e t5-unified-cache64
+      - name: Verify cache64 SDK config
+        if: steps.cache64_build.outcome == 'success'
+        run: |
+          test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE 64' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_64B 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
       - name: Prepare cache64 experimental firmware
+        if: steps.cache64_build.outcome == 'success'
         run: |
           test -s .pio/build/t5-unified-cache64/firmware.bin
           cp .pio/build/t5-unified-cache64/firmware.bin meshink-testing-cache64-update.bin
           sha256sum meshink-testing-cache64-update.bin > meshink-testing-cache64-SHA256.txt
       - name: Downloadable cache64 experimental firmware
+        if: steps.cache64_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: meshink-testing-cache64-firmware
