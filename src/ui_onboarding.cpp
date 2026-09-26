@@ -1139,7 +1139,9 @@ static void draw_quick_panel() {
     box(404,290,112,70);
     epd_fill_rect({441,323,38,4},0x00,fb);
     epd_fill_rect({458,306,4,38},0x00,fb);
-    char level[16];snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
+    char level[16];
+    if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
+    else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
     centred(level,307,4,0,true);
 
     box(24,410,238,100,true);
@@ -1187,13 +1189,16 @@ static void quick_set_brightness(int value) {
 
 static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_t start_y=-1) {
     if(!quick_panel_active)return false;
-    // Everything below the sheet is intentionally inert except dismissal.
-    if(y>=QUICK_PANEL_BOTTOM) { close_quick_panel();return true; }
-
-    const bool slider_release=
-        y>=180&&y<=260&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16&&
-        (start_y<0||(start_y>=180&&start_y<=260));
-    if(slider_release) {
+    // Once a gesture starts on the slider, always commit its final clamped X
+    // on release. This includes releasing beyond either end or outside the
+    // slider vertically, matching the live PWM preview seen during the drag.
+    const bool slider_drag_release=
+        start_x>=QUICK_SLIDER_LEFT-16&&start_x<=QUICK_SLIDER_RIGHT+16&&
+        start_y>=180&&start_y<=260;
+    const bool slider_tap_release=
+        start_y<0&&y>=180&&y<=260&&
+        x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+    if(slider_drag_release||slider_tap_release) {
         const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
         const int value=((clamped-QUICK_SLIDER_LEFT)*100+
             (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
@@ -1201,6 +1206,10 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
         quick_set_brightness(value);
         return true;
     }
+
+    // Everything below the sheet is intentionally inert except dismissal.
+    if(y>=QUICK_PANEL_BOTTOM) { close_quick_panel();return true; }
+
     if(hit(x,y,24,290,112,70)) { quick_set_brightness((int)frontlight_brightness-1);return true; }
     if(hit(x,y,404,290,112,70)) { quick_set_brightness((int)frontlight_brightness+1);return true; }
     if(hit(x,y,24,410,238,100)) {
