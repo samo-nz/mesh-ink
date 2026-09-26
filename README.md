@@ -13,31 +13,40 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 <table>
   <tr>
     <td align="center"><img src="screenshots/contacts.webp" width="220"><br><sub>Contacts</sub></td>
+    <td align="center"><img src="screenshots/maps-mylocation.webp" width="220"><br><sub>Map — my location</sub></td>
+    <td align="center"><img src="screenshots/about.webp" width="220"><br><sub>About</sub></td>
+  </tr>
+</table>
+
+<details>
+<summary><strong>View more screenshots</strong></summary>
+
+<br>
+
+<table>
+  <tr>
     <td align="center"><img src="screenshots/conversation.webp" width="220"><br><sub>Conversation</sub></td>
     <td align="center"><img src="screenshots/channels.webp" width="220"><br><sub>Channels</sub></td>
+    <td align="center"><img src="screenshots/discovered.webp" width="220"><br><sub>Discovered nodes</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="screenshots/discovered.webp" width="220"><br><sub>Discovered nodes</sub></td>
     <td align="center"><img src="screenshots/node-info1.webp" width="220"><br><sub>Node information</sub></td>
     <td align="center"><img src="screenshots/node-info2.webp" width="220"><br><sub>Node information — page 2</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="screenshots/maps-mylocation.webp" width="220"><br><sub>Map — my location</sub></td>
     <td align="center"><img src="screenshots/maps-node.webp" width="220"><br><sub>Map — node location</sub></td>
-    <td align="center"><img src="screenshots/advertise.webp" width="220"><br><sub>Advertise</sub></td>
   </tr>
   <tr>
+    <td align="center"><img src="screenshots/advertise.webp" width="220"><br><sub>Advertise</sub></td>
     <td align="center"><img src="screenshots/more.webp" width="220"><br><sub>More</sub></td>
     <td align="center"><img src="screenshots/settings.webp" width="220"><br><sub>Settings</sub></td>
-    <td align="center"><img src="screenshots/settings-location.webp" width="220"><br><sub>Location settings</sub></td>
   </tr>
   <tr>
+    <td align="center"><img src="screenshots/settings-location.webp" width="220"><br><sub>Location settings</sub></td>
     <td align="center"><img src="screenshots/bt-companion.webp" width="220"><br><sub>Bluetooth companion mode</sub></td>
-    <td align="center"><img src="screenshots/about.webp" width="220"><br><sub>About</sub></td>
     <td></td>
   </tr>
 </table>
 
+</details>
 ## Features
 
 - Direct messages and channel messaging
@@ -62,13 +71,18 @@ MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro**, using its 4.7-inch 5
 
 The easiest way to install or update MeshInk is with the **[MeshInk Web Flasher](https://samo-nz.github.io/mesh-ink/)**.
 
+<details>
+<summary><strong>Installation instructions and manual flashing</strong></summary>
+
+### Using the web flasher
+
 1. Open the flasher in a desktop version of **Chrome or Edge**.
 2. Connect the T5 with a **USB data cable**.
 3. Choose **Update** if MeshInk is already installed, or **Install MeshInk** for a new/clean installation.
 4. Select the T5's USB serial port when prompted and follow the on-screen instructions.
 5. If the device is not detected, hold **BOOT**, briefly press **RESET**, then release **BOOT** and try again.
 
-## Installing
+### Manual installation
 
 Download the latest release from the [MeshInk Releases](https://github.com/samo-nz/mesh-ink/releases) page. Releases contain only the unified MeshInk firmware:
 
@@ -77,7 +91,7 @@ Download the latest release from the [MeshInk Releases](https://github.com/samo-
 
 A data-capable USB cable is required. If the computer does not see the T5 in flashing mode, hold **BOOT**, press and release **RESET**, then release **BOOT**.
 
-### Windows
+#### Windows
 
 1. Install [Python](https://www.python.org/downloads/windows/) if it is not already installed. During installation, enable **Add Python to PATH**.
 2. Open **Command Prompt** in the folder containing the downloaded `.bin` file.
@@ -102,7 +116,7 @@ A data-capable USB cable is required. If the computer does not see the T5 in fla
 
 6. Press **RESET** after flashing if the T5 does not restart automatically.
 
-### macOS
+#### macOS
 
 1. Install [Python 3](https://www.python.org/downloads/macos/) if needed, then open **Terminal**.
 2. Install esptool:
@@ -133,7 +147,7 @@ A data-capable USB cable is required. If the computer does not see the T5 in fla
 
 5. Press **RESET** if the T5 does not restart automatically.
 
-### Linux
+#### Linux
 
 1. Open a terminal and make sure Python 3 and pip are installed. On Debian/Ubuntu this is:
 
@@ -167,6 +181,7 @@ If esptool reports that it cannot connect, repeat the BOOT/RESET sequence and tr
 
 > **Radio settings matter.** Select the preset appropriate for your country and local MeshCore network before transmitting.
 
+</details>
 ## Using MeshInk
 
 On first setup, choose a node name and radio preset. MeshInk then opens into the main Contacts view.
