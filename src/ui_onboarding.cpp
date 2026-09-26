@@ -1988,7 +1988,10 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_GL16);return true;
         }
         if(keyboard_message_mode){
-            if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;
+            if(compose_text[0]&&local_mesh_send_active(compose_text)){
+                compose_text[0]=0;text_refresh_pending=false;
+                keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
+            }
         }
         // DONE in landscape is only an orientation switch for name entry.
         // Return to portrait setup with radio preset still available; only
@@ -2646,7 +2649,6 @@ void ui_loop() {
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(tap.x,tap.y);
     }
-    const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
     static uint32_t last_status_poll=0;
     const uint32_t status_poll_interval=standby_active?60000:15000;
     if(millis()-last_status_poll>=status_poll_interval){
@@ -2657,6 +2659,7 @@ void ui_loop() {
         t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
         t5_timing_set_ui_action(T5UiAction::None);
     }
+    const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
     if(status_dirty&&!message_alert_active){
         // A full status redraw also contains the newest text, so satisfy a
         // simultaneous debounced text refresh with this one panel update.
