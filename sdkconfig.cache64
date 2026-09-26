@@ -12,6 +12,8 @@ CONFIG_BT_BLE_ENABLED=y
 CONFIG_BT_GATTS_ENABLE=y
 CONFIG_BT_GATTC_ENABLE=y
 CONFIG_BT_BLE_SMP_ENABLE=y
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+CONFIG_BT_BLE_50_FEATURES_SUPPORTED=y
 
 # Arduino 2.0.x / ESP-IDF 4.4 also emits legacy compatibility aliases.
 # Some Bluedroid source gates still key off these names.
