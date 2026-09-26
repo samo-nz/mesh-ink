@@ -179,6 +179,34 @@ enum class Screen : uint8_t {
     Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
+static const char* timing_screen_name(){
+    switch(screen){
+        case Screen::Welcome:return "Welcome";
+        case Screen::Presets:return "Presets";
+        case Screen::CompanionConfirm:return "Companion";
+        case Screen::ShutdownConfirm:return "Shutdown";
+        case Screen::Contacts:return "Contacts";
+        case Screen::ContactChat:return "ContactChat";
+        case Screen::ContactDetails:return "NodeInfo";
+        case Screen::Channels:return "Channels";
+        case Screen::ChannelChat:return "ChannelChat";
+        case Screen::Maps:return "Maps";
+        case Screen::Discovery:return "Discovery";
+        case Screen::More:return "More";
+        case Screen::AdvertMenu:return "Advert";
+        case Screen::Settings:return "Settings";
+        case Screen::RadioSettings:return "RadioSettings";
+        case Screen::GpsSettings:return "GpsSettings";
+        case Screen::GpsTuning:return "GpsTuning";
+        case Screen::Timezone:return "Timezone";
+        case Screen::PrivacySettings:return "Privacy";
+        case Screen::DisplaySettings:return "DisplaySettings";
+        case Screen::NightSchedule:return "NightSchedule";
+        case Screen::Help:return "Help";
+        case Screen::About:return "About";
+        default:return "?";
+    }
+}
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
@@ -287,12 +315,31 @@ struct QueuedTap{
     int8_t zoom_steps=0;
     uint16_t hold_ms=0;
     uint8_t map_sampled=0;
+    uint32_t queued_at_ms=0;
     QueuedTap()=default;
     // Arduino's C++11 toolchain requires an explicit constructor here once
     // the map-only fields have default initializers. Preserve all existing
     // five-argument single-touch event construction unchanged.
     QueuedTap(int16_t px,int16_t py,int16_t pdx,int16_t pdy,bool is_home):
-        x(px),y(py),dx(pdx),dy(pdy),home(is_home) {}
+        x(px),y(py),dx(pdx),dy(pdy),home(is_home),queued_at_ms(millis()) {}
+};
+
+struct T5InputTimingScope{
+#if T5_TIMING_DIAGNOSTICS
+    uint32_t started_us;
+    uint32_t age_ms;
+    uint32_t queue_depth;
+    T5InputTimingScope(uint32_t queued_at,uint32_t depth):
+        started_us(micros()),age_ms(queued_at?(uint32_t)(millis()-queued_at):0),queue_depth(depth){
+        t5_timing_set_ui_action(T5UiAction::Touch);
+    }
+    ~T5InputTimingScope(){
+        t5_timing_note_ui_input((uint32_t)(micros()-started_us),age_ms,queue_depth);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }
+#else
+    T5InputTimingScope(uint32_t,uint32_t){}
+#endif
 };
 struct MapTapSequence{
     uint8_t count=0;
@@ -1395,10 +1442,12 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 }
 
 static void draw_screen() {
+    const uint32_t timing_draw_started=micros();
+    t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
-    if(standby_active){draw_standby();return;}
-    if(quick_panel_active){draw_quick_panel();return;}
-    if(keyboard_landscape){draw_landscape_keyboard();return;}
+    if(standby_active){draw_standby();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
+    if(quick_panel_active){draw_quick_panel();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
+    if(keyboard_landscape){draw_landscape_keyboard();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
@@ -1410,6 +1459,7 @@ static void draw_screen() {
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
+    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
@@ -1421,6 +1471,7 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     const EpdDrawMode requested_mode=mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MODE_GL16)mode=MODE_DU;
+    t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
@@ -2391,6 +2442,7 @@ void ui_finish_startup() {
 }
 
 void ui_loop() {
+    t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     if(hardware_failure){
         static uint32_t report_at=0;if(millis()-report_at>=60000){report_at=millis();Serial.println("[T5-ERROR] radio unavailable; startup halted; press RST to retry");}
         delay(100);return;
@@ -2418,6 +2470,7 @@ void ui_loop() {
     if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
+        T5InputTimingScope timing_input(tap.queued_at_ms,(uint32_t)uxQueueMessagesWaiting(touch_queue));
         last_user_activity=millis();
         if(tap.home){
             map_taps={};
@@ -2537,21 +2590,37 @@ void ui_loop() {
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(tap.x,tap.y);
     }
-    if(text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0){text_refresh_pending=false;draw_screen();refresh(MODE_DU);}
+    if(text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0){
+        t5_timing_set_ui_action(T5UiAction::TextRefresh);
+        text_refresh_pending=false;draw_screen();refresh(MODE_DU);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }
     static uint32_t last_status_poll=0;
     const uint32_t status_poll_interval=standby_active?60000:15000;
     if(millis()-last_status_poll>=status_poll_interval){
         last_status_poll=millis();
+        t5_timing_set_ui_action(T5UiAction::StatusPoll);
+        const uint32_t timing_status_started=micros();
         if(update_status_hardware())status_dirty=true;
+        t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
+        t5_timing_set_ui_action(T5UiAction::None);
     }
-    if(status_dirty&&!message_alert_active){const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;draw_screen();refresh(MODE_DU,wake);}
+    if(status_dirty&&!message_alert_active){
+        t5_timing_set_ui_action(T5UiAction::StatusRefresh);
+        const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;draw_screen();refresh(MODE_DU,wake);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
+        t5_timing_set_ui_action(T5UiAction::ToastRefresh);
         toast_visible=false;
         if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MODE_DU,true);
+        t5_timing_set_ui_action(T5UiAction::None);
     }
     frontlight_service();
+    if(message_alert_active)t5_timing_set_ui_action(T5UiAction::MessageAlert);
     service_message_alert();
+    t5_timing_set_ui_action(T5UiAction::None);
 #if T5_LOG_POWER
     static uint32_t power_report_at=0,loop_count=0;loop_count++;
     if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
