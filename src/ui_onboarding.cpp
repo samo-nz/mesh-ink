@@ -1102,7 +1102,7 @@ static void draw_about() {
     if(node_name[0])centred(node_name,600,3,0,true);
     centred(UI_VERSION,642,3,0,true);
     text("HARDWARE",24,720,2,0,true);text("LILYGO T5 PRO",250,720,2);
-    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_VERSION,250,770,2);
+    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",250,770,2);
 }
 
 static void draw_screen();
