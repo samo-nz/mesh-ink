@@ -179,6 +179,7 @@ static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
+static constexpr uint8_t NODE_INFO_PAGE_COUNT=4;
 // Maps spans the screen between the compact 48-pixel status bar and
 // the 60-pixel bottom navigation; there is no extra title/header strip.
 static constexpr int MAP_TOP=48;
@@ -673,7 +674,7 @@ static void clamp_list_page(size_t& page,size_t count) {
     if(page>=pages)page=pages-1;
 }
 
-static void draw_list_page_arrow(int centre_x,int centre_y,bool up) {
+static void draw_page_arrow(int centre_x,int centre_y,bool up) {
     // A compact swipe-direction hint beside the page counter. Three-pixel
     // strokes remain legible on e-paper without consuming another row.
     epd_fill_rect({centre_x-1,centre_y-7,3,15},0,fb);
@@ -685,17 +686,20 @@ static void draw_list_page_arrow(int centre_x,int centre_y,bool up) {
     }
 }
 
-static void draw_list_page_footer(size_t page,size_t count) {
-    const size_t pages=list_page_count(count);
+static void draw_page_indicator(size_t page,size_t pages,int y) {
     if(pages<=1)return;
     char page_text[24];
     snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",(unsigned)(page+1),(unsigned)pages);
     const int text_width=(int)strlen(page_text)*12;
     const int text_left=(540-text_width)/2;
-    centred(page_text,875,2,0,true);
+    centred(page_text,y,2,0,true);
     // Swipe down returns to the previous page; swipe up advances.
-    if(page>0)draw_list_page_arrow(text_left-24,882,false);
-    if(page+1<pages)draw_list_page_arrow(text_left+text_width+24,882,true);
+    if(page>0)draw_page_arrow(text_left-24,y+7,false);
+    if(page+1<pages)draw_page_arrow(text_left+text_width+24,y+7,true);
+}
+
+static void draw_list_page_footer(size_t page,size_t count) {
+    draw_page_indicator(page,list_page_count(count),875);
 }
 
 static void draw_contacts() {
@@ -950,6 +954,8 @@ static void chat_page_bounds(size_t count,int available,uint8_t requested,size_t
     if(!count){first=end=0;pages=1;}else if(requested>=pages){chat_page=pages-1;chat_page_bounds(count,available,chat_page,first,end,pages);}
 }
 
+static constexpr int CHAT_HISTORY_AVAILABLE=674;
+
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
     const size_t count=ui_data?ui_data->active_message_count():0;
@@ -958,7 +964,7 @@ static void draw_chat(bool channel) {
     if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
     if(keyboard){box(12,544,516,70);if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);else text("Enter text",28,568,2,0,false);draw_keyboard();}
     else{
-        if(pages>1){box(12,818,160,62,chat_page+1>=pages);text("OLDER",50,839,2,chat_page+1>=pages?0xFF:0,true);box(368,818,160,62,chat_page==0);text("NEWER",406,839,2,chat_page==0?0xFF:0,true);char p[18];snprintf(p,sizeof(p),"PAGE %u OF %u",chat_page+1,pages);centred(p,840,2,0,true);}
+        draw_page_indicator(chat_page,pages,840);
         box(12,888,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,908,2,0,true);
     }
 }
@@ -966,41 +972,51 @@ static void draw_chat(bool channel) {
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",300,3,0,true);return;}
-    centred(node.name,126,4,0,true);char page[20];snprintf(page,sizeof(page),"PAGE %u OF 2",details_page+1);centred(page,174,2,0,true);
-    if(details_page==0){
-        text("LAST ADVERT",24,230,2,0,true);
-        text(node.advert_age,230,230,2);
-        text("ROUTE",24,310,2,0,true);text(node.route,230,310,2);
-        text("POSITION",24,380,2,0,true);
-        draw_wrapped(node.position,230,380,25,2,0,false,2);
-        // Source age and last-heard time differ: a successful info reply
-        // does not make an older saved coordinate a fresh GPS fix.
-        draw_wrapped(node.position_source,230,424,25,2,0,false,1);
-        text("LAST HEARD",24,450,2,0,true);
-        draw_wrapped(node.last_seen,230,450,25,2,0,false,1);
-        text("IDENTITY",24,480,2,0,true);text(node.identity,230,480,2);
-        if(node.latitude||node.longitude){
-            box(24,540,492,62);centred("OPEN POSITION ON MAP",561,2,0,true);
-        }
-    }
-    else{text("STATUS",24,230,2,0,true);draw_wrapped(node.status,24,264,39,2,0,false,2);text("TELEMETRY / POSITION",24,350,2,0,true);draw_wrapped(node.telemetry,24,384,39,2,0,false,4);text("DISCOVERED PATH",24,530,2,0,true);draw_wrapped(node.path,24,564,39,2,0,false,2);box(24,650,492,70,true);centred(node.request_active?"REQUESTING...":"REQUEST ALL INFO",674,3,0xFF,true);}
-    // Action labels must be centered within THEIR OWN rectangles. centred()
-    // centers over the entire 540px display and previously put both CHAT and
-    // DELETE on top of each other, between two otherwise blank buttons.
+    if(details_page>=NODE_INFO_PAGE_COUNT)details_page=NODE_INFO_PAGE_COUNT-1;
+    centred(node.name,126,4,0,true);
     auto action_button=[](const char* label,int x,int y,int w,int h,bool selected=false) {
         box(x,y,w,h,selected);
         const int scale=2;
         const int label_width=(int)strlen(label)*6*scale;
         text(label,x+(w-label_width)/2,y+(h-7*scale)/2,scale,selected?0xFF:0,true);
     };
-    action_button("PREV",24,738,220,58,details_page==0);
-    action_button("NEXT",296,738,220,58,details_page==1);
+    auto request_label=[&](UiNodeInfoRequest request,const char* idle) {
+        return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
+    };
+
     if(details_page==0){
+        text("OVERVIEW",24,206,3,0,true);
+        text("LAST ADVERT",24,258,2,0,true);text(node.advert_age,230,258,2);
+        text("ROUTE",24,326,2,0,true);text(node.route,230,326,2);
+        text("POSITION",24,394,2,0,true);draw_wrapped(node.position,230,394,25,2,0,false,2);
+        // Source age and last-heard time differ: a successful info reply
+        // does not make an older saved coordinate a fresh GPS fix.
+        draw_wrapped(node.position_source,230,438,25,2,0,false,1);
+        text("LAST HEARD",24,480,2,0,true);draw_wrapped(node.last_seen,230,480,25,2,0,false,1);
+        text("IDENTITY",24,526,2,0,true);text(node.identity,230,526,2);
+        if(node.latitude||node.longitude){box(24,590,492,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
         if(node.saved_contact){
             action_button("CHAT",24,808,240,70);
             action_button("DELETE",276,808,240,70);
         } else action_button("ADD CONTACT",24,808,492,70,true);
+    } else if(details_page==1){
+        text("STATUS",24,220,3,0,true);
+        draw_wrapped(node.status,24,270,39,2,0,false,6);
+        action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,650,492,70,true);
+    } else if(details_page==2){
+        text("TELEMETRY / POSITION",24,220,3,0,true);
+        draw_wrapped(node.telemetry,24,270,39,2,0,false,4);
+        text("POSITION",24,410,2,0,true);draw_wrapped(node.position,24,444,39,2,0,false,2);
+        draw_wrapped(node.position_source,24,496,39,2,0,false,1);
+        if(node.latitude||node.longitude){box(24,548,492,62);centred("OPEN POSITION ON MAP",569,2,0,true);}
+        action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),24,650,492,70,true);
+    } else {
+        text("DISCOVERED PATH",24,220,3,0,true);
+        draw_wrapped(node.path,24,270,39,2,0,false,5);
+        text("SAVED ROUTE",24,430,2,0,true);draw_wrapped(node.route,24,464,39,2,0,false,2);
+        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),24,650,492,70,true);
     }
+    draw_page_indicator(details_page,NODE_INFO_PAGE_COUNT,770);
 }
 
 static void settings_row(const char* title,const char* subtitle,int y);
@@ -1884,20 +1900,16 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::ContactChat:
-            if(!keyboard_visible&&hit(x,y,12,818,160,62)){chat_page++;draw_screen();refresh(MODE_GL16);return true;}
-            if(!keyboard_visible&&hit(x,y,368,818,160,62)&&chat_page>0){chat_page--;draw_screen();refresh(MODE_GL16);return true;}
-            if(hit(x,y,12,888,516,62)){keyboard_message_mode=true;keyboard_visible=true;chat_page=0;draw_screen();refresh(MODE_GL16);return true;}break;
         case Screen::ChannelChat:
-            if(!keyboard_visible&&hit(x,y,12,818,160,62)){chat_page++;draw_screen();refresh(MODE_GL16);return true;}
-            if(!keyboard_visible&&hit(x,y,368,818,160,62)&&chat_page>0){chat_page--;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,12,888,516,62)){keyboard_message_mode=true;keyboard_visible=true;chat_page=0;draw_screen();refresh(MODE_GL16);return true;}break;
         case Screen::ContactDetails:
             if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
-                if(hit(x,y,24,738,220,58)&&details_page>0){details_page--;draw_screen();refresh(MODE_GL16);return true;}
-                if(hit(x,y,296,738,220,58)&&details_page<1){details_page++;draw_screen();refresh(MODE_GL16);return true;}
-                if(details_page==1&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info()?"REQUESTING ALL INFO":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
-                if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,540,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
+                if(details_page==1&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==2&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==3&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(details_page==0&&(node.latitude||node.longitude)&&hit(x,y,24,590,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
+                if(details_page==2&&(node.latitude||node.longitude)&&hit(x,y,24,548,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(details_page==0&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
                 if(details_page==0&&node.saved_contact&&hit(x,y,276,808,240,70)){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MODE_DU);return true;}
                 if(details_page==0&&!node.saved_contact&&hit(x,y,24,808,492,70)){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MODE_DU);return true;}
@@ -2368,6 +2380,25 @@ void ui_loop() {
             if((size_t)next!=page){
                 page=(size_t)next;
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",screen==Screen::Contacts?"contacts":"channels",(unsigned)(page+1),(unsigned)pages);
+                draw_screen();refresh(MODE_GL16);
+            }
+        }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            const size_t count=ui_data?ui_data->active_message_count():0;
+            size_t first=0,end=0;uint8_t pages=1;
+            chat_page_bounds(count,CHAT_HISTORY_AVAILABLE,chat_page,first,end,pages);
+            int next=(int)chat_page+(tap.dy<0?1:-1);
+            if(next<0)next=0;if(next>=pages)next=pages-1;
+            if((uint8_t)next!=chat_page){
+                chat_page=(uint8_t)next;
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u/%u\n",chat_page+1,pages);
+                draw_screen();refresh(MODE_GL16);
+            }
+        }else if(screen==Screen::ContactDetails&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            int next=(int)details_page+(tap.dy<0?1:-1);
+            if(next<0)next=0;if(next>=NODE_INFO_PAGE_COUNT)next=NODE_INFO_PAGE_COUNT-1;
+            if((uint8_t)next!=details_page){
+                details_page=(uint8_t)next;
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] node-info page=%u/%u\n",details_page+1,NODE_INFO_PAGE_COUNT);
                 draw_screen();refresh(MODE_GL16);
             }
         }else if(screen==Screen::Presets&&abs(tap.dy)>60){
