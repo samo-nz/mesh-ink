@@ -48,6 +48,7 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 - MeshCore Bluetooth companion mode
 - Configurable LoRa region and radio presets
 - E-paper interface with frontlight controls
+- Pull-down Quick Settings for brightness, advert flood and power off
 - Low-power standby with long-press wake/sleep
 - New-message indication while in standby
 - Local message history
@@ -173,6 +174,16 @@ On first setup, choose a node name and radio preset. MeshInk then opens into the
 The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. From More you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode.
 
 A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
+
+### Quick Settings
+
+Swipe down from the **top edge of the screen** to open Quick Settings. From here you can quickly:
+
+- Adjust the **front-light brightness**, including turning it off.
+- Send an **Advert Flood** to advertise your node across the mesh.
+- **Power Off** the device.
+
+Swipe **up** to close Quick Settings and return to the previous screen.
 
 ### Maps: controls and gestures
 
