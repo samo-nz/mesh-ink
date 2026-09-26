@@ -80,9 +80,19 @@ contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
 contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
-assert "login_active_node(const char* password)" in data_source, "UI provider exposes protected-node login"
+assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
 assert "frame[0]=26" in runtime_source, "protected-node login uses MeshCore CMD_SEND_LOGIN"
 assert "frame[0]==0x85" in runtime_source and "frame[0]==0x86" in runtime_source, "protected-node login handles success and failure pushes"
+assert "PERM_ACL_" not in source, "UI must display returned role without inventing ACL constants"
+assert 'strcpy(detail_access_,"GUEST")' in runtime_source, "Guest ACL role is reported"
+assert 'strcpy(detail_access_,"READ ONLY")' in runtime_source, "Read-only ACL role is reported"
+assert 'strcpy(detail_access_,"READ/WRITE")' in runtime_source, "Read-write ACL role is reported"
+assert 'strcpy(detail_access_,"ADMIN")' in runtime_source, "Admin ACL role is reported"
+assert 'Preferences prefs;if(!prefs.begin("mesh-auth",false))return false;' in runtime_source, "saved remote passwords persist in NVS"
+assert "uint8_t key[PUB_KEY_SIZE]" in runtime_source and "char password[16]" in runtime_source, "saved credentials are keyed to full node identity"
+contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbox")
+contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
+
 assert "contact.type==ADV_TYPE_REPEATER||contact.type==ADV_TYPE_ROOM" in runtime_source, "status capability includes repeater and room server"
 assert "if(request==UiNodeInfoRequest::Status&&(!protected_server||!detail_authenticated_))return false;" in runtime_source, "status requests require authenticated protected server"
 assert "BATTERY %.2f V" in runtime_source and "PACKETS RX/TX" in runtime_source, "server status payload is decoded into readable metrics"
