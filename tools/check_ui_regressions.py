@@ -154,5 +154,17 @@ assert 'initial_gps.getBool("gps_default_v1",false)' in companion, "GPS defaults
 assert "settings->gps_enabled=1;" in companion, "new setup GPS must default ON"
 assert "settings->gps_interval=0;" in companion, "new setup GPS must default continuous"
 assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default marker missing"
+# Portrait keyboard ergonomics: message entry uses a wide space bar with no
+# adjacent HIDE key; Radio Settings name entry has a wide SAVE action and
+# dismisses by tapping above the keyboard instead.
+contains('key("SPACE",120,898,298);', "message keyboard wide space bar")
+contains('key("SEND",426,898,102);', "message SEND remains isolated at far right")
+contains('if(y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}', "message keyboard dismisses by tapping above it")
+contains('if(x<422){append(\' \');queue_text_refresh();return true;}', "former message HIDE region belongs to SPACE")
+contains('screen==Screen::RadioSettings&&!keyboard_password_mode', "Radio Settings uses dedicated name-entry bottom row")
+contains('key("SAVE",120,898,408);', "Radio Settings has wide SAVE action")
+contains('if(screen==Screen::RadioSettings&&y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}', "Radio Settings keyboard dismisses by tapping above it")
+assert source.count('key("HIDE",318,898,100);')==1, "HIDE must remain only for non-message/non-Radio-Settings flows"
+
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
