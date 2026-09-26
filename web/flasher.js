@@ -164,6 +164,7 @@ async function flash() {
   updateControls();
   let transport = null;
   let completed = false;
+  let writeStarted = false;
   try {
     setActivity(`Preparing MeshInk v${activeManifest.version} ${wipe ? "install" : "update"}…`);
     const item = activeManifest.files[mode];
@@ -188,6 +189,7 @@ async function flash() {
     progressLabel.textContent = "Writing firmware: 0%";
     log(wipe ? "Erasing entire flash, then writing 16 MB image at 0x0…" :
                "Writing application at 0x10000 with eraseAll=false; NVS and message storage are left alone.");
+    writeStarted = true;
     await loader.writeFlash({
       fileArray: [{ data: bytes, address: wipe ? FULL_WIPE_ADDRESS : UPDATE_ADDRESS }],
       flashMode: "dio",
@@ -217,7 +219,7 @@ async function flash() {
     if (!completed) {
       const message = error.message || String(error);
       const cancelled = error.name === "NotFoundError";
-      const connectionFailure = !cancelled && (!transport || !/writing firmware/i.test(progressLabel.textContent));
+      const connectionFailure = !cancelled && !writeStarted;
       progress.removeAttribute("value");
       progress.hidden = true;
       connectionRetry = connectionFailure;
