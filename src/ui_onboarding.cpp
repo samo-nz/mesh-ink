@@ -1097,11 +1097,12 @@ static void draw_meshink_logo(int top,bool compact=false) {
 static void draw_about() {
     draw_app_header("ABOUT",true);
     draw_meshink_logo(118,true);
-    if(node_name[0])centred(node_name,560,3,0,true);
-    centred(UI_VERSION,602,3,0,true);
-    text("HARDWARE",24,680,2,0,true);text("LILYGO T5 PRO",250,680,2);
-    text("MODE",24,730,2,0,true);text("LOCAL UI + BLE",250,730,2);
-    text("CORE",24,780,2,0,true);text("MESHCORE",250,780,2);
+    centred("Made by Samo",510,2,0,true);
+    centred("github.com/samo-nz/mesh-ink",540,2,0,true);
+    if(node_name[0])centred(node_name,600,3,0,true);
+    centred(UI_VERSION,642,3,0,true);
+    text("HARDWARE",24,720,2,0,true);text("LILYGO T5 PRO",250,720,2);
+    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_VERSION,250,770,2);
 }
 
 static void draw_screen();
