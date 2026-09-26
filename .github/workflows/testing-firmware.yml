@@ -14,6 +14,11 @@ on:
       - 'tools/check_ui_regressions.py'
       - 'src/t5_timing.*'
       - 'src/unified_main.cpp'
+      - 'src/cache64_compat.cpp'
+      - 'src/CMakeLists.txt'
+      - 'CMakeLists.txt'
+      - 'sdkconfig.cache64'
+      - 'cache64_include/**'
       - '.github/workflows/testing-firmware.yml'
   workflow_dispatch:
 
@@ -76,6 +81,9 @@ jobs:
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE 64' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_64B 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BLUEDROID_ENABLED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_GATTS_ENABLE 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_GATTC_ENABLE 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
       - name: Prepare cache64 experimental firmware
         if: steps.cache64_build.outcome == 'success'
         run: |
