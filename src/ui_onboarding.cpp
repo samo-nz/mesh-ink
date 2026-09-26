@@ -671,12 +671,14 @@ static void draw_app_header(const char* title,bool back=false,const char* action
 }
 
 static const char* node_role_label(uint8_t type){
+    static char unknown[16];
     switch(type){
+        case (uint8_t)UiNodeRole::Unknown:return "UNKNOWN";
         case (uint8_t)UiNodeRole::Chat:return "CHAT";
         case (uint8_t)UiNodeRole::Repeater:return "REPEATER";
         case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";
         case (uint8_t)UiNodeRole::Sensor:return "SENSOR";
-        default:return "UNKNOWN";
+        default:snprintf(unknown,sizeof(unknown),"TYPE %u",(unsigned)type);return unknown;
     }
 }
 static void draw_node_role_icon(uint8_t type,int x,int y){
@@ -1017,6 +1019,12 @@ static void draw_contact_details() {
     };
     const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
 
+    if(page!=NodeInfoPage::Overview&&!node.saved_contact){
+        text("ADD CONTACT FIRST",24,250,3,0,true);
+        draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",24,304,39,2,0,false,4);
+        draw_page_indicator(details_page,pages,770);
+        return;
+    }
     if(page==NodeInfoPage::Overview){
         text("OVERVIEW",24,206,3,0,true);
         text("LAST ADVERT",24,258,2,0,true);text(node.advert_age,230,258,2);
@@ -1978,15 +1986,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
                 const NodeInfoPage page=node_info_page(node.node_type,details_page);
                 const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
-                if(page==NodeInfoPage::Status&&hit(x,y,24,650,492,70)){
+                if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,24,650,492,70)){
                     if(!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
-                if(page==NodeInfoPage::Telemetry&&hit(x,y,24,650,492,70)){
+                if(node.saved_contact&&page==NodeInfoPage::Telemetry&&hit(x,y,24,650,492,70)){
                     if(repeater&&!node.authenticated){if(!node.login_active){repeater_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
-                if(page==NodeInfoPage::Path&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
+                if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,24,650,492,70)){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;}
                 if(page==NodeInfoPage::Overview&&(node.latitude||node.longitude)&&hit(x,y,24,590,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,24,548,492,62)){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,24,808,240,70)){open_screen(Screen::ContactChat);return true;}
