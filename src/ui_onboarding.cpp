@@ -1049,7 +1049,7 @@ static void draw_contact_details() {
         if(!node.authenticated){
             draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
             if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",24,410,2,0,true);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,808,492,70,true);
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
             text(login_text,24,258,2,0,true);
@@ -1060,7 +1060,7 @@ static void draw_contact_details() {
         text("TELEMETRY / POSITION",24,220,3,0,true);
         if(login_required&&!node.authenticated){
             draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,808,492,70,true);
         }else{
             draw_wrapped(node.telemetry,24,270,27,3,0,true,4);
             text("POSITION",24,420,2,0,true);draw_wrapped(node.position,24,454,27,3,0,true,2);
