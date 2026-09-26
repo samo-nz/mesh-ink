@@ -160,7 +160,7 @@ assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default 
 contains('key("SPACE",120,898,298);', "space-capable portrait keyboards use a wide space bar")
 contains('key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);', "message/password action remains isolated at far right")
 contains('if(y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}', "message keyboard dismisses by tapping above it")
-assert source.count("if(x<422){append(' ');queue_text_refresh();return true;}")>=2, "message and password former HIDE regions belong to SPACE")
+assert source.count("if(x<422){append(' ');queue_text_refresh();return true;}")>=2, "message and password former HIDE regions belong to SPACE"
 contains('key("SAVE",120,898,408);', "name entry uses a wide SAVE action instead of a dead space bar")
 contains('if(screen==Screen::RadioSettings&&y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}', "Radio Settings keyboard dismisses by tapping above it")
 assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
