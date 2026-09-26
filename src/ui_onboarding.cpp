@@ -17,6 +17,7 @@
 #include "map_tiles.h"
 #include "map_gestures.h"
 #include "t5_logging.h"
+#include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
@@ -98,6 +99,7 @@ static bool keyboard_visible = true;
 static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
 static bool keyboard_landscape = false;
+static bool standby_restore_landscape = false;
 static uint16_t status_unread = 0;
 static uint16_t status_channel_unread = 0;
 static bool status_gps_enabled = false;
@@ -152,6 +154,14 @@ static uint8_t standby_timeout_index=1;
 static uint32_t last_user_activity=0;
 static bool status_wake_light=false;
 static bool message_alert_active=false;
+static bool quick_panel_active=false;
+static bool quick_panel_restore_landscape=false;
+static constexpr int QUICK_PANEL_BOTTOM=620;
+static constexpr int QUICK_SLIDER_LEFT=44;
+static constexpr int QUICK_SLIDER_RIGHT=496;
+static constexpr int QUICK_SLIDER_Y=190;
+static volatile bool quick_slider_dragging=false;
+static volatile uint8_t quick_slider_preview=30;
 static uint8_t message_alert_phase=0;
 static uint32_t message_alert_deadline=0;
 static uint32_t message_alert_cooldown_until=0;
@@ -159,7 +169,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu,
-    Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
+    Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
@@ -240,8 +250,17 @@ static const char* standby_timeout_name(){static const char* names[]={"5 MINUTES
 static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(status_hour*60+status_minute);return night_start_minutes<=night_end_minutes?(now>=night_start_minutes&&now<night_end_minutes):(now>=night_start_minutes||now<night_end_minutes);}
 static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
 static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();const uint8_t duty=frontlight_lit?(uint8_t)max(1,(frontlight_brightness*255)/100):0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);}
+static void frontlight_preview(uint8_t level){
+    // Live PWM feedback for the quick slider only. Do not alter the persisted
+    // brightness or redraw the e-paper until the release event is handled.
+    frontlight_lit=level>0;
+    const uint8_t duty=level?(uint8_t)max(1,((int)level*255)/100):0;
+    ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);
+    const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];
+    frontlight_deadline=timeout?millis()+timeout:0;
+}
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
-static void frontlight_service(){if(message_alert_active)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
+static void frontlight_service(){if(message_alert_active||quick_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 // Keep the original five-field single-touch event compatible with all UI
@@ -940,6 +959,7 @@ static void draw_more() {
     draw_app_header("MORE");
     settings_row("DISCOVERED ADVERTS","RECENT NODES HEARD",130);settings_row("ADVERTISE","ZERO HOP OR FLOOD",260);
     settings_row("SETTINGS","DEVICE AND RADIO",390);settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",520);
+    settings_row("HELP","USING MESHINK",650);
     draw_bottom_nav(3);
 }
 
@@ -957,7 +977,8 @@ static void draw_settings() {
     draw_app_header("SETTINGS",true);
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
     settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
-    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
+    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
+    settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
 }
 
 static void draw_radio_settings() {
@@ -1011,12 +1032,26 @@ static void draw_display_settings() {
     box(12,358,516,160);text("BRIGHTNESS",28,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
     epd_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;epd_fill_rect({knob-12,449,24,35},0,fb);text("-",28,452,3,0,true);text("+",492,452,3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
-    text(map_imperial?"MAP SCALE: IMPERIAL":"MAP SCALE: METRIC",28,652,2,0,true);
-    const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?758:674;
+    settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
+    const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
     if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
     box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
-    centred("SHORT BOOT: REFRESH",856,2,0,true);
-    centred("HOLD BOOT: STANDBY",882,2,0,true);
+}
+
+static void draw_help() {
+    draw_app_header("USING MESHINK",true);
+    // Keep each heading close to its paragraph; 2x body text is the largest
+    // size that fits the complete guide, including the final "UI.".
+    text("QUICK SETTINGS",24,142,3,0,true);
+    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,176,39,2,0,false,3);
+    text("BOOT BUTTON",24,266,3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,300,39,2,0,false,5);
+    text("KEYBOARD",24,444,3,0,true);
+    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,478,39,2,0,false,4);
+    text("MAPS",24,586,3,0,true);
+    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,620,39,2,0,false,4);
+    text("BLUETOOTH COMPANION MODE",24,728,3,0,true);
+    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,762,39,2,0,false,5);
 }
 
 static void draw_standby(){
@@ -1063,24 +1098,165 @@ static void draw_meshink_logo(int top,bool compact=false) {
 static void draw_about() {
     draw_app_header("ABOUT",true);
     draw_meshink_logo(118,true);
-    if(node_name[0])centred(node_name,560,3,0,true);
-    centred(UI_VERSION,602,3,0,true);
-    text("HARDWARE",24,680,2,0,true);text("LILYGO T5 PRO",250,680,2);
-    text("MODE",24,730,2,0,true);text("LOCAL UI + BLE",250,730,2);
-    text("CORE",24,780,2,0,true);text("MESHCORE",250,780,2);
+    centred("Made by Samo",506,3,0,true);
+    centred("github.com/samo-nz/mesh-ink",540,2,0,true);
+    if(node_name[0])centred(node_name,600,3,0,true);
+    centred(UI_VERSION,642,3,0,true);
+    text("HARDWARE",24,720,2,0,true);text("LILYGO T5 PRO",170,720,2);
+    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",170,770,2);
+}
+
+static void draw_screen();
+static void refresh(EpdDrawMode mode,bool wake_light);
+static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh);
+
+static void draw_underlying_screen() {
+    // Render the current page normally, but without allowing its controls to
+    // receive events while the quick sheet is open.
+    const bool panel=quick_panel_active;
+    quick_panel_active=false;
+    draw_screen();
+    quick_panel_active=panel;
+}
+
+static void draw_quick_panel() {
+    // Keep the previous page visible below the sheet. E-paper has no alpha,
+    // so this is a normal redraw followed by an opaque top overlay.
+    draw_underlying_screen();
+
+    // Visually disable the exposed page with a sparse 25% black dither.
+    // One pixel in each 2x2 cell is darkened, preserving the page beneath
+    // while making it clear that tapping it only dismisses quick settings.
+    for(int y=QUICK_PANEL_BOTTOM;y<960;++y)
+        for(int x=((y&1)?1:0);x<540;x+=2)
+            if((y&1)==0) epd_draw_pixel(x,y,0x00,fb);
+
+    epd_fill_rect({0,0,540,QUICK_PANEL_BOTTOM},0xFF,fb);
+    epd_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
+
+    centred("QUICK SETTINGS",34,4,0,true);
+    centred("FRONT LIGHT",92,3,0,true);
+
+    // Full-width release-driven slider. The filled track and thumb show the
+    // persisted brightness; dragging does not redraw until the finger lifts.
+    const int track_y=QUICK_SLIDER_Y;
+    const int track_w=QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT;
+    box(QUICK_SLIDER_LEFT,track_y-8,track_w,16);
+    const int thumb_x=QUICK_SLIDER_LEFT+
+        ((int)frontlight_brightness*track_w)/100;
+    epd_fill_rect({QUICK_SLIDER_LEFT,track_y-5,
+        max(1,thumb_x-QUICK_SLIDER_LEFT),10},0x00,fb);
+    epd_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
+
+    centred("TAP OR DRAG TO SELECT",221,2,0,true);
+
+    // End controls and the current value share one row beneath the slider.
+    box(24,256,112,70);
+    // Draw the symbols as primitives so their visual centres are exact and
+    // independent of font glyph metrics.
+    epd_fill_rect({61,289,38,4},0x00,fb);
+    box(404,256,112,70);
+    epd_fill_rect({441,289,38,4},0x00,fb);
+    epd_fill_rect({458,272,4,38},0x00,fb);
+    char level[16];
+    if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
+    else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
+    centred(level,273,4,0,true);
+
+    box(24,410,238,100,true);
+    text("ADVERT FLOOD",24+(238-12*12)/2,449,2,0xFF,true);
+    box(278,410,238,100);
+    text("POWER OFF",278+(238-9*12)/2,449,2,0,true);
+
+    centred("TAP BELOW OR SWIPE UP TO CLOSE",560,2,0,true);
+    draw_toast();
+}
+
+static void close_quick_panel() {
+    if(!quick_panel_active)return;
+    quick_panel_active=false;
+    if(quick_panel_restore_landscape) {
+        quick_panel_restore_landscape=false;
+        keyboard_landscape=true;
+        epd_set_rotation(EPD_ROT_LANDSCAPE);
+    }
+    draw_screen();refresh(MODE_GL16,true);
+}
+
+static void open_quick_panel() {
+    if(quick_panel_active||standby_active)return;
+    map_taps={};
+    quick_panel_restore_landscape=keyboard_landscape;
+    if(keyboard_landscape) {
+        keyboard_landscape=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
+    quick_panel_active=true;
+    draw_quick_panel();
+    refresh(MODE_GL16,true);
+}
+
+static void quick_set_brightness(int value) {
+    frontlight_brightness=(uint8_t)max(0,min(100,value));
+    frontlight_mode=frontlight_brightness?FrontlightMode::On:FrontlightMode::Off;
+    save_frontlight_settings();
+    if(frontlight_brightness) frontlight_event();
+    else { frontlight_drive(false);frontlight_deadline=0; }
+    draw_quick_panel();
+    refresh(MODE_DU,false);
+}
+
+static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_t start_y=-1) {
+    if(!quick_panel_active)return false;
+    // Once a gesture starts on the slider, always commit its final clamped X
+    // on release. This includes releasing beyond either end or outside the
+    // slider vertically, matching the live PWM preview seen during the drag.
+    const bool slider_drag_release=
+        start_x>=QUICK_SLIDER_LEFT-16&&start_x<=QUICK_SLIDER_RIGHT+16&&
+        start_y>=146&&start_y<=226;
+    const bool slider_tap_release=
+        start_y<0&&y>=146&&y<=226&&
+        x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+    if(slider_drag_release||slider_tap_release) {
+        const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
+        const int value=((clamped-QUICK_SLIDER_LEFT)*100+
+            (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
+            (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
+        quick_set_brightness(value);
+        return true;
+    }
+
+    // Everything below the sheet is intentionally inert except dismissal.
+    if(y>=QUICK_PANEL_BOTTOM) { close_quick_panel();return true; }
+
+    if(hit(x,y,24,256,112,70)) { quick_set_brightness((int)frontlight_brightness-1);return true; }
+    if(hit(x,y,404,256,112,70)) { quick_set_brightness((int)frontlight_brightness+1);return true; }
+    if(hit(x,y,24,410,238,100)) {
+        show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
+        draw_quick_panel();refresh(MODE_DU,true);return true;
+    }
+    if(hit(x,y,278,410,238,100)) {
+        quick_panel_active=false;quick_panel_restore_landscape=false;
+        keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        screen=Screen::ShutdownConfirm;draw_screen();refresh(MODE_GL16,true);return true;
+    }
+    return true;
 }
 
 static void draw_screen() {
-    if(keyboard_landscape){draw_landscape_keyboard();return;}
+    // Standby must take precedence over every transient/landscape UI layer.
     if(standby_active){draw_standby();return;}
+    if(quick_panel_active){draw_quick_panel();return;}
+    if(keyboard_landscape){draw_landscape_keyboard();return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;case Screen::Timezone:draw_timezone();break;
-        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::About:draw_about();break;
+        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails)draw_bottom_nav(details_from_discovery?3:0);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
@@ -1421,9 +1597,22 @@ static void touch_sampler_task(void*){
                 if(!pressed)home_held=false;
             }else if(pressed){
                 last_x=x;last_y=y;
-                if(!held){held=true;start_x=x;start_y=y;frontlight_event();}
+                if(!held){
+                    held=true;start_x=x;start_y=y;frontlight_event();
+                    quick_slider_dragging=quick_panel_active&&
+                        y>=146&&y<=226&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+                }
+                if(quick_slider_dragging) {
+                    const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
+                    const int value=((clamped-QUICK_SLIDER_LEFT)*100+
+                        (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
+                        (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
+                    quick_slider_preview=(uint8_t)max(0,min(100,value));
+                    frontlight_preview(quick_slider_preview);
+                }
             }else if(held){
                 held=false;
+                quick_slider_dragging=false;
                 QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
                     Serial.println("[T5-TOUCH] input queue full; tap discarded");
@@ -1669,7 +1858,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,130,516,112)){open_screen(Screen::Discovery);return true;}
             if(hit(x,y,12,260,516,112)){open_screen(Screen::AdvertMenu);return true;}
             if(hit(x,y,12,390,516,112)){open_screen(Screen::Settings);return true;}
-            if(hit(x,y,12,520,516,112)){open_screen(Screen::CompanionConfirm);return true;}break;
+            if(hit(x,y,12,520,516,112)){open_screen(Screen::CompanionConfirm);return true;}
+            if(hit(x,y,12,650,516,112)){open_screen(Screen::Help);return true;}break;
         case Screen::AdvertMenu:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
             if(hit(x,y,12,180,516,112)){show_toast(local_mesh_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}
@@ -1720,9 +1910,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,238,516,112)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,538,516,112)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MODE_DU);return true;}
-            if(hit(x,y,12,630,516,50)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MODE_DU);return true;}
-            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,674,492,70)){open_screen(Screen::NightSchedule);return true;}
-            if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?758:674,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
+            if(hit(x,y,12,656,516,112)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MODE_DU);return true;}
+            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,790,492,70)){open_screen(Screen::NightSchedule);return true;}
+            if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?806:790,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
         case Screen::NightSchedule:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::DisplaySettings);return true;}
             if(hit(x,y,24,150,492,112)){night_edit_field=0;draw_screen();refresh(MODE_DU);return true;}
@@ -1730,6 +1920,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,24,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,296,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,24,600,492,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MODE_DU);return true;}break;
+        case Screen::Help:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}break;
         case Screen::About:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         default:break;
@@ -1740,6 +1932,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
     T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] tap x=%d y=%d\n",x,y);
+    if(handle_quick_panel_tap(x,y))return;
     if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
@@ -1809,12 +2002,34 @@ static void set_touch_power(bool enabled){
 }
 
 static void enter_standby(const char* reason){
-    if(standby_active)return;standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
+    if(standby_active)return;
+    // Standby owns the whole display. Dismiss transient quick settings first
+    // so it cannot remain layered over, or reappear immediately after, standby.
+    // Preserve the view underneath Quick Settings before dismissing it.
+    // A panel opened over the landscape keyboard has already switched the
+    // physical display to portrait, so keyboard_landscape alone is not enough.
+    const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);
+    quick_panel_active=false;quick_panel_restore_landscape=false;quick_slider_dragging=false;
+    // Standby is always portrait, but remember a landscape keyboard so wake
+    // returns to the exact editing view that was active before standby.
+    standby_restore_landscape=restore_landscape;
+    if(restore_landscape){
+        keyboard_landscape=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
+    standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
     T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
     if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
+    if(standby_restore_landscape){
+        standby_restore_landscape=false;
+        keyboard_landscape=true;
+        epd_set_rotation(EPD_ROT_LANDSCAPE);
+    } else {
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
     set_cpu_target(160,"wake");T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
 }
 
@@ -1857,9 +2072,10 @@ static void service_boot_button(){
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
     if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){
-        // Short BOOT refreshes the CURRENT screen without changing navigation,
-        // keyboard, map centre, zoom or the open conversation.
-        draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);
+        // Short BOOT refresh is deliberately disabled in standby. Waking from
+        // standby requires the existing two-second hold, avoiding needless EPD
+        // refreshes from accidental short presses.
+        if(!standby_active){draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);}
     }pressed_at=0;handled=false;}
 }
 
@@ -1887,7 +2103,7 @@ void ui_setup() {
     map_saved_gps_longitude=map_last_gps_longitude;
     frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
-    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=30;
+    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness>100)frontlight_brightness=30;
     if(standby_timeout_index>3)standby_timeout_index=1;
     if(night_start_minutes>=1440)night_start_minutes=20*60;if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
@@ -1942,6 +2158,11 @@ void ui_finish_startup() {
     draw_screen();
     if(screen==Screen::Welcome)
         fast_full_redraw("FIRST_SETUP_SCREEN",false);
+    else if(screen==Screen::Contacts)
+        // Existing-user boot transitions directly from the dark startup logo
+        // to Contacts. Force the same complete refresh as a short BOOT press
+        // so the splash cannot remain faintly visible in the panel history.
+        fast_full_redraw("CONTACTS_AFTER_BOOT",false);
     else
         refresh(MODE_GL16);
     // The first interactive frame already includes the MeshCore status
@@ -1997,6 +2218,20 @@ void ui_loop() {
             }
             details_page=0;details_from_discovery=false;chat_page=0;
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
+            continue;
+        }
+        // A deliberate downward pull beginning at the top edge opens the
+        // CrossPoint-style quick panel before page-specific swipe handling.
+        const int first_y=tap.y-tap.dy;
+        if(!quick_panel_active&&first_y<=80&&tap.dy>=90&&abs(tap.dy)>abs(tap.dx)) {
+            open_quick_panel();
+            continue;
+        }
+        if(quick_panel_active) {
+            const int quick_start_x=tap.x-tap.dx;
+            const int quick_start_y=tap.y-tap.dy;
+            if(tap.dy<=-90&&abs(tap.dy)>abs(tap.dx)) close_quick_panel();
+            else handle_quick_panel_tap(tap.x,tap.y,quick_start_x,quick_start_y);
             continue;
         }
         // An event sampled while Maps was visible must never become a
