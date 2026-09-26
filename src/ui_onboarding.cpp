@@ -421,7 +421,17 @@ static void draw_keyboard() {
     }
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
     key("DEL",460,828,68);
-    key("LAND",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"SAVE"),426,898,102);
+    key("LAND",12,898,100);
+    if(keyboard_message_mode){
+        // Message composition follows conventional phone keyboards: give the
+        // space bar the wide centre/right area and keep SEND isolated.
+        key("SPACE",120,898,298);
+        key("SEND",426,898,102);
+    }else{
+        key("SPACE",120,898,190);
+        key("HIDE",318,898,100);
+        key(keyboard_password_mode?"LOGIN":"SAVE",426,898,102);
+    }
 }
 
 static void landscape_key(const char* label,int x,int y,int w){
@@ -1912,6 +1922,10 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
+    // There is no HIDE key in message composition. Tapping anywhere above
+    // the keyboard dismisses it, matching common mobile keyboard behaviour
+    // and eliminating the easy-to-hit button beside SEND.
+    if(y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(meshink_keyboard::in_row(y,828)){
         if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
         if(x>=457){
@@ -1925,10 +1939,11 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
         append(character);queue_text_refresh();return true;
     }
     if(y>=894&&y<960){
-        // Extend each action into half of its neighbouring gap.
+        // Extend each action into half of its neighbouring gap. The old HIDE
+        // region is now part of SPACE, giving the portrait keyboard a normal
+        // wide space bar and reducing accidental mode changes.
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<314){append(' ');queue_text_refresh();return true;}
-        if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        if(x<422){append(' ');queue_text_refresh();return true;}
         if(compose_text[0]){
             const bool ok=local_mesh_send_active(compose_text);
             if(ok){compose_text[0]=0;keyboard_visible=false;}
