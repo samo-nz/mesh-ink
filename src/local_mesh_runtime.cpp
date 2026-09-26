@@ -126,7 +126,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     char detail_identity_[24]{},detail_seen_[72]{},detail_advert_age_[72]{};
     char detail_position_source_[72]{},detail_route_[40]{},detail_position_[64]{};
     char detail_status_[80]="NOT REQUESTED",detail_telemetry_[120]="NOT REQUESTED",detail_path_[64]="NOT REQUESTED";
-    bool detail_request_active_=false,request_gps_received_=false;int32_t detail_lat_=0,detail_lon_=0;
+    bool detail_request_active_=false,request_gps_received_=false;UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
     uint8_t detail_frame_[192]{};uint8_t detail_frame_len_=0;
     MessageStore store_;
     static void bind(ListStorage& item){item.entry.title=item.title;item.entry.subtitle=item.subtitle;item.entry.time=item.time;}
@@ -166,7 +166,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
             view.entry.outgoing=m.state!=(uint8_t)UiMessageState::Received;view.entry.state=(UiMessageState)m.state;
         }
     }
-    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
+    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
     MeshCoreUiProvider(){for(auto& i:contacts_)bind(i);for(auto& i:channels_)bind(i);for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);for(auto& i:active_messages_)bind(i);}
     void begin(){store_.begin();refresh(true);}
@@ -337,19 +337,19 @@ public:
         out={detail_contact_.name,self->detail_identity_,self->detail_seen_,
              self->detail_route_,self->detail_position_,self->detail_status_,
              self->detail_telemetry_,self->detail_path_,self->detail_lat_,
-             self->detail_lon_,detail_request_active_,detail_saved_,
+             self->detail_lon_,detail_request_active_,detail_request_type_,detail_saved_,
              self->detail_advert_age_,self->detail_position_source_};
         return true;
     }
     bool add_active_node()override{if(!detail_valid_||detail_saved_||!detail_frame_len_)return false;detail_frame_[0]=9;if(!local_mesh_enqueue_command(detail_frame_,detail_frame_len_))return false;detail_saved_=true;return true;}
     bool remove_active_contact()override{if(!detail_valid_||!detail_saved_)return false;uint8_t command[1+PUB_KEY_SIZE]{15};memcpy(command+1,detail_contact_.id.pub_key,PUB_KEY_SIZE);if(!local_mesh_enqueue_command(command,sizeof(command)))return false;detail_saved_=false;return true;}
-    bool request_active_node_info()override;
+    bool request_active_node_info(UiNodeInfoRequest request)override;
     const uint8_t* detail_key()const{return detail_contact_.id.pub_key;}
-    void request_state(bool active){detail_request_active_=active;ui_request_data_refresh("node-info");}
-    void request_timeout(uint8_t stage){
-        char* out=stage==0?detail_status_:stage==1?detail_telemetry_:detail_path_;
+    void request_state(bool active,UiNodeInfoRequest request=UiNodeInfoRequest::None){detail_request_active_=active;detail_request_type_=active?request:UiNodeInfoRequest::None;ui_request_data_refresh("node-info");}
+    void request_timeout(UiNodeInfoRequest request){
+        char* out=request==UiNodeInfoRequest::Status?detail_status_:request==UiNodeInfoRequest::Telemetry?detail_telemetry_:detail_path_;
         strcpy(out,"NO RESPONSE / NOT ALLOWED");
-        if(stage==1)ui_notify_node_position_unavailable();
+        if(request==UiNodeInfoRequest::Telemetry)ui_notify_node_position_unavailable();
     }
     void status_response(const uint8_t* data,size_t len){note_info_reply();snprintf(detail_status_,sizeof(detail_status_),"RECEIVED  %u BYTES",(unsigned)len);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] node info: status reply received");}
     void path_response(const uint8_t* data,size_t len){note_info_reply();if(!len){strcpy(detail_path_,"NO PATH DATA");return;}const uint8_t hops=data[0]&0x3F;snprintf(detail_path_,sizeof(detail_path_),hops?"OUTBOUND %u HOP%s":"DIRECT / ZERO HOP",hops,hops==1?"":"S");T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] node info: path reply received");}
@@ -382,27 +382,33 @@ public:
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
 struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,ack=0,deadline=0;uint8_t key[6]{};char text[145]{};} pending_direct;
-struct PendingInfo{bool active=false;bool waiting_sent=false;uint8_t stage=0;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
+struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 int8_t pending_advert=-1;
 static bool enqueue_direct_attempt(){
     uint8_t frame[MAX_FRAME_SIZE+1]{};size_t p=0;frame[p++]=2;frame[p++]=0;frame[p++]=pending_direct.retry;memcpy(frame+p,&pending_direct.timestamp,4);p+=4;memcpy(frame+p,pending_direct.key,6);p+=6;const size_t n=min(strlen(pending_direct.text),(size_t)MAX_TEXT_LEN);memcpy(frame+p,pending_direct.text,n);p+=n;
     if(!local_mesh_enqueue_command(frame,p))return false;pending_direct.waiting_response=true;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u queued sequence=%lu\n",pending_direct.retry,(unsigned long)pending_direct.sequence);return true;
 }
-static bool enqueue_info_stage(){uint8_t frame[4+PUB_KEY_SIZE]{};size_t len=0;if(pending_info.stage==0){frame[0]=27;memcpy(frame+1,pending_info.key,PUB_KEY_SIZE);len=1+PUB_KEY_SIZE;}else if(pending_info.stage==1){frame[0]=39;memcpy(frame+4,pending_info.key,PUB_KEY_SIZE);len=4+PUB_KEY_SIZE;}else{frame[0]=52;frame[1]=0;memcpy(frame+2,pending_info.key,PUB_KEY_SIZE);len=2+PUB_KEY_SIZE;}if(!local_mesh_enqueue_command(frame,len))return false;pending_info.waiting_sent=true;pending_info.deadline=millis()+30000;return true;}
-static void advance_info(){if(++pending_info.stage>=3){pending_info.active=false;provider.request_state(false);return;}pending_info.waiting_sent=false;enqueue_info_stage();}
+static bool enqueue_info_request(){
+    uint8_t frame[4+PUB_KEY_SIZE]{};size_t len=0;
+    if(pending_info.request==UiNodeInfoRequest::Status){frame[0]=27;memcpy(frame+1,pending_info.key,PUB_KEY_SIZE);len=1+PUB_KEY_SIZE;}
+    else if(pending_info.request==UiNodeInfoRequest::Telemetry){frame[0]=39;memcpy(frame+4,pending_info.key,PUB_KEY_SIZE);len=4+PUB_KEY_SIZE;}
+    else if(pending_info.request==UiNodeInfoRequest::Path){frame[0]=52;frame[1]=0;memcpy(frame+2,pending_info.key,PUB_KEY_SIZE);len=2+PUB_KEY_SIZE;}
+    else return false;
+    if(!local_mesh_enqueue_command(frame,len))return false;
+    pending_info.waiting_sent=true;pending_info.deadline=millis()+30000;return true;
+}
+static void finish_info(){pending_info.active=false;pending_info.waiting_sent=false;pending_info.request=UiNodeInfoRequest::None;provider.request_state(false);}
 
-bool MeshCoreUiProvider::request_active_node_info(){
-    if(active_channel_||pending_info.active)return false;
+bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
+    if(active_channel_||pending_info.active||request==UiNodeInfoRequest::None)return false;
     ContactInfo contact{};if(!active_contact(contact))return false;
-    pending_info={};pending_info.active=true;
+    pending_info={};pending_info.active=true;pending_info.request=request;
     memcpy(pending_info.key,contact.id.pub_key,PUB_KEY_SIZE);
-    if(!enqueue_info_stage()){pending_info.active=false;return false;}
-    request_gps_received_=false;
-    // Older position retains its original source/age until a GPS reply arrives.
-    strcpy(detail_status_,"REQUESTING");
-    strcpy(detail_telemetry_,"WAITING");
-    strcpy(detail_path_,"WAITING");
-    request_state(true);
+    if(request==UiNodeInfoRequest::Telemetry)request_gps_received_=false;
+    char* target=request==UiNodeInfoRequest::Status?detail_status_:request==UiNodeInfoRequest::Telemetry?detail_telemetry_:detail_path_;
+    strcpy(target,"REQUESTING");
+    request_state(true,request);
+    if(!enqueue_info_request()){finish_info();strcpy(target,"REQUEST FAILED");return false;}
     return true;
 }
 }
@@ -411,11 +417,11 @@ UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
     if(!frame||!len)return;char message[150]{};
     if(frame[0]==0x8A){provider.cache_discovered(frame,len);provider.refresh(true);ui_request_data_refresh("new-advert");T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] discovered advert cached with full MeshCore identity");}
-    else if(pending_info.active&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){provider.status_response(frame+8,len-8);advance_info();}
-    else if(pending_info.active&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8B){provider.telemetry_response(frame+8,len-8);advance_info();}
-    else if(pending_info.active&&len>=9&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8D){provider.path_response(frame+8,len-8);advance_info();}
+    else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){provider.status_response(frame+8,len-8);finish_info();}
+    else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Telemetry&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8B){provider.telemetry_response(frame+8,len-8);finish_info();}
+    else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Path&&len>=9&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8D){provider.path_response(frame+8,len-8);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
-    else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.stage);advance_info();}
+    else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u transmitted ack=%08lx timeout=%lu\n",pending_direct.retry,(unsigned long)pending_direct.ack,(unsigned long)timeout);}
     else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
     else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct command failed error=%u\n",len>1?frame[1]:0);}
@@ -462,7 +468,7 @@ void local_mesh_loop(){
     sensors.loop();
     t5_gps_power_probe_tick(); // executes even when MeshCore has stopped the GPS provider
     rtc_clock.tick();
-    if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.stage);advance_info();}
+    if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
     if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
         if(pending_direct.retry>=5){provider.update_message(pending_direct.sequence,UiMessageState::Failed);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct failed after 5 retries sequence=%lu\n",(unsigned long)pending_direct.sequence);pending_direct.active=false;}
         else{pending_direct.retry++;provider.update_message(pending_direct.sequence,(UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;}}
