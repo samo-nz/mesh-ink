@@ -4,12 +4,14 @@
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
+#include <string.h>
 
 namespace {
 constexpr uint32_t LEARN_MS=30000;
 constexpr uint32_t SUMMARY_MS=60000;
 constexpr uint32_t EVENT_COOLDOWN_MS=5000;
 constexpr uint32_t SERIAL_EVENT_SPACING_MS=2000;
+constexpr uint32_t SLOW_CYCLE_FLOOR_US=500000;
 
 enum MetricId:uint8_t {
     TouchGap=0,TouchExec,MainGap,MeshExec,UiExec,DisplayExec,CycleExec,MetricCount
@@ -38,11 +40,43 @@ struct Event {
     uint32_t at_ms=0;
 };
 
+struct CycleDetail {
+    uint32_t mesh_us=0;
+    uint32_t ui_us=0;
+    uint32_t draw_us=0;          // longest draw_screen() in this loop
+    uint32_t display_us=0;       // cumulative physical EPD time this loop
+    uint32_t status_us=0;
+    uint32_t input_us=0;         // cumulative handler time for queued events
+    uint32_t max_queue_age_ms=0;
+    uint16_t input_events=0;
+    uint8_t max_queue_depth=0;
+    uint8_t display_count=0;
+    uint8_t requested_mode=0;
+    uint8_t actual_mode=0;
+    T5UiAction trigger=T5UiAction::None;
+    bool keyboard=false;
+    bool landscape=false;
+    bool standby=false;
+    char screen[20]="?";
+};
+
+struct SlowCycleEvent {
+    bool valid=false;
+    uint32_t total_us=0;
+    uint32_t heap=0;
+    uint32_t psram=0;
+    uint16_t cpu_mhz=0;
+    CycleDetail detail{};
+};
+
 Metric metrics[MetricCount]{};
 Event pending_event{};
+SlowCycleEvent pending_slow{};
+CycleDetail current_cycle{};
 bool event_pending=false;
 uint32_t suppressed_events=0,replaced_events=0,touch_queue_drops=0,touch_queue_drops_window=0;
-uint32_t started_ms=0,last_summary_ms=0,last_serial_event_ms=0;
+uint32_t slow_cycles_window=0,slow_suppressed=0,slow_replaced=0,slow_worst_us=0,slow_queue_age_worst_ms=0;
+uint32_t started_ms=0,last_summary_ms=0,last_serial_event_ms=0,last_slow_event_ms=0;
 uint32_t last_touch_start_us=0,last_cycle_start_us=0;
 bool learning=false;
 volatile T5TimingSection current_section=T5TimingSection::Idle;
@@ -67,6 +101,19 @@ static const char* section_name(T5TimingSection section){
         case T5TimingSection::Mesh:return "MESH";
         case T5TimingSection::Ui:return "UI";
         case T5TimingSection::Display:return "DISPLAY";
+        default:return "IDLE";
+    }
+}
+
+static const char* action_name(T5UiAction action){
+    switch(action){
+        case T5UiAction::Touch:return "TOUCH";
+        case T5UiAction::TextRefresh:return "TEXT";
+        case T5UiAction::StatusPoll:return "STATUS-POLL";
+        case T5UiAction::StatusRefresh:return "STATUS-REFRESH";
+        case T5UiAction::ToastRefresh:return "TOAST";
+        case T5UiAction::MessageAlert:return "ALERT";
+        case T5UiAction::Other:return "OTHER";
         default:return "IDLE";
     }
 }
@@ -169,6 +216,54 @@ static void print_ms_value(uint32_t us){
                   (unsigned long)((us%1000UL)/100UL));
 }
 
+static uint32_t slow_cycle_threshold_locked(){
+    const uint32_t learned=metrics[CycleExec].baseline;
+    return larger(SLOW_CYCLE_FLOOR_US,learned?learned*12UL:0UL);
+}
+
+static void maybe_queue_slow_cycle(uint32_t elapsed_us){
+    const uint32_t now=millis();
+    portENTER_CRITICAL(&timing_mux);
+    if(learning){
+        portEXIT_CRITICAL(&timing_mux);
+        return;
+    }
+    const uint32_t threshold=slow_cycle_threshold_locked();
+    if(elapsed_us<threshold){
+        portEXIT_CRITICAL(&timing_mux);
+        return;
+    }
+    slow_cycles_window++;
+    if(elapsed_us>slow_worst_us)slow_worst_us=elapsed_us;
+    if(current_cycle.max_queue_age_ms>slow_queue_age_worst_ms)
+        slow_queue_age_worst_ms=current_cycle.max_queue_age_ms;
+
+    SlowCycleEvent candidate{};
+    candidate.valid=true;
+    candidate.total_us=elapsed_us;
+    candidate.detail=current_cycle;
+    candidate.heap=ESP.getFreeHeap();
+    candidate.psram=ESP.getFreePsram();
+    candidate.cpu_mhz=(uint16_t)getCpuFrequencyMhz();
+
+    if(last_slow_event_ms&&now-last_slow_event_ms<EVENT_COOLDOWN_MS){
+        slow_suppressed++;
+        if(!pending_slow.valid||candidate.total_us>pending_slow.total_us){
+            pending_slow=candidate;
+            slow_replaced++;
+        }
+        portEXIT_CRITICAL(&timing_mux);
+        return;
+    }
+    last_slow_event_ms=now;
+    if(!pending_slow.valid)pending_slow=candidate;
+    else if(candidate.total_us>pending_slow.total_us){
+        pending_slow=candidate;
+        slow_replaced++;
+    }else slow_suppressed++;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
 static void finish_learning(){
     Metric snapshot[MetricCount]{};
     portENTER_CRITICAL(&timing_mux);
@@ -204,11 +299,15 @@ static void finish_learning(){
     Serial.print(" ui>");print_ms_value(snapshot[UiExec].threshold);
     Serial.print(" display>");print_ms_value(snapshot[DisplayExec].threshold);
     Serial.println("; abnormal samples never teach the baseline");
+    Serial.print("[T5-TIMING] correlated slow-loop snapshots start at >");
+    print_ms_value(larger(SLOW_CYCLE_FLOOR_US,snapshot[CycleExec].baseline*12UL));
+    Serial.println("; component timings may be nested, not additive");
 }
 
 static void print_summary(){
     Metric snapshot[MetricCount]{};
     uint32_t suppressed=0,replaced=0,queue_drops=0;
+    uint32_t slow_count=0,slow_supp=0,slow_repl=0,slow_worst=0,slow_age=0;
     portENTER_CRITICAL(&timing_mux);
     for(uint8_t i=0;i<MetricCount;++i){
         snapshot[i]=metrics[i];
@@ -220,6 +319,11 @@ static void print_summary(){
     suppressed=suppressed_events;suppressed_events=0;
     replaced=replaced_events;replaced_events=0;
     queue_drops=touch_queue_drops_window;touch_queue_drops_window=0;
+    slow_count=slow_cycles_window;slow_cycles_window=0;
+    slow_supp=slow_suppressed;slow_suppressed=0;
+    slow_repl=slow_replaced;slow_replaced=0;
+    slow_worst=slow_worst_us;slow_worst_us=0;
+    slow_age=slow_queue_age_worst_ms;slow_queue_age_worst_ms=0;
     portEXIT_CRITICAL(&timing_mux);
 
     Serial.print("[T5-TIMING] 60s: touch avg=");
@@ -231,17 +335,46 @@ static void print_summary(){
     Serial.print(" mesh=");print_ms_value(snapshot[MeshExec].window_max);
     Serial.print(" ui=");print_ms_value(snapshot[UiExec].window_max);
     Serial.print(" display=");print_ms_value(snapshot[DisplayExec].window_max);
-    Serial.printf(" queue-drops=%lu suppressed=%lu replaced=%lu\n",
-        (unsigned long)queue_drops,(unsigned long)suppressed,(unsigned long)replaced);
+    Serial.printf(" queue-drops=%lu slow=%lu",(unsigned long)queue_drops,(unsigned long)slow_count);
+    if(slow_count){
+        Serial.print(" slow-worst=");print_ms_value(slow_worst);
+        Serial.printf(" queue-age-worst=%lums",(unsigned long)slow_age);
+    }
+    Serial.printf(" suppressed=%lu/%lu replaced=%lu/%lu\n",
+        (unsigned long)suppressed,(unsigned long)slow_supp,
+        (unsigned long)replaced,(unsigned long)slow_repl);
+}
+
+static void print_slow(const SlowCycleEvent& slow){
+    const CycleDetail& d=slow.detail;
+    Serial.print("[T5-TIMING] SLOW cycle=");
+    print_ms_value(slow.total_us);
+    Serial.printf(" screen=%s action=%s keyboard=%d land=%d standby=%d cpu=%uMHz heap=%lu psram=%lu",
+        d.screen,action_name(d.trigger),d.keyboard,d.landscape,d.standby,
+        (unsigned)slow.cpu_mhz,(unsigned long)slow.heap,(unsigned long)slow.psram);
+    Serial.print(" mesh=");print_ms_value(d.mesh_us);
+    Serial.print(" ui=");print_ms_value(d.ui_us);
+    Serial.print(" draw-max=");print_ms_value(d.draw_us);
+    Serial.print(" display-sum=");print_ms_value(d.display_us);
+    Serial.printf(" refreshes=%u mode=%u>%u",(unsigned)d.display_count,
+        (unsigned)d.requested_mode,(unsigned)d.actual_mode);
+    Serial.print(" input-sum=");print_ms_value(d.input_us);
+    Serial.printf(" events=%u queue-age=%lums queue-depth=%u",
+        (unsigned)d.input_events,(unsigned long)d.max_queue_age_ms,
+        (unsigned)d.max_queue_depth);
+    Serial.print(" status=");print_ms_value(d.status_us);
+    Serial.println();
 }
 } // namespace
 
 void t5_timing_begin(){
     portENTER_CRITICAL(&timing_mux);
     for(uint8_t i=0;i<MetricCount;++i)metrics[i]=Metric{};
-    pending_event=Event{};event_pending=false;
+    pending_event=Event{};pending_slow=SlowCycleEvent{};current_cycle=CycleDetail{};
+    event_pending=false;
     suppressed_events=0;replaced_events=0;touch_queue_drops=0;touch_queue_drops_window=0;
-    started_ms=millis();last_summary_ms=started_ms;last_serial_event_ms=0;
+    slow_cycles_window=0;slow_suppressed=0;slow_replaced=0;slow_worst_us=0;slow_queue_age_worst_ms=0;
+    started_ms=millis();last_summary_ms=started_ms;last_serial_event_ms=0;last_slow_event_ms=0;
     last_touch_start_us=0;last_cycle_start_us=0;
     learning=true;
     current_section=T5TimingSection::Idle;current_section_started_us=micros();
@@ -283,13 +416,16 @@ uint32_t t5_timing_cycle_begin(){
     portENTER_CRITICAL(&timing_mux);
     previous=last_cycle_start_us;
     last_cycle_start_us=now;
+    current_cycle=CycleDetail{};
     portEXIT_CRITICAL(&timing_mux);
     if(previous)record_metric(MainGap,(uint32_t)(now-previous));
     return now;
 }
 
 void t5_timing_cycle_end(uint32_t started_us){
-    record_metric(CycleExec,(uint32_t)(micros()-started_us));
+    const uint32_t elapsed=(uint32_t)(micros()-started_us);
+    record_metric(CycleExec,elapsed);
+    maybe_queue_slow_cycle(elapsed);
 }
 
 uint32_t t5_timing_section_begin(T5TimingSection section){
@@ -301,6 +437,10 @@ void t5_timing_section_end(T5TimingSection section,uint32_t started_us){
     const uint32_t elapsed=(uint32_t)(micros()-started_us);
     if(section==T5TimingSection::Mesh)record_metric(MeshExec,elapsed);
     else if(section==T5TimingSection::Ui)record_metric(UiExec,elapsed);
+    portENTER_CRITICAL(&timing_mux);
+    if(section==T5TimingSection::Mesh)current_cycle.mesh_us=elapsed;
+    else if(section==T5TimingSection::Ui)current_cycle.ui_us=elapsed;
+    portEXIT_CRITICAL(&timing_mux);
     set_section(T5TimingSection::Idle);
 }
 
@@ -310,8 +450,61 @@ uint32_t t5_timing_display_begin(){
 }
 
 void t5_timing_display_end(uint32_t started_us){
-    record_metric(DisplayExec,(uint32_t)(micros()-started_us));
+    const uint32_t elapsed=(uint32_t)(micros()-started_us);
+    record_metric(DisplayExec,elapsed);
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.display_us+=elapsed;
+    if(current_cycle.display_count<255)current_cycle.display_count++;
+    portEXIT_CRITICAL(&timing_mux);
     set_section(T5TimingSection::Ui);
+}
+
+void t5_timing_set_ui_context(const char* screen,bool keyboard,bool landscape,bool standby){
+    portENTER_CRITICAL(&timing_mux);
+    if(screen&&screen[0]){
+        strncpy(current_cycle.screen,screen,sizeof(current_cycle.screen)-1);
+        current_cycle.screen[sizeof(current_cycle.screen)-1]=0;
+    }
+    current_cycle.keyboard=keyboard;
+    current_cycle.landscape=landscape;
+    current_cycle.standby=standby;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_set_ui_action(T5UiAction action){
+    portENTER_CRITICAL(&timing_mux);
+    if(action!=T5UiAction::None)current_cycle.trigger=action;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_ui_draw(uint32_t elapsed_us){
+    portENTER_CRITICAL(&timing_mux);
+    if(elapsed_us>current_cycle.draw_us)current_cycle.draw_us=elapsed_us;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_ui_status(uint32_t elapsed_us){
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.status_us+=elapsed_us;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_ui_input(uint32_t elapsed_us,uint32_t age_ms,uint32_t queue_depth){
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.input_us+=elapsed_us;
+    if(current_cycle.input_events<65535)current_cycle.input_events++;
+    if(age_ms>current_cycle.max_queue_age_ms)current_cycle.max_queue_age_ms=age_ms;
+    if(queue_depth>current_cycle.max_queue_depth)
+        current_cycle.max_queue_depth=(uint8_t)min((uint32_t)255,queue_depth);
+    if(current_cycle.trigger==T5UiAction::None)current_cycle.trigger=T5UiAction::Touch;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_refresh(uint8_t requested_mode,uint8_t actual_mode){
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.requested_mode=requested_mode;
+    current_cycle.actual_mode=actual_mode;
+    portEXIT_CRITICAL(&timing_mux);
 }
 
 void t5_timing_service(){
@@ -319,18 +512,26 @@ void t5_timing_service(){
     if(learning&&now-started_ms>=LEARN_MS)finish_learning();
     if(learning)return;
 
+    SlowCycleEvent slow{};
     Event event{};
-    bool have_event=false;
+    bool have_slow=false,have_event=false;
     if(now-last_serial_event_ms>=SERIAL_EVENT_SPACING_MS){
         portENTER_CRITICAL(&timing_mux);
-        if(event_pending){
+        if(pending_slow.valid){
+            slow=pending_slow;
+            pending_slow=SlowCycleEvent{};
+            have_slow=true;
+        }else if(event_pending){
             event=pending_event;
             event_pending=false;
             have_event=true;
         }
         portEXIT_CRITICAL(&timing_mux);
     }
-    if(have_event){
+    if(have_slow){
+        last_serial_event_ms=now;
+        print_slow(slow);
+    }else if(have_event){
         last_serial_event_ms=now;
         Serial.printf("[T5-TIMING] EXCESS %s observed=",metric_name(event.metric));
         print_ms_value(event.observed_us);
