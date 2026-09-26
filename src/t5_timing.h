@@ -26,6 +26,7 @@ void t5_timing_display_end(uint32_t started_us);
 void t5_timing_set_ui_context(const char* screen,bool keyboard,bool landscape,bool standby);
 void t5_timing_set_ui_action(T5UiAction action);
 void t5_timing_note_ui_draw(uint32_t elapsed_us);
+void t5_timing_note_chat_draw(uint32_t history_us,uint32_t keyboard_us);
 void t5_timing_note_ui_status(uint32_t elapsed_us);
 void t5_timing_note_text_wait(uint32_t wait_ms);
 void t5_timing_note_ui_input(uint32_t elapsed_us,uint32_t age_ms,uint32_t queue_depth);
@@ -46,6 +47,7 @@ inline void t5_timing_display_end(uint32_t){}
 inline void t5_timing_set_ui_context(const char*,bool,bool,bool){}
 inline void t5_timing_set_ui_action(T5UiAction){}
 inline void t5_timing_note_ui_draw(uint32_t){}
+inline void t5_timing_note_chat_draw(uint32_t,uint32_t){}
 inline void t5_timing_note_ui_status(uint32_t){}
 inline void t5_timing_note_text_wait(uint32_t){}
 inline void t5_timing_note_ui_input(uint32_t,uint32_t,uint32_t){}
