@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "board/target.cpp"
+        "companion_runtime.cpp"
+        "local_mesh_runtime.cpp"
+        "map_tiles.cpp"
+        "pmtiles_reader.cpp"
+        "t5_timing.cpp"
+        "ui_onboarding.cpp"
+        "unified_main.cpp"
+    INCLUDE_DIRS
+        "."
+        "board"
+        "../include"
+        "../lib/MeshCore/examples/companion_radio"
+)
