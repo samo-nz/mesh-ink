@@ -1039,16 +1039,22 @@ static void draw_display_settings() {
 
 static void draw_help() {
     draw_app_header("USING MESHINK",true);
-    text("TOUCH",24,126,3,0,true);
-    draw_wrapped("Tap controls to select them. Swipe and scroll where shown.",24,170,39,2,0,false,3);
-    text("QUICK SETTINGS",24,270,3,0,true);
-    draw_wrapped("Swipe down from the top edge for front light, advert flood and power off.",24,314,39,2,0,false,4);
-    text("BOOT BUTTON",24,438,3,0,true);
-    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to enter standby.",24,482,39,2,0,false,4);
-    text("STANDBY",24,606,3,0,true);
-    draw_wrapped("Hold BOOT for 2 seconds to wake. Short presses are ignored while in standby.",24,650,39,2,0,false,4);
-    text("KEYBOARD",24,774,3,0,true);
-    draw_wrapped("Message entry uses the landscape keyboard. Standby restores it after wake.",24,818,39,2,0,false,3);
+    // Dense one-page guide: 3x headings and 2x body are the largest existing
+    // text sizes that keep all requested sections above the bottom nav.
+    text("QUICK SETTINGS",24,118,3,0,true);
+    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,154,39,2,0,false,3);
+
+    text("BOOT BUTTON",24,260,3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,296,39,2,0,false,5);
+
+    text("KEYBOARD",24,454,3,0,true);
+    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,490,39,2,0,false,4);
+
+    text("MAPS",24,622,3,0,true);
+    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,658,39,2,0,false,4);
+
+    text("BLUETOOTH COMPANION MODE",24,790,3,0,true);
+    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,826,39,2,0,false,3);
 }
 
 static void draw_standby(){
