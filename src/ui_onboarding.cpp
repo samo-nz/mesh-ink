@@ -1721,7 +1721,7 @@ static void touch_sampler_task(void*){
                 // Even a stationary two-finger gesture must cancel a pending
                 // single/double tap, without triggering a phantom pan.
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    Serial.println("[T5-TOUCH] input queue full; pinch discarded");
+                    t5_timing_note_touch_queue_drop();
             } else if(held) {
                 held=false;
                 QueuedTap tap{last_x,last_y,
@@ -1729,7 +1729,7 @@ static void touch_sampler_task(void*){
                 tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                 tap.map_sampled=1;
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+                    t5_timing_note_touch_queue_drop();
             }
         } else {
             // Original non-Maps sampling and release logic is unchanged.
@@ -1761,7 +1761,7 @@ static void touch_sampler_task(void*){
                 quick_slider_dragging=false;
                 QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+                    t5_timing_note_touch_queue_drop();
             }
         }
         t5_timing_touch_end(timing_touch_started);
