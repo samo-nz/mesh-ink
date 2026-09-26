@@ -16,7 +16,8 @@
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
 #include "map_gestures.h"
-#include "t5_logging.h"\n#include "meshcore_version.h"
+#include "t5_logging.h"
+#include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
