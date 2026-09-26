@@ -67,7 +67,7 @@ contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
 contains("draw_page_indicator(chat_page,pages,840);", "conversation history shows swipe page indicator")
-assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed")
+assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
 contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater;}", "Status is currently exposed only for repeaters")
 contains("screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60", "Node Info pages use vertical swipe paging")
@@ -80,17 +80,17 @@ contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
 contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "repeater password keyboard has a dedicated login action")
-assert "login_active_node(const char* password)" in data_source, "UI provider exposes repeater login")
-assert "frame[0]=26" in runtime_source, "repeater login uses MeshCore CMD_SEND_LOGIN")
-assert "frame[0]==0x85" in runtime_source and "frame[0]==0x86" in runtime_source, "repeater login handles success and failure pushes")
-assert "contact.type!=ADV_TYPE_REPEATER||!detail_authenticated_" in runtime_source, "status requests require authenticated repeater")
-assert "BATTERY %.2f V" in runtime_source and "PACKETS RX/TX" in runtime_source, "repeater status payload is decoded into readable metrics")
+assert "login_active_node(const char* password)" in data_source, "UI provider exposes repeater login"
+assert "frame[0]=26" in runtime_source, "repeater login uses MeshCore CMD_SEND_LOGIN"
+assert "frame[0]==0x85" in runtime_source and "frame[0]==0x86" in runtime_source, "repeater login handles success and failure pushes"
+assert "contact.type!=ADV_TYPE_REPEATER||!detail_authenticated_" in runtime_source, "status requests require authenticated repeater"
+assert "BATTERY %.2f V" in runtime_source and "PACKETS RX/TX" in runtime_source, "repeater status payload is decoded into readable metrics"
 
 assert "request_active_node_info(UiNodeInfoRequest request)" in data_source, "Node Info provider must accept one typed request"
 assert "advance_info" not in runtime_source, "Node Info transport must not auto-chain requests"
 assert "pending_info.stage" not in runtime_source, "Node Info transport must not retain staged request-all state"
 for request in ("Status", "Telemetry", "Path"):
-    assert f"pending_info.request==UiNodeInfoRequest::{request}" in runtime_source, f"{request} reply must match only its selected request")
+    assert f"pending_info.request==UiNodeInfoRequest::{request}" in runtime_source, f"{request} reply must match only its selected request"
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
