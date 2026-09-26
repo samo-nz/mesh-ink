@@ -46,6 +46,7 @@ struct CycleDetail {
     uint32_t draw_us=0;          // longest draw_screen() in this loop
     uint32_t display_us=0;       // cumulative physical EPD time this loop
     uint32_t status_us=0;
+    uint32_t text_wait_ms=0;
     uint32_t input_us=0;         // cumulative handler time for queued events
     uint32_t max_queue_age_ms=0;
     uint16_t input_events=0;
@@ -223,13 +224,9 @@ static uint32_t slow_cycle_threshold_locked(){
 
 static void maybe_queue_slow_cycle(uint32_t elapsed_us){
     const uint32_t now=millis();
+    SlowCycleEvent candidate{};
     portENTER_CRITICAL(&timing_mux);
-    if(learning){
-        portEXIT_CRITICAL(&timing_mux);
-        return;
-    }
-    const uint32_t threshold=slow_cycle_threshold_locked();
-    if(elapsed_us<threshold){
+    if(learning||elapsed_us<slow_cycle_threshold_locked()){
         portEXIT_CRITICAL(&timing_mux);
         return;
     }
@@ -237,25 +234,22 @@ static void maybe_queue_slow_cycle(uint32_t elapsed_us){
     if(elapsed_us>slow_worst_us)slow_worst_us=elapsed_us;
     if(current_cycle.max_queue_age_ms>slow_queue_age_worst_ms)
         slow_queue_age_worst_ms=current_cycle.max_queue_age_ms;
-
-    SlowCycleEvent candidate{};
-    candidate.valid=true;
-    candidate.total_us=elapsed_us;
-    candidate.detail=current_cycle;
-    candidate.heap=ESP.getFreeHeap();
-    candidate.psram=ESP.getFreePsram();
-    candidate.cpu_mhz=(uint16_t)getCpuFrequencyMhz();
-
     if(last_slow_event_ms&&now-last_slow_event_ms<EVENT_COOLDOWN_MS){
         slow_suppressed++;
-        if(!pending_slow.valid||candidate.total_us>pending_slow.total_us){
-            pending_slow=candidate;
-            slow_replaced++;
-        }
         portEXIT_CRITICAL(&timing_mux);
         return;
     }
     last_slow_event_ms=now;
+    candidate.valid=true;
+    candidate.total_us=elapsed_us;
+    candidate.detail=current_cycle;
+    portEXIT_CRITICAL(&timing_mux);
+
+    candidate.heap=ESP.getFreeHeap();
+    candidate.psram=ESP.getFreePsram();
+    candidate.cpu_mhz=(uint16_t)getCpuFrequencyMhz();
+
+    portENTER_CRITICAL(&timing_mux);
     if(!pending_slow.valid)pending_slow=candidate;
     else if(candidate.total_us>pending_slow.total_us){
         pending_slow=candidate;
@@ -363,6 +357,7 @@ static void print_slow(const SlowCycleEvent& slow){
         (unsigned)d.input_events,(unsigned long)d.max_queue_age_ms,
         (unsigned)d.max_queue_depth);
     Serial.print(" status=");print_ms_value(d.status_us);
+    Serial.printf(" text-wait=%lums",(unsigned long)d.text_wait_ms);
     Serial.println();
 }
 } // namespace
@@ -486,6 +481,12 @@ void t5_timing_note_ui_draw(uint32_t elapsed_us){
 void t5_timing_note_ui_status(uint32_t elapsed_us){
     portENTER_CRITICAL(&timing_mux);
     current_cycle.status_us+=elapsed_us;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_text_wait(uint32_t wait_ms){
+    portENTER_CRITICAL(&timing_mux);
+    if(wait_ms>current_cycle.text_wait_ms)current_cycle.text_wait_ms=wait_ms;
     portEXIT_CRITICAL(&timing_mux);
 }
 
