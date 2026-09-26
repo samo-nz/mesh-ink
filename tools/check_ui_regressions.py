@@ -170,6 +170,7 @@ contains("static bool message_keyboard_case_dirty = false;", "message keyboard t
 contains("if(n==0&&!keyboard_symbols&&keyboard_upper&&", "first message letter triggers lowercase")
 contains("keyboard_upper=false;", "auto lowercase transition")
 contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fresh messages reopen uppercase")
+contains("if(text_refresh_pending)return;", "typing refresh is throttled/coalesced instead of indefinitely debounced")
 contains("static void draw_message_entry_fast()", "message typing avoids full chat redraw")
 contains("static void draw_radio_name_fast()", "Radio Settings name typing avoids full settings redraw")
 contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
