@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Mesh.h>
 #include <SPIFFS.h>
+#include <Preferences.h>
 #include <time.h>
 #include "local_mesh_runtime.h"
 #include "companion_runtime.h"
@@ -169,6 +170,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     } recent_info_{};
     char detail_identity_[24]{},detail_seen_[72]{},detail_advert_age_[72]{};
     char detail_position_source_[72]{},detail_route_[40]{},detail_position_[64]{};
+    char detail_access_[20]="NOT LOGGED IN";
     char detail_status_[320]="NOT REQUESTED",detail_telemetry_[120]="NOT REQUESTED",detail_path_[64]="NOT REQUESTED";
     bool detail_request_active_=false,detail_login_active_=false,detail_authenticated_=false,request_gps_received_=false;
     UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
