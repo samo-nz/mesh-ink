@@ -2150,6 +2150,11 @@ void ui_finish_startup() {
     draw_screen();
     if(screen==Screen::Welcome)
         fast_full_redraw("FIRST_SETUP_SCREEN",false);
+    else if(screen==Screen::Contacts)
+        // Existing-user boot transitions directly from the dark startup logo
+        // to Contacts. Force the same complete refresh as a short BOOT press
+        // so the splash cannot remain faintly visible in the panel history.
+        fast_full_redraw("CONTACTS_AFTER_BOOT",false);
     else
         refresh(MODE_GL16);
     // The first interactive frame already includes the MeshCore status
