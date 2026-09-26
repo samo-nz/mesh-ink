@@ -6,9 +6,12 @@ on:
       - 'src/pmtiles_reader.*'
       - 'src/map_tiles.cpp'
       - 'src/ui_onboarding.cpp'
+      - 'src/ui_data.h'
+      - 'src/local_mesh_runtime.cpp'
       - 'src/map_gestures.h'
       - 'tests/test_map_gestures.cpp'
       - 'platformio.ini'
+      - 'tools/check_ui_regressions.py'
       - '.github/workflows/pmtiles-pr-check.yml'
   workflow_dispatch:
 
@@ -37,6 +40,8 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_map_gestures.cpp -o /tmp/map-gestures-test
           /tmp/map-gestures-test
+      - name: UI interaction regression checks
+        run: python tools/check_ui_regressions.py
       - run: python -m platformio run -e t5-unified
       - name: Prepare test update firmware
         run: |

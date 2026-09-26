@@ -6,9 +6,10 @@ They do not replace a physical GT911, GPS, or e-paper test.
 """
 from pathlib import Path
 
-source = (Path(__file__).resolve().parents[1] / "src" / "ui_onboarding.cpp").read_text(
-    encoding="utf-8"
-)
+root = Path(__file__).resolve().parents[1]
+source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
+runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
+data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -25,7 +26,7 @@ assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved 
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
 contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
 contains('fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);', "full e-paper redraw on first Contacts")
-contains('landscape_key(keyboard_message_mode?"SEND":"DONE",711,425,234);', "landscape name entry uses DONE, not SAVE")
+contains('landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),711,425,234);', "landscape keyboard preserves DONE for name entry and LOGIN for repeater auth")
 assert 'if(was_setup)show_contacts_after_setup();' not in source, "landscape keyboard must not complete setup"
 assert source.count('save_node_name();')==1, "only the portrait SAVE may persist setup"
 contains('keyboard_visible=true;set_keyboard_orientation(false);\n        return true;', "landscape DONE returns to portrait without saving")
@@ -62,8 +63,62 @@ contains("(screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60",
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
 contains("draw_list_page_footer(channels_page,count);", "Channels displays page count when multiple pages exist")
 contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page footer")
-contains("if(page>0)draw_list_page_arrow", "list footer shows previous-page swipe-down arrow only when available")
-contains("if(page+1<pages)draw_list_page_arrow", "list footer shows next-page swipe-up arrow only when available")
+contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
+contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
+contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
+contains("draw_page_indicator(chat_page,pages,840);", "conversation history shows swipe page indicator")
+assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
+contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
+contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
+contains("screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60", "Node Info pages use vertical swipe paging")
+contains('UiNodeInfoRequest::Status,"REQUEST STATUS"', "Node Info exposes an individual status request")
+contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes an individual telemetry request")
+contains('UiNodeInfoRequest::Path,"REQUEST PATH"', "Node Info exposes an individual path request")
+assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once"
+contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node role icons")
+contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
+contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
+contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
+contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
+assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
+assert "frame[0]=26" in runtime_source, "protected-node login uses MeshCore CMD_SEND_LOGIN"
+assert "frame[0]==0x85" in runtime_source and "frame[0]==0x86" in runtime_source, "protected-node login handles success and failure pushes"
+assert "PERM_ACL_" not in source, "UI must display returned role without inventing ACL constants"
+assert 'strcpy(detail_access_,"GUEST")' in runtime_source, "Guest ACL role is reported"
+assert 'strcpy(detail_access_,"READ ONLY")' in runtime_source, "Read-only ACL role is reported"
+assert 'strcpy(detail_access_,"READ/WRITE")' in runtime_source, "Read-write ACL role is reported"
+assert 'strcpy(detail_access_,"ADMIN")' in runtime_source, "Admin ACL role is reported"
+assert 'Preferences prefs;if(!prefs.begin("mesh-auth",false))return false;' in runtime_source, "saved remote passwords persist in NVS"
+assert "uint8_t key[PUB_KEY_SIZE]" in runtime_source and "char password[16]" in runtime_source, "saved credentials are keyed to full node identity"
+contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbox")
+contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
+contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use thicker line primitives")
+contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
+contains("draw_wrapped(node.status,24,294,27,3,0,true,14);", "received status text is larger and bold")
+contains("draw_wrapped(node.telemetry,24,270,27,3,0,true,4);", "received telemetry text is larger and bold")
+contains("draw_wrapped(node.path,24,270,27,3,0,true,5);", "received path text is larger and bold")
+contains('page==NodeInfoPage::Status&&hit(x,y,24,808,492,70)', "status action touch follows lowered button")
+contains('page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)', "telemetry action touch follows lowered button")
+contains('page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)', "path action touch follows lowered button")
+assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
+
+contains('epd_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
+contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
+contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
+contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
+assert "char masked[16]" not in source, "password entry must not mask typed text on-device"
+
+
+assert "contact.type==ADV_TYPE_REPEATER||contact.type==ADV_TYPE_ROOM" in runtime_source, "status capability includes repeater and room server"
+assert "if(request==UiNodeInfoRequest::Status&&(!protected_server||!detail_authenticated_))return false;" in runtime_source, "status requests require authenticated protected server"
+assert "BATTERY %.2f V" in runtime_source and "PACKETS RX/TX" in runtime_source, "server status payload is decoded into readable metrics"
+assert "POSTS %u" in runtime_source and "PUSHES %u" in runtime_source, "room server status exposes room-specific counters"
+
+assert "request_active_node_info(UiNodeInfoRequest request)" in data_source, "Node Info provider must accept one typed request"
+assert "advance_info" not in runtime_source, "Node Info transport must not auto-chain requests"
+assert "pending_info.stage" not in runtime_source, "Node Info transport must not retain staged request-all state"
+for request in ("Status", "Telemetry", "Path"):
+    assert f"pending_info.request==UiNodeInfoRequest::{request}" in runtime_source, f"{request} reply must match only its selected request"
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
