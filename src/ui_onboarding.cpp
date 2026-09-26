@@ -98,6 +98,7 @@ static bool keyboard_visible = true;
 static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
 static bool keyboard_landscape = false;
+static bool standby_restore_landscape = false;
 static uint16_t status_unread = 0;
 static uint16_t status_channel_unread = 0;
 static bool status_gps_enabled = false;
@@ -1984,12 +1985,26 @@ static void enter_standby(const char* reason){
     // Standby owns the whole display. Dismiss transient quick settings first
     // so it cannot remain layered over, or reappear immediately after, standby.
     quick_panel_active=false;quick_panel_restore_landscape=false;quick_slider_dragging=false;
+    // Standby is always portrait, but remember a landscape keyboard so wake
+    // returns to the exact editing view that was active before standby.
+    standby_restore_landscape=keyboard_landscape;
+    if(keyboard_landscape){
+        keyboard_landscape=false;
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
     T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
     if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
+    if(standby_restore_landscape){
+        standby_restore_landscape=false;
+        keyboard_landscape=true;
+        epd_set_rotation(EPD_ROT_LANDSCAPE);
+    } else {
+        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    }
     set_cpu_target(160,"wake");T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
 }
 
