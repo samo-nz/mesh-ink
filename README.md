@@ -47,6 +47,7 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 </table>
 
 </details>
+
 ## Features
 
 - Direct messages and channel messaging
@@ -204,8 +205,6 @@ Swipe **up** to close Quick Settings and return to the previous screen.
 
 Open **Maps** from the bottom navigation. Drag one finger to pan; use **+** and **−** to change zoom, or tap the **target** button to centre on your device's current or last known GPS position. Tap a map node marker to open its details. While **Maps** is displayed, pinch two fingers apart/together to zoom around their starting midpoint, **double-tap** the map to zoom in one level at the first tap's location, or **triple-tap** to zoom out one level at that location. These multi-touch and multi-tap zoom gestures apply **only on Maps**; typing and other screens retain their normal single-tap controls.
 
-Copy 256×256 raster PNG tiles to the SD card as `/maps/Z/X/Y.png`, or put a **PMTiles v3 raster PNG** archive at `/maps/osm-bright/osm-bright.pmtiles`. Archives at `/maps/<name>/<file>.pmtiles` or directly in `/maps/<file>.pmtiles` also work. See [Offline map files](#offline-map-files) for supported formats and limitations.
-
 ## Offline map files
 
 MeshInk reads 256×256 raster PNG map tiles from the SD card. Either put loose
@@ -258,5 +257,6 @@ MeshInk is built on the work of several open-source projects. Many thanks to the
 - [MicroNMEA](https://github.com/stevemarple/MicroNMEA) — GPS/NMEA parsing.
 - [Adafruit BusIO](https://github.com/adafruit/Adafruit_BusIO) — hardware bus abstractions.
 - [base64](https://github.com/Densaugeo/base64_arduino) — Base64 encoding and decoding.
+- [Aurora](https://github.com/jetaudio/crosspoint-aurora) — Crosspoint Reader fork for the T5 paper - No code used but was very helpful with making a responsive display.
 
 Thank you to everyone who develops and maintains these projects. MeshInk would not exist without their work.
