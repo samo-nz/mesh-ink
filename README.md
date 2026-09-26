@@ -183,6 +183,7 @@ If esptool reports that it cannot connect, repeat the BOOT/RESET sequence and tr
 > **Radio settings matter.** Select the preset appropriate for your country and local MeshCore network before transmitting.
 
 </details>
+
 ## Using MeshInk
 
 On first setup, choose a node name and radio preset. MeshInk then opens into the main Contacts view.
@@ -203,9 +204,16 @@ Swipe **up** to close Quick Settings and return to the previous screen.
 
 ### Maps: controls and gestures
 
-Open **Maps** from the bottom navigation. Drag one finger to pan; use **+** and **−** to change zoom, or tap the **target** button to centre on your device's current or last known GPS position. Tap a map node marker to open its details. While **Maps** is displayed, pinch two fingers apart/together to zoom around their starting midpoint, **double-tap** the map to zoom in one level at the first tap's location, or **triple-tap** to zoom out one level at that location. These multi-touch and multi-tap zoom gestures apply **only on Maps**; typing and other screens retain their normal single-tap controls.
+Open **Maps** from the bottom navigation. Drag one finger to pan; use **+** and **−** to change zoom, or tap the **target** button to centre on your device's current or last known GPS position. 
+Tap a map node marker to open its details. While **Maps** is displayed, pinch two fingers apart/together to zoom around their starting midpoint, **double-tap** the map to zoom in one level at the first tap's location, or **triple-tap** to zoom out one level at that location.
 
 ## Offline map files
+
+MeshInk uses the same tiles as other Meshcore/Meshtastic devices, place them in a directory called "maps" in the root folder of the SD card. both raw PNG tiles in folders and the newer PMTiles files are supported.
+One good website to download these tiles is [Oxed's Map Tile Downloader](https://download.tiles.coalition.space/)
+
+<details>
+<summary><strong>View details on map tiles</strong></summary>
 
 MeshInk reads 256×256 raster PNG map tiles from the SD card. Either put loose
 tiles in `/maps/Z/X/Y.png`, or copy a **PMTiles v3 raster PNG** archive to
@@ -225,6 +233,8 @@ offsets, so tile data beyond 4 GiB is not supported. Vector tiles (MVT),
 JPEG/WebP, and separately gzip-compressed tile payloads are **not** rendered.
 A typical Protomaps vector `.pmtiles` map therefore needs to be rendered to
 raster PNG tiles before it can be used on MeshInk.
+
+<details/>
 
 ## Building from source
 
