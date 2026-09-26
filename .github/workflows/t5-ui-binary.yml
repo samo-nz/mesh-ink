@@ -121,18 +121,15 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.7.0 adds offline PMTiles v3 raster PNG maps alongside
-          loose SD-card PNG tiles, with decoded tile caching and faster
-          experimental 25 MHz SD loading. SD removal and reinsertion
-          recover without rebooting. Maps now supports one-finger panning,
-          two-finger pinch zoom, double-tap to zoom in and triple-tap to
-          zoom out around the gesture location; the new gestures are
-          confined to Maps and preserve ordinary typing on other pages.
-          A corrected e-paper power-off sequence stops the previous
-          gradual darkening while keeping the Loading.. feedback and
-          full-map redraw. See the README for map controls and SD paths.
-          The update image does not intentionally erase existing
-          MeshCore settings, contacts or message history.
+          MeshInk 1.7.0 adds the pull-down Quick Settings panel with live
+          front-light control, advert flood and power off, plus standby and
+          landscape-keyboard fixes, improved startup refresh behaviour, and
+          refreshed Help, Display and About screens. The update also improves
+          brightness OFF persistence and presents MeshCore release/revision
+          information in About.
+
+          The update image does not intentionally erase existing MeshCore
+          settings, contacts or message history.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
