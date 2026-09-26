@@ -1044,14 +1044,14 @@ static void draw_help() {
     // size that fits the complete guide, including the final "UI.".
     text("QUICK SETTINGS",24,142,3,0,true);
     draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,176,39,2,0,false,3);
-    text("BOOT BUTTON",24,236,3,0,true);
-    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,270,39,2,0,false,5);
-    text("KEYBOARD",24,414,3,0,true);
-    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,448,39,2,0,false,4);
-    text("MAPS",24,556,3,0,true);
-    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,590,39,2,0,false,4);
-    text("BLUETOOTH COMPANION MODE",24,698,3,0,true);
-    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,732,39,2,0,false,5);
+    text("BOOT BUTTON",24,266,3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,300,39,2,0,false,5);
+    text("KEYBOARD",24,444,3,0,true);
+    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,478,39,2,0,false,4);
+    text("MAPS",24,586,3,0,true);
+    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,620,39,2,0,false,4);
+    text("BLUETOOTH COMPANION MODE",24,728,3,0,true);
+    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,762,39,2,0,false,5);
 }
 
 static void draw_standby(){
