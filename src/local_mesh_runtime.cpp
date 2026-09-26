@@ -370,7 +370,7 @@ public:
         if(request==UiNodeInfoRequest::Telemetry)ui_notify_node_position_unavailable();
     }
     void login_state(bool active){detail_login_active_=active;ui_request_data_refresh("node-login");}
-    void login_result(bool success){detail_login_active_=false;detail_authenticated_=success;ui_request_data_refresh("node-login");}
+    void login_result(bool success){detail_login_active_=false;detail_authenticated_=success;if(!success)strcpy(detail_status_,"LOGIN FAILED");ui_request_data_refresh("node-login");}
     void status_response(const uint8_t* data,size_t len){
         note_info_reply();
         if(detail_contact_.type==ADV_TYPE_REPEATER&&len>=56){
