@@ -21,6 +21,39 @@ constexpr size_t MAX_STORED_MESSAGES=96;
 constexpr uint32_t STORE_MAGIC=0x354D3554; // T5M5
 constexpr uint16_t STORE_VERSION=1;
 constexpr char STORE_PATH[]="/ui_messages.bin";
+constexpr uint32_t CREDENTIAL_MAGIC=0x3143524D; // MRC1
+constexpr size_t MAX_SAVED_CREDENTIALS=16;
+struct SavedCredential{uint8_t key[PUB_KEY_SIZE]{};char password[16]{};bool valid=false;};
+struct CredentialBlob{uint32_t magic=CREDENTIAL_MAGIC;SavedCredential entries[MAX_SAVED_CREDENTIALS]{};};
+
+static bool load_credentials(CredentialBlob& blob){
+    Preferences prefs;if(!prefs.begin("mesh-auth",true))return false;
+    const size_t len=prefs.getBytesLength("credentials");
+    const bool ok=len==sizeof(blob)&&prefs.getBytes("credentials",&blob,sizeof(blob))==sizeof(blob)&&blob.magic==CREDENTIAL_MAGIC;
+    prefs.end();if(!ok)blob=CredentialBlob{};return ok;
+}
+static bool write_credentials(const CredentialBlob& blob){
+    Preferences prefs;if(!prefs.begin("mesh-auth",false))return false;
+    const bool ok=prefs.putBytes("credentials",&blob,sizeof(blob))==sizeof(blob);prefs.end();return ok;
+}
+static bool load_saved_password(const uint8_t* key,char* out,size_t len){
+    if(!key||!out||!len)return false;CredentialBlob blob{};load_credentials(blob);
+    for(const auto& entry:blob.entries)if(entry.valid&&!memcmp(entry.key,key,PUB_KEY_SIZE)){strncpy(out,entry.password,len-1);out[len-1]=0;return true;}
+    out[0]=0;return false;
+}
+static bool save_password_for(const uint8_t* key,const char* password){
+    if(!key||!password)return false;CredentialBlob blob{};load_credentials(blob);SavedCredential* slot=nullptr;
+    for(auto& entry:blob.entries)if(entry.valid&&!memcmp(entry.key,key,PUB_KEY_SIZE)){slot=&entry;break;}
+    if(!slot)for(auto& entry:blob.entries)if(!entry.valid){slot=&entry;break;}
+    if(!slot)slot=&blob.entries[0];
+    *slot=SavedCredential{};slot->valid=true;memcpy(slot->key,key,PUB_KEY_SIZE);strncpy(slot->password,password,sizeof(slot->password)-1);
+    return write_credentials(blob);
+}
+static bool clear_saved_password(const uint8_t* key){
+    if(!key)return false;CredentialBlob blob{};load_credentials(blob);bool changed=false;
+    for(auto& entry:blob.entries)if(entry.valid&&!memcmp(entry.key,key,PUB_KEY_SIZE)){entry=SavedCredential{};changed=true;}
+    return !changed||write_credentials(blob);
+}
 
 // gps_interval in upstream MeshCore controls how often coordinates are copied,
 // not receiver power. Timed modes here pause the SOFTWARE GPS provider after
@@ -354,14 +387,15 @@ public:
              self->detail_route_,self->detail_position_,self->detail_status_,
              self->detail_telemetry_,self->detail_path_,self->detail_lat_,
              self->detail_lon_,detail_request_active_,detail_request_type_,
-             detail_login_active_,detail_authenticated_,detail_contact_.type,detail_saved_,
+             detail_login_active_,detail_authenticated_,self->detail_access_,detail_contact_.type,detail_saved_,
              self->detail_advert_age_,self->detail_position_source_};
         return true;
     }
     bool add_active_node()override{if(!detail_valid_||detail_saved_||!detail_frame_len_)return false;detail_frame_[0]=9;if(!local_mesh_enqueue_command(detail_frame_,detail_frame_len_))return false;detail_saved_=true;return true;}
     bool remove_active_contact()override{if(!detail_valid_||!detail_saved_)return false;uint8_t command[1+PUB_KEY_SIZE]{15};memcpy(command+1,detail_contact_.id.pub_key,PUB_KEY_SIZE);if(!local_mesh_enqueue_command(command,sizeof(command)))return false;detail_saved_=false;return true;}
     bool request_active_node_info(UiNodeInfoRequest request)override;
-    bool login_active_node(const char* password)override;
+    bool login_active_node(const char* password,bool save_password)override;
+    bool active_node_saved_password(char* out,size_t len)const override{return detail_valid_&&load_saved_password(detail_contact_.id.pub_key,out,len);}
     const uint8_t* detail_key()const{return detail_contact_.id.pub_key;}
     void request_state(bool active,UiNodeInfoRequest request=UiNodeInfoRequest::None){detail_request_active_=active;detail_request_type_=active?request:UiNodeInfoRequest::None;ui_request_data_refresh("node-info");}
     void request_timeout(UiNodeInfoRequest request){
@@ -370,7 +404,20 @@ public:
         if(request==UiNodeInfoRequest::Telemetry)ui_notify_node_position_unavailable();
     }
     void login_state(bool active){detail_login_active_=active;ui_request_data_refresh("node-login");}
-    void login_result(bool success){detail_login_active_=false;detail_authenticated_=success;if(!success)strcpy(detail_status_,"LOGIN FAILED");ui_request_data_refresh("node-login");}
+    void login_result(bool success,uint8_t permissions=0,bool role_known=false){
+        detail_login_active_=false;detail_authenticated_=success;
+        if(success){
+            if(role_known){
+                switch(permissions&0x03){
+                    case 0:strcpy(detail_access_,"GUEST");break;
+                    case 1:strcpy(detail_access_,"READ ONLY");break;
+                    case 2:strcpy(detail_access_,"READ/WRITE");break;
+                    case 3:strcpy(detail_access_,"ADMIN");break;
+                }
+            }else strcpy(detail_access_,"LEGACY LOGIN");
+        }else{strcpy(detail_access_,"NOT LOGGED IN");strcpy(detail_status_,"LOGIN FAILED");}
+        ui_request_data_refresh("node-login");
+    }
     void status_response(const uint8_t* data,size_t len){
         note_info_reply();
         const bool repeater=detail_contact_.type==ADV_TYPE_REPEATER;
@@ -434,7 +481,7 @@ public:
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
 struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,ack=0,deadline=0;uint8_t key[6]{};char text[145]{};} pending_direct;
 struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
-struct PendingLogin{bool active=false;bool waiting_sent=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};} pending_login;
+struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
 int8_t pending_advert=-1;
 static bool enqueue_direct_attempt(){
     uint8_t frame[MAX_FRAME_SIZE+1]{};size_t p=0;frame[p++]=2;frame[p++]=0;frame[p++]=pending_direct.retry;memcpy(frame+p,&pending_direct.timestamp,4);p+=4;memcpy(frame+p,pending_direct.key,6);p+=6;const size_t n=min(strlen(pending_direct.text),(size_t)MAX_TEXT_LEN);memcpy(frame+p,pending_direct.text,n);p+=n;
@@ -467,14 +514,15 @@ bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
     return true;
 }
 
-bool MeshCoreUiProvider::login_active_node(const char* password){
+bool MeshCoreUiProvider::login_active_node(const char* password,bool save_password){
     if(active_channel_||pending_login.active||pending_info.active||pending_direct.active||!password)return false;
     ContactInfo contact{};if(!active_contact(contact)||(contact.type!=ADV_TYPE_REPEATER&&contact.type!=ADV_TYPE_ROOM))return false;
     const size_t password_len=min(strlen(password),(size_t)15);
     uint8_t frame[1+PUB_KEY_SIZE+15]{};frame[0]=26;memcpy(frame+1,contact.id.pub_key,PUB_KEY_SIZE);memcpy(frame+1+PUB_KEY_SIZE,password,password_len);
     if(!local_mesh_enqueue_command(frame,1+PUB_KEY_SIZE+password_len))return false;
-    pending_login={};pending_login.active=true;pending_login.waiting_sent=true;pending_login.deadline=millis()+30000;memcpy(pending_login.key,contact.id.pub_key,PUB_KEY_SIZE);
-    detail_authenticated_=false;login_state(true);return true;
+    pending_login={};pending_login.active=true;pending_login.waiting_sent=true;pending_login.save_password=save_password;pending_login.deadline=millis()+30000;
+    memcpy(pending_login.key,contact.id.pub_key,PUB_KEY_SIZE);memcpy(pending_login.password,password,password_len);pending_login.password[password_len]=0;
+    detail_authenticated_=false;strcpy(detail_access_,"LOGGING IN");login_state(true);return true;
 }
 }
 
@@ -482,13 +530,19 @@ UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
     if(!frame||!len)return;char message[150]{};
     if(frame[0]==0x8A){provider.cache_discovered(frame,len);provider.refresh(true);ui_request_data_refresh("new-advert");T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] discovered advert cached with full MeshCore identity");}
-    else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x85){pending_login={};provider.login_result(true);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] repeater login succeeded");}
-    else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x86){pending_login={};provider.login_result(false);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] repeater login failed");}
+    else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x85){
+        PendingLogin completed=pending_login;pending_login={};
+        const bool role_known=len>=13;const uint8_t permissions=role_known?frame[12]:(frame[1]?3:0);
+        if(completed.save_password)save_password_for(completed.key,completed.password);else clear_saved_password(completed.key);
+        memset(completed.password,0,sizeof(completed.password));provider.login_result(true,permissions,role_known);
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] server login succeeded role=%u known=%d\n",(unsigned)(permissions&3),role_known);
+    }
+    else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x86){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] server login failed");}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){provider.status_response(frame+8,len-8);finish_info();}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Telemetry&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8B){provider.telemetry_response(frame+8,len-8);finish_info();}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Path&&len>=9&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8D){provider.path_response(frame+8,len-8);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_login.active&&pending_login.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_login.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_login.waiting_sent=false;}
-    else if(frame[0]==1&&pending_login.active){pending_login={};provider.login_result(false);}
+    else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u transmitted ack=%08lx timeout=%lu\n",pending_direct.retry,(unsigned long)pending_direct.ack,(unsigned long)timeout);}
@@ -537,7 +591,7 @@ void local_mesh_loop(){
     sensors.loop();
     t5_gps_power_probe_tick(); // executes even when MeshCore has stopped the GPS provider
     rtc_clock.tick();
-    if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){pending_login={};provider.login_result(false);}
+    if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
     if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
         if(pending_direct.retry>=5){provider.update_message(pending_direct.sequence,UiMessageState::Failed);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct failed after 5 retries sequence=%lu\n",(unsigned long)pending_direct.sequence);pending_direct.active=false;}
