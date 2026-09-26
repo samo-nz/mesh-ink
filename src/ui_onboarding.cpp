@@ -17,6 +17,7 @@
 #include "map_tiles.h"
 #include "map_gestures.h"
 #include "t5_logging.h"
+#include "t5_timing.h"
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
@@ -1402,6 +1403,7 @@ static void draw_screen() {
 }
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
+    const uint32_t timing_display_started=t5_timing_display_begin();
     if(wake_light&&!standby_active)frontlight_event();
     // Maps contains only black and white pixels. Use the direct DU waveform
     // for normal updates; the 1.3.24 device test confirmed it prevents the
@@ -1418,6 +1420,7 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     set_cpu_target(standby_active?80:160,"display-complete",false);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+    t5_timing_display_end(timing_display_started);
 }
 
 static void invalidate_display_back_buffer() {
@@ -1653,11 +1656,14 @@ static void touch_sampler_task(void*){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
             map_last_count=0;
+            t5_timing_touch_reset();
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+            t5_timing_touch_reset();
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
             continue;
         }
+        const uint32_t timing_touch_started=t5_timing_touch_begin();
         // Preserve the EXACT legacy single-touch parser and release-driven
         // typing behaviour on all screens except Maps.
         const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
@@ -1670,6 +1676,7 @@ static void touch_sampler_task(void*){
             uint8_t count=0;int16_t x0=0,y0=0,x1=0,y1=0;
             bool home=false;
             if(!map_touch_points(count,x0,y0,x1,y1,home)) {
+                t5_timing_touch_end(timing_touch_started);
                 vTaskDelay(pdMS_TO_TICKS(8));continue;
             }
             if(home) {
@@ -1757,6 +1764,7 @@ static void touch_sampler_task(void*){
                     Serial.println("[T5-TOUCH] input queue full; tap discarded");
             }
         }
+        t5_timing_touch_end(timing_touch_started);
         vTaskDelay(pdMS_TO_TICKS(8));
     }
 }
@@ -2359,6 +2367,7 @@ void ui_finish_startup() {
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;
+    t5_timing_begin();
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
