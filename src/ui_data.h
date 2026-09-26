@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Failed, Retrying1, Retrying2, Retrying3, Retrying4, Retrying5 };
+enum class UiNodeInfoRequest : uint8_t { Status=0, Telemetry=1, Path=2, None=255 };
 
 struct UiListEntry {
     const char* title;
@@ -30,6 +31,7 @@ struct UiNodeDetails {
     int32_t latitude;
     int32_t longitude;
     bool request_active;
+    UiNodeInfoRequest request_type;
     bool saved_contact;
     const char* advert_age;       // time since the last saved advertisement
     const char* position_source;  // last advert vs GPS reply receipt age
@@ -66,7 +68,7 @@ public:
     virtual bool active_node_details(UiNodeDetails& out) const = 0;
     virtual bool add_active_node() = 0;
     virtual bool remove_active_contact() = 0;
-    virtual bool request_active_node_info() = 0;
+    virtual bool request_active_node_info(UiNodeInfoRequest request) = 0;
     virtual const char* active_title() const = 0;
     virtual bool active_is_channel() const = 0;
     virtual size_t active_message_count() const = 0;
