@@ -49,7 +49,6 @@ jobs:
         run: |
           test -s .pio/build/t5-unified/firmware.bin
           cp .pio/build/t5-unified/firmware.bin meshink-testing-update.bin
-          cp .pio/build/t5-unified/firmware.elf meshink-testing.elf
           sha256sum meshink-testing-update.bin > meshink-testing-SHA256.txt
       - name: Downloadable testing firmware
         uses: actions/upload-artifact@v4
@@ -57,7 +56,6 @@ jobs:
           name: meshink-testing-firmware
           path: |
             meshink-testing-update.bin
-            meshink-testing.elf
             meshink-testing-SHA256.txt
           if-no-files-found: error
           retention-days: 14
