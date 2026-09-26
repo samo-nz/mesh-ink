@@ -435,8 +435,7 @@ static const char** active_keyboard_rows(){
 }
 static void draw_landscape_keyboard(){
     epd_hl_set_all_white(&display);
-    char masked[16]{};if(keyboard_password_mode){const size_t n=strlen(remote_password);memset(masked,'*',n);masked[n]=0;}
-    const char* value=keyboard_password_mode?masked:(keyboard_message_mode?compose_text:node_name);
+    const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
     EpdRect entry={16,14,928,112};epd_draw_rect(entry,0,fb);
     draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),32,30,48,4,0,true,2);
     const char* numbers="1234567890";
@@ -1071,10 +1070,13 @@ static void draw_contact_details() {
     }
     draw_page_indicator(details_page,pages,770);
     if(keyboard_visible&&keyboard_password_mode){
-        char masked[16]{};const size_t n=strlen(remote_password);memset(masked,'*',n);masked[n]=0;
+        // Password entry is a full lower-screen layer. Clear the underlying
+        // Node Info controls/page footer so the keyboard has a clean white
+        // background between keys and across its bottom action row.
+        epd_fill_rect({0,486,540,474},0xFF,fb);
         box(24,504,28,28,save_remote_password);if(save_remote_password)text("X",30,509,2,0xFF,true);
         text("SAVE PASSWORD",66,510,2,0,true);
-        box(12,544,516,70);text(masked[0]?masked:"REMOTE PASSWORD",28,568,2,0,true);draw_keyboard();
+        box(12,544,516,70);text(remote_password[0]?remote_password:"REMOTE PASSWORD",28,568,2,0,true);draw_keyboard();
     }
 }
 
@@ -1388,7 +1390,7 @@ static void draw_screen() {
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
-    if(screen==Screen::ContactDetails)draw_bottom_nav(details_from_discovery?3:0);
+    if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
 }
