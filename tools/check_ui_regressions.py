@@ -154,5 +154,43 @@ assert 'initial_gps.getBool("gps_default_v1",false)' in companion, "GPS defaults
 assert "settings->gps_enabled=1;" in companion, "new setup GPS must default ON"
 assert "settings->gps_interval=0;" in companion, "new setup GPS must default continuous"
 assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default marker missing"
+# Portrait keyboard ergonomics: message entry uses a wide space bar with no
+# adjacent HIDE key; Radio Settings name entry has a wide SAVE action and
+# dismisses by tapping above the keyboard instead.
+contains('key("SPACE",120,898,298);', "space-capable portrait keyboards use a wide space bar")
+contains('key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);', "message/password action remains isolated at far right")
+contains('if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}', "message keyboard dismisses quickly by tapping above it")
+assert source.count("if(x<422){append(' ');queue_text_refresh();return true;}")>=2, "message and password former HIDE regions belong to SPACE"
+contains('key("SAVE",120,898,408);', "name entry uses a wide SAVE action instead of a dead space bar")
+contains('if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}', "Radio Settings keyboard dismisses quickly by tapping above it")
+assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
+
+# 1.8.4 interaction-latency fixes and sentence-style message keyboard.
+contains("static bool message_keyboard_case_dirty = false;", "message keyboard tracks one-time case redraw")
+contains("if(n==0&&!keyboard_symbols&&keyboard_upper&&", "first message letter triggers lowercase")
+contains("keyboard_upper=false;", "auto lowercase transition")
+contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fresh messages reopen uppercase")
+contains("if(text_refresh_pending)return;", "typing refresh is throttled/coalesced instead of indefinitely debounced")
+contains("static void draw_message_entry_fast()", "message typing avoids full chat redraw")
+contains("static void draw_radio_name_fast()", "Radio Settings name typing avoids full settings redraw")
+contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Radio Settings preserves the existing node name when editing")
+
+contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
+contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
+contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
+contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
+contains("draw_screen();refresh(MODE_DU);return true;", "same-page keyboard transitions use DU")
+
+# 1.8.3 correlated timing instrumentation must remain wired without adding
+# synchronous Serial writes to the touch producer.
+contains("uint32_t queued_at_ms=0;", "queued touch events carry enqueue timestamps")
+contains("T5InputTimingScope timing_input", "UI measures touch event queue age and handler time")
+contains("t5_timing_note_ui_draw", "framebuffer draw timing hook")
+contains("t5_timing_note_chat_draw", "chat history/keyboard render split")
+contains("t5_timing_note_text_wait", "text debounce timing hook")
+contains("T5UiAction::StatusPoll", "status-poll timing attribution")
+contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
+assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
+
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")

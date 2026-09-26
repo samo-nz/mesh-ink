@@ -17,6 +17,7 @@
 #include "map_tiles.h"
 #include "map_gestures.h"
 #include "t5_logging.h"
+#include "t5_timing.h"
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
@@ -98,6 +99,7 @@ static bool replace_name_on_type = false;
 static bool keyboard_visible = true;
 static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
+static bool message_keyboard_case_dirty = false;
 static bool keyboard_landscape = false;
 static bool standby_restore_landscape = false;
 static uint16_t status_unread = 0;
@@ -153,6 +155,7 @@ static QueueHandle_t touch_queue=nullptr;
 static TaskHandle_t touch_task_handle=nullptr;
 static bool text_refresh_pending=false;
 static uint32_t text_refresh_after=0;
+static uint32_t text_refresh_queued_at=0;
 static bool touch_enabled=true;
 static bool standby_active=false;
 static bool hardware_failure=false;
@@ -178,6 +181,34 @@ enum class Screen : uint8_t {
     Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
+static const char* timing_screen_name(){
+    switch(screen){
+        case Screen::Welcome:return "Welcome";
+        case Screen::Presets:return "Presets";
+        case Screen::CompanionConfirm:return "Companion";
+        case Screen::ShutdownConfirm:return "Shutdown";
+        case Screen::Contacts:return "Contacts";
+        case Screen::ContactChat:return "ContactChat";
+        case Screen::ContactDetails:return "NodeInfo";
+        case Screen::Channels:return "Channels";
+        case Screen::ChannelChat:return "ChannelChat";
+        case Screen::Maps:return "Maps";
+        case Screen::Discovery:return "Discovery";
+        case Screen::More:return "More";
+        case Screen::AdvertMenu:return "Advert";
+        case Screen::Settings:return "Settings";
+        case Screen::RadioSettings:return "RadioSettings";
+        case Screen::GpsSettings:return "GpsSettings";
+        case Screen::GpsTuning:return "GpsTuning";
+        case Screen::Timezone:return "Timezone";
+        case Screen::PrivacySettings:return "Privacy";
+        case Screen::DisplaySettings:return "DisplaySettings";
+        case Screen::NightSchedule:return "NightSchedule";
+        case Screen::Help:return "Help";
+        case Screen::About:return "About";
+        default:return "?";
+    }
+}
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
@@ -286,12 +317,31 @@ struct QueuedTap{
     int8_t zoom_steps=0;
     uint16_t hold_ms=0;
     uint8_t map_sampled=0;
+    uint32_t queued_at_ms=0;
     QueuedTap()=default;
     // Arduino's C++11 toolchain requires an explicit constructor here once
     // the map-only fields have default initializers. Preserve all existing
     // five-argument single-touch event construction unchanged.
     QueuedTap(int16_t px,int16_t py,int16_t pdx,int16_t pdy,bool is_home):
-        x(px),y(py),dx(pdx),dy(pdy),home(is_home) {}
+        x(px),y(py),dx(pdx),dy(pdy),home(is_home),queued_at_ms(millis()) {}
+};
+
+struct T5InputTimingScope{
+#if T5_TIMING_DIAGNOSTICS
+    uint32_t started_us;
+    uint32_t age_ms;
+    uint32_t queue_depth;
+    T5InputTimingScope(uint32_t queued_at,uint32_t depth):
+        started_us(micros()),age_ms(queued_at?(uint32_t)(millis()-queued_at):0),queue_depth(depth){
+        t5_timing_set_ui_action(T5UiAction::Touch);
+    }
+    ~T5InputTimingScope(){
+        t5_timing_note_ui_input((uint32_t)(micros()-started_us),age_ms,queue_depth);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }
+#else
+    T5InputTimingScope(uint32_t,uint32_t){}
+#endif
 };
 struct MapTapSequence{
     uint8_t count=0;
@@ -420,7 +470,18 @@ static void draw_keyboard() {
     }
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
     key("DEL",460,828,68);
-    key("LAND",12,898,100);key("SPACE",120,898,190);key("HIDE",318,898,100);key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"SAVE"),426,898,102);
+    key("LAND",12,898,100);
+    if(keyboard_message_mode||keyboard_password_mode){
+        // Space is valid for message/password entry. Match familiar phone
+        // keyboards with a wide space bar and an isolated action at right.
+        key("SPACE",120,898,298);
+        key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);
+    }else{
+        // MeshCore node names do not accept spaces. Use the entire remaining
+        // row for SAVE instead of showing dead SPACE/HIDE controls.
+        key("SAVE",120,898,408);
+    }
+    if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
 
 static void landscape_key(const char* label,int x,int y,int w){
@@ -456,6 +517,7 @@ static void draw_landscape_keyboard(){
     landscape_key("DEL",812,355,133);
     landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
     landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),711,425,234);
+    if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
 
 // The number and letter hitboxes are calculated from the EXACT geometry used
@@ -997,15 +1059,36 @@ static constexpr int CHAT_HISTORY_AVAILABLE=674;
 
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
+    const uint32_t timing_history_started=micros();
     const size_t count=ui_data?ui_data->active_message_count():0;
     const bool keyboard=keyboard_visible&&keyboard_message_mode;const int history_bottom=keyboard?526:800;const int available=history_bottom-126;
     size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
     if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
+    const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
+    const uint32_t timing_keyboard_started=micros();
     if(keyboard){box(12,544,516,70);if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);else text("Enter text",28,568,2,0,false);draw_keyboard();}
     else{
         draw_page_indicator(chat_page,pages,840);
         box(12,888,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,908,2,0,true);
     }
+    t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
+}
+
+static void draw_message_entry_fast() {
+    // Typing does not change the chat history. Avoid rebuilding the status
+    // bar, message bubbles and bottom navigation for every character.
+    const uint32_t timing_draw_started=micros();
+    const uint32_t timing_keyboard_started=micros();
+    box(12,544,516,70);
+    if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);
+    else text("Enter text",28,568,2,0,false);
+    if(message_keyboard_case_dirty){
+        draw_keyboard();
+        message_keyboard_case_dirty=false;
+    }
+    const uint32_t keyboard_us=(uint32_t)(micros()-timing_keyboard_started);
+    t5_timing_note_chat_draw(0,keyboard_us);
+    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void draw_contact_details() {
@@ -1125,6 +1208,12 @@ static void draw_radio_settings() {
     settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
     settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
+}
+
+static void draw_radio_name_fast() {
+    const uint32_t timing_draw_started=micros();
+    settings_row("NODE NAME",node_name,120);
+    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void draw_gps_settings() {
@@ -1384,10 +1473,12 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 }
 
 static void draw_screen() {
+    const uint32_t timing_draw_started=micros();
+    t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
-    if(standby_active){draw_standby();return;}
-    if(quick_panel_active){draw_quick_panel();return;}
-    if(keyboard_landscape){draw_landscape_keyboard();return;}
+    if(standby_active){draw_standby();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
+    if(quick_panel_active){draw_quick_panel();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
+    if(keyboard_landscape){draw_landscape_keyboard();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
@@ -1397,11 +1488,15 @@ static void draw_screen() {
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
-    else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
+    else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||
+            (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
+        draw_bottom_nav(3);
     draw_toast();
+    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void refresh(EpdDrawMode mode,bool wake_light=true) {
+    const uint32_t timing_display_started=t5_timing_display_begin();
     if(wake_light&&!standby_active)frontlight_event();
     // Maps contains only black and white pixels. Use the direct DU waveform
     // for normal updates; the 1.3.24 device test confirmed it prevents the
@@ -1409,6 +1504,7 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     const EpdDrawMode requested_mode=mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MODE_GL16)mode=MODE_DU;
+    t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
     set_cpu_target(240,"display-refresh",false);
     epd_poweron();
     const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
@@ -1418,6 +1514,7 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     set_cpu_target(standby_active?80:160,"display-complete",false);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+    t5_timing_display_end(timing_display_started);
 }
 
 static void invalidate_display_back_buffer() {
@@ -1653,11 +1750,14 @@ static void touch_sampler_task(void*){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
             map_last_count=0;
+            t5_timing_touch_reset();
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+            t5_timing_touch_reset();
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
             continue;
         }
+        const uint32_t timing_touch_started=t5_timing_touch_begin();
         // Preserve the EXACT legacy single-touch parser and release-driven
         // typing behaviour on all screens except Maps.
         const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
@@ -1670,6 +1770,7 @@ static void touch_sampler_task(void*){
             uint8_t count=0;int16_t x0=0,y0=0,x1=0,y1=0;
             bool home=false;
             if(!map_touch_points(count,x0,y0,x1,y1,home)) {
+                t5_timing_touch_end(timing_touch_started);
                 vTaskDelay(pdMS_TO_TICKS(8));continue;
             }
             if(home) {
@@ -1714,7 +1815,7 @@ static void touch_sampler_task(void*){
                 // Even a stationary two-finger gesture must cancel a pending
                 // single/double tap, without triggering a phantom pan.
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    Serial.println("[T5-TOUCH] input queue full; pinch discarded");
+                    t5_timing_note_touch_queue_drop();
             } else if(held) {
                 held=false;
                 QueuedTap tap{last_x,last_y,
@@ -1722,7 +1823,7 @@ static void touch_sampler_task(void*){
                 tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                 tap.map_sampled=1;
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+                    t5_timing_note_touch_queue_drop();
             }
         } else {
             // Original non-Maps sampling and release logic is unchanged.
@@ -1754,9 +1855,10 @@ static void touch_sampler_task(void*){
                 quick_slider_dragging=false;
                 QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    Serial.println("[T5-TOUCH] input queue full; tap discarded");
+                    t5_timing_note_touch_queue_drop();
             }
         }
+        t5_timing_touch_end(timing_touch_started);
         vTaskDelay(pdMS_TO_TICKS(8));
     }
 }
@@ -1769,7 +1871,21 @@ static void cycle_keyboard_mode(){
 }
 static void append(char c) {
     if(keyboard_password_mode){size_t n=strlen(remote_password);if(n<15){remote_password[n]=c;remote_password[n+1]=0;}return;}
-    if(keyboard_message_mode){size_t n=strlen(compose_text);if(n<48){compose_text[n]=c;compose_text[n+1]=0;}return;}
+    if(keyboard_message_mode){
+        const size_t n=strlen(compose_text);
+        if(n<48){
+            compose_text[n]=c;compose_text[n+1]=0;
+            // Fresh messages start with sentence-style uppercase. Once the
+            // first alphabetic character is entered, fall back to lowercase
+            // unless the user already selected another keyboard mode.
+            if(n==0&&!keyboard_symbols&&keyboard_upper&&
+               ((c>='A'&&c<='Z')||(c>='a'&&c<='z'))){
+                keyboard_upper=false;
+                message_keyboard_case_dirty=true;
+            }
+        }
+        return;
+    }
     if(!legal_name_character(c)){Serial.printf("[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
     size_t n=strlen(node_name); if (n<20) { node_name[n]=c; node_name[n+1]=0; saved=false; }
@@ -1784,6 +1900,7 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
         centre_map_on_device();
     const bool already_on_map=screen==Screen::Maps;
     map_taps={}; // prevent a pending map double tap from firing on another UI
+    text_refresh_pending=false;
     keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;save_remote_password=false;remote_password[0]=0;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
@@ -1811,7 +1928,15 @@ static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
 }
 
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
-static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=millis()+110;}
+static void queue_text_refresh(){
+    // Throttle/coalesce rather than debounce. The first character schedules
+    // the next paint; later characters join it instead of pushing it farther
+    // into the future. This caps visible typing latency during continuous input.
+    if(text_refresh_pending)return;
+    text_refresh_pending=true;
+    text_refresh_queued_at=millis();
+    text_refresh_after=text_refresh_queued_at+110;
+}
 static void set_keyboard_orientation(bool landscape){
     keyboard_landscape=landscape;
     epd_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
@@ -1871,7 +1996,10 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_GL16);return true;
         }
         if(keyboard_message_mode){
-            if(compose_text[0]&&local_mesh_send_active(compose_text))compose_text[0]=0;
+            if(compose_text[0]&&local_mesh_send_active(compose_text)){
+                compose_text[0]=0;text_refresh_pending=false;
+                keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
+            }
         }
         // DONE in landscape is only an orientation switch for name entry.
         // Return to portrait setup with radio preset still available; only
@@ -1893,8 +2021,7 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
     if(keyboard_character_at(x,y,false,character)){append(character);queue_text_refresh();return true;}
     if(y>=894&&y<960){
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<314){append(' ');queue_text_refresh();return true;}
-        if(x<422){memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;draw_screen();refresh(MODE_GL16);return true;}
+        if(x<422){append(' ');queue_text_refresh();return true;}
         const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
         memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
         show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_DU);return true;
@@ -1904,6 +2031,10 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
+    // There is no HIDE key in message composition. Tapping anywhere above
+    // the keyboard dismisses it, matching common mobile keyboard behaviour
+    // and eliminating the easy-to-hit button beside SEND.
+    if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}
     if(meshink_keyboard::in_row(y,828)){
         if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
         if(x>=457){
@@ -1917,13 +2048,17 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
         append(character);queue_text_refresh();return true;
     }
     if(y>=894&&y<960){
-        // Extend each action into half of its neighbouring gap.
+        // Extend each action into half of its neighbouring gap. The old HIDE
+        // region is now part of SPACE, giving the portrait keyboard a normal
+        // wide space bar and reducing accidental mode changes.
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<314){append(' ');queue_text_refresh();return true;}
-        if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        if(x<422){append(' ');queue_text_refresh();return true;}
         if(compose_text[0]){
             const bool ok=local_mesh_send_active(compose_text);
-            if(ok){compose_text[0]=0;keyboard_visible=false;}
+            if(ok){
+                compose_text[0]=0;keyboard_visible=false;text_refresh_pending=false;
+                keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
+            }
             draw_screen();refresh(MODE_DU);
         }
         return true;
@@ -1933,6 +2068,9 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
+    // In Radio Settings, tapping above the keyboard dismisses name editing.
+    // First-time setup keeps its explicit setup controls and save flow.
+    if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}
     if(meshink_keyboard::in_row(y,828)){
         if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
         if(x>=457){
@@ -1947,8 +2085,6 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     }
     if(y>=894&&y<960){
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<314)return true; // node names cannot contain spaces
-        if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
         const bool was_setup=screen==Screen::Welcome;
         save_node_name();
         if(was_setup){
@@ -1996,7 +2132,12 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
-            if(hit(x,y,12,888,516,62)){keyboard_message_mode=true;keyboard_visible=true;chat_page=0;draw_screen();refresh(MODE_GL16);return true;}break;
+            if(hit(x,y,12,888,516,62)){
+                keyboard_message_mode=true;keyboard_visible=true;chat_page=0;
+                if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
+                text_refresh_pending=false;
+                draw_screen();refresh(MODE_DU);return true;
+            }break;
         case Screen::ContactDetails:
             if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
@@ -2064,7 +2205,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,598,516,112)){open_screen(Screen::About);return true;}break;
         case Screen::RadioSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
-            if(hit(x,y,12,120,516,112)){replace_name_on_type=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);return true;}
+            if(hit(x,y,12,120,516,112)){replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;text_refresh_pending=false;draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,250,516,112)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MODE_GL16);return true;}
             if(hit(x,y,12,510,516,112)){local_mesh_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MODE_DU);return true;}
             return true;
@@ -2359,6 +2500,7 @@ void ui_finish_startup() {
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;
+    t5_timing_begin();
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
@@ -2367,6 +2509,7 @@ void ui_finish_startup() {
 }
 
 void ui_loop() {
+    t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     if(hardware_failure){
         static uint32_t report_at=0;if(millis()-report_at>=60000){report_at=millis();Serial.println("[T5-ERROR] radio unavailable; startup halted; press RST to retry");}
         delay(100);return;
@@ -2394,6 +2537,7 @@ void ui_loop() {
     if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
+        T5InputTimingScope timing_input(tap.queued_at_ms,(uint32_t)uxQueueMessagesWaiting(touch_queue));
         last_user_activity=millis();
         if(tap.home){
             map_taps={};
@@ -2513,21 +2657,55 @@ void ui_loop() {
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(tap.x,tap.y);
     }
-    if(text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0){text_refresh_pending=false;draw_screen();refresh(MODE_DU);}
     static uint32_t last_status_poll=0;
     const uint32_t status_poll_interval=standby_active?60000:15000;
     if(millis()-last_status_poll>=status_poll_interval){
         last_status_poll=millis();
+        t5_timing_set_ui_action(T5UiAction::StatusPoll);
+        const uint32_t timing_status_started=micros();
         if(update_status_hardware())status_dirty=true;
+        t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
+        t5_timing_set_ui_action(T5UiAction::None);
     }
-    if(status_dirty&&!message_alert_active){const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;draw_screen();refresh(MODE_DU,wake);}
+    const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
+    if(status_dirty&&!message_alert_active){
+        // A full status redraw also contains the newest text, so satisfy a
+        // simultaneous debounced text refresh with this one panel update.
+        t5_timing_set_ui_action(T5UiAction::StatusRefresh);
+        if(text_refresh_due){
+            const uint32_t timing_text_now=millis();
+            t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
+            text_refresh_pending=false;
+        }
+        const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;
+        draw_screen();refresh(MODE_DU,wake);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }else if(text_refresh_due){
+        t5_timing_set_ui_action(T5UiAction::TextRefresh);
+        const uint32_t timing_text_now=millis();
+        t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
+        text_refresh_pending=false;
+        if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+           keyboard_visible&&keyboard_message_mode&&!keyboard_landscape)
+            draw_message_entry_fast();
+        else if(screen==Screen::RadioSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)
+            draw_radio_name_fast();
+        else
+            draw_screen();
+        refresh(MODE_DU);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
+        t5_timing_set_ui_action(T5UiAction::ToastRefresh);
         toast_visible=false;
         if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MODE_DU,true);
+        t5_timing_set_ui_action(T5UiAction::None);
     }
     frontlight_service();
+    if(message_alert_active)t5_timing_set_ui_action(T5UiAction::MessageAlert);
     service_message_alert();
+    t5_timing_set_ui_action(T5UiAction::None);
 #if T5_LOG_POWER
     static uint32_t power_report_at=0,loop_count=0;loop_count++;
     if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}

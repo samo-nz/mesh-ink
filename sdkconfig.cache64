@@ -1,0 +1,32 @@
+# Experimental ESP32-S3 cache configuration for EPDiy LCD/DMA output.
+# This file is only used by the Arduino+ESP-IDF cache64 test environment.
+CONFIG_FREERTOS_HZ=1000
+CONFIG_AUTOSTART_ARDUINO=y
+CONFIG_ARDUINO_VARIANT="esp32s3"
+
+# Match the normal Arduino ESP32-S3 Bluetooth/BLE capabilities used by
+# MeshCore's SerialBLEInterface.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=y
+CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_GATTS_ENABLE=y
+CONFIG_BT_GATTC_ENABLE=y
+CONFIG_BT_BLE_SMP_ENABLE=y
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+CONFIG_BT_BLE_50_FEATURES_SUPPORTED=y
+
+# Arduino 2.0.x / ESP-IDF 4.4 also emits legacy compatibility aliases.
+# Some Bluedroid source gates still key off these names.
+CONFIG_BLUEDROID_ENABLED=y
+CONFIG_BLUEDROID_PINNED_TO_CORE_0=y
+CONFIG_BLUEDROID_PINNED_TO_CORE=0
+CONFIG_GATTS_ENABLE=y
+CONFIG_GATTS_SEND_SERVICE_CHANGE_AUTO=y
+CONFIG_GATTS_SEND_SERVICE_CHANGE_MODE=0
+CONFIG_GATTC_ENABLE=y
+
+# The actual experiment: allow EPDiy's LCD/DMA path to keep its configured
+# 20 MHz pixel clock instead of automatically reducing it to 10 MHz.
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+# CONFIG_ESP32S3_DATA_CACHE_LINE_32B is not set
+CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE=64

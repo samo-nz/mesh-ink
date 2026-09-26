@@ -2,6 +2,11 @@
 #include <Preferences.h>
 #include "ui_onboarding.h"
 #include "companion_runtime.h"
+#include "t5_timing.h"
+
+#ifndef T5_CACHE64_EXPERIMENT
+#define T5_CACHE64_EXPERIMENT 0
+#endif
 
 static bool companion_mode = false;
 static constexpr uint8_t BOOT_BUTTON = 0;
@@ -44,6 +49,10 @@ void setup() {
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
                   companion_mode ? "BT companion" : "local UI");
+#if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
+    Serial.printf("[T5-BOOT] data-cache-line=%dB cache64-experiment=%d\n",
+                  CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, T5_CACHE64_EXPERIMENT);
+#endif
     if (companion_mode) companion_setup();
     else {
         ui_setup();           // show boot logo with INITIALISING STORAGE...
@@ -57,7 +66,16 @@ void loop() {
         companion_loop();
         companion_exit_button();
     } else {
-        if(local_mesh_is_running())local_mesh_loop();
+        const uint32_t cycle_started=t5_timing_cycle_begin();
+        if(local_mesh_is_running()){
+            const uint32_t mesh_started=t5_timing_section_begin(T5TimingSection::Mesh);
+            local_mesh_loop();
+            t5_timing_section_end(T5TimingSection::Mesh,mesh_started);
+        }
+        const uint32_t ui_started=t5_timing_section_begin(T5TimingSection::Ui);
         ui_loop();
+        t5_timing_section_end(T5TimingSection::Ui,ui_started);
+        t5_timing_cycle_end(cycle_started);
+        t5_timing_service();
     }
 }
