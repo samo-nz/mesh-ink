@@ -15,6 +15,7 @@ const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
 let manifest = null;
 let busy = false;
 let flashingCompleted = false;
+let connectionRetry = false;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function log(message) {
@@ -37,13 +38,16 @@ function updateControls() {
   const wipe = selectedMode() === "wipe";
   button.classList.toggle("wipe", wipe);
   button.textContent = busy ? "Flashing — do not disconnect" :
-    !manifest ? "Loading firmware…" : wipe ? "Install MeshInk" : "Update MeshInk";
+    !manifest ? "Loading firmware…" :
+    connectionRetry ? "Retry connection" :
+    wipe ? "Install MeshInk" : "Update MeshInk";
   button.disabled = !ready();
   restartButton.hidden = !flashingCompleted;
   restartButton.disabled = busy || !navigator.serial || !window.isSecureContext;
   for (const input of modeInputs) input.disabled = busy;
   detail.textContent = !navigator.serial || !window.isSecureContext ?
     "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
+    connectionRetry ? "Put the T5 into bootloader mode, then click Retry connection." :
     wipe ? "For a new device or a fresh start." :
            "For a device that already has MeshInk installed.";
 }
@@ -153,6 +157,7 @@ async function flash() {
   )) return;
   busy = true;
   flashingCompleted = false;
+  connectionRetry = false;
   progress.hidden = false;
   progress.removeAttribute("value"); // show indeterminate activity while downloading/checking
   setActivity("Downloading firmware…");
@@ -176,6 +181,7 @@ async function flash() {
       terminal: { clean() {}, write(message) { log(message); }, writeLine(message) { log(message); } }
     });
     const chip = String(await loader.main());
+    connectionRetry = false;
     setActivity(`Connected to ${chip}. Starting flash…`);
     if (!/ESP32-S3/i.test(chip)) throw new Error("This image is only for ESP32-S3. No flash was written.");
     progress.value = 0;
@@ -209,11 +215,22 @@ async function flash() {
       "Automatic restart was not confirmed. Click Restart device above or press RESET on the T5.");
   } catch (error) {
     if (!completed) {
-      siteStatus.textContent = "Flashing did not complete";
-      progressLabel.textContent = "Flashing did not complete";
-      log(`ERROR: ${error.message || String(error)}`);
-      if (error.name === "NotFoundError") log("No serial port selected; no flash operation started.");
-      log("If an update was interrupted during writing, do not assume the firmware is bootable. Reconnect and retry.");
+      const message = error.message || String(error);
+      const cancelled = error.name === "NotFoundError";
+      const connectionFailure = !cancelled && (!transport || !/writing firmware/i.test(progressLabel.textContent));
+      progress.removeAttribute("value");
+      progress.hidden = true;
+      connectionRetry = connectionFailure;
+      siteStatus.textContent = cancelled ? "No serial port selected" :
+        connectionFailure ? "T5 not connected · enter bootloader mode" :
+        "Flashing did not complete";
+      progressLabel.textContent = cancelled ? "No serial port selected" :
+        connectionFailure ? "Enter bootloader mode, then retry" :
+        "Flashing did not complete";
+      log(`ERROR: ${message}`);
+      if (cancelled) log("No serial port selected; no flash operation started.");
+      else if (connectionFailure) log("Could not connect to the T5. Put it into bootloader/download mode, then click Retry connection.");
+      else log("If an update was interrupted during writing, do not assume the firmware is bootable. Reconnect and retry.");
     }
   } finally {
     if (transport) {
