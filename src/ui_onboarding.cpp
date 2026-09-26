@@ -1056,15 +1056,19 @@ static constexpr int CHAT_HISTORY_AVAILABLE=674;
 
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
+    const uint32_t timing_history_started=micros();
     const size_t count=ui_data?ui_data->active_message_count():0;
     const bool keyboard=keyboard_visible&&keyboard_message_mode;const int history_bottom=keyboard?526:800;const int available=history_bottom-126;
     size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
     if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
+    const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
+    const uint32_t timing_keyboard_started=micros();
     if(keyboard){box(12,544,516,70);if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);else text("Enter text",28,568,2,0,false);draw_keyboard();}
     else{
         draw_page_indicator(chat_page,pages,840);
         box(12,888,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,908,2,0,true);
     }
+    t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
 
 static void draw_contact_details() {
