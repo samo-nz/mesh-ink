@@ -422,19 +422,15 @@ static void draw_keyboard() {
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
     key("DEL",460,828,68);
     key("LAND",12,898,100);
-    if(keyboard_message_mode){
-        // Message composition follows conventional phone keyboards: give the
-        // space bar the wide centre/right area and keep SEND isolated.
+    if(keyboard_message_mode||keyboard_password_mode){
+        // Space is valid for message/password entry. Match familiar phone
+        // keyboards with a wide space bar and an isolated action at right.
         key("SPACE",120,898,298);
-        key("SEND",426,898,102);
-    }else if(screen==Screen::RadioSettings&&!keyboard_password_mode){
-        // Radio Settings name entry has no valid space character. Remove the
-        // dead SPACE/HIDE controls and make SAVE an obvious wide action.
-        key("SAVE",120,898,408);
+        key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);
     }else{
-        key("SPACE",120,898,190);
-        key("HIDE",318,898,100);
-        key(keyboard_password_mode?"LOGIN":"SAVE",426,898,102);
+        // MeshCore node names do not accept spaces. Use the entire remaining
+        // row for SAVE instead of showing dead SPACE/HIDE controls.
+        key("SAVE",120,898,408);
     }
 }
 
@@ -1915,8 +1911,7 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
     if(keyboard_character_at(x,y,false,character)){append(character);queue_text_refresh();return true;}
     if(y>=894&&y<960){
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<314){append(' ');queue_text_refresh();return true;}
-        if(x<422){memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;draw_screen();refresh(MODE_GL16);return true;}
+        if(x<422){append(' ');queue_text_refresh();return true;}
         const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
         memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
         show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_DU);return true;
@@ -1977,10 +1972,6 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     }
     if(y>=894&&y<960){
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(screen!=Screen::RadioSettings){
-            if(x<314)return true; // node names cannot contain spaces
-            if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-        }
         const bool was_setup=screen==Screen::Welcome;
         save_node_name();
         if(was_setup){
