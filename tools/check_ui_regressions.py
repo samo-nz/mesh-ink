@@ -92,6 +92,12 @@ assert 'Preferences prefs;if(!prefs.begin("mesh-auth",false))return false;' in r
 assert "uint8_t key[PUB_KEY_SIZE]" in runtime_source and "char password[16]" in runtime_source, "saved credentials are keyed to full node identity"
 contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbox")
 contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
+contains('epd_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
+contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
+contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
+contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
+assert "char masked[16]" not in source, "password entry must not mask typed text on-device"
+
 
 assert "contact.type==ADV_TYPE_REPEATER||contact.type==ADV_TYPE_ROOM" in runtime_source, "status capability includes repeater and room server"
 assert "if(request==UiNodeInfoRequest::Status&&(!protected_server||!detail_authenticated_))return false;" in runtime_source, "status requests require authenticated protected server"
