@@ -673,12 +673,29 @@ static void clamp_list_page(size_t& page,size_t count) {
     if(page>=pages)page=pages-1;
 }
 
+static void draw_list_page_arrow(int centre_x,int centre_y,bool up) {
+    // A compact swipe-direction hint beside the page counter. Three-pixel
+    // strokes remain legible on e-paper without consuming another row.
+    epd_fill_rect({centre_x-1,centre_y-7,3,15},0,fb);
+    const int tip_y=up?centre_y-9:centre_y+9;
+    const int wing_y=up?centre_y-2:centre_y+2;
+    for(int d=-1;d<=1;++d){
+        line(centre_x,tip_y+d,centre_x-7,wing_y+d);
+        line(centre_x,tip_y+d,centre_x+7,wing_y+d);
+    }
+}
+
 static void draw_list_page_footer(size_t page,size_t count) {
     const size_t pages=list_page_count(count);
     if(pages<=1)return;
     char page_text[24];
     snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",(unsigned)(page+1),(unsigned)pages);
+    const int text_width=(int)strlen(page_text)*12;
+    const int text_left=(540-text_width)/2;
     centred(page_text,875,2,0,true);
+    // Swipe down returns to the previous page; swipe up advances.
+    if(page>0)draw_list_page_arrow(text_left-24,882,false);
+    if(page+1<pages)draw_list_page_arrow(text_left+text_width+24,882,true);
 }
 
 static void draw_contacts() {
