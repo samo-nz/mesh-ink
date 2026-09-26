@@ -1046,7 +1046,7 @@ static void draw_contact_details() {
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
         }else{
             text("LOGGED IN",24,258,2,0,true);
-            draw_wrapped(node.status,24,294,39,2,0,false,13);
+            draw_wrapped(node.status,24,294,39,2,0,false,14);
             action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,650,492,70,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
@@ -1853,7 +1853,7 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         if(x<199){set_keyboard_orientation(false);return true;}
         if(x<707){append(' ');queue_text_refresh();return true;}
         if(keyboard_password_mode){
-            const bool ok=remote_password[0]&&ui_data&&ui_data->login_active_node(remote_password);
+            const bool ok=ui_data&&ui_data->login_active_node(remote_password);
             memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;
             keyboard_landscape=false;epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_GL16);return true;
@@ -1882,7 +1882,7 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
         if(x<116){set_keyboard_orientation(true);return true;}
         if(x<314){append(' ');queue_text_refresh();return true;}
         if(x<422){memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-        const bool ok=remote_password[0]&&ui_data&&ui_data->login_active_node(remote_password);
+        const bool ok=ui_data&&ui_data->login_active_node(remote_password);
         memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;
         show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_DU);return true;
     }
