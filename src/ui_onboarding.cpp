@@ -1042,8 +1042,8 @@ static void draw_help() {
     draw_app_header("USING MESHINK",true);
     // Keep each heading close to its paragraph; 2x body text is the largest
     // size that fits the complete guide, including the final "UI.".
-    text("QUICK SETTINGS",24,112,3,0,true);
-    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,146,39,2,0,false,3);
+    text("QUICK SETTINGS",24,142,3,0,true);
+    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,176,39,2,0,false,3);
     text("BOOT BUTTON",24,236,3,0,true);
     draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,270,39,2,0,false,5);
     text("KEYBOARD",24,414,3,0,true);
@@ -1098,12 +1098,12 @@ static void draw_meshink_logo(int top,bool compact=false) {
 static void draw_about() {
     draw_app_header("ABOUT",true);
     draw_meshink_logo(118,true);
-    centred("Made by Samo",510,2,0,true);
+    centred("Made by Samo",506,3,0,true);
     centred("github.com/samo-nz/mesh-ink",540,2,0,true);
     if(node_name[0])centred(node_name,600,3,0,true);
     centred(UI_VERSION,642,3,0,true);
-    text("HARDWARE",24,720,2,0,true);text("LILYGO T5 PRO",250,720,2);
-    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",250,770,2);
+    text("HARDWARE",24,720,2,0,true);text("LILYGO T5 PRO",170,720,2);
+    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",170,770,2);
 }
 
 static void draw_screen();
