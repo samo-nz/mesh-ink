@@ -154,6 +154,7 @@ static QueueHandle_t touch_queue=nullptr;
 static TaskHandle_t touch_task_handle=nullptr;
 static bool text_refresh_pending=false;
 static uint32_t text_refresh_after=0;
+static uint32_t text_refresh_queued_at=0;
 static bool touch_enabled=true;
 static bool standby_active=false;
 static bool hardware_failure=false;
@@ -1880,7 +1881,7 @@ static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
 }
 
 static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
-static void queue_text_refresh(){text_refresh_pending=true;text_refresh_after=millis()+110;}
+static void queue_text_refresh(){text_refresh_pending=true;text_refresh_queued_at=millis();text_refresh_after=text_refresh_queued_at+110;}
 static void set_keyboard_orientation(bool landscape){
     keyboard_landscape=landscape;
     epd_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
@@ -2592,6 +2593,8 @@ void ui_loop() {
     }
     if(text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0){
         t5_timing_set_ui_action(T5UiAction::TextRefresh);
+        const uint32_t timing_text_now=millis();
+        t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
         text_refresh_pending=false;draw_screen();refresh(MODE_DU);
         t5_timing_set_ui_action(T5UiAction::None);
     }
