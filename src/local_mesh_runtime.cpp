@@ -440,7 +440,7 @@ static bool enqueue_info_request(){
 static void finish_info(){pending_info.active=false;pending_info.waiting_sent=false;pending_info.request=UiNodeInfoRequest::None;provider.request_state(false);}
 
 bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
-    if(active_channel_||pending_info.active||pending_login.active||request==UiNodeInfoRequest::None)return false;
+    if(active_channel_||pending_info.active||pending_login.active||pending_direct.active||request==UiNodeInfoRequest::None)return false;
     ContactInfo contact{};if(!active_contact(contact))return false;
     if(request==UiNodeInfoRequest::Status&&(contact.type!=ADV_TYPE_REPEATER||!detail_authenticated_))return false;
     if(request==UiNodeInfoRequest::Telemetry&&contact.type==ADV_TYPE_REPEATER&&!detail_authenticated_)return false;
@@ -455,7 +455,7 @@ bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
 }
 
 bool MeshCoreUiProvider::login_active_node(const char* password){
-    if(active_channel_||pending_login.active||pending_info.active||!password)return false;
+    if(active_channel_||pending_login.active||pending_info.active||pending_direct.active||!password)return false;
     ContactInfo contact{};if(!active_contact(contact)||contact.type!=ADV_TYPE_REPEATER)return false;
     const size_t password_len=min(strlen(password),(size_t)15);
     uint8_t frame[1+PUB_KEY_SIZE+15]{};frame[0]=26;memcpy(frame+1,contact.id.pub_key,PUB_KEY_SIZE);memcpy(frame+1+PUB_KEY_SIZE,password,password_len);
