@@ -36,6 +36,7 @@ struct UiNodeDetails {
     UiNodeInfoRequest request_type;
     bool login_active;
     bool authenticated;
+    const char* access_level;
     uint8_t node_type; // Raw MeshCore advert type for future role support.
     bool saved_contact;
     const char* advert_age;       // time since the last saved advertisement
@@ -74,7 +75,8 @@ public:
     virtual bool add_active_node() = 0;
     virtual bool remove_active_contact() = 0;
     virtual bool request_active_node_info(UiNodeInfoRequest request) = 0;
-    virtual bool login_active_node(const char* password) = 0;
+    virtual bool login_active_node(const char* password, bool save_password) = 0;
+    virtual bool active_node_saved_password(char* out, size_t len) const = 0;
     virtual const char* active_title() const = 0;
     virtual bool active_is_channel() const = 0;
     virtual size_t active_message_count() const = 0;
