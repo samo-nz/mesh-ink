@@ -130,6 +130,9 @@ static char compose_text[49] = {};
 static UiDataProvider* ui_data = nullptr;
 static size_t selected_contact = 0;
 static size_t selected_channel = 0;
+static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
+static size_t contacts_page = 0;
+static size_t channels_page = 0;
 static int16_t cached_touch_x = 0, cached_touch_y = 0;
 static uint8_t chat_page = 0;
 static uint8_t timezone_index = 0;
@@ -661,20 +664,73 @@ static void draw_list_entry(const UiListEntry& item,int y) {
     if(item.unread){epd_fill_rect({482,y+94,20,20},0,fb);}
 }
 
+static size_t list_page_count(size_t count) {
+    return count ? (count+LIST_ITEMS_PER_PAGE-1)/LIST_ITEMS_PER_PAGE : 1;
+}
+
+static void clamp_list_page(size_t& page,size_t count) {
+    const size_t pages=list_page_count(count);
+    if(page>=pages)page=pages-1;
+}
+
+static void draw_list_page_arrow(int centre_x,int centre_y,bool up) {
+    // A compact swipe-direction hint beside the page counter. Three-pixel
+    // strokes remain legible on e-paper without consuming another row.
+    epd_fill_rect({centre_x-1,centre_y-7,3,15},0,fb);
+    const int tip_y=up?centre_y-9:centre_y+9;
+    const int wing_y=up?centre_y-2:centre_y+2;
+    for(int d=-1;d<=1;++d){
+        line(centre_x,tip_y+d,centre_x-7,wing_y+d);
+        line(centre_x,tip_y+d,centre_x+7,wing_y+d);
+    }
+}
+
+static void draw_list_page_footer(size_t page,size_t count) {
+    const size_t pages=list_page_count(count);
+    if(pages<=1)return;
+    char page_text[24];
+    snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",(unsigned)(page+1),(unsigned)pages);
+    const int text_width=(int)strlen(page_text)*12;
+    const int text_left=(540-text_width)/2;
+    centred(page_text,875,2,0,true);
+    // Swipe down returns to the previous page; swipe up advances.
+    if(page>0)draw_list_page_arrow(text_left-24,882,false);
+    if(page+1<pages)draw_list_page_arrow(text_left+text_width+24,882,true);
+}
+
 static void draw_contacts() {
     draw_app_header("CONTACTS");
     // The model is fully populated before ui_use_data_provider() attaches it.
     // A missing provider means STARTUP, not a completed empty contact list.
     if(!ui_data)centred("LOADING CONTACT INFO..",300,3,0,true);
-    else if(!ui_data->contact_count())centred("NO SAVED CONTACTS",300,3,0,true);
-    else for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)draw_list_entry(ui_data->contact(i),120+i*150);
+    else {
+        const size_t count=ui_data->contact_count();
+        clamp_list_page(contacts_page,count);
+        if(!count)centred("NO SAVED CONTACTS",300,3,0,true);
+        else {
+            const size_t first=contacts_page*LIST_ITEMS_PER_PAGE;
+            for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
+                draw_list_entry(ui_data->contact(first+row),120+row*150);
+            draw_list_page_footer(contacts_page,count);
+        }
+    }
     draw_bottom_nav(0);
 }
 
 static void draw_channels() {
     draw_app_header("CHANNELS");
-    if(!ui_data||!ui_data->channel_count())centred("NO CONFIGURED CHANNELS",300,3,0,true);
-    else for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)draw_list_entry(ui_data->channel(i),120+i*150);
+    if(!ui_data)centred("NO CONFIGURED CHANNELS",300,3,0,true);
+    else {
+        const size_t count=ui_data->channel_count();
+        clamp_list_page(channels_page,count);
+        if(!count)centred("NO CONFIGURED CHANNELS",300,3,0,true);
+        else {
+            const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
+            for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
+                draw_list_entry(ui_data->channel(first+row),120+row*150);
+            draw_list_page_footer(channels_page,count);
+        }
+    }
     draw_bottom_nav(1);
 }
 
@@ -1806,9 +1862,27 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
         case Screen::Contacts:
-            if(ui_data)for(size_t i=0;i<ui_data->contact_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_contact=i;if(ui_data->open_contact(i)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}break;
+            if(ui_data){
+                const size_t count=ui_data->contact_count();
+                clamp_list_page(contacts_page,count);
+                const size_t first=contacts_page*LIST_ITEMS_PER_PAGE;
+                for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                    const size_t index=first+row;
+                    if(hit(x,y,12,120+row*150,516,142)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}
+                }
+            }
+            break;
         case Screen::Channels:
-            if(ui_data)for(size_t i=0;i<ui_data->channel_count()&&i<5;++i)if(hit(x,y,12,120+i*150,516,142)){selected_channel=i;if(ui_data->open_channel(i)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}break;
+            if(ui_data){
+                const size_t count=ui_data->channel_count();
+                clamp_list_page(channels_page,count);
+                const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
+                for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                    const size_t index=first+row;
+                    if(hit(x,y,12,120+row*150,516,142)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}
+                }
+            }
+            break;
         case Screen::ContactChat:
             if(!keyboard_visible&&hit(x,y,12,818,160,62)){chat_page++;draw_screen();refresh(MODE_GL16);return true;}
             if(!keyboard_visible&&hit(x,y,368,818,160,62)&&chat_page>0){chat_page--;draw_screen();refresh(MODE_GL16);return true;}
@@ -2284,7 +2358,19 @@ void ui_loop() {
             open_screen(Screen::Maps);
             continue;
         }
-        if(screen==Screen::Presets&&abs(tap.dy)>60){
+        if((screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            const size_t count=!ui_data?0:(screen==Screen::Contacts?ui_data->contact_count():ui_data->channel_count());
+            size_t& page=screen==Screen::Contacts?contacts_page:channels_page;
+            clamp_list_page(page,count);
+            const size_t pages=list_page_count(count);
+            int next=(int)page+(tap.dy<0?1:-1);
+            if(next<0)next=0;if(next>=(int)pages)next=(int)pages-1;
+            if((size_t)next!=page){
+                page=(size_t)next;
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",screen==Screen::Contacts?"contacts":"channels",(unsigned)(page+1),(unsigned)pages);
+                draw_screen();refresh(MODE_GL16);
+            }
+        }else if(screen==Screen::Presets&&abs(tap.dy)>60){
             const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
