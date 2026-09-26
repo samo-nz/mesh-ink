@@ -481,6 +481,7 @@ static void draw_keyboard() {
         // row for SAVE instead of showing dead SPACE/HIDE controls.
         key("SAVE",120,898,408);
     }
+    if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
 
 static void landscape_key(const char* label,int x,int y,int w){
@@ -516,6 +517,7 @@ static void draw_landscape_keyboard(){
     landscape_key("DEL",812,355,133);
     landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
     landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),711,425,234);
+    if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
 
 // The number and letter hitboxes are calculated from the EXACT geometry used
@@ -1206,6 +1208,12 @@ static void draw_radio_settings() {
     settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
     settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
+}
+
+static void draw_radio_name_fast() {
+    const uint32_t timing_draw_started=micros();
+    settings_row("NODE NAME",node_name,120);
+    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void draw_gps_settings() {
@@ -2669,6 +2677,8 @@ void ui_loop() {
         if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
            keyboard_visible&&keyboard_message_mode&&!keyboard_landscape)
             draw_message_entry_fast();
+        else if(screen==Screen::RadioSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)
+            draw_radio_name_fast();
         else
             draw_screen();
         refresh(MODE_DU);
