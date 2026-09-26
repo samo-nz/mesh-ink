@@ -157,7 +157,7 @@ static bool quick_panel_restore_landscape=false;
 static constexpr int QUICK_PANEL_BOTTOM=620;
 static constexpr int QUICK_SLIDER_LEFT=44;
 static constexpr int QUICK_SLIDER_RIGHT=496;
-static constexpr int QUICK_SLIDER_Y=224;
+static constexpr int QUICK_SLIDER_Y=190;
 static volatile bool quick_slider_dragging=false;
 static volatile uint8_t quick_slider_preview=30;
 static uint8_t message_alert_phase=0;
@@ -1116,7 +1116,7 @@ static void draw_quick_panel() {
     epd_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
 
     centred("QUICK SETTINGS",34,4,0,true);
-    centred("FRONT LIGHT",106,3,0,true);
+    centred("FRONT LIGHT",92,3,0,true);
 
     // Full-width release-driven slider. The filled track and thumb show the
     // persisted brightness; dragging does not redraw until the finger lifts.
@@ -1129,20 +1129,20 @@ static void draw_quick_panel() {
         max(1,thumb_x-QUICK_SLIDER_LEFT),10},0x00,fb);
     epd_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
 
-    centred("TAP OR DRAG TO SELECT",255,2,0,true);
+    centred("TAP OR DRAG TO SELECT",221,2,0,true);
 
     // End controls and the current value share one row beneath the slider.
-    box(24,290,112,70);
+    box(24,256,112,70);
     // Draw the symbols as primitives so their visual centres are exact and
     // independent of font glyph metrics.
-    epd_fill_rect({61,323,38,4},0x00,fb);
-    box(404,290,112,70);
-    epd_fill_rect({441,323,38,4},0x00,fb);
-    epd_fill_rect({458,306,4,38},0x00,fb);
+    epd_fill_rect({61,289,38,4},0x00,fb);
+    box(404,256,112,70);
+    epd_fill_rect({441,289,38,4},0x00,fb);
+    epd_fill_rect({458,272,4,38},0x00,fb);
     char level[16];
     if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
-    centred(level,307,4,0,true);
+    centred(level,273,4,0,true);
 
     box(24,410,238,100,true);
     text("ADVERT FLOOD",24+(238-12*12)/2,449,2,0xFF,true);
@@ -1194,9 +1194,9 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
     // slider vertically, matching the live PWM preview seen during the drag.
     const bool slider_drag_release=
         start_x>=QUICK_SLIDER_LEFT-16&&start_x<=QUICK_SLIDER_RIGHT+16&&
-        start_y>=180&&start_y<=260;
+        start_y>=146&&start_y<=226;
     const bool slider_tap_release=
-        start_y<0&&y>=180&&y<=260&&
+        start_y<0&&y>=146&&y<=226&&
         x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
     if(slider_drag_release||slider_tap_release) {
         const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
@@ -1210,8 +1210,8 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
     // Everything below the sheet is intentionally inert except dismissal.
     if(y>=QUICK_PANEL_BOTTOM) { close_quick_panel();return true; }
 
-    if(hit(x,y,24,290,112,70)) { quick_set_brightness((int)frontlight_brightness-1);return true; }
-    if(hit(x,y,404,290,112,70)) { quick_set_brightness((int)frontlight_brightness+1);return true; }
+    if(hit(x,y,24,256,112,70)) { quick_set_brightness((int)frontlight_brightness-1);return true; }
+    if(hit(x,y,404,256,112,70)) { quick_set_brightness((int)frontlight_brightness+1);return true; }
     if(hit(x,y,24,410,238,100)) {
         show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MODE_DU,true);return true;
@@ -1226,9 +1226,10 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 }
 
 static void draw_screen() {
+    // Standby must take precedence over every transient/landscape UI layer.
+    if(standby_active){draw_standby();return;}
     if(quick_panel_active){draw_quick_panel();return;}
     if(keyboard_landscape){draw_landscape_keyboard();return;}
-    if(standby_active){draw_standby();return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
@@ -1580,7 +1581,7 @@ static void touch_sampler_task(void*){
                 if(!held){
                     held=true;start_x=x;start_y=y;frontlight_event();
                     quick_slider_dragging=quick_panel_active&&
-                        y>=180&&y<=260&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+                        y>=146&&y<=226&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
                 }
                 if(quick_slider_dragging) {
                     const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
@@ -1979,7 +1980,11 @@ static void set_touch_power(bool enabled){
 }
 
 static void enter_standby(const char* reason){
-    if(standby_active)return;standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
+    if(standby_active)return;
+    // Standby owns the whole display. Dismiss transient quick settings first
+    // so it cannot remain layered over, or reappear immediately after, standby.
+    quick_panel_active=false;quick_panel_restore_landscape=false;quick_slider_dragging=false;
+    standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
     T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
@@ -2027,9 +2032,10 @@ static void service_boot_button(){
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
     if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){
-        // Short BOOT refreshes the CURRENT screen without changing navigation,
-        // keyboard, map centre, zoom or the open conversation.
-        draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);
+        // Short BOOT refresh is deliberately disabled in standby. Waking from
+        // standby requires the existing two-second hold, avoiding needless EPD
+        // refreshes from accidental short presses.
+        if(!standby_active){draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);}
     }pressed_at=0;handled=false;}
 }
 
