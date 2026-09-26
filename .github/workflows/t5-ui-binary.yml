@@ -121,13 +121,21 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.7.1 fixes Contacts and Channels list pagination so
-          entries beyond the first five are accessible. Multi-page lists now
-          support vertical swipe navigation, show PAGE X OF Y, and display
-          directional swipe arrows only when another page is available.
+          MeshInk $VERSION adds role-aware remote node information and a major
+          telemetry/status upgrade. Repeater and Room Server nodes can be
+          authenticated on-device, with the returned ACL role shown as Guest,
+          Read Only, Read/Write, or Admin. Status pages decode radio, battery,
+          uptime, queue, packet, duplicate, airtime, error, and Room Server
+          post/push counters. Saved per-node passwords are optional and persist
+          across reboot when using normal update images.
+
+          Conversation history now uses vertical swipe paging, Contacts and
+          Discovery show node-role indicators, remote Status/Telemetry/Path
+          results use larger text, and the password keyboard has been cleaned
+          up for the T5 display.
 
           The update image does not intentionally erase existing MeshCore
-          settings, contacts or message history.
+          settings, contacts, message history, or saved MeshInk credentials.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
