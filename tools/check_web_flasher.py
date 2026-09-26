@@ -46,6 +46,12 @@ require('restartButton.addEventListener("click", restartBoard)' in js,
         "manual restart button is wired")
 require('flashingCompleted = true;' in js, "manual restart only appears after firmware written")
 require('progress.removeAttribute("value")' in js, "visible indeterminate progress during download")
+require('let writeStarted = false;' in js and 'writeStarted = true;' in js,
+        "explicitly track whether flash writing has started")
+require('const connectionFailure = !cancelled && !writeStarted;' in js,
+        "pre-write serial failures enter bootloader retry state")
+require('progress.hidden = true;' in js and 'connectionRetry = connectionFailure;' in js,
+        "connection failure stops progress and enables retry guidance")
 require('setActivity("Checking firmware checksum…")' in js, "checksum progress is visible")
 
 
