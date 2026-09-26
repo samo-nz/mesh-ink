@@ -4,6 +4,10 @@
 #include "companion_runtime.h"
 #include "t5_timing.h"
 
+#ifndef T5_CACHE64_EXPERIMENT
+#define T5_CACHE64_EXPERIMENT 0
+#endif
+
 static bool companion_mode = false;
 static constexpr uint8_t BOOT_BUTTON = 0;
 
@@ -45,6 +49,10 @@ void setup() {
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
                   companion_mode ? "BT companion" : "local UI");
+#if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
+    Serial.printf("[T5-BOOT] data-cache-line=%dB cache64-experiment=%d\n",
+                  CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, T5_CACHE64_EXPERIMENT);
+#endif
     if (companion_mode) companion_setup();
     else {
         ui_setup();           // show boot logo with INITIALISING STORAGE...
