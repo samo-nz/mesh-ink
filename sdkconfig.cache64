@@ -13,6 +13,16 @@ CONFIG_BT_GATTS_ENABLE=y
 CONFIG_BT_GATTC_ENABLE=y
 CONFIG_BT_BLE_SMP_ENABLE=y
 
+# Arduino 2.0.x / ESP-IDF 4.4 also emits legacy compatibility aliases.
+# Some Bluedroid source gates still key off these names.
+CONFIG_BLUEDROID_ENABLED=y
+CONFIG_BLUEDROID_PINNED_TO_CORE_0=y
+CONFIG_BLUEDROID_PINNED_TO_CORE=0
+CONFIG_GATTS_ENABLE=y
+CONFIG_GATTS_SEND_SERVICE_CHANGE_AUTO=y
+CONFIG_GATTS_SEND_SERVICE_CHANGE_MODE=0
+CONFIG_GATTC_ENABLE=y
+
 # The actual experiment: allow EPDiy's LCD/DMA path to keep its configured
 # 20 MHz pixel clock instead of automatically reducing it to 10 MHz.
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
