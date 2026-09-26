@@ -168,7 +168,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu,
-    Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, About
+    Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static Screen preset_return_screen = Screen::Welcome;
@@ -975,7 +975,9 @@ static void draw_settings() {
     draw_app_header("SETTINGS",true);
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
     settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
-    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
+    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
+    settings_row("HELP","USING MESHINK",598);
+    settings_row("ABOUT","FIRMWARE AND DEVICE INFO",718);
 }
 
 static void draw_radio_settings() {
@@ -1033,8 +1035,20 @@ static void draw_display_settings() {
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
     if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
     box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
-    centred("SHORT BOOT: REFRESH",856,2,0,true);
-    centred("HOLD BOOT: STANDBY",882,2,0,true);
+}
+
+static void draw_help() {
+    draw_app_header("USING MESHINK",true);
+    text("TOUCH",24,126,3,0,true);
+    draw_wrapped("Tap controls to select them. Swipe and scroll where shown.",24,170,39,2,0,false,3);
+    text("QUICK SETTINGS",24,270,3,0,true);
+    draw_wrapped("Swipe down from the top edge for front light, advert flood and power off.",24,314,39,2,0,false,4);
+    text("BOOT BUTTON",24,438,3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to enter standby.",24,482,39,2,0,false,4);
+    text("STANDBY",24,606,3,0,true);
+    draw_wrapped("Hold BOOT for 2 seconds to wake. Short presses are ignored while in standby.",24,650,39,2,0,false,4);
+    text("KEYBOARD",24,774,3,0,true);
+    draw_wrapped("Message entry uses the landscape keyboard. Standby restores it after wake.",24,818,39,2,0,false,3);
 }
 
 static void draw_standby(){
@@ -1236,9 +1250,9 @@ static void draw_screen() {
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;case Screen::Timezone:draw_timezone();break;
-        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::About:draw_about();break;
+        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails)draw_bottom_nav(details_from_discovery?3:0);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||settings_page)draw_bottom_nav(3);
     draw_toast();
@@ -1851,7 +1865,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,238,516,112)){open_screen(Screen::GpsSettings);return true;}
             if(hit(x,y,12,358,516,112)){open_screen(Screen::PrivacySettings);return true;}
             if(hit(x,y,12,478,516,112)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit(x,y,12,598,516,112)){open_screen(Screen::About);return true;}break;
+            if(hit(x,y,12,598,516,112)){open_screen(Screen::Help);return true;}
+            if(hit(x,y,12,718,516,112)){open_screen(Screen::About);return true;}break;
         case Screen::RadioSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             if(hit(x,y,12,120,516,112)){replace_name_on_type=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);return true;}
@@ -1901,6 +1916,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,24,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,296,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,24,600,492,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MODE_DU);return true;}break;
+        case Screen::Help:
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         case Screen::About:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         default:break;
