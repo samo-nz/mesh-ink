@@ -6,9 +6,10 @@ They do not replace a physical GT911, GPS, or e-paper test.
 """
 from pathlib import Path
 
-source = (Path(__file__).resolve().parents[1] / "src" / "ui_onboarding.cpp").read_text(
-    encoding="utf-8"
-)
+root = Path(__file__).resolve().parents[1]
+source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
+runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
+data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -72,7 +73,12 @@ contains("screen==Screen::ContactDetails&&abs(tap.dy)>60", "Node Info pages use 
 contains('UiNodeInfoRequest::Status,"REQUEST STATUS"', "Node Info exposes an individual status request")
 contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes an individual telemetry request")
 contains('UiNodeInfoRequest::Path,"REQUEST PATH"', "Node Info exposes an individual path request")
-assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once")
+assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once"
+assert "request_active_node_info(UiNodeInfoRequest request)" in data_source, "Node Info provider must accept one typed request"
+assert "advance_info" not in runtime_source, "Node Info transport must not auto-chain requests"
+assert "pending_info.stage" not in runtime_source, "Node Info transport must not retain staged request-all state"
+for request in ("Status", "Telemetry", "Path"):
+    assert f"pending_info.request==UiNodeInfoRequest::{request}" in runtime_source, f"{request} reply must match only its selected request")
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
