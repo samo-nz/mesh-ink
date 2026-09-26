@@ -330,7 +330,9 @@ static void print_summary(){
     Serial.print(" main=");print_ms_value(snapshot[MainGap].window_max);
     Serial.print(" mesh=");print_ms_value(snapshot[MeshExec].window_max);
     Serial.print(" ui=");print_ms_value(snapshot[UiExec].window_max);
-    Serial.print(" display=");print_ms_value(snapshot[DisplayExec].window_max);
+    Serial.print(" display-worst=");print_ms_value(snapshot[DisplayExec].window_max);
+    Serial.print(" display-total=");print_ms_value((uint32_t)min((uint64_t)0xFFFFFFFFULL,snapshot[DisplayExec].window_sum));
+    Serial.printf(" refreshes=%lu",(unsigned long)snapshot[DisplayExec].window_count);
     Serial.printf(" queue-drops=%lu slow=%lu",(unsigned long)queue_drops,(unsigned long)slow_count);
     if(slow_count){
         Serial.print(" slow-worst=");print_ms_value(slow_worst);
