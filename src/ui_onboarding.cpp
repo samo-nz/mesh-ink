@@ -427,6 +427,10 @@ static void draw_keyboard() {
         // space bar the wide centre/right area and keep SEND isolated.
         key("SPACE",120,898,298);
         key("SEND",426,898,102);
+    }else if(screen==Screen::RadioSettings&&!keyboard_password_mode){
+        // Radio Settings name entry has no valid space character. Remove the
+        // dead SPACE/HIDE controls and make SAVE an obvious wide action.
+        key("SAVE",120,898,408);
     }else{
         key("SPACE",120,898,190);
         key("HIDE",318,898,100);
@@ -1956,6 +1960,9 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
+    // In Radio Settings, tapping above the keyboard dismisses name editing.
+    // First-time setup keeps its explicit setup controls and save flow.
+    if(screen==Screen::RadioSettings&&y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
     if(meshink_keyboard::in_row(y,828)){
         if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
         if(x>=457){
@@ -1970,8 +1977,10 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     }
     if(y>=894&&y<960){
         if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<314)return true; // node names cannot contain spaces
-        if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        if(screen!=Screen::RadioSettings){
+            if(x<314)return true; // node names cannot contain spaces
+            if(x<422){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
+        }
         const bool was_setup=screen==Screen::Welcome;
         save_node_name();
         if(was_setup){
