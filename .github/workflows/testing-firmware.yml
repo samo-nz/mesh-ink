@@ -63,10 +63,13 @@ jobs:
             meshink-testing-SHA256.txt
           if-no-files-found: error
           retention-days: 14
-      - name: Build cache64 experiment
+      - name: Build cache64 experiment (optional)
         id: cache64_build
         continue-on-error: true
         run: python -m platformio run -e t5-unified-cache64
+      - name: Explain optional cache64 failure
+        if: steps.cache64_build.outcome == 'failure'
+        run: echo "::warning::Optional cache64 experiment failed; the normal meshink-testing-firmware artifact above is valid and unaffected."
       - name: Verify cache64 SDK config
         if: steps.cache64_build.outcome == 'success'
         run: |
