@@ -958,6 +958,7 @@ static void draw_more() {
     draw_app_header("MORE");
     settings_row("DISCOVERED ADVERTS","RECENT NODES HEARD",130);settings_row("ADVERTISE","ZERO HOP OR FLOOD",260);
     settings_row("SETTINGS","DEVICE AND RADIO",390);settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",520);
+    settings_row("HELP","USING MESHINK",650);
     draw_bottom_nav(3);
 }
 
@@ -976,8 +977,7 @@ static void draw_settings() {
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
     settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
     settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
-    settings_row("HELP","USING MESHINK",598);
-    settings_row("ABOUT","FIRMWARE AND DEVICE INFO",718);
+    settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
 }
 
 static void draw_radio_settings() {
@@ -1039,22 +1039,18 @@ static void draw_display_settings() {
 
 static void draw_help() {
     draw_app_header("USING MESHINK",true);
-    // Dense one-page guide: 3x headings and 2x body are the largest existing
-    // text sizes that keep all requested sections above the bottom nav.
-    text("QUICK SETTINGS",24,118,3,0,true);
-    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,154,39,2,0,false,3);
-
-    text("BOOT BUTTON",24,260,3,0,true);
-    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,296,39,2,0,false,5);
-
-    text("KEYBOARD",24,454,3,0,true);
-    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,490,39,2,0,false,4);
-
-    text("MAPS",24,622,3,0,true);
-    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,658,39,2,0,false,4);
-
-    text("BLUETOOTH COMPANION MODE",24,790,3,0,true);
-    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,826,39,2,0,false,3);
+    // Keep each heading close to its paragraph; 2x body text is the largest
+    // size that fits the complete guide, including the final "UI.".
+    text("QUICK SETTINGS",24,112,3,0,true);
+    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,146,39,2,0,false,3);
+    text("BOOT BUTTON",24,236,3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,270,39,2,0,false,5);
+    text("KEYBOARD",24,414,3,0,true);
+    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,448,39,2,0,false,4);
+    text("MAPS",24,556,3,0,true);
+    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,590,39,2,0,false,4);
+    text("BLUETOOTH COMPANION MODE",24,698,3,0,true);
+    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,732,39,2,0,false,5);
 }
 
 static void draw_standby(){
@@ -1860,7 +1856,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,130,516,112)){open_screen(Screen::Discovery);return true;}
             if(hit(x,y,12,260,516,112)){open_screen(Screen::AdvertMenu);return true;}
             if(hit(x,y,12,390,516,112)){open_screen(Screen::Settings);return true;}
-            if(hit(x,y,12,520,516,112)){open_screen(Screen::CompanionConfirm);return true;}break;
+            if(hit(x,y,12,520,516,112)){open_screen(Screen::CompanionConfirm);return true;}
+            if(hit(x,y,12,650,516,112)){open_screen(Screen::Help);return true;}break;
         case Screen::AdvertMenu:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}
             if(hit(x,y,12,180,516,112)){show_toast(local_mesh_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MODE_DU);return true;}
@@ -1871,8 +1868,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,238,516,112)){open_screen(Screen::GpsSettings);return true;}
             if(hit(x,y,12,358,516,112)){open_screen(Screen::PrivacySettings);return true;}
             if(hit(x,y,12,478,516,112)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit(x,y,12,598,516,112)){open_screen(Screen::Help);return true;}
-            if(hit(x,y,12,718,516,112)){open_screen(Screen::About);return true;}break;
+            if(hit(x,y,12,598,516,112)){open_screen(Screen::About);return true;}break;
         case Screen::RadioSettings:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}
             if(hit(x,y,12,120,516,112)){replace_name_on_type=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);return true;}
@@ -1923,7 +1919,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,296,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,24,600,492,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MODE_DU);return true;}break;
         case Screen::Help:
-            if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
+            if(hit(x,y,0,48,110,70)){open_screen(Screen::More);return true;}break;
         case Screen::About:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::Settings);return true;}break;
         default:break;
