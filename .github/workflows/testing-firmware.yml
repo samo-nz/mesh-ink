@@ -20,6 +20,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: meshink-testing-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   firmware:
     runs-on: ubuntu-latest
