@@ -165,5 +165,16 @@ contains('key("SAVE",120,898,408);', "name entry uses a wide SAVE action instead
 contains('if(screen==Screen::RadioSettings&&y<618){keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}', "Radio Settings keyboard dismisses by tapping above it")
 assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
 
+# 1.8.3 correlated timing instrumentation must remain wired without adding
+# synchronous Serial writes to the touch producer.
+contains("uint32_t queued_at_ms=0;", "queued touch events carry enqueue timestamps")
+contains("T5InputTimingScope timing_input", "UI measures touch event queue age and handler time")
+contains("t5_timing_note_ui_draw", "framebuffer draw timing hook")
+contains("t5_timing_note_chat_draw", "chat history/keyboard render split")
+contains("t5_timing_note_text_wait", "text debounce timing hook")
+contains("T5UiAction::StatusPoll", "status-poll timing attribution")
+contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
+assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
+
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
