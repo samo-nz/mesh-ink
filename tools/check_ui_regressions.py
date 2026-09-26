@@ -173,6 +173,8 @@ contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fr
 contains("if(text_refresh_pending)return;", "typing refresh is throttled/coalesced instead of indefinitely debounced")
 contains("static void draw_message_entry_fast()", "message typing avoids full chat redraw")
 contains("static void draw_radio_name_fast()", "Radio Settings name typing avoids full settings redraw")
+contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Radio Settings preserves the existing node name when editing")
+
 contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
 contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
 contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
