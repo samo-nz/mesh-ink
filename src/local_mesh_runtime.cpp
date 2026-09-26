@@ -373,21 +373,33 @@ public:
     void login_result(bool success){detail_login_active_=false;detail_authenticated_=success;if(!success)strcpy(detail_status_,"LOGIN FAILED");ui_request_data_refresh("node-login");}
     void status_response(const uint8_t* data,size_t len){
         note_info_reply();
-        if(detail_contact_.type==ADV_TYPE_REPEATER&&len>=56){
+        const bool repeater=detail_contact_.type==ADV_TYPE_REPEATER;
+        const bool room=detail_contact_.type==ADV_TYPE_ROOM;
+        if((repeater&&len>=56)||(room&&len>=52)){
             uint16_t batt=0,queue=0,errors=0,direct_dups=0,flood_dups=0;int16_t noise=0,rssi=0,snr4=0;
-            uint32_t rx=0,tx=0,tx_air=0,uptime=0,sent_flood=0,sent_direct=0,recv_flood=0,recv_direct=0,rx_air=0,rx_errors=0;
+            uint32_t rx=0,tx=0,tx_air=0,uptime=0,sent_flood=0,sent_direct=0,recv_flood=0,recv_direct=0;
             memcpy(&batt,data+0,2);memcpy(&queue,data+2,2);memcpy(&noise,data+4,2);memcpy(&rssi,data+6,2);
             memcpy(&rx,data+8,4);memcpy(&tx,data+12,4);memcpy(&tx_air,data+16,4);memcpy(&uptime,data+20,4);
             memcpy(&sent_flood,data+24,4);memcpy(&sent_direct,data+28,4);memcpy(&recv_flood,data+32,4);memcpy(&recv_direct,data+36,4);
             memcpy(&errors,data+40,2);memcpy(&snr4,data+42,2);memcpy(&direct_dups,data+44,2);memcpy(&flood_dups,data+46,2);
-            memcpy(&rx_air,data+48,4);memcpy(&rx_errors,data+52,4);
             const uint32_t days=uptime/86400U,hours=(uptime%86400U)/3600U;
-            snprintf(detail_status_,sizeof(detail_status_),
-                     "BATTERY %.2f V\nUPTIME %luD %luH\nTX QUEUE %u\nNOISE %d DBM\nLAST RSSI %d DBM\nLAST SNR %.1f DB\nPACKETS RX/TX %lu / %lu\nFLOOD RX/TX %lu / %lu\nDIRECT RX/TX %lu / %lu\nRX ERRORS %lu\nDUPLICATES D/F %u / %u\nAIRTIME TX/RX %luS / %luS\nERROR FLAGS 0X%04X",
-                     batt/1000.0f,(unsigned long)days,(unsigned long)hours,(unsigned)queue,(int)noise,(int)rssi,snr4/4.0f,
-                     (unsigned long)rx,(unsigned long)tx,(unsigned long)recv_flood,(unsigned long)sent_flood,
-                     (unsigned long)recv_direct,(unsigned long)sent_direct,(unsigned long)rx_errors,
-                     (unsigned)direct_dups,(unsigned)flood_dups,(unsigned long)tx_air,(unsigned long)rx_air,(unsigned)errors);
+            if(repeater){
+                uint32_t rx_air=0,rx_errors=0;memcpy(&rx_air,data+48,4);memcpy(&rx_errors,data+52,4);
+                snprintf(detail_status_,sizeof(detail_status_),
+                         "BATTERY %.2f V\nUPTIME %luD %luH\nTX QUEUE %u\nNOISE %d DBM\nLAST RSSI %d DBM\nLAST SNR %.1f DB\nPACKETS RX/TX %lu / %lu\nFLOOD RX/TX %lu / %lu\nDIRECT RX/TX %lu / %lu\nRX ERRORS %lu\nDUPLICATES D/F %u / %u\nAIRTIME TX/RX %luS / %luS\nERROR FLAGS 0X%04X",
+                         batt/1000.0f,(unsigned long)days,(unsigned long)hours,(unsigned)queue,(int)noise,(int)rssi,snr4/4.0f,
+                         (unsigned long)rx,(unsigned long)tx,(unsigned long)recv_flood,(unsigned long)sent_flood,
+                         (unsigned long)recv_direct,(unsigned long)sent_direct,(unsigned long)rx_errors,
+                         (unsigned)direct_dups,(unsigned)flood_dups,(unsigned long)tx_air,(unsigned long)rx_air,(unsigned)errors);
+            }else{
+                uint16_t posted=0,pushed=0;memcpy(&posted,data+48,2);memcpy(&pushed,data+50,2);
+                snprintf(detail_status_,sizeof(detail_status_),
+                         "BATTERY %.2f V\nUPTIME %luD %luH\nTX QUEUE %u\nNOISE %d DBM\nLAST RSSI %d DBM\nLAST SNR %.1f DB\nPACKETS RX/TX %lu / %lu\nFLOOD RX/TX %lu / %lu\nDIRECT RX/TX %lu / %lu\nDUPLICATES D/F %u / %u\nAIRTIME TX %luS\nPOSTS %u\nPUSHES %u\nERROR FLAGS 0X%04X",
+                         batt/1000.0f,(unsigned long)days,(unsigned long)hours,(unsigned)queue,(int)noise,(int)rssi,snr4/4.0f,
+                         (unsigned long)rx,(unsigned long)tx,(unsigned long)recv_flood,(unsigned long)sent_flood,
+                         (unsigned long)recv_direct,(unsigned long)sent_direct,(unsigned)direct_dups,(unsigned)flood_dups,
+                         (unsigned long)tx_air,(unsigned)posted,(unsigned)pushed,(unsigned)errors);
+            }
         }else snprintf(detail_status_,sizeof(detail_status_),"STATUS RESPONSE  %u BYTES",(unsigned)len);
         T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] node info: status reply received bytes=%u type=%u\n",(unsigned)len,detail_contact_.type);
     }
@@ -442,8 +454,9 @@ static void finish_info(){pending_info.active=false;pending_info.waiting_sent=fa
 bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
     if(active_channel_||pending_info.active||pending_login.active||pending_direct.active||request==UiNodeInfoRequest::None)return false;
     ContactInfo contact{};if(!active_contact(contact))return false;
-    if(request==UiNodeInfoRequest::Status&&(contact.type!=ADV_TYPE_REPEATER||!detail_authenticated_))return false;
-    if(request==UiNodeInfoRequest::Telemetry&&contact.type==ADV_TYPE_REPEATER&&!detail_authenticated_)return false;
+    const bool protected_server=contact.type==ADV_TYPE_REPEATER||contact.type==ADV_TYPE_ROOM;
+    if(request==UiNodeInfoRequest::Status&&(!protected_server||!detail_authenticated_))return false;
+    if(request==UiNodeInfoRequest::Telemetry&&protected_server&&!detail_authenticated_)return false;
     pending_info={};pending_info.active=true;pending_info.request=request;
     memcpy(pending_info.key,contact.id.pub_key,PUB_KEY_SIZE);
     if(request==UiNodeInfoRequest::Telemetry)request_gps_received_=false;
@@ -456,7 +469,7 @@ bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
 
 bool MeshCoreUiProvider::login_active_node(const char* password){
     if(active_channel_||pending_login.active||pending_info.active||pending_direct.active||!password)return false;
-    ContactInfo contact{};if(!active_contact(contact)||contact.type!=ADV_TYPE_REPEATER)return false;
+    ContactInfo contact{};if(!active_contact(contact)||(contact.type!=ADV_TYPE_REPEATER&&contact.type!=ADV_TYPE_ROOM))return false;
     const size_t password_len=min(strlen(password),(size_t)15);
     uint8_t frame[1+PUB_KEY_SIZE+15]{};frame[0]=26;memcpy(frame+1,contact.id.pub_key,PUB_KEY_SIZE);memcpy(frame+1+PUB_KEY_SIZE,password,password_len);
     if(!local_mesh_enqueue_command(frame,1+PUB_KEY_SIZE+password_len))return false;
