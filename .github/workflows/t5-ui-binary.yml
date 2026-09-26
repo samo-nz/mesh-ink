@@ -121,12 +121,10 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 1.7.0 adds the pull-down Quick Settings panel with live
-          front-light control, advert flood and power off, plus standby and
-          landscape-keyboard fixes, improved startup refresh behaviour, and
-          refreshed Help, Display and About screens. The update also improves
-          brightness OFF persistence and presents MeshCore release/revision
-          information in About.
+          MeshInk 1.7.1 fixes Contacts and Channels list pagination so
+          entries beyond the first five are accessible. Multi-page lists now
+          support vertical swipe navigation, show PAGE X OF Y, and display
+          directional swipe arrows only when another page is available.
 
           The update image does not intentionally erase existing MeshCore
           settings, contacts or message history.
