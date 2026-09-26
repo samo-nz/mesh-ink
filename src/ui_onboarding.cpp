@@ -127,6 +127,7 @@ static bool setup_complete = false;
 static bool toast_opens_main = false;
 static bool keyboard_message_mode = false;
 static bool keyboard_password_mode = false;
+static bool save_remote_password = false;
 static char compose_text[49] = {};
 static char remote_password[16] = {};
 static UiDataProvider* ui_data = nullptr;
@@ -1045,7 +1046,8 @@ static void draw_contact_details() {
             if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",24,410,2,0,true);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,650,492,70,true);
         }else{
-            text("LOGGED IN",24,258,2,0,true);
+            char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
+            text(login_text,24,258,2,0,true);
             draw_wrapped(node.status,24,294,39,2,0,false,14);
             action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,650,492,70,true);
         }
@@ -1070,7 +1072,9 @@ static void draw_contact_details() {
     draw_page_indicator(details_page,pages,770);
     if(keyboard_visible&&keyboard_password_mode){
         char masked[16]{};const size_t n=strlen(remote_password);memset(masked,'*',n);masked[n]=0;
-        box(12,544,516,70);text(masked[0]?masked:"REPEATER PASSWORD",28,568,2,0,true);draw_keyboard();
+        box(24,504,28,28,save_remote_password);if(save_remote_password)text("X",30,509,2,0xFF,true);
+        text("SAVE PASSWORD",66,510,2,0,true);
+        box(12,544,516,70);text(masked[0]?masked:"REMOTE PASSWORD",28,568,2,0,true);draw_keyboard();
     }
 }
 
@@ -1772,7 +1776,7 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
         centre_map_on_device();
     const bool already_on_map=screen==Screen::Maps;
     map_taps={}; // prevent a pending map double tap from firing on another UI
-    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;remote_password[0]=0;screen=next;
+    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;save_remote_password=false;remote_password[0]=0;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
         return;
@@ -1853,8 +1857,8 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         if(x<199){set_keyboard_orientation(false);return true;}
         if(x<707){append(' ');queue_text_refresh();return true;}
         if(keyboard_password_mode){
-            const bool ok=ui_data&&ui_data->login_active_node(remote_password);
-            memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;
+            const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
+            memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
             keyboard_landscape=false;epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_GL16);return true;
         }
@@ -1872,6 +1876,7 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
 
 static bool handle_password_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_password_mode)return false;
+    if(hit(x,y,20,496,260,46)){save_remote_password=!save_remote_password;draw_screen();refresh(MODE_DU);return true;}
     if(meshink_keyboard::in_row(y,828)){
         if(x<91){cycle_keyboard_mode();draw_screen();refresh(MODE_DU);return true;}
         if(x>=457){const size_t n=strlen(remote_password);if(n)remote_password[n-1]=0;queue_text_refresh();return true;}
@@ -1881,9 +1886,9 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
     if(y>=894&&y<960){
         if(x<116){set_keyboard_orientation(true);return true;}
         if(x<314){append(' ');queue_text_refresh();return true;}
-        if(x<422){memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;draw_screen();refresh(MODE_GL16);return true;}
-        const bool ok=ui_data&&ui_data->login_active_node(remote_password);
-        memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;
+        if(x<422){memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;draw_screen();refresh(MODE_GL16);return true;}
+        const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
+        memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
         show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_DU);return true;
     }
     return true;
@@ -1992,7 +1997,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
                 const bool login_required=repeater||room_server;
                 if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,24,650,492,70)){
-                    if(!node.authenticated){if(!node.login_active){remote_password[0]=0;keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
+                    if(!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MODE_GL16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MODE_DU);return true;
                 }
                 if(node.saved_contact&&page==NodeInfoPage::Telemetry&&hit(x,y,24,650,492,70)){
