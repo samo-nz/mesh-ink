@@ -92,6 +92,16 @@ assert 'Preferences prefs;if(!prefs.begin("mesh-auth",false))return false;' in r
 assert "uint8_t key[PUB_KEY_SIZE]" in runtime_source and "char password[16]" in runtime_source, "saved credentials are keyed to full node identity"
 contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbox")
 contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
+contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use thicker line primitives")
+contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
+contains("draw_wrapped(node.status,24,294,27,3,0,true,14);", "received status text is larger and bold")
+contains("draw_wrapped(node.telemetry,24,270,27,3,0,true,4);", "received telemetry text is larger and bold")
+contains("draw_wrapped(node.path,24,270,27,3,0,true,5);", "received path text is larger and bold")
+contains('page==NodeInfoPage::Status&&hit(x,y,24,808,492,70)', "status action touch follows lowered button")
+contains('page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)', "telemetry action touch follows lowered button")
+contains('page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)', "path action touch follows lowered button")
+assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
+
 contains('epd_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
 contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
