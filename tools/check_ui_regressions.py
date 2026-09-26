@@ -61,6 +61,9 @@ contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering addre
 contains("(screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60", "Contacts/Channels vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
 contains("draw_list_page_footer(channels_page,count);", "Channels displays page count when multiple pages exist")
+contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page footer")
+contains("if(page>0)draw_list_page_arrow", "list footer shows previous-page swipe-down arrow only when available")
+contains("if(page+1<pages)draw_list_page_arrow", "list footer shows next-page swipe-up arrow only when available")
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
