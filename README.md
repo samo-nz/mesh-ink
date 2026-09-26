@@ -234,7 +234,7 @@ JPEG/WebP, and separately gzip-compressed tile payloads are **not** rendered.
 A typical Protomaps vector `.pmtiles` map therefore needs to be rendered to
 raster PNG tiles before it can be used on MeshInk.
 
-<details/>
+</details>
 
 ## Building from source
 
