@@ -33,7 +33,10 @@ contains('if(was_setup){\n            show_contacts_after_setup();', "portrait s
 
 contains("frontlight_brightness=30;", "new-device frontlight default")
 contains('prefs.getUChar("light_level",30)', "first-install brightness load")
-contains('if(frontlight_brightness<1||frontlight_brightness>100)frontlight_brightness=30', "brightness fallback")
+contains('if(frontlight_brightness>100)frontlight_brightness=30', "brightness fallback preserves valid OFF level")
+assert 'frontlight_brightness<1||frontlight_brightness>100' not in source, "saved OFF brightness must survive reboot"
+contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);', "standby preserves keyboard under quick settings")
+contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
 contains('draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);', "BOOT refresh without home navigation")
 assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
 # Keep non-Maps typing and Home release on the original single-touch path.
