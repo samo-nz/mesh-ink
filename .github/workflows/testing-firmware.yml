@@ -84,6 +84,7 @@ jobs:
           grep -q '#define CONFIG_BLUEDROID_ENABLED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_GATTS_ENABLE 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_GATTC_ENABLE 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BT_BLE_42_FEATURES_SUPPORTED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
       - name: Prepare cache64 experimental firmware
         if: steps.cache64_build.outcome == 'success'
         run: |
