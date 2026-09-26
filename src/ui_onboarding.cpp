@@ -1029,8 +1029,8 @@ static void draw_display_settings() {
     box(12,358,516,160);text("BRIGHTNESS",28,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
     epd_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;epd_fill_rect({knob-12,449,24,35},0,fb);text("-",28,452,3,0,true);text("+",492,452,3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
-    text(map_imperial?"MAP SCALE: IMPERIAL":"MAP SCALE: METRIC",28,652,2,0,true);
-    const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?758:674;
+    settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
+    const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
     if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
     box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
     centred("SHORT BOOT: REFRESH",856,2,0,true);
@@ -1891,9 +1891,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,12,238,516,112)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MODE_DU);return true;}
             if(hit(x,y,12,538,516,112)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MODE_DU);return true;}
-            if(hit(x,y,12,630,516,50)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MODE_DU);return true;}
-            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,674,492,70)){open_screen(Screen::NightSchedule);return true;}
-            if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?758:674,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
+            if(hit(x,y,12,656,516,112)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MODE_DU);return true;}
+            if(frontlight_mode==FrontlightMode::NightTimer&&hit(x,y,24,790,492,70)){open_screen(Screen::NightSchedule);return true;}
+            if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?806:790,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
         case Screen::NightSchedule:
             if(hit(x,y,0,48,110,70)){open_screen(Screen::DisplaySettings);return true;}
             if(hit(x,y,24,150,492,112)){night_edit_field=0;draw_screen();refresh(MODE_DU);return true;}
