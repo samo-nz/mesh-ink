@@ -1599,24 +1599,27 @@ static void load_map_with_feedback(bool already_on_map) {
         draw_status_bar();
         draw_bottom_nav(2);
     }
-    // Make the loading frame itself the contrast-preparation frame. Turning
-    // the terrain fully black here means the final DU reveal still gets the
-    // same stable black->map transition that avoided progressive darkening,
-    // but we no longer need a separate intermediate black refresh.
-    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
-    draw_toast_message("Loading.."); // white text remains readable on black
+    // When panning or zooming, fb still holds the visible previous map.
+    // Keep that map visible under the loading toast; this avoids a jarring
+    // black flash during interactive pan/zoom even though it requires the
+    // established three-refresh contrast-preserving sequence.
+    draw_toast_message("Loading..");
     refresh(MODE_DU);
 
-    // The black loading frame stays on the panel while all tile I/O and PNG
-    // decoding run synchronously. Refreshing lowered the CPU to 160 MHz;
-    // temporarily use the ESP32-S3's existing 240 MHz draw setting for the
-    // CPU-heavy raster render. The final refresh restores normal clocking.
+    // The previous map and toast stay on the panel while all tile I/O and
+    // PNG decoding run synchronously. Refreshing the loading toast lowered
+    // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
+    // display-performance setting for the CPU-heavy raster render.
     set_cpu_target(240,"map-render",false);
     draw_screen();
 
-    // Reveal the fully composed frame directly from the prepared black terrain.
-    // This is the second and final physical refresh for the gesture.
-    fast_full_redraw("MAP_BLACK_LOADING_COMPLETE",false);
+    // Prepare the completed terrain black, then reveal the finished map.
+    // This preserves the stable black->map DU transition that prevents
+    // progressive darkening of unchanged terrain on repeated map updates.
+    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
+    refresh(MODE_DU,false); // intentional transient black prep
+    draw_screen(); // same decoded map_base_cache; no second tile decode
+    fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
 }
 
 static void full_display_clean(const char* reason) {
