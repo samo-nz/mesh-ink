@@ -154,7 +154,11 @@ contains('show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "s
 contains("!(tap.x>=456&&tap.y<281)", "larger map controls excluded from swipe")
 contains("static constexpr int MAP_TOP=48;", "map starts below compact status bar")
 contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
-contains('draw_toast_message("Loading..");\n    refresh(MODE_DU);', "Maps keep the previous map visible beneath Loading")
+contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
+contains('refresh_area(MODE_DU,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
+contains('else\n        refresh(MODE_DU);', "first Maps entry retains full Loading refresh")
+contains('epd_hl_update_area(', "partial Loading path uses EPDiy area update API")
+contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
 contains('refresh(MODE_DU,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
 contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
 contains("static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;", "map projection centre matches viewport")
@@ -251,3 +255,8 @@ assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
+
+simd_source = (root / "src" / "cache64_s3_rgb565.S").read_text(encoding="utf-8")
+compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
+assert ".global s3_rgb565" in simd_source and "ee.vld.128.ip" in simd_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
+assert 'extern "C" void s3_rgb565' not in compat_source, "obsolete scalar RGB565 compatibility function removed"
