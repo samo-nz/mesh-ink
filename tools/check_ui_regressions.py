@@ -212,8 +212,11 @@ contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale
 contains("screen!=Screen::Maps;", "stale-touch filter excludes Maps gestures")
 assert "native=%u parent=%u src=%u-%u loose=%u pmtiles=%u" in map_source, "map logs native/parent and source zoom/type"
 assert "[T5-PMT] ready path=%s zoom=%u-%u" in pmtiles_source, "PMTiles logs archive zoom coverage"
-contains('if(loose&&pmtiles)return "MIX";', "MIX badge is reserved for genuinely mixed storage sources")
-contains('if(result.native==0&&result.reused>0)return pmtiles?"E-M":"E-P";', "parent-only viewport gets enlarged-source badge")
+contains('if(result.native_pmtiles&&result.native_loose)return "MIX";', "MIX badge is reserved for genuinely mixed native sources")
+contains('if(result.native_pmtiles)return "PMT";', "native PMTiles wins over harmless parent fallback")
+contains('if(result.native_loose)return "PNG";', "native loose PNG wins over harmless parent fallback")
+contains('if(result.parent_pmtiles)return "E-M";', "parent-only PMTiles viewport gets enlarged-source badge")
+contains('if(result.parent_loose)return "E-P";', "parent-only loose viewport gets enlarged-source badge")
 contains('return pmtiles?"E-M":"E-P";', "map badge distinguishes enlarged PMTiles versus loose PNG parents")
 contains('return pmtiles?"PMT":"PNG";', "map badge distinguishes native PMTiles versus loose PNG")
 contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;', "keyboard touch sampler uses faster cadence for rapid repeated letters")
