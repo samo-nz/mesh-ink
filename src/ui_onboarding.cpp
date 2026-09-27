@@ -361,6 +361,7 @@ struct MapTapSequence{
     uint32_t last_at=0;
 };
 static MapTapSequence map_taps{};
+static uint32_t navigation_touch_cutoff_ms=0;
 
 static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
@@ -1963,6 +1964,13 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
         return;
     }
     draw_screen();refresh(MODE_GL16);
+    // The e-paper transition above blocks the UI task while the touch sampler
+    // keeps running on the other core. Ignore releases that completed before
+    // this new page became visible; their coordinates belong to the previous
+    // page and replaying them can trigger several unintended full refreshes.
+    // A press held until after the transition remains eligible because its
+    // release timestamp is newer than this cutoff.
+    navigation_touch_cutoff_ms=millis();
 }
 // A zoom changes the map centre so the geographic location under the FIRST
 // tap / starting pinch midpoint stays under the same screen pixel. Display
@@ -2594,6 +2602,15 @@ void ui_loop() {
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         T5InputTimingScope timing_input(tap.queued_at_ms,(uint32_t)uxQueueMessagesWaiting(touch_queue));
+        // Only ordinary portrait page navigation uses this stale-event fence.
+        // Keyboard input, Quick Settings and Maps keep their existing queue /
+        // gesture semantics and are never discarded by this rule.
+        const bool stale_navigation_tap=
+            navigation_touch_cutoff_ms&&tap.queued_at_ms&&
+            (int32_t)(tap.queued_at_ms-navigation_touch_cutoff_ms)<=0&&
+            !keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&
+            screen!=Screen::Maps;
+        if(stale_navigation_tap)continue;
         last_user_activity=millis();
         if(tap.home){
             map_taps={};
