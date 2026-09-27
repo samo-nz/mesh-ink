@@ -7,7 +7,7 @@
 #include <string.h>
 
 namespace {
-constexpr uint32_t LEARN_MS=30000;
+constexpr uint32_t LEARN_MS=5000;
 constexpr uint32_t SUMMARY_MS=60000;
 constexpr uint32_t EVENT_COOLDOWN_MS=5000;
 constexpr uint32_t SERIAL_EVENT_SPACING_MS=2000;
@@ -277,7 +277,7 @@ static void finish_learning(){
     last_summary_ms=millis();
     portEXIT_CRITICAL(&timing_mux);
 
-    Serial.print("[T5-TIMING] learned 30s baseline: touch gap avg=");
+    Serial.printf("[T5-TIMING] learned %lus baseline: touch gap avg=",(unsigned long)(LEARN_MS/1000));
     print_ms_value(snapshot[TouchGap].baseline);
     Serial.print(" max=");print_ms_value(snapshot[TouchGap].learn_max);
     Serial.print(" exec=");print_ms_value(snapshot[TouchExec].baseline);
@@ -380,7 +380,7 @@ void t5_timing_begin(){
     learning=true;
     current_section=T5TimingSection::Idle;current_section_started_us=micros();
     portEXIT_CRITICAL(&timing_mux);
-    Serial.println("[T5-TIMING] learning normal timing for 30s; stall reports suppressed during learning");
+    Serial.printf("[T5-TIMING] learning normal timing for %lus; stall reports suppressed during learning\n",(unsigned long)(LEARN_MS/1000));
 }
 
 void t5_timing_touch_reset(){
