@@ -30,7 +30,11 @@ Tile tile_cache[CACHE_SLOTS]{};
 AbsentTile absent_tiles[ABSENT_SLOTS]{};
 size_t absent_cursor=0;
 uint32_t cache_age=0;
-PNG png;
+// PNGdec's S3 SIMD path assumes its internal RGBA row buffer is 16-byte
+// aligned. In the hybrid cache64 link a normally declared PNG object landed
+// at +8 mod 16, making every vector source row misaligned. Align the whole
+// decoder object so PNGdec's internal ucPixels row remains vector-safe.
+alignas(16) PNG png;
 #if T5_CACHE64_EXPERIMENT
 extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
 #endif
