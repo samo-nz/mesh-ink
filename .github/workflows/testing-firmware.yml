@@ -12,6 +12,8 @@ on:
       - 'tests/test_map_gestures.cpp'
       - 'platformio.ini'
       - 'tools/check_ui_regressions.py'
+      - 'tools/test_keyboard_geometry.cpp'
+      - 'src/keyboard_geometry.h'
       - 'src/t5_timing.*'
       - 'src/unified_main.cpp'
       - 'src/cache64_compat.cpp'
@@ -53,6 +55,11 @@ jobs:
           /tmp/map-gestures-test
       - name: UI interaction regression checks
         run: python tools/check_ui_regressions.py
+      - name: Portrait and landscape keyboard target regression
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
+            tools/test_keyboard_geometry.cpp -o /tmp/meshink-keyboard-test
+          /tmp/meshink-keyboard-test
       - run: python -m platformio run -e t5-unified
       - name: Prepare test update firmware
         run: |
