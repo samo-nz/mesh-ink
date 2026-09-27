@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 #include "map_tiles.h"
+#include "map_gray.h"
 #include "pmtiles_reader.h"
 #include "board/target.h"
 
@@ -391,9 +392,7 @@ int32_t png_seek(PNGFILE*,int32_t position) {
 // Keep source brightness in the 4-bit RAM cache, independent of how the
 // panel is driven. Compose a consistent binary map from that brightness.
 uint8_t gray_level(uint16_t colour) {
-    const unsigned raw=min(255U,(unsigned)((((colour>>11)&31)*77+
-                               ((colour>>5)&63)*75+(colour&31)*29)>>5));
-    return (uint8_t)min(15U,(raw+8U)/17U);
+    return meshink_map_gray::level_from_rgb565(colour);
 }
 // Dither against WORLD pixel coordinates, not screen coordinates.
 // This lookup reproduces the existing 16 brightness levels and all 16
@@ -441,9 +440,33 @@ int png_draw(PNGDRAW* row) {
     // buffer must be explicitly aligned or converted pixels can be shifted
     // into the preceding bytes and leave a bright strip at a tile edge.
     alignas(16) static uint16_t pixels[TILE_SIZE];
-    // PNGdec writes iWidth RGB565 pixels into the caller's buffer.
     // Reject unexpected rows rather than risking an overwrite.
     if(row->y<0||row->y>=TILE_SIZE||row->iWidth!=TILE_SIZE)return 0;
+
+    // Normal cached map tiles only need 4-bit luminance. For RGBA PNGs,
+    // collapse RGBA -> RGB565 -> grayscale -> packed-nibbles into one pass.
+    // level_from_rgb888() deliberately applies the same 5/6/5 quantization
+    // before luminance, so the resulting map shades are bit-for-bit identical.
+    if(decode_bits&&row->iPixelType==PNG_PIXEL_TRUECOLOR_ALPHA) {
+        static bool direct_gray_logged=false;
+        const uint8_t* source=row->pPixels;
+        uint8_t* dest=decode_bits+(size_t)row->y*(TILE_SIZE/2);
+        for(int sx=0;sx<TILE_SIZE;sx+=2) {
+            const uint8_t high=meshink_map_gray::level_from_rgb888(
+                source[0],source[1],source[2]);
+            source+=4;
+            const uint8_t low=meshink_map_gray::level_from_rgb888(
+                source[0],source[1],source[2]);
+            source+=4;
+            *dest++=(uint8_t)((high<<4)|low);
+        }
+        if(!direct_gray_logged&&row->y==0) {
+            Serial.printf("[T5-PNG-GRAY] direct-rgba=1 src-mod16=%u\n",
+                          (unsigned)((uintptr_t)row->pPixels&15U));
+            direct_gray_logged=true;
+        }
+        return 1;
+    }
 #if T5_CACHE64_EXPERIMENT
     // PNGdec's S3 helper uses 128-bit PIE loads/stores. The normal Arduino
     // build happened to give PNGdec an aligned internal row, but the hybrid
