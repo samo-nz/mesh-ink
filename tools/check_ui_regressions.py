@@ -12,6 +12,7 @@ runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="u
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
+pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -212,6 +213,12 @@ contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale
 contains("screen!=Screen::Maps;", "stale-touch filter excludes Maps gestures")
 assert "native=%u parent=%u src=%u-%u loose=%u pmtiles=%u" in map_source, "map logs native/parent and source zoom/type"
 assert "parent-edge=%u parent-full=%u parent-px=%lu" in map_source, "map logs whether fallback tiles are clipped edges or fully visible"
+assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timing"
+assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map separates PMTiles tile-range seek/read timing"
+assert "pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u" in map_source, "map separates decode and composition timing"
+assert "struct PmtilesPerfStats" in pmtiles_header, "PMTiles reader exposes metadata performance counters"
+assert "metadata_seek_us" in pmtiles_source and "metadata_read_us" in pmtiles_source, "PMTiles reader measures metadata I/O"
+assert "inflate_us" in pmtiles_source and "index_parse_us" in pmtiles_source, "PMTiles reader measures inflate and index parsing"
 assert "[T5-PMT] ready path=%s zoom=%u-%u" in pmtiles_source, "PMTiles logs archive zoom coverage"
 contains('if(result.native_pmtiles&&result.native_loose)return "MIX";', "MIX badge is reserved for genuinely mixed native sources")
 contains('if(result.native_pmtiles)return "PMT";', "native PMTiles wins over harmless parent fallback")
