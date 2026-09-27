@@ -260,7 +260,7 @@ print("PASS: UI behaviour, full-height map, monochrome controls and first-setup 
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
 
 compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
-assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
-assert 'extern "C" void s3_rgb565' not in compat_source, "obsolete scalar RGB565 compatibility function removed"
-assert "alignas(16) static uint16_t pixels[TILE_SIZE];" in map_source, "S3 SIMD RGB565 destination row is 16-byte aligned"
-assert "if(zoom<=12)draw_cached_epdiy(*tile,draw);" in map_source and "else draw_cached(*tile,draw);" in map_source, "1.8.28 isolates low-zoom packed framebuffer composition"
+assert 'extern "C" void s3_rgb565' in compat_source, "cache64 uses proven scalar RGB565 compatibility function"
+assert ".global s3_rgb565" not in compat_source and "ee.vld.128.ip" not in compat_source, "experimental S3 SIMD RGB565 assembly removed"
+assert "alignas(16) static uint16_t pixels[TILE_SIZE];" in map_source, "RGB565 destination row remains safely aligned"
+assert "if(zoom<=12)draw_cached_epdiy(*tile,draw);" not in map_source, "failed low-zoom compositor A/B removed"
