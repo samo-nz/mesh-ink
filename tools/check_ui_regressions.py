@@ -211,6 +211,7 @@ contains("const bool stale_navigation_tap=", "UI filters touch releases queued d
 contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale-touch filter excludes keyboard and Quick Settings")
 contains("screen!=Screen::Maps;", "stale-touch filter excludes Maps gestures")
 assert "native=%u parent=%u src=%u-%u loose=%u pmtiles=%u" in map_source, "map logs native/parent and source zoom/type"
+assert "parent-edge=%u parent-full=%u parent-px=%lu" in map_source, "map logs whether fallback tiles are clipped edges or fully visible"
 assert "[T5-PMT] ready path=%s zoom=%u-%u" in pmtiles_source, "PMTiles logs archive zoom coverage"
 contains('if(result.native_pmtiles&&result.native_loose)return "MIX";', "MIX badge is reserved for genuinely mixed native sources")
 contains('if(result.native_pmtiles)return "PMT";', "native PMTiles wins over harmless parent fallback")
