@@ -158,10 +158,10 @@ void add_archive(const char* parent,const char* name) {
         if(!strcmp(archive_paths[i],absolute))return;
     const size_t len=strlen(basename);
     const bool suffix=len>=8&&!strcasecmp(basename+len-8,".pmtiles");
-    const bool magic=suffix||has_pmtiles_magic(absolute);
-    Serial.printf("[T5-MAP] archive-scan file=%s suffix=%u magic=%u\n",
-                  absolute,(unsigned)suffix,(unsigned)magic);
-    if(!magic)return;
+    const bool header=has_pmtiles_magic(absolute);
+    Serial.printf("[T5-MAP] archive-scan file=%s suffix=%u header=%u\n",
+                  absolute,(unsigned)suffix,(unsigned)header);
+    if(!suffix&&!header)return;
     strcpy(archive_paths[archive_count++],absolute);
 }
 bool is_zoom_folder(const char* name) {
