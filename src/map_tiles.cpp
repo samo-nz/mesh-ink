@@ -134,20 +134,34 @@ bool media_ready(bool probe=true) {
     }
     return true;
 }
-// Scans /maps/*.pmtiles and /maps/<name>/*.pmtiles so files copied
-// directly from common map downloaders work without being renamed.
+// Scans /maps and one non-numeric subfolder level for PMTiles archives.
+// Prefer the usual .pmtiles suffix, but also recognise a v3 PMTiles header so
+// oddly named/truncated files from FAT/SD tooling are still usable.
+bool has_pmtiles_magic(const char* path) {
+    File probe=SD.open(path,FILE_READ);
+    if(!probe||probe.isDirectory()){if(probe)probe.close();return false;}
+    uint8_t magic[8]{};
+    const bool ok=probe.read(magic,sizeof(magic))==sizeof(magic)&&
+        memcmp(magic,"PMTiles",7)==0&&magic[7]==3;
+    probe.close();
+    return ok;
+}
 void add_archive(const char* parent,const char* name) {
     if(!name||archive_count>=MAX_ARCHIVES)return;
     const char* basename=strrchr(name,'/');
     basename=basename?basename+1:name;
-    const size_t len=strlen(basename);
-    if(len<8||strcasecmp(basename+len-8,".pmtiles"))return;
     char absolute[SOURCE_PATH_BYTES];
     const int written=snprintf(absolute,sizeof(absolute),"%s/%s",
                                parent,basename);
     if(written<=0||written>=int(sizeof(absolute)))return;
     for(size_t i=0;i<archive_count;++i)
         if(!strcmp(archive_paths[i],absolute))return;
+    const size_t len=strlen(basename);
+    const bool suffix=len>=8&&!strcasecmp(basename+len-8,".pmtiles");
+    const bool magic=suffix||has_pmtiles_magic(absolute);
+    Serial.printf("[T5-MAP] archive-scan file=%s suffix=%u magic=%u\n",
+                  absolute,(unsigned)suffix,(unsigned)magic);
+    if(!magic)return;
     strcpy(archive_paths[archive_count++],absolute);
 }
 bool is_zoom_folder(const char* name) {
