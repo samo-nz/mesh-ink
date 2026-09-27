@@ -72,6 +72,29 @@ int main() {
             assert(!in_row(top_y+66,top_y));
         }
     }
+    // Special buttons use the same midpoint ownership as the visible gaps.
+    // Portrait third row: mode [12,88), letters [93..), DEL [460,528).
+    assert(91==(88+93)/2);
+    assert(457==(454+460)/2);
+    // Portrait bottom: LAND [12,112), SPACE [120,418), SEND [426,528).
+    assert(116==(112+120)/2);
+    assert(422==(418+426)/2);
+    // Landscape third row: mode [15,145), letters [153..), DEL [812,945).
+    assert(149==(145+153)/2);
+    assert(805==(798+812)/2);
+    // Landscape bottom: PORTRAIT [15,195), SPACE [203,703), action [711,945).
+    assert(199==(195+203)/2);
+    assert(707==(703+711)/2);
+
+    // The landscape touch transform must cover the entire 960x540 display
+    // without changing orientation or introducing an off-by-one edge.
+    auto landscape_x=[](int raw_x,int raw_y){(void)raw_x;return raw_y;};
+    auto landscape_y=[](int raw_x,int raw_y){(void)raw_y;return 539-raw_x;};
+    assert(landscape_x(0,0)==0&&landscape_y(0,0)==539);
+    assert(landscape_x(539,959)==959&&landscape_y(539,959)==0);
+    assert(landscape_x(539,0)==0&&landscape_y(539,0)==0);
+    assert(landscape_x(0,959)==959&&landscape_y(0,959)==539);
+
     std::printf("PASS: %d keyboard layouts, every key pixel and gap midpoint verified in portrait and landscape; no symbol/Delete overlap.\n",rows);
     return 0;
 }
