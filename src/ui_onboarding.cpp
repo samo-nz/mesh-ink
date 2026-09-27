@@ -253,15 +253,14 @@ static bool map_cache_hit() {
 
 static const char* map_source_badge(const MapRenderResult& result) {
     if(!result.sd_ready||!result.tiles)return "---";
-    const bool parent=result.reused>0;
-    const bool native=result.native>0;
     const bool loose=result.loose_tiles>0;
     const bool pmtiles=result.pmtiles_tiles>0;
-    // Reserve MIX for genuinely mixed storage sources. When native and
-    // enlarged-parent tiles come from the same source, say so explicitly.
+    // The badge answers "which storage source is supplying the map?".
+    // Ignore a few parent fallbacks within otherwise-native coverage because
+    // deliberately omitted blank/ocean tiles would otherwise make PNG/PMT
+    // screens look mixed. Reserve MIX for true loose+PMTiles source mixing.
     if(loose&&pmtiles)return "MIX";
-    if(native&&parent)return pmtiles?"PMT/E-M":"PNG/E-P";
-    if(parent)return pmtiles?"E-M":"E-P";
+    if(result.native==0&&result.reused>0)return pmtiles?"E-M":"E-P";
     return pmtiles?"PMT":"PNG";
 }
 // A current fix takes priority; otherwise use the last verified position.
