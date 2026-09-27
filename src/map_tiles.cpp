@@ -49,6 +49,13 @@ uint32_t png_range_start=0,png_range_length=0;
 bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
+// 1.8.27 format-specific SIMD A/B state. PNGdec only uses s3_rgb565()
+// for truecolor+alpha rows, so keep the source kind/zoom visible to the
+// callback and log each source zoom's format once per SD mount.
+bool decode_from_pmtiles=false;
+int decode_source_zoom=-1;
+bool png_format_logged_loose[25]{};
+bool png_format_logged_pmt[25]{};
 constexpr uint32_t SD_RETRY_MS=1500;
 // Experimental SD clock: the verified firmware used 10 MHz. No map writes.
 constexpr uint32_t MAP_SD_SPI_HZ=25000000;
@@ -111,6 +118,10 @@ void reset_sd_caches() {
     absent_cursor=0;
     memset(zoom_folder_known,0,sizeof(zoom_folder_known));
     memset(zoom_folder_present,0,sizeof(zoom_folder_present));
+    memset(png_format_logged_loose,0,sizeof(png_format_logged_loose));
+    memset(png_format_logged_pmt,0,sizeof(png_format_logged_pmt));
+    decode_from_pmtiles=false;
+    decode_source_zoom=-1;
     archive_count=0;
     archives_discovered=false;
     free(pmt_png_buffer);
@@ -437,7 +448,32 @@ int png_draw(PNGDRAW* row) {
     // PNGdec writes iWidth RGB565 pixels into the caller's buffer.
     // Reject unexpected rows rather than risking an overwrite.
     if(row->y<0||row->y>=TILE_SIZE||row->iWidth!=TILE_SIZE)return 0;
-    png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
+    if(row->y==0&&decode_source_zoom>=0&&decode_source_zoom<25) {
+        bool& logged=decode_from_pmtiles
+            ? png_format_logged_pmt[decode_source_zoom]
+            : png_format_logged_loose[decode_source_zoom];
+        if(!logged) {
+            Serial.printf("[T5-PNG] source=%s z=%d type=%d bpp=%d alpha=%d\n",
+                          decode_from_pmtiles?"PMT":"PNG",decode_source_zoom,
+                          row->iPixelType,row->iBpp,row->iHasAlpha);
+            logged=true;
+        }
+    }
+    // Diagnostic A/B: PNGdec's S3 SIMD helper is entered only for RGBA
+    // (PNG_PIXEL_TRUECOLOR_ALPHA) when the background sentinel is 0xffffffff.
+    // Keep PMTiles and all non-RGBA loose tiles on the normal PNGdec path,
+    // but reproduce the previous scalar conversion for loose RGBA tiles.
+    if(!decode_from_pmtiles&&row->iPixelType==PNG_PIXEL_TRUECOLOR_ALPHA) {
+        const uint8_t* src=row->pPixels;
+        for(int sx=0;sx<TILE_SIZE;++sx) {
+            const uint8_t r=src[0],g=src[1],b=src[2];
+            pixels[sx]=(uint16_t)((b>>3)|((uint16_t)(g>>2)<<5)|
+                                  ((uint16_t)(r>>3)<<11));
+            src+=4;
+        }
+    } else {
+        png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
+    }
     if(decode_bits) {
         for(int sx=0;sx<TILE_SIZE;++sx) {
             const size_t offset=(size_t)row->y*TILE_SIZE+(size_t)sx;
@@ -602,6 +638,8 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     Tile* slot=acquire_slot();
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
+    decode_from_pmtiles=selected_pmtiles;
+    decode_source_zoom=z;
     const uint32_t decode_started=micros();
     const int decode_status=png.decode(nullptr,0);
     const uint32_t decode_elapsed=(uint32_t)(micros()-decode_started);
@@ -610,6 +648,8 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     png.close();
     png_range_active=false;
     decode_bits=nullptr;
+    decode_from_pmtiles=false;
+    decode_source_zoom=-1;
     if(map_io_failed) {
         if(slot)slot->valid=false;
         return false;
