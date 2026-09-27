@@ -43,6 +43,10 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int 
 // Probes a removable card and retries a failed mount without rebooting.
 // Call before reusing a cached map framebuffer or periodically while on Maps.
 bool map_tiles_media_ready();
+// During the boot splash, mount/index map storage without decoding tiles.
+// This warms zoom-folder/archive metadata so the first Maps interaction does
+// not pay the one-time FAT/PMTiles discovery cost.
+void map_tiles_warm_storage();
 // Changes whenever the old card is unmounted or a new mount succeeds.
 // UI must discard cached map images when this value changes.
 uint32_t map_tiles_media_epoch();
