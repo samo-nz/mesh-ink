@@ -33,6 +33,9 @@ struct MapRenderResult {
     uint16_t native_pmtiles;
     uint16_t parent_loose;
     uint16_t parent_pmtiles;
+    uint16_t parent_edge_tiles;
+    uint16_t parent_full_tiles;
+    uint32_t parent_visible_pixels;
 };
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,
                                  double latitude,double longitude,uint8_t zoom);
