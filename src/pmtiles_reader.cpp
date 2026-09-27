@@ -389,6 +389,26 @@ void pmtiles_end_frame() {
     frame_active = false;
 }
 
+bool pmtiles_warm_archive(const char* path) {
+    if(!path||!*path)return false;
+    perf=PmtilesPerfStats{};
+    io_failed=false;
+    if(!frame_file||strcmp(frame_path,path)) {
+        close_frame_file();
+        const uint32_t open_started=perf_now_us();
+        frame_file=SD.open(path,FILE_READ);
+        perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
+        if(!frame_file){io_failed=true;return false;}
+        strncpy(frame_path,path,sizeof(frame_path)-1);
+        frame_path[sizeof(frame_path)-1]=0;
+    }
+    const uint32_t prepare_started=perf_now_us();
+    const bool ok=prepare(frame_file,path);
+    perf.prepare_us+=(uint32_t)(perf_now_us()-prepare_started);
+    if(!ok&&io_failed)close_frame_file();
+    return ok;
+}
+
 File* pmtiles_frame_file(const char* path) {
     // Only lend the handle for the same archive that was just indexed.
     // Never reopen, reassign or close it while PNGdec is using it.
