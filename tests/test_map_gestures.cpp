@@ -49,6 +49,8 @@ int main() {
     assert(same_tap_area(100,100,135,135));
     assert(!same_tap_area(100,100,161,100));
     assert(TAP_WINDOW_MS>=300&&TAP_WINDOW_MS<=450);
+    assert(MIN_ZOOM==2);
+    assert(MAX_ZOOM==18);
 
     // Symmetric under swapping contact order. Reject tiny pinches and noise.
     assert(distance_squared(10,20,110,20)==distance_squared(110,20,10,20));
@@ -61,7 +63,7 @@ int main() {
     assert(pinch_zoom_steps(100*100,30*30)==-3);
     assert(pinch_zoom_steps(20*20,200*200)==0);
 
-    for(int z=9;z<=17;++z) {
+    for(int z=3;z<=17;++z) {
         check_anchor(-41.2,174.7,z,z+1,130,690);
         check_anchor(-41.2,174.7,z,z+1,270,MAP_CENTRE_Y);
         check_anchor(-41.2,174.7,z,z-1,450,350);
