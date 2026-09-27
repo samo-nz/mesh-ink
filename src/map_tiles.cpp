@@ -251,7 +251,11 @@ void discover_archives() {
                       entry_name?entry_name:"(null)",
                       (unsigned)candidate.isDirectory(),
                       basename?basename:"(null)");
-        if(candidate.isDirectory()&&basename&&!is_zoom_folder(basename)) {
+        if(candidate.isDirectory()&&basename&&is_zoom_folder(basename)) {
+            unsigned zoom=0;
+            for(const char* p=basename;*p;++p)zoom=zoom*10U+(unsigned)(*p-'0');
+            if(zoom<25U)zoom_folder_present[zoom]=true;
+        } else if(candidate.isDirectory()&&basename) {
             char folder[SOURCE_PATH_BYTES];
             const int written=snprintf(folder,sizeof(folder),
                                        "/maps/%s",basename);
@@ -277,10 +281,12 @@ void discover_archives() {
             add_archive("/maps",entry_name);
         }
         candidate.close();
-        if(archive_count==MAX_ARCHIVES)break;
         candidate=directory.openNextFile();
     }
     directory.close();
+    // A complete shallow /maps scan is enough to know every loose zoom
+    // folder without recursively enumerating x/y tile directories.
+    for(unsigned zoom=0;zoom<25U;++zoom)zoom_folder_known[zoom]=true;
     if(archive_count)
         Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
                       (unsigned)archive_count);
@@ -837,6 +843,26 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
 } // namespace
 
 bool map_tiles_media_ready(){return media_ready(true);}
+void map_tiles_warm_storage(){
+    const uint32_t started=millis();
+    if(!media_ready(false)){
+        Serial.println("[T5-MAP-WARM] SD unavailable; deferred until Maps");
+        return;
+    }
+    discover_archives();
+    unsigned loose_zooms=0;
+    for(unsigned z=0;z<25U;++z)if(zoom_folder_present[z])++loose_zooms;
+    bool archive_warm=false;
+    if(archive_count)archive_warm=pmtiles_warm_archive(archive_paths[0]);
+    const PmtilesPerfStats warm=pmtiles_perf_stats();
+    Serial.printf("[T5-MAP-WARM] elapsed=%lums loose-zooms=%u archives=%u first-pmt=%u archive-open=%luus prepare=%luus meta-read=%luus/%u\n",
+                  (unsigned long)(millis()-started),loose_zooms,
+                  (unsigned)archive_count,archive_warm?1U:0U,
+                  (unsigned long)warm.archive_open_us,
+                  (unsigned long)warm.prepare_us,
+                  (unsigned long)warm.metadata_read_us,
+                  (unsigned)warm.metadata_reads);
+}
 uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
