@@ -250,6 +250,17 @@ static bool map_cache_hit() {
     return map_base_valid&&map_base_cache&&map_base_zoom==map_zoom&&
         fabs(map_base_lat-map_latitude)<0.00000001&&fabs(map_base_lon-map_longitude)<0.00000001;
 }
+
+static const char* map_source_badge(const MapRenderResult& result) {
+    if(!result.sd_ready||!result.tiles)return "---";
+    const bool parent=result.reused>0;
+    const bool loose=result.loose_tiles>0;
+    const bool pmtiles=result.pmtiles_tiles>0;
+    // A viewport can legitimately mix source types or exact/parent tiles.
+    if((loose&&pmtiles)||(result.native&&result.reused))return "MIX";
+    if(parent)return pmtiles?"E-M":"E-P";
+    return pmtiles?"PMT":"PNG";
+}
 // A current fix takes priority; otherwise use the last verified position.
 // The stored fallback is for map navigation, never advertised as a GPS fix.
 static bool map_device_position(long& latitude,long& longitude,bool& current_fix){
@@ -1021,7 +1032,8 @@ static void draw_maps() {
         epd_fill_rect({18,774,232,30},0xFF,fb);
         text("NO MAP TILES HERE",22,778,2,0,true);
     }
-    char zoom[12];snprintf(zoom,sizeof(zoom),"ZOOM %u",map_zoom);epd_fill_rect({18,812,100,30},0xFF,fb);text(zoom,22,816,2,0,true);
+    char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
+    epd_fill_rect({18,812,190,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // The three map controls share their 66x66 size, black background and
     // white glyphs. Keep their touch rectangles in sync below.
     constexpr int control_x=462;
