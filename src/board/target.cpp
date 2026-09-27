@@ -125,7 +125,7 @@ SPIClass& t5_shared_spi() { return radio_spi; }
 class T5RadioHal final : public ArduinoHal {
     static void (*callbacks_[GPIO_NUM_MAX])(void);
     static bool arduino_owned_[GPIO_NUM_MAX];
-    static void IRAM_ATTR irq_bridge(void* arg) {
+    static void irq_bridge(void* arg) {
         const uint32_t pin=(uint32_t)(uintptr_t)arg;
         if(pin<GPIO_NUM_MAX&&callbacks_[pin])callbacks_[pin]();
     }
