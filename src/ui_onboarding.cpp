@@ -1758,9 +1758,12 @@ static void touch_sampler_task(void*){
             continue;
         }
         const uint32_t timing_touch_started=t5_timing_touch_begin();
-        // Preserve the EXACT legacy single-touch parser and release-driven
-        // typing behaviour on all screens except Maps.
-        const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
+        // Maps owns the gesture-oriented two-point parser only while the
+        // map itself is interactive. Quick Settings must fall back to the
+        // ordinary single-touch parser so slider movement can preview PWM
+        // continuously instead of being delivered only on finger release.
+        const bool on_map=screen==Screen::Maps&&!standby_active&&
+            !keyboard_landscape&&!quick_panel_active;
         if(on_map!=map_previous) {
             held=false;home_held=false;map_multi=false;
             was_pressed=false;map_last_count=0;
