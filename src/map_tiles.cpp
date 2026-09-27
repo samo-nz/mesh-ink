@@ -23,6 +23,7 @@ struct Tile {
     int z,x,y;
     uint32_t age;
     bool valid;
+    bool from_pmtiles;
 };
 struct AbsentTile {int z,x,y;bool valid;};
 Tile tile_cache[CACHE_SLOTS]{};
@@ -198,6 +199,8 @@ void discover_archives() {
     if(archive_count)
         Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
                       (unsigned)archive_count);
+    else
+        Serial.println("[T5-MAP] no PMTiles archives found under /maps or /maps/<name>");
 }
 
 
@@ -411,9 +414,15 @@ Tile* acquire_slot() {
 // parent levels. Cache the SOURCE PNG, not a viewport-specific tile image;
 // different pan positions and child zooms can reuse the same decoded data.
 bool load_source(int z,int x,int y,const DrawContext& draw,
-                 MapRenderResult& result,Tile*& output,bool& direct) {
+                 MapRenderResult& result,Tile*& output,bool& direct,
+                 bool& from_pmtiles) {
+    from_pmtiles=false;
     output=find_cached(z,x,y);
-    if(output){++result.ram_hits;return true;}
+    if(output){
+        ++result.ram_hits;
+        from_pmtiles=output->from_pmtiles;
+        return true;
+    }
     if(map_io_failed||pmtiles_had_io_error())return false;
     if(previously_absent(z,x,y))return false;
     char path[SOURCE_PATH_BYTES];
@@ -428,6 +437,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         ++result.sd_checks;
     }
     bool loose_present=false;
+    bool selected_pmtiles=false;
     if(z>=0&&z<25&&zoom_folder_present[z]){
         // Opening the file is itself a complete presence check. If present,
         // PNGdec reuses this handle instead of opening the same path again.
@@ -448,6 +458,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
             if(found_in_archive) {
                 snprintf(path,sizeof(path),"%s",archive_paths[i]);
                 found=true;
+                selected_pmtiles=true;
                 break;
             }
             if(pmtiles_had_io_error()){
@@ -493,8 +504,11 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         return false;
     }
     ++result.disk_decodes;
+    if(selected_pmtiles)++result.pmtiles_decodes;
+    else ++result.loose_decodes;
+    from_pmtiles=selected_pmtiles;
     if(slot) {
-        slot->z=z;slot->x=x;slot->y=y;slot->valid=true;
+        slot->z=z;slot->x=x;slot->y=y;slot->from_pmtiles=selected_pmtiles;slot->valid=true;
         output=slot;
     } else direct=true;
     return true;
@@ -549,12 +563,15 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             (x&(subdivisions-1))*TILE_SIZE/subdivisions,
             (y&(subdivisions-1))*TILE_SIZE/subdivisions,
             TILE_SIZE/subdivisions,x,y};
-        Tile* tile=nullptr;bool direct=false;
-        if(!load_source(source_zoom,parent_x,parent_y,draw,result,tile,direct))
+        Tile* tile=nullptr;bool direct=false,from_pmtiles=false;
+        if(!load_source(source_zoom,parent_x,parent_y,draw,result,tile,direct,
+                        from_pmtiles))
             continue;
         if(tile)draw_cached(*tile,draw);
         // A low-memory decode drew the same requested tile directly.
         ++result.tiles;
+        if(from_pmtiles)++result.pmtiles_tiles;
+        else ++result.loose_tiles;
         if(depth)++result.reused;
         else ++result.native;
         // The initial range is only a placeholder. Do not claim the requested
@@ -609,9 +626,13 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u missing=%u\n",
+    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u decode-loose=%u decode-pmtiles=%u missing=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
-                  (unsigned)result.tiles,(unsigned)result.missing);
+                  (unsigned)result.tiles,(unsigned)result.native,
+                  (unsigned)result.reused,(unsigned)result.min_source_zoom,
+                  (unsigned)result.max_source_zoom,(unsigned)result.loose_tiles,
+                  (unsigned)result.pmtiles_tiles,(unsigned)result.loose_decodes,
+                  (unsigned)result.pmtiles_decodes,(unsigned)result.missing);
     return result;
 }
