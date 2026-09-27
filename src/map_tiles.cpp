@@ -429,7 +429,11 @@ void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
 // PNG callbacks keep source luminance in PSRAM. If allocation fails,
 // decode directly to the framebuffer with the SAME monochrome map palette.
 int png_draw(PNGDRAW* row) {
-    static uint16_t pixels[TILE_SIZE];
+    // ESP32-S3 PIE 128-bit stores force their destination address to a
+    // 16-byte boundary. PNGdec's s3_rgb565() uses ee.vst.128.ip, so the row
+    // buffer must be explicitly aligned or converted pixels can be shifted
+    // into the preceding bytes and leave a bright strip at a tile edge.
+    alignas(16) static uint16_t pixels[TILE_SIZE];
     // PNGdec writes iWidth RGB565 pixels into the caller's buffer.
     // Reject unexpected rows rather than risking an overwrite.
     if(row->y<0||row->y>=TILE_SIZE||row->iWidth!=TILE_SIZE)return 0;
