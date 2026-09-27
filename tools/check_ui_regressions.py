@@ -218,6 +218,9 @@ contains('return pmtiles?"E-M":"E-P";', "map badge distinguishes enlarged PMTile
 contains('return pmtiles?"PMT":"PNG";', "map badge distinguishes native PMTiles versus loose PNG")
 contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;', "keyboard touch sampler uses faster cadence for rapid repeated letters")
 contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
+assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTiles v3 header"
+assert 'archive-scan entry=%s dir=%u base=%s' in map_source, "archive scan logs cache64 directory enumeration"
+assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan reports suffix and PMTiles header detection"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
