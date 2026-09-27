@@ -144,6 +144,9 @@ contains("box(control_x,208,66,66,true);", "black locate button matches zoom but
 contains("epd_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
 contains("epd_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
 contains("draw_target_icon(sx-15,sy-15,false);", "device marker same icon as GPS fix")
+contains("if(map_zoom<meshink_map_gestures::MAX_ZOOM)", "Maps plus button uses shared maximum zoom")
+contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reaches shared minimum zoom")
+assert "if(map_zoom>8)" not in source, "stale Maps minimum zoom 8 must not return"
 contains("if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)", "automatic map recenter")
 contains("open_screen(Screen::Maps,true);", "explicit node position preserved")
 contains('prefs.getBool("map_fix_saved",false)', "reload last known position")
