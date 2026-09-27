@@ -253,15 +253,18 @@ static bool map_cache_hit() {
 
 static const char* map_source_badge(const MapRenderResult& result) {
     if(!result.sd_ready||!result.tiles)return "---";
-    const bool loose=result.loose_tiles>0;
-    const bool pmtiles=result.pmtiles_tiles>0;
-    // The badge answers "which storage source is supplying the map?".
-    // Ignore a few parent fallbacks within otherwise-native coverage because
-    // deliberately omitted blank/ocean tiles would otherwise make PNG/PMT
-    // screens look mixed. Reserve MIX for true loose+PMTiles source mixing.
-    if(loose&&pmtiles)return "MIX";
-    if(result.native==0&&result.reused>0)return pmtiles?"E-M":"E-P";
-    return pmtiles?"PMT":"PNG";
+    // Prefer the requested/native zoom source. Parent fallbacks often represent
+    // intentionally omitted blank/ocean tiles and should not contaminate the
+    // badge for an otherwise-native viewport.
+    if(result.native_pmtiles&&result.native_loose)return "MIX";
+    if(result.native_pmtiles)return "PMT";
+    if(result.native_loose)return "PNG";
+    // No native tiles at this zoom: report which lower-resolution source is
+    // being enlarged to fill the viewport.
+    if(result.parent_pmtiles&&result.parent_loose)return "MIX";
+    if(result.parent_pmtiles)return "E-M";
+    if(result.parent_loose)return "E-P";
+    return "---";
 }
 // A current fix takes priority; otherwise use the last verified position.
 // The stored fallback is for map navigation, never advertised as a GPS fix.
