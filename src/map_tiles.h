@@ -19,6 +19,13 @@ struct MapRenderResult {
     uint16_t ram_hits;
     uint16_t disk_decodes;
     uint16_t sd_checks;
+    // Screen-tile source accounting. These counts include RAM-cache hits so
+    // a warm zoom still reveals whether the visible data originated from
+    // loose XYZ PNGs or a PMTiles archive.
+    uint16_t loose_tiles;
+    uint16_t pmtiles_tiles;
+    uint16_t loose_decodes;
+    uint16_t pmtiles_decodes;
 };
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,
                                  double latitude,double longitude,uint8_t zoom);
