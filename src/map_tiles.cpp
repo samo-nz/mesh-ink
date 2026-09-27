@@ -597,6 +597,17 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             ++result.reused;
             if(from_pmtiles)++result.parent_pmtiles;
             else ++result.parent_loose;
+            const int visible_x0=max(0,dx);
+            const int visible_y0=max(48,dy);
+            const int visible_x1=min(540,dx+TILE_SIZE);
+            const int visible_y1=min(900,dy+TILE_SIZE);
+            const int visible_w=max(0,visible_x1-visible_x0);
+            const int visible_h=max(0,visible_y1-visible_y0);
+            result.parent_visible_pixels+=(uint32_t)visible_w*(uint32_t)visible_h;
+            if(visible_w==TILE_SIZE&&visible_h==TILE_SIZE)
+                ++result.parent_full_tiles;
+            else
+                ++result.parent_edge_tiles;
         }else{
             ++result.native;
             if(from_pmtiles)++result.native_pmtiles;
@@ -654,7 +665,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u native-loose=%u native-pmt=%u parent-loose=%u parent-pmt=%u decode-loose=%u decode-pmtiles=%u missing=%u\n",
+    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u native-loose=%u native-pmt=%u parent-loose=%u parent-pmt=%u parent-edge=%u parent-full=%u parent-px=%lu decode-loose=%u decode-pmtiles=%u missing=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
                   (unsigned)result.tiles,(unsigned)result.native,
@@ -662,7 +673,10 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                   (unsigned)result.max_source_zoom,(unsigned)result.loose_tiles,
                   (unsigned)result.pmtiles_tiles,(unsigned)result.native_loose,
                   (unsigned)result.native_pmtiles,(unsigned)result.parent_loose,
-                  (unsigned)result.parent_pmtiles,(unsigned)result.loose_decodes,
-                  (unsigned)result.pmtiles_decodes,(unsigned)result.missing);
+                  (unsigned)result.parent_pmtiles,(unsigned)result.parent_edge_tiles,
+                  (unsigned)result.parent_full_tiles,
+                  (unsigned long)result.parent_visible_pixels,
+                  (unsigned)result.loose_decodes,(unsigned)result.pmtiles_decodes,
+                  (unsigned)result.missing);
     return result;
 }
