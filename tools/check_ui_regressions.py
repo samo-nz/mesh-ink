@@ -45,7 +45,7 @@ assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
 # the keyboard or other app screens. The old one-branch sampler text check
 # predates the map-only split and would reject a working two-point sampler.
 contains("bool held=false,home_held=false,map_previous=false;", "independent home touch latch")
-contains("const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;", "map-only multitouch gate")
+contains("const bool on_map=screen==Screen::Maps&&!standby_active&&\n            !keyboard_landscape&&!quick_panel_active;", "Maps yields touch sampling to Quick Settings")
 contains("if(!map_touch_points(count,x0,y0,x1,y1,home))", "Maps reads two touch points")
 non_map_sampler = source.split("// Non-Maps keeps the legacy single-touch GT911 parser.", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
@@ -57,6 +57,8 @@ assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "ke
 assert "constexpr int16_t KEYBOARD_TOUCH_SLOP=28;" in non_map_sampler, "bounded keyboard thumb-roll tolerance"
 assert "event_x=start_x;" in non_map_sampler and "event_y=start_y;" in non_map_sampler, "small keyboard releases anchor to touch-down"
 assert "QueuedTap tap{event_x,event_y,dx,dy,false};" in non_map_sampler, "stabilized non-Maps release event path"
+assert "quick_slider_dragging=quick_panel_active&&" in non_map_sampler, "Quick Settings slider enters live-drag mode"
+assert "frontlight_preview(quick_slider_preview);" in non_map_sampler, "Quick Settings slider previews brightness during movement"
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
 contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
