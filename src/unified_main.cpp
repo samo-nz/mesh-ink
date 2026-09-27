@@ -9,6 +9,7 @@
 #endif
 
 static bool companion_mode = false;
+static bool cache64_psram_blocked = false;
 static constexpr uint8_t BOOT_BUTTON = 0;
 
 void request_companion_mode() {
@@ -53,6 +54,17 @@ void setup() {
     Serial.printf("[T5-BOOT] data-cache-line=%dB cache64-experiment=%d\n",
                   CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, T5_CACHE64_EXPERIMENT);
 #endif
+#if T5_CACHE64_EXPERIMENT
+    const bool psram_ok=psramFound();
+    Serial.printf("[T5-BOOT] psram-found=%d size=%lu free=%lu\n",
+                  psram_ok?1:0,(unsigned long)ESP.getPsramSize(),
+                  (unsigned long)ESP.getFreePsram());
+    if(!psram_ok){
+        cache64_psram_blocked=true;
+        Serial.println("[T5-BOOT] FATAL cache64 PSRAM unavailable; UI start blocked to prevent EPDiy reboot loop");
+        return;
+    }
+#endif
     if (companion_mode) companion_setup();
     else {
         ui_setup();           // show boot logo with INITIALISING STORAGE...
@@ -62,6 +74,7 @@ void setup() {
 }
 
 void loop() {
+    if(cache64_psram_blocked){delay(1000);return;}
     if (companion_mode) {
         companion_loop();
         companion_exit_button();
