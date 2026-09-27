@@ -206,6 +206,10 @@ assert "[T5-TOUCH] input queue full" not in source, "touch producer must never p
 # but must restore the previous clock immediately afterwards.
 contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
 contains('set_cpu_target(previous_mhz,"ui-draw-complete",false);', "UI draw boost restores previous CPU clock")
+contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
+contains("const bool stale_navigation_tap=", "UI filters touch releases queued during blocking navigation")
+contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale-touch filter excludes keyboard and Quick Settings")
+contains("screen!=Screen::Maps;", "stale-touch filter excludes Maps gestures")
 assert "native=%u parent=%u src=%u-%u loose=%u pmtiles=%u" in map_source, "map logs native/parent and source zoom/type"
 assert "[T5-PMT] ready path=%s zoom=%u-%u" in pmtiles_source, "PMTiles logs archive zoom coverage"
 contains('return pmtiles?"E-M":"E-P";', "map badge distinguishes enlarged PMTiles versus loose PNG parents")
