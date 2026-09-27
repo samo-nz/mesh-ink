@@ -256,7 +256,6 @@ assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
 
-simd_source = (root / "src" / "cache64_s3_rgb565.S").read_text(encoding="utf-8")
 compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
-assert ".global s3_rgb565" in simd_source and "ee.vld.128.ip" in simd_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
+assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
 assert 'extern "C" void s3_rgb565' not in compat_source, "obsolete scalar RGB565 compatibility function removed"
