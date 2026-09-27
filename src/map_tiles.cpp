@@ -31,6 +31,9 @@ AbsentTile absent_tiles[ABSENT_SLOTS]{};
 size_t absent_cursor=0;
 uint32_t cache_age=0;
 PNG png;
+#if T5_CACHE64_EXPERIMENT
+extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
+#endif
 File file;                 // owns loose PNG file handles
 File* png_file=nullptr;    // borrows the already open PMTiles archive file
 uint8_t* target=nullptr;
@@ -437,7 +440,34 @@ int png_draw(PNGDRAW* row) {
     // PNGdec writes iWidth RGB565 pixels into the caller's buffer.
     // Reject unexpected rows rather than risking an overwrite.
     if(row->y<0||row->y>=TILE_SIZE||row->iWidth!=TILE_SIZE)return 0;
-    png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
+#if T5_CACHE64_EXPERIMENT
+    // PNGdec's S3 helper uses 128-bit PIE loads/stores. The normal Arduino
+    // build happened to give PNGdec an aligned internal row, but the hybrid
+    // cache64 ESP-IDF link can place that large decoder object differently.
+    // Keep the zero-copy fast path when PNGdec's row is aligned; otherwise
+    // stage only this RGBA row into an explicitly aligned scratch buffer.
+    if(row->iPixelType==PNG_PIXEL_TRUECOLOR_ALPHA) {
+        alignas(16) static uint8_t simd_source[TILE_SIZE*4];
+        static bool simd_alignment_logged=false;
+        uint8_t* source=row->pPixels;
+        const unsigned source_mod=(unsigned)((uintptr_t)source&15U);
+        const unsigned dest_mod=(unsigned)((uintptr_t)pixels&15U);
+        const bool staged=source_mod!=0U;
+        if(staged) {
+            memcpy(simd_source,source,TILE_SIZE*4);
+            source=simd_source;
+        }
+        if(!simd_alignment_logged&&row->y==0) {
+            Serial.printf("[T5-PNG-SIMD] src-mod16=%u dst-mod16=%u staged=%u\n",
+                          source_mod,dest_mod,staged?1U:0U);
+            simd_alignment_logged=true;
+        }
+        s3_rgb565(source,(uint8_t*)pixels,row->iWidth,false);
+    } else
+#endif
+    {
+        png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
+    }
     if(decode_bits) {
         for(int sx=0;sx<TILE_SIZE;++sx) {
             const size_t offset=(size_t)row->y*TILE_SIZE+(size_t)sx;
