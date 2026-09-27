@@ -737,7 +737,13 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             continue;
         if(tile) {
             const uint32_t compose_started=micros();
-            draw_cached(*tile,draw);
+            // 1.8.27 diagnostic A/B: keep PMTiles on the direct packed
+            // framebuffer path, but render loose PNG tiles through EPDiy's
+            // proven pixel path. This isolates the vertical loose-tile seam
+            // regression without changing source priority, PNG decoding, or
+            // the PMTiles fast path.
+            if(from_pmtiles)draw_cached(*tile,draw);
+            else draw_cached_epdiy(*tile,draw);
             perf_compose_us+=(uint32_t)(micros()-compose_started);
         }
         // A low-memory decode drew the same requested tile directly.
