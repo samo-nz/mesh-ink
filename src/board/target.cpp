@@ -140,10 +140,11 @@ public:
         if(mode==GpioInterruptRising)type=GPIO_INTR_POSEDGE;
         else if(mode==GpioInterruptFalling)type=GPIO_INTR_NEGEDGE;
 
+        if(callbacks_[interruptNum]||arduino_owned_[interruptNum])
+            detachInterrupt(interruptNum);
         callbacks_[interruptNum]=interruptCb;
         arduino_owned_[interruptNum]=false;
         gpio_set_intr_type(pin,type);
-        gpio_isr_handler_remove(pin); // harmless if this pin had no old handler
         const esp_err_t added=gpio_isr_handler_add(
             pin,irq_bridge,(void*)(uintptr_t)interruptNum);
         if(added==ESP_OK)return;
