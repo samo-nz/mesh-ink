@@ -47,12 +47,16 @@ assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
 contains("bool held=false,home_held=false,map_previous=false;", "independent home touch latch")
 contains("const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;", "map-only multitouch gate")
 contains("if(!map_touch_points(count,x0,y0,x1,y1,home))", "Maps reads two touch points")
-non_map_sampler = source.split("// Original non-Maps sampling and release logic is unchanged.", 1)[1].split(
+non_map_sampler = source.split("// Non-Maps keeps the legacy single-touch GT911 parser.", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
 assert "const bool pressed=touch_point(x,y,home);" in non_map_sampler, "non-Maps must keep the original single-touch parser"
 assert "held=false;\n            }else if(home_held){\n                if(!pressed)home_held=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
-assert "QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};" in non_map_sampler, "ordinary non-Maps release-driven tap path must remain intact"
+assert "int16_t event_x=last_x,event_y=last_y;" in non_map_sampler, "ordinary non-keyboard UI release position remains the default"
+assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "keyboard-only thumb-roll gate"
+assert "constexpr int16_t KEYBOARD_TOUCH_SLOP=28;" in non_map_sampler, "bounded keyboard thumb-roll tolerance"
+assert "event_x=start_x;" in non_map_sampler and "event_y=start_y;" in non_map_sampler, "small keyboard releases anchor to touch-down"
+assert "QueuedTap tap{event_x,event_y,dx,dy,false};" in non_map_sampler, "stabilized non-Maps release event path"
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
 contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
