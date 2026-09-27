@@ -1037,7 +1037,7 @@ static void draw_maps() {
         text("NO MAP TILES HERE",22,778,2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
-    epd_fill_rect({18,812,190,30},0xFF,fb);text(zoom,22,816,2,0,true);
+    epd_fill_rect({18,812,260,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // The three map controls share their 66x66 size, black background and
     // white glyphs. Keep their touch rectangles in sync below.
     constexpr int control_x=462;
