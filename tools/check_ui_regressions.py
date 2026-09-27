@@ -221,6 +221,12 @@ contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
 assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTiles v3 header"
 assert 'archive-scan entry=%s dir=%u base=%s' in map_source, "archive scan logs cache64 directory enumeration"
 assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan reports suffix and PMTiles header detection"
+board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
+timing_source = (root / "src" / "t5_timing.cpp").read_text(encoding="utf-8")
+assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
+assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
+assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
+assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics use 5 second warm-up"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
