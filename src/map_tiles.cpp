@@ -737,11 +737,7 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             continue;
         if(tile) {
             const uint32_t compose_started=micros();
-            // 1.8.28 diagnostic A/B: use the proven EPDiy composition path
-            // only at the affected requested zooms. Decoding, source choice,
-            // caching and dithering inputs stay unchanged.
-            if(zoom<=12)draw_cached_epdiy(*tile,draw);
-            else draw_cached(*tile,draw);
+            draw_cached(*tile,draw);
             perf_compose_us+=(uint32_t)(micros()-compose_started);
         }
         // A low-memory decode drew the same requested tile directly.
