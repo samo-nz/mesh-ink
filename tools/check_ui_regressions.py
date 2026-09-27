@@ -10,6 +10,8 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
+map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
+pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -204,8 +206,8 @@ assert "[T5-TOUCH] input queue full" not in source, "touch producer must never p
 # but must restore the previous clock immediately afterwards.
 contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
 contains('set_cpu_target(previous_mhz,"ui-draw-complete",false);', "UI draw boost restores previous CPU clock")
-contains("native=%u parent=%u src=%u-%u loose=%u pmtiles=%u", "map logs native/parent and source zoom/type")
-contains("[T5-PMT] ready path=%s zoom=%u-%u", "PMTiles logs archive zoom coverage")
+assert "native=%u parent=%u src=%u-%u loose=%u pmtiles=%u" in map_source, "map logs native/parent and source zoom/type"
+assert "[T5-PMT] ready path=%s zoom=%u-%u" in pmtiles_source, "PMTiles logs archive zoom coverage"
 contains('return pmtiles?"E-M":"E-P";', "map badge distinguishes enlarged PMTiles versus loose PNG parents")
 contains('return pmtiles?"PMT":"PNG";', "map badge distinguishes native PMTiles versus loose PNG")
 contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
