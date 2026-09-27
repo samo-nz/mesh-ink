@@ -1599,32 +1599,24 @@ static void load_map_with_feedback(bool already_on_map) {
         draw_status_bar();
         draw_bottom_nav(2);
     }
-    // When panning or zooming, fb still holds the visible previous map.
-    // This overlay does not invalidate or replace the cached map background.
-    draw_toast_message("Loading..");
+    // Make the loading frame itself the contrast-preparation frame. Turning
+    // the terrain fully black here means the final DU reveal still gets the
+    // same stable black->map transition that avoided progressive darkening,
+    // but we no longer need a separate intermediate black refresh.
+    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
+    draw_toast_message("Loading.."); // white text remains readable on black
     refresh(MODE_DU);
 
-    // The previous map and toast stay on the panel while all tile I/O and
-    // PNG decoding run synchronously. Refreshing the loading toast lowered
-    // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
-    // display-performance setting for the CPU-heavy raster render. The
-    // subsequent refresh restores 160 MHz through its normal power path.
+    // The black loading frame stays on the panel while all tile I/O and PNG
+    // decoding run synchronously. Refreshing lowered the CPU to 160 MHz;
+    // temporarily use the ESP32-S3's existing 240 MHz draw setting for the
+    // CPU-heavy raster render. The final refresh restores normal clocking.
     set_cpu_target(240,"map-render",false);
     draw_screen();
 
-    // The old map under the dark toast retained balanced contrast, while
-    // unchanged terrain became progressively too dark after repeated forced
-    // map-to-map DU passes. Prepare the complete terrain with the SAME
-    // black-to-map transition as the toast, then reveal the finished map with
-    // one short-BOOT-style forced DU redraw. Keep the loading toast and old
-    // map visible through all tile I/O; the black preparation is only after
-    // the next frame is completely ready.
-    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
-    refresh(MODE_DU,false); // transient black prep; waveform completes, then power off
-    // draw_screen() reuses the fully decoded map_base_cache for this same
-    // view (including map overlays); no second PNG/PMTiles decode occurs.
-    draw_screen();
-    fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
+    // Reveal the fully composed frame directly from the prepared black terrain.
+    // This is the second and final physical refresh for the gesture.
+    fast_full_redraw("MAP_BLACK_LOADING_COMPLETE",false);
 }
 
 static void full_display_clean(const char* reason) {
