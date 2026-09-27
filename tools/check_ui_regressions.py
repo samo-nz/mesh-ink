@@ -47,6 +47,8 @@ assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
 contains("bool held=false,home_held=false,map_previous=false;", "independent home touch latch")
 contains("const bool on_map=screen==Screen::Maps&&!standby_active&&\n            !keyboard_landscape&&!quick_panel_active;", "Maps yields touch sampling to Quick Settings")
 contains("if(!map_touch_points(count,x0,y0,x1,y1,home))", "Maps reads two touch points")
+contains("r==1&&!keyboard_symbols", "alphabetic A/L edge expansion is isolated from symbols")
+contains("key_index_edge_extended(", "A/L use edge-expanded home-row hit targets")
 non_map_sampler = source.split("// Non-Maps keeps the legacy single-touch GT911 parser.", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
