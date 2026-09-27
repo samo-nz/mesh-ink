@@ -5,19 +5,8 @@
 #endif
 
 #if T5_CACHE64_EXPERIMENT
-// PNGdec 1.1.6 assumes its optional ESP32-S3 SIMD helper is present whenever
-// ARDUINO_ESP32S3_DEV is defined. In the Arduino+ESP-IDF cache64 experiment
-// we intentionally omit ESP-DSP, so provide the exact scalar equivalent.
-extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian){
-    if(!src||!dest||count<=0)return;
-    for(int i=0;i<count;++i){
-        const uint8_t r=src[0],g=src[1],b=src[2];
-        uint16_t px=(uint16_t)((b>>3)|((uint16_t)(g>>2)<<5)|((uint16_t)(r>>3)<<11));
-        if(big_endian)px=(uint16_t)((px>>8)|(px<<8));
-        dest[0]=(uint8_t)(px&0xFF);
-        dest[1]=(uint8_t)(px>>8);
-        src+=4;
-        dest+=2;
-    }
-}
+// The cache64 build previously supplied a scalar s3_rgb565() compatibility
+// function because PNGdec gates its ESP32-S3 assembly behind ESP-DSP.
+// MeshInk now compiles the pinned PNGdec S3 assembly routine directly from
+// cache64_s3_rgb565.S, so no C++ replacement is needed here.
 #endif
