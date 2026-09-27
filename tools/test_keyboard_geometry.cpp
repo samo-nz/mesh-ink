@@ -74,7 +74,7 @@ int main() {
     }
     // Special buttons use the same midpoint ownership as the visible gaps.
     // Portrait third row: mode [12,88), letters [93..), DEL [460,528).
-    assert(91==(88+93)/2);
+    assert(91==(88+93+1)/2);
     assert(457==(454+460)/2);
     // Portrait bottom: LAND [12,112), SPACE [120,418), SEND [426,528).
     assert(116==(112+120)/2);
