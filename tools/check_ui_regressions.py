@@ -259,3 +259,4 @@ print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, br
 compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
 assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
 assert 'extern "C" void s3_rgb565' not in compat_source, "obsolete scalar RGB565 compatibility function removed"
+assert "alignas(16) static uint16_t pixels[TILE_SIZE];" in map_source, "S3 SIMD RGB565 destination row is 16-byte aligned"
