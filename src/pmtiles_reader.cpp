@@ -374,14 +374,18 @@ const Entry* select_entry(const Directory& d, uint64_t id) {
 } // namespace
 
 void pmtiles_begin_frame() {
-    close_frame_file();
+    // Keep the active archive handle open across map renders. With FATFS
+    // fast-seek, opening a large archive also builds its cluster-link map and
+    // costs about 112 ms on this card; retaining the same read-only handle
+    // preserves that work until media reset/remount or archive switching.
     perf = PmtilesPerfStats{};
     frame_active = true;
     io_failed = false;
 }
 
 void pmtiles_end_frame() {
-    close_frame_file();
+    // PNGdec may only borrow the handle while a map frame is active, but the
+    // reader itself keeps ownership so the FAT fast-seek map survives.
     frame_active = false;
 }
 
@@ -396,7 +400,8 @@ bool pmtiles_had_io_error() { return io_failed; }
 PmtilesPerfStats pmtiles_perf_stats() { return perf; }
 
 void pmtiles_reset() {
-    pmtiles_end_frame();
+    frame_active = false;
+    close_frame_file();
     clear_directory(root);
     clear_leaves();
     archive = Archive{};
