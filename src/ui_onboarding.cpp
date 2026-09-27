@@ -1853,7 +1853,23 @@ static void touch_sampler_task(void*){
             }else if(held){
                 held=false;
                 quick_slider_dragging=false;
-                QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
+                const int16_t dx=(int16_t)(last_x-start_x);
+                const int16_t dy=(int16_t)(last_y-start_y);
+                int16_t event_x=last_x,event_y=last_y;
+                // Keyboard keys are small enough that normal thumb roll while
+                // lifting can move the final GT911 centroid into a neighbour.
+                // Keep small keyboard releases anchored to the initial
+                // touch-down point; a deliberate larger correction still uses
+                // the final position. Other UI and map gestures are unchanged.
+                const bool keyboard_touch=!quick_panel_active&&
+                    (keyboard_landscape||keyboard_visible);
+                constexpr int16_t KEYBOARD_TOUCH_SLOP=28;
+                if(keyboard_touch&&abs(dx)<=KEYBOARD_TOUCH_SLOP&&
+                   abs(dy)<=KEYBOARD_TOUCH_SLOP){
+                    event_x=start_x;
+                    event_y=start_y;
+                }
+                QueuedTap tap{event_x,event_y,dx,dy,false};
                 if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
                     t5_timing_note_touch_queue_drop();
             }
