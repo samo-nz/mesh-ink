@@ -6,7 +6,7 @@
 // All coordinates are portrait screen pixels in the existing 540x960 view.
 namespace meshink_map_gestures {
 constexpr int MAP_TOP=48, MAP_BOTTOM=900, MAP_CENTRE_Y=474;
-constexpr int MIN_ZOOM=8, MAX_ZOOM=18;
+constexpr int MIN_ZOOM=2, MAX_ZOOM=18;
 constexpr uint32_t TAP_WINDOW_MS=350;
 constexpr int TAP_RADIUS_PX=60;
 constexpr int TAP_SLOP_PX=16;
