@@ -1026,8 +1026,8 @@ static void draw_maps() {
     }
     draw_map_nodes();
     draw_device_location_marker();
-    // Show missing-map coverage when needed, but keep source zoom and tile
-    // statistics in serial diagnostics instead of overlaying them on the map.
+    // Show missing-map coverage when needed. Keep detailed source statistics
+    // in serial diagnostics, but expose a compact source badge beside ZOOM.
     if(result.sd_ready&&!result.tiles) {
         epd_fill_rect({18,774,232,30},0xFF,fb);
         text("NO MAP TILES HERE",22,778,2,0,true);
