@@ -56,3 +56,11 @@ CONFIG_GATTC_ENABLE=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 # CONFIG_ESP32S3_DATA_CACHE_LINE_32B is not set
 CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE=64
+
+
+# PMTiles cold-load A/B: the archive is one large read-only FAT file with
+# repeated long/random seeks. ESP-IDF fast-seek builds a CLMT so lseek can
+# avoid walking the FAT chain for each tile range. Keep FAT buffer placement
+# unchanged in this build so the speed difference is attributable to fast-seek.
+CONFIG_FATFS_USE_FASTSEEK=y
+CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE=1024
