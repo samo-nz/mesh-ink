@@ -254,10 +254,13 @@ static bool map_cache_hit() {
 static const char* map_source_badge(const MapRenderResult& result) {
     if(!result.sd_ready||!result.tiles)return "---";
     const bool parent=result.reused>0;
+    const bool native=result.native>0;
     const bool loose=result.loose_tiles>0;
     const bool pmtiles=result.pmtiles_tiles>0;
-    // A viewport can legitimately mix source types or exact/parent tiles.
-    if((loose&&pmtiles)||(result.native&&result.reused))return "MIX";
+    // Reserve MIX for genuinely mixed storage sources. When native and
+    // enlarged-parent tiles come from the same source, say so explicitly.
+    if(loose&&pmtiles)return "MIX";
+    if(native&&parent)return pmtiles?"PMT/E-M":"PNG/E-P";
     if(parent)return pmtiles?"E-M":"E-P";
     return pmtiles?"PMT":"PNG";
 }
@@ -1916,7 +1919,12 @@ static void touch_sampler_task(void*){
             }
         }
         t5_timing_touch_end(timing_touch_started);
-        vTaskDelay(pdMS_TO_TICKS(8));
+        // Repeated letters can be typed faster than the ordinary 8 ms polling
+        // cadence observes the brief release between two taps on the same key.
+        // Poll more aggressively only while a keyboard is active; every other
+        // screen keeps the lower-overhead 8 ms cadence.
+        const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;
+        vTaskDelay(pdMS_TO_TICKS(sample_ms));
     }
 }
 
