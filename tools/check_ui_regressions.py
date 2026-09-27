@@ -154,9 +154,9 @@ contains('show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "s
 contains("!(tap.x>=456&&tap.y<281)", "larger map controls excluded from swipe")
 contains("static constexpr int MAP_TOP=48;", "map starts below compact status bar")
 contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
-contains('epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);\n    draw_toast_message("Loading..");', "Maps loading refresh doubles as black contrast preparation")
-contains('fast_full_redraw("MAP_BLACK_LOADING_COMPLETE",false);', "Maps reveal final frame after black loading preparation")
-assert "transient black prep" not in source, "Maps no longer use a dedicated third black-prep refresh"
+contains('draw_toast_message("Loading..");\n    refresh(MODE_DU);', "Maps keep the previous map visible beneath Loading")
+contains('refresh(MODE_DU,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
+contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
 contains("static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;", "map projection centre matches viewport")
 contains("result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,", "map fills entire viewport")
 assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
