@@ -1826,7 +1826,8 @@ static void touch_sampler_task(void*){
                     t5_timing_note_touch_queue_drop();
             }
         } else {
-            // Original non-Maps sampling and release logic is unchanged.
+            // Non-Maps keeps the legacy single-touch GT911 parser. Keyboard releases
+            // get a small thumb-roll stabilization below; other UI releases remain unchanged.
             int16_t x=0,y=0;bool home=false;
             const bool pressed=touch_point(x,y,home);
             if(home){
