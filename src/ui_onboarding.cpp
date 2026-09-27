@@ -358,6 +358,19 @@ static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
     return accepted&&actual==mhz;
 }
 
+struct T5CpuBoostScope {
+    uint32_t previous_mhz;
+    bool restore;
+    explicit T5CpuBoostScope(bool enabled,const char* reason):
+        previous_mhz(getCpuFrequencyMhz()),restore(false){
+        if(enabled&&previous_mhz<240)
+            restore=set_cpu_target(240,reason,false);
+    }
+    ~T5CpuBoostScope(){
+        if(restore)set_cpu_target(previous_mhz,"ui-draw-complete",false);
+    }
+};
+
 struct Preset {
     const char* title;
     const char* detail;
@@ -1479,6 +1492,11 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 }
 
 static void draw_screen() {
+    // Full framebuffer composition is CPU-bound on cache64. Burst to 240 MHz
+    // only while drawing, then restore the previous clock before the caller
+    // decides whether to refresh the panel. Fast text-only redraws remain at
+    // the normal 160 MHz.
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
     const uint32_t timing_draw_started=micros();
     t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
