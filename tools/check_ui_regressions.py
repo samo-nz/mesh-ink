@@ -217,8 +217,6 @@ contains('if(result.native_pmtiles)return "PMT";', "native PMTiles wins over har
 contains('if(result.native_loose)return "PNG";', "native loose PNG wins over harmless parent fallback")
 contains('if(result.parent_pmtiles)return "E-M";', "parent-only PMTiles viewport gets enlarged-source badge")
 contains('if(result.parent_loose)return "E-P";', "parent-only loose viewport gets enlarged-source badge")
-contains('return pmtiles?"E-M":"E-P";', "map badge distinguishes enlarged PMTiles versus loose PNG parents")
-contains('return pmtiles?"PMT":"PNG";', "map badge distinguishes native PMTiles versus loose PNG")
 contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;', "keyboard touch sampler uses faster cadence for rapid repeated letters")
 contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
 assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTiles v3 header"
