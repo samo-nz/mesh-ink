@@ -183,6 +183,10 @@ void discover_archives() {
         const char* entry_name=candidate.name();
         const char* basename=entry_name?strrchr(entry_name,'/'):nullptr;
         basename=basename?basename+1:entry_name;
+        Serial.printf("[T5-MAP] archive-scan entry=%s dir=%u base=%s\n",
+                      entry_name?entry_name:"(null)",
+                      (unsigned)candidate.isDirectory(),
+                      basename?basename:"(null)");
         if(candidate.isDirectory()&&basename&&!is_zoom_folder(basename)) {
             char folder[SOURCE_PATH_BYTES];
             const int written=snprintf(folder,sizeof(folder),
@@ -194,6 +198,9 @@ void discover_archives() {
                 if(subdir&&subdir.isDirectory()) {
                     File nested=subdir.openNextFile();
                     while(nested&&archive_count<MAX_ARCHIVES) {
+                        Serial.printf("[T5-MAP] archive-scan nested=%s dir=%u\n",
+                                      nested.name()?nested.name():"(null)",
+                                      (unsigned)nested.isDirectory());
                         if(!nested.isDirectory())
                             add_archive(folder,nested.name());
                         nested.close();
