@@ -31,6 +31,9 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
 // Always end a frame before unmounting an SD card.
 void pmtiles_begin_frame();
 void pmtiles_end_frame();
+// Open and prepare one archive ahead of the first map frame. The read-only
+// handle/root index are retained and reused by later pmtiles_begin_frame().
+bool pmtiles_warm_archive(const char* path);
 // Borrow the archive file already opened for this render. Valid only until
 // pmtiles_end_frame()/pmtiles_reset(); the caller must NOT close this handle.
 File* pmtiles_frame_file(const char* path);
