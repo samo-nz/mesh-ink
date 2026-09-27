@@ -661,8 +661,14 @@ static void draw_status_bar(bool standby_quantized=false) {
 
 // Share the same small black notification style between ordinary settings
 // toasts and the synchronous Maps loading message (which has no timeout).
+static EpdRect toast_message_rect(const char* message) {
+    const int scale=3,w=max(300,(int)strlen(message)*6*scale+48),h=72;
+    return {(540-w)/2,640,w,h};
+}
 static void draw_toast_message(const char* message) {
-    const int scale=3,w=max(300,(int)strlen(message)*6*scale+48),h=72,x=(540-w)/2,y=640,r=12;
+    const int scale=3,r=12;
+    const EpdRect rect=toast_message_rect(message);
+    const int x=rect.x,y=rect.y,w=rect.width,h=rect.height;
     epd_fill_rect({x+r,y,w-2*r,h},0,fb);epd_fill_rect({x,y+r,w,h-2*r},0,fb);
     epd_fill_rect({x+5,y+5,w-10,h-10},0,fb);
     text(message,x+(w-(int)strlen(message)*6*scale)/2,y+25,scale,0xFF,true);
@@ -1559,6 +1565,27 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     t5_timing_display_end(timing_display_started);
 }
 
+static void refresh_area(EpdDrawMode mode,EpdRect area,bool wake_light=true) {
+    const uint32_t timing_display_started=t5_timing_display_begin();
+    const uint32_t started=millis();
+    if(wake_light&&!standby_active)frontlight_event();
+    const EpdDrawMode requested_mode=mode;
+    const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
+    if(active_map&&mode==MODE_GL16)mode=MODE_DU;
+    t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
+    set_cpu_target(240,"display-area-refresh",false);
+    epd_poweron();
+    const EpdDrawError err=epd_hl_update_area(
+        &display,mode,(int)epd_ambient_temperature(),area);
+    epd_poweroff();
+    set_cpu_target(standby_active?80:160,"display-area-complete",false);
+    const uint32_t elapsed=millis()-started;
+    Serial.printf("[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
+        (unsigned long)area.width,(unsigned long)area.height,
+        (long)area.x,(long)area.y,(unsigned long)elapsed,(int)err);
+    t5_timing_display_end(timing_display_started);
+}
+
 static void invalidate_display_back_buffer() {
     const size_t bytes=(size_t)epd_width()*epd_height()/2;
     for(size_t i=0;i<bytes;++i)display.back_fb[i]=(uint8_t)~display.front_fb[i];
@@ -1604,7 +1631,10 @@ static void load_map_with_feedback(bool already_on_map) {
     // black flash during interactive pan/zoom even though it requires the
     // established three-refresh contrast-preserving sequence.
     draw_toast_message("Loading..");
-    refresh(MODE_DU);
+    if(already_on_map)
+        refresh_area(MODE_DU,toast_message_rect("Loading.."));
+    else
+        refresh(MODE_DU);
 
     // The previous map and toast stay on the panel while all tile I/O and
     // PNG decoding run synchronously. Refreshing the loading toast lowered
