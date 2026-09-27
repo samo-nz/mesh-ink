@@ -3,6 +3,7 @@
 #include "ui_onboarding.h"
 #include "companion_runtime.h"
 #include "t5_timing.h"
+#include "map_tiles.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -67,8 +68,9 @@ void setup() {
 #endif
     if (companion_mode) companion_setup();
     else {
-        ui_setup();           // show boot logo with INITIALISING STORAGE...
+        ui_setup();           // show boot logo while storage/radio initialize
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        map_tiles_warm_storage(); // hide SD/map inventory work behind splash
         ui_finish_startup();  // only now show a tappable setup/home screen
     }
 }
