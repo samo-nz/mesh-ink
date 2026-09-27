@@ -52,6 +52,18 @@ uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
 // Experimental SD clock: the verified firmware used 10 MHz. No map writes.
 constexpr uint32_t MAP_SD_SPI_HZ=25000000;
+// Per-render PMTiles/PNG timing. PNG decode includes its nested range I/O;
+// range seek/read counters are logged separately so CPU decode can be inferred.
+uint32_t perf_pmt_lookup_us=0,perf_pmt_range_seek_us=0,perf_pmt_range_read_us=0;
+uint32_t perf_pmt_decode_us=0,perf_loose_decode_us=0,perf_compose_us=0;
+uint32_t perf_pmt_range_bytes=0;
+uint16_t perf_pmt_seek_calls=0,perf_pmt_read_calls=0;
+void reset_map_perf() {
+    perf_pmt_lookup_us=perf_pmt_range_seek_us=perf_pmt_range_read_us=0;
+    perf_pmt_decode_us=perf_loose_decode_us=perf_compose_us=0;
+    perf_pmt_range_bytes=0;
+    perf_pmt_seek_calls=perf_pmt_read_calls=0;
+}
 void reset_sd_caches() {
     for(auto& tile:tile_cache)tile.valid=false;
     memset(absent_tiles,0,sizeof(absent_tiles));
@@ -243,9 +255,15 @@ void* png_open(const char* name,int32_t* size) {
     }
     if(png_range_active) {
         const bool valid_range=png_range_length&&png_range_length<=INT32_MAX;
-        const bool range_seek_ok=valid_range&&
-            (png_file->position()==png_range_start ||
-             png_file->seek(png_range_start));
+        bool range_seek_ok=false;
+        if(valid_range&&png_file->position()==png_range_start) {
+            range_seek_ok=true;
+        } else if(valid_range) {
+            const uint32_t seek_started=micros();
+            range_seek_ok=png_file->seek(png_range_start);
+            perf_pmt_range_seek_us+=(uint32_t)(micros()-seek_started);
+            ++perf_pmt_seek_calls;
+        }
         if(!range_seek_ok){
             if(png_file==&file&&file)file.close();
             png_file=nullptr;
@@ -278,7 +296,13 @@ int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     }
     if(pos>=end)return 0;
     const int32_t allowed=(int32_t)min((uint64_t)length,end-pos);
+    const uint32_t read_started=png_range_active?micros():0;
     const int32_t n=png_file->read(data,allowed);
+    if(png_range_active) {
+        perf_pmt_range_read_us+=(uint32_t)(micros()-read_started);
+        ++perf_pmt_read_calls;
+        if(n>0)perf_pmt_range_bytes+=(uint32_t)n;
+    }
     if(n!=allowed){
         Serial.printf("[T5-MAP] tile SD read failed: got=%ld expected=%ld pos=%lu end=%llu\n",
                       (long)n,(long)allowed,(unsigned long)png_file->position(),
@@ -293,9 +317,17 @@ int32_t png_seek(PNGFILE*,int32_t position) {
        (uint32_t)position>png_range_length))return -1;
     const uint64_t absolute=(uint64_t)(png_range_active?png_range_start:0)+
                             (uint32_t)position;
-    const bool seek_ok=absolute<=UINT32_MAX&&
-        (png_file->position()==(uint32_t)absolute ||
-         png_file->seek((uint32_t)absolute));
+    bool seek_ok=false;
+    if(absolute<=UINT32_MAX&&png_file->position()==(uint32_t)absolute) {
+        seek_ok=true;
+    } else if(absolute<=UINT32_MAX) {
+        const uint32_t seek_started=png_range_active?micros():0;
+        seek_ok=png_file->seek((uint32_t)absolute);
+        if(png_range_active) {
+            perf_pmt_range_seek_us+=(uint32_t)(micros()-seek_started);
+            ++perf_pmt_seek_calls;
+        }
+    }
     if(!seek_ok){
         Serial.printf("[T5-MAP] tile seek failed: position=%ld range=%lu\n",
                       (long)position,(unsigned long)png_range_length);
@@ -475,7 +507,9 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         bool found=false;
         for(size_t i=0;i<archive_count;++i) {
             ++result.sd_checks;
+            const uint32_t lookup_started=micros();
             const bool found_in_archive=pmtiles_find_png(archive_paths[i],z,x,y,range);
+            perf_pmt_lookup_us+=(uint32_t)(micros()-lookup_started);
             if(found_in_archive) {
                 snprintf(path,sizeof(path),"%s",archive_paths[i]);
                 found=true;
@@ -510,7 +544,11 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     Tile* slot=acquire_slot();
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
+    const uint32_t decode_started=micros();
     const int decode_status=png.decode(nullptr,0);
+    const uint32_t decode_elapsed=(uint32_t)(micros()-decode_started);
+    if(selected_pmtiles)perf_pmt_decode_us+=decode_elapsed;
+    else perf_loose_decode_us+=decode_elapsed;
     png.close();
     png_range_active=false;
     decode_bits=nullptr;
@@ -588,7 +626,11 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
         if(!load_source(source_zoom,parent_x,parent_y,draw,result,tile,direct,
                         from_pmtiles))
             continue;
-        if(tile)draw_cached(*tile,draw);
+        if(tile) {
+            const uint32_t compose_started=micros();
+            draw_cached(*tile,draw);
+            perf_compose_us+=(uint32_t)(micros()-compose_started);
+        }
         // A low-memory decode drew the same requested tile directly.
         ++result.tiles;
         if(from_pmtiles)++result.pmtiles_tiles;
@@ -634,6 +676,7 @@ uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
     const uint32_t started=millis(); // experimental A/B measurement only
+    reset_map_perf();
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
     if(!ready)return result;
@@ -654,6 +697,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
     const bool failed=map_io_failed||pmtiles_had_io_error();
+    const PmtilesPerfStats pmt_perf=pmtiles_perf_stats();
     pmtiles_end_frame();
     if(failed) {
         // A failed *tile* operation is not proof the card was removed: an
@@ -665,6 +709,27 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
+    Serial.printf("[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
+                  (unsigned)zoom,(unsigned long)(millis()-started),
+                  (unsigned long)perf_pmt_lookup_us,
+                  (unsigned long)pmt_perf.archive_open_us,
+                  (unsigned long)pmt_perf.prepare_us,
+                  (unsigned long)pmt_perf.metadata_seek_us,
+                  (unsigned long)pmt_perf.metadata_read_us,
+                  (unsigned)pmt_perf.metadata_reads,
+                  (unsigned long)pmt_perf.metadata_bytes,
+                  (unsigned long)pmt_perf.inflate_us,
+                  (unsigned long)pmt_perf.index_parse_us,
+                  (unsigned)pmt_perf.leaf_loads,
+                  (unsigned long)perf_pmt_range_seek_us,
+                  (unsigned)perf_pmt_seek_calls,
+                  (unsigned long)perf_pmt_range_read_us,
+                  (unsigned)perf_pmt_read_calls,
+                  (unsigned long)perf_pmt_range_bytes,
+                  (unsigned long)perf_pmt_decode_us,
+                  (unsigned long)perf_loose_decode_us,
+                  (unsigned long)perf_compose_us,
+                  (unsigned)result.sd_checks);
     Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u native-loose=%u native-pmt=%u parent-loose=%u parent-pmt=%u parent-edge=%u parent-full=%u parent-px=%lu decode-loose=%u decode-pmtiles=%u missing=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
