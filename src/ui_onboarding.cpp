@@ -2261,8 +2261,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }}break;
         case Screen::Maps:
             // Controls take priority over map markers near the right edge.
-            if(hit(x,y,462,58,66,66)){if(map_zoom<18){map_zoom++;open_screen(Screen::Maps);}return true;}
-            if(hit(x,y,462,133,66,66)){if(map_zoom>8){map_zoom--;open_screen(Screen::Maps);}return true;}
+            if(hit(x,y,462,58,66,66)){if(map_zoom<meshink_map_gestures::MAX_ZOOM){map_zoom++;open_screen(Screen::Maps);}return true;}
+            if(hit(x,y,462,133,66,66)){if(map_zoom>meshink_map_gestures::MIN_ZOOM){map_zoom--;open_screen(Screen::Maps);}return true;}
             if(hit(x,y,462,208,66,66)){
                 long latitude=0,longitude=0;bool current_fix=false;
                 if(map_device_position(latitude,longitude,current_fix)){
