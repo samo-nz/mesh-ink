@@ -206,6 +206,9 @@ contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI 
 contains('set_cpu_target(previous_mhz,"ui-draw-complete",false);', "UI draw boost restores previous CPU clock")
 contains("native=%u parent=%u src=%u-%u loose=%u pmtiles=%u", "map logs native/parent and source zoom/type")
 contains("[T5-PMT] ready path=%s zoom=%u-%u", "PMTiles logs archive zoom coverage")
+contains('return pmtiles?"E-M":"E-P";', "map badge distinguishes enlarged PMTiles versus loose PNG parents")
+contains('return pmtiles?"PMT":"PNG";', "map badge distinguishes native PMTiles versus loose PNG")
+contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
