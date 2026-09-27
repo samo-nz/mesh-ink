@@ -57,10 +57,12 @@ int main() {
     assert(pinch_zoom_steps(100*100,110*110)==0);
     assert(pinch_zoom_steps(100*100,130*130)==1);
     assert(pinch_zoom_steps(100*100,60*60)==-1);
-    assert(pinch_zoom_steps(100*100,210*210)==2);
-    assert(pinch_zoom_steps(100*100,45*45)==-2);
-    assert(pinch_zoom_steps(100*100,310*310)==3);
-    assert(pinch_zoom_steps(100*100,30*30)==-3);
+    // Pinch magnitude must never skip zoom levels. A new gesture is required
+    // for every additional level in either direction.
+    assert(pinch_zoom_steps(100*100,210*210)==1);
+    assert(pinch_zoom_steps(100*100,45*45)==-1);
+    assert(pinch_zoom_steps(100*100,310*310)==1);
+    assert(pinch_zoom_steps(100*100,30*30)==-1);
     assert(pinch_zoom_steps(20*20,200*200)==0);
 
     for(int z=3;z<=17;++z) {
