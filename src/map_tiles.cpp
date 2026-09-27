@@ -626,10 +626,8 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     } else direct=true;
     return true;
 }
-void draw_cached(const Tile& tile,const DrawContext& draw) {
-    // Keep the exact same WORLD-anchored dithering and panel-pixel sampling.
-    // crop_size is always 256 / 2^depth: use a shift rather than a source
-    // coordinate division for every pixel, and reuse the packed source row.
+void draw_cached_epdiy(const Tile& tile,const DrawContext& draw) {
+    // Generic fallback preserving EPDiy's own rotation/pixel handling.
     const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
     const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
     if(x0>=x1||y0>=y1)return;
@@ -662,6 +660,59 @@ void draw_cached(const Tile& tile,const DrawContext& draw) {
             }
         }
         epd_fill_rect({run_x,py,x1-run_x,1},black?0x00:0xFF,target);
+    }
+}
+
+void draw_cached(const Tile& tile,const DrawContext& draw) {
+    // Maps is portrait-only. EPDiy stores two 4-bit physical pixels per byte;
+    // inverted portrait maps logical (x,y) -> physical (y, H-1-x). Writing the
+    // packed framebuffer directly avoids ~460k calls through epd_draw_pixel()
+    // per viewport while preserving exactly the same world-anchored dither.
+    if(epd_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT) {
+        draw_cached_epdiy(tile,draw);
+        return;
+    }
+    const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
+    const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
+    if(x0>=x1||y0>=y1)return;
+    unsigned shift=0;
+    while((TILE_SIZE>>shift)>draw.crop_size)++shift;
+    const uint16_t* masks=map_black_masks();
+    const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
+    const int physical_width=epd_width();
+    const int physical_height=epd_height();
+    const size_t row_bytes=(size_t)physical_width/2U;
+
+    for(int px=x0;px<x1;++px) {
+        const int sx=draw.crop_x+((px-draw.dx)>>shift);
+        const unsigned x_phase=(unsigned)(world_x_base+px)&3U;
+        const int physical_y=physical_height-px-1;
+        uint8_t* out_row=target+(size_t)physical_y*row_bytes;
+        const auto black_at=[&](int py)->bool {
+            const int sy=draw.crop_y+((py-draw.dy)>>shift);
+            const uint8_t packed=
+                tile.bits[(size_t)sy*(TILE_SIZE/2)+(sx>>1)];
+            const unsigned level=(sx&1)?(packed&0x0FU):(packed>>4);
+            const int world_y=draw.tile_y*TILE_SIZE+py-draw.dy;
+            const unsigned phase=(((unsigned)world_y&3U)<<2)|x_phase;
+            return (masks[level]&(1U<<phase))!=0;
+        };
+
+        int py=y0;
+        if(py&1) {
+            uint8_t& out=out_row[(unsigned)py>>1];
+            out=(uint8_t)((out&0x0FU)|(black_at(py)?0x00U:0xF0U));
+            ++py;
+        }
+        for(;py+1<y1;py+=2) {
+            const uint8_t low=black_at(py)?0x00U:0x0FU;
+            const uint8_t high=black_at(py+1)?0x00U:0xF0U;
+            out_row[(unsigned)py>>1]=(uint8_t)(low|high);
+        }
+        if(py<y1) {
+            uint8_t& out=out_row[(unsigned)py>>1];
+            out=(uint8_t)((out&0xF0U)|(black_at(py)?0x00U:0x0FU));
+        }
     }
 }
 bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
