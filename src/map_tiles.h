@@ -26,6 +26,13 @@ struct MapRenderResult {
     uint16_t pmtiles_tiles;
     uint16_t loose_decodes;
     uint16_t pmtiles_decodes;
+    // Split visible source accounting by native/requested zoom versus
+    // lower-zoom parent fallback so the UI badge can report the real map
+    // source without blank/ocean fallback tiles making it look "mixed".
+    uint16_t native_loose;
+    uint16_t native_pmtiles;
+    uint16_t parent_loose;
+    uint16_t parent_pmtiles;
 };
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,
                                  double latitude,double longitude,uint8_t zoom);
