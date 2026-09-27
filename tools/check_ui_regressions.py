@@ -200,5 +200,10 @@ contains("T5UiAction::StatusPoll", "status-poll timing attribution")
 contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
 assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
 
+# 1.8.10: full-screen framebuffer composition may use a short 240 MHz burst,
+# but must restore the previous clock immediately afterwards.
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
+contains('set_cpu_target(previous_mhz,"ui-draw-complete",false);', "UI draw boost restores previous CPU clock")
+
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
