@@ -2,6 +2,19 @@
 #include <stdint.h>
 #include <SD.h> // platform's File is an fs::File alias; do not forward-declare class File
 
+
+struct PmtilesPerfStats {
+    uint32_t archive_open_us = 0;
+    uint32_t prepare_us = 0;
+    uint32_t metadata_seek_us = 0;
+    uint32_t metadata_read_us = 0;
+    uint32_t metadata_bytes = 0;
+    uint32_t inflate_us = 0;
+    uint32_t index_parse_us = 0;
+    uint16_t metadata_reads = 0;
+    uint16_t leaf_loads = 0;
+};
+
 // A PNG byte range in a local PMTiles v3 archive. The archive remains on SD;
 // the caller passes this range to PNGdec's existing file callbacks.
 struct PmtilesPngRange {
@@ -23,5 +36,8 @@ void pmtiles_end_frame();
 File* pmtiles_frame_file(const char* path);
 // SD seek/read/open failures must not be treated as permanently missing tiles.
 bool pmtiles_had_io_error();
+// Per-frame cold-path instrumentation. Categories may be nested; callers use
+// these to separate archive metadata costs from tile PNG range I/O.
+PmtilesPerfStats pmtiles_perf_stats();
 // Discard all file handles and directory indexes on media failure/remount.
 void pmtiles_reset();
