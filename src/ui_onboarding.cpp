@@ -535,8 +535,14 @@ static bool keyboard_character_at(int x,int y,bool landscape,char& character){
     const int top=landscape?215:688;
     for(int r=0;r<3;++r){
         if(!meshink_keyboard::in_row(y,top+r*70))continue;
-        const int i=meshink_keyboard::key_index(
-            meshink_keyboard::letters(landscape,r,(int)strlen(rows[r])),x);
+        const auto layout=meshink_keyboard::letters(
+            landscape,r,(int)strlen(rows[r]));
+        // A/L are the only alphabetic home-row keys bordering unused screen
+        // margin. Make that blank area useful without changing what is drawn.
+        const int i=(r==1&&!keyboard_symbols)
+            ? meshink_keyboard::key_index_edge_extended(
+                layout,x,landscape?960:540)
+            : meshink_keyboard::key_index(layout,x);
         if(i<0)return false;
         character=rows[r][i];
         return true;
