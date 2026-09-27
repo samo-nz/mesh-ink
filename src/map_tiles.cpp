@@ -593,8 +593,15 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
         ++result.tiles;
         if(from_pmtiles)++result.pmtiles_tiles;
         else ++result.loose_tiles;
-        if(depth)++result.reused;
-        else ++result.native;
+        if(depth){
+            ++result.reused;
+            if(from_pmtiles)++result.parent_pmtiles;
+            else ++result.parent_loose;
+        }else{
+            ++result.native;
+            if(from_pmtiles)++result.native_pmtiles;
+            else ++result.native_loose;
+        }
         // The initial range is only a placeholder. Do not claim the requested
         // zoom was loaded when all displayed tiles came from parent tiles.
         if(result.tiles==1) {
@@ -647,13 +654,15 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u decode-loose=%u decode-pmtiles=%u missing=%u\n",
+    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u native-loose=%u native-pmt=%u parent-loose=%u parent-pmt=%u decode-loose=%u decode-pmtiles=%u missing=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
                   (unsigned)result.tiles,(unsigned)result.native,
                   (unsigned)result.reused,(unsigned)result.min_source_zoom,
                   (unsigned)result.max_source_zoom,(unsigned)result.loose_tiles,
-                  (unsigned)result.pmtiles_tiles,(unsigned)result.loose_decodes,
+                  (unsigned)result.pmtiles_tiles,(unsigned)result.native_loose,
+                  (unsigned)result.native_pmtiles,(unsigned)result.parent_loose,
+                  (unsigned)result.parent_pmtiles,(unsigned)result.loose_decodes,
                   (unsigned)result.pmtiles_decodes,(unsigned)result.missing);
     return result;
 }
