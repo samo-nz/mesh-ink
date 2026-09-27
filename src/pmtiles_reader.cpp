@@ -405,7 +405,17 @@ bool pmtiles_warm_archive(const char* path) {
     const uint32_t prepare_started=perf_now_us();
     const bool ok=prepare(frame_file,path);
     perf.prepare_us+=(uint32_t)(perf_now_us()-prepare_started);
-    if(!ok&&io_failed)close_frame_file();
+    if(!ok&&io_failed) {
+        // A transient warmup read must not cache this archive permanently as
+        // unsupported. Leave later Maps access free to reopen and retry it.
+        close_frame_file();
+        clear_directory(root);
+        clear_leaves();
+        archive=Archive{};
+        cached_path[0]=0;
+        prepared=false;
+        io_failed=false;
+    }
     return ok;
 }
 
