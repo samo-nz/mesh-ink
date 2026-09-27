@@ -55,14 +55,55 @@ constexpr uint32_t MAP_SD_SPI_HZ=25000000;
 // Per-render PMTiles/PNG timing. PNG decode includes its nested range I/O;
 // range seek/read counters are logged separately so CPU decode can be inferred.
 uint32_t perf_pmt_lookup_us=0,perf_pmt_range_seek_us=0,perf_pmt_range_read_us=0;
+uint32_t perf_pmt_preload_seek_us=0,perf_pmt_preload_read_us=0;
 uint32_t perf_pmt_decode_us=0,perf_loose_decode_us=0,perf_compose_us=0;
-uint32_t perf_pmt_range_bytes=0;
-uint16_t perf_pmt_seek_calls=0,perf_pmt_read_calls=0;
+uint32_t perf_pmt_range_bytes=0,perf_pmt_preload_bytes=0;
+uint16_t perf_pmt_seek_calls=0,perf_pmt_read_calls=0,perf_pmt_preload_reads=0;
+
+// PMTiles payload scratch lives in PSRAM. SD reads are staged through aligned
+// internal RAM because direct SD DMA into PSRAM has previously been unreliable
+// on this combined Arduino+ESP-IDF/cache64 build.
+uint8_t* pmt_png_buffer=nullptr;
+size_t pmt_png_capacity=0;
+alignas(4) uint8_t pmt_io_stage[4096];
+
 void reset_map_perf() {
     perf_pmt_lookup_us=perf_pmt_range_seek_us=perf_pmt_range_read_us=0;
+    perf_pmt_preload_seek_us=perf_pmt_preload_read_us=0;
     perf_pmt_decode_us=perf_loose_decode_us=perf_compose_us=0;
-    perf_pmt_range_bytes=0;
-    perf_pmt_seek_calls=perf_pmt_read_calls=0;
+    perf_pmt_range_bytes=perf_pmt_preload_bytes=0;
+    perf_pmt_seek_calls=perf_pmt_read_calls=perf_pmt_preload_reads=0;
+}
+bool ensure_pmt_png_buffer(size_t n) {
+    if(n<=pmt_png_capacity&&pmt_png_buffer)return true;
+    const size_t wanted=(n+4095U)&~(size_t)4095U;
+    uint8_t* next=(uint8_t*)heap_caps_malloc(
+        wanted,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!next)return false;
+    free(pmt_png_buffer);
+    pmt_png_buffer=next;
+    pmt_png_capacity=wanted;
+    return true;
+}
+bool preload_pmt_png(File* archive,uint32_t offset,uint32_t length) {
+    if(!archive||!length||!ensure_pmt_png_buffer(length))return false;
+    const uint32_t seek_started=micros();
+    const bool seek_ok=archive->position()==offset||archive->seek(offset);
+    perf_pmt_preload_seek_us+=(uint32_t)(micros()-seek_started);
+    if(!seek_ok){map_io_failed=true;return false;}
+    uint32_t copied=0;
+    while(copied<length) {
+        const size_t chunk=min((size_t)(length-copied),sizeof(pmt_io_stage));
+        const uint32_t read_started=micros();
+        const size_t got=archive->read(pmt_io_stage,chunk);
+        perf_pmt_preload_read_us+=(uint32_t)(micros()-read_started);
+        ++perf_pmt_preload_reads;
+        perf_pmt_preload_bytes+=(uint32_t)got;
+        if(got!=chunk){map_io_failed=true;return false;}
+        memcpy(pmt_png_buffer+copied,pmt_io_stage,chunk);
+        copied+=(uint32_t)chunk;
+    }
+    return true;
 }
 void reset_sd_caches() {
     for(auto& tile:tile_cache)tile.valid=false;
@@ -72,6 +113,9 @@ void reset_sd_caches() {
     memset(zoom_folder_present,0,sizeof(zoom_folder_present));
     archive_count=0;
     archives_discovered=false;
+    free(pmt_png_buffer);
+    pmt_png_buffer=nullptr;
+    pmt_png_capacity=0;
     png_range_active=false;
     png_range_start=png_range_length=0;
     pmtiles_reset();
@@ -525,13 +569,23 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         }
         if(!found){mark_absent(z,x,y);return false;}
     }
-    png_range_active=range.length!=0;
+    bool pmt_preloaded=false;
+    if(selected_pmtiles&&range.length) {
+        File* archive=pmtiles_frame_file(path);
+        if(archive&&ensure_pmt_png_buffer(range.length)) {
+            if(!preload_pmt_png(archive,range.offset,range.length))return false;
+            pmt_preloaded=true;
+        }
+    }
+    png_range_active=selected_pmtiles&&!pmt_preloaded&&range.length!=0;
     png_range_start=range.offset;
     png_range_length=range.length;
-    const int open_status=png.open(path,png_open,png_close,
-                                  png_read,png_seek,png_draw);
+    const int open_status=pmt_preloaded
+        ? png.openRAM(pmt_png_buffer,(int)range.length,png_draw)
+        : png.open(path,png_open,png_close,png_read,png_seek,png_draw);
     if(open_status!=PNG_SUCCESS) {
-        png_close(nullptr); // only closes a loose-file handle, not PMTiles
+        if(!pmt_preloaded)
+            png_close(nullptr); // only closes a loose-file handle, not PMTiles
         png_range_active=false;
         return false;
     }
@@ -709,7 +763,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    Serial.printf("[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
+    Serial.printf("[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned long)perf_pmt_lookup_us,
                   (unsigned long)pmt_perf.archive_open_us,
@@ -721,6 +775,10 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                   (unsigned long)pmt_perf.inflate_us,
                   (unsigned long)pmt_perf.index_parse_us,
                   (unsigned)pmt_perf.leaf_loads,
+                  (unsigned long)perf_pmt_preload_seek_us,
+                  (unsigned long)perf_pmt_preload_read_us,
+                  (unsigned)perf_pmt_preload_reads,
+                  (unsigned long)perf_pmt_preload_bytes,
                   (unsigned long)perf_pmt_range_seek_us,
                   (unsigned)perf_pmt_seek_calls,
                   (unsigned long)perf_pmt_range_read_us,
