@@ -318,6 +318,10 @@ bool prepare(File& file, const char* path) {
         return false;
     archive.supported = parse_directory(file, archive.root_offset,
                                         archive.root_length, root);
+    if(archive.supported)
+        Serial.printf("[T5-PMT] ready path=%s zoom=%u-%u compression=%u\n",
+                      path,(unsigned)archive.min_zoom,
+                      (unsigned)archive.max_zoom,(unsigned)archive.compression);
     return archive.supported;
 }
 // Use the PMTiles Hilbert ordering, not a row-major or TMS tile address.
