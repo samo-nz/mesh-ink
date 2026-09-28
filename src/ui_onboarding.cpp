@@ -2327,12 +2327,13 @@ static void show_contacts_after_setup(){
 }
 static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(!keyboard_landscape)return false;
-    const int16_t x=raw_y,y=(int16_t)(meshink_display_portrait_width()-1-raw_x);
+    const auto metrics=keyboard_metrics(true);
+    const int16_t x=raw_y,y=(int16_t)(metrics.height-1-raw_x);
     T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
     // Give the mode and Delete buttons the full third-row edge areas.
-    if(meshink_keyboard::in_row(y,355)){
-        if(x<149){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-        if(x>=805){
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+        if(x>=meshink_keyboard::delete_split(metrics)){
             char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
             const size_t n=strlen(value);
             if(n)value[n-1]=0;
@@ -2344,9 +2345,9 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
     if(keyboard_character_at(x,y,true,character)){
         append(character);queue_text_refresh();return true;
     }
-    if(meshink_keyboard::in_row(y,425)){
-        if(x<199){set_keyboard_orientation(false);return true;}
-        if(x<707){append(' ');queue_text_refresh();return true;}
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(false);return true;}
+        if(x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
         if(keyboard_password_mode){
             const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
             memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
@@ -2370,16 +2371,17 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
 
 static bool handle_password_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_password_mode)return false;
+    const auto metrics=keyboard_metrics(false);
     if(hit(x,y,20,496,260,46)){save_remote_password=!save_remote_password;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-    if(meshink_keyboard::in_row(y,828)){
-        if(x<91){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-        if(x>=457){const size_t n=strlen(remote_password);if(n)remote_password[n-1]=0;queue_text_refresh();return true;}
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+        if(x>=meshink_keyboard::delete_split(metrics)){const size_t n=strlen(remote_password);if(n)remote_password[n-1]=0;queue_text_refresh();return true;}
     }
     char character=0;
     if(keyboard_character_at(x,y,false,character)){append(character);queue_text_refresh();return true;}
-    if(y>=portrait_layout().bottom_nav_top-6&&y<portrait_layout().height){
-        if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<422){append(' ');queue_text_refresh();return true;}
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
+        if(x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
         const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
         memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
         show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
@@ -2389,13 +2391,14 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
 
 static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(!keyboard_visible||!keyboard_message_mode)return false;
+    const auto metrics=keyboard_metrics(false);
     // There is no HIDE key in message composition. Tapping anywhere above
     // the keyboard dismisses it, matching common mobile keyboard behaviour
     // and eliminating the easy-to-hit button beside SEND.
-    if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-    if(meshink_keyboard::in_row(y,828)){
-        if(x<91){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-        if(x>=457){
+    if(y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+        if(x>=meshink_keyboard::delete_split(metrics)){
             const size_t n=strlen(compose_text);
             if(n)compose_text[n-1]=0;
             queue_text_refresh();return true;
@@ -2405,12 +2408,9 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(keyboard_character_at(x,y,false,character)){
         append(character);queue_text_refresh();return true;
     }
-    if(y>=portrait_layout().bottom_nav_top-6&&y<portrait_layout().height){
-        // Extend each action into half of its neighbouring gap. The old HIDE
-        // region is now part of SPACE, giving the portrait keyboard a normal
-        // wide space bar and reducing accidental mode changes.
-        if(x<116){set_keyboard_orientation(true);return true;}
-        if(x<422){append(' ');queue_text_refresh();return true;}
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
+        if(x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
         if(compose_text[0]){
             const bool ok=local_mesh_send_active(compose_text);
             if(ok){
@@ -2426,12 +2426,13 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
+    const auto metrics=keyboard_metrics(false);
     // In Radio Settings, tapping above the keyboard dismisses name editing.
     // First-time setup keeps its explicit setup controls and save flow.
-    if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-    if(meshink_keyboard::in_row(y,828)){
-        if(x<91){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-        if(x>=457){
+    if(screen==Screen::RadioSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+        if(x>=meshink_keyboard::delete_split(metrics)){
             const size_t n=strlen(node_name);
             if(n)node_name[n-1]=0;
             saved=false;queue_text_refresh();return true;
@@ -2441,8 +2442,8 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     if(keyboard_character_at(x,y,false,character)){
         append(character);queue_text_refresh();return true;
     }
-    if(y>=portrait_layout().bottom_nav_top-6&&y<portrait_layout().height){
-        if(x<116){set_keyboard_orientation(true);return true;}
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
         const bool was_setup=screen==Screen::Welcome;
         save_node_name();
         if(was_setup){
