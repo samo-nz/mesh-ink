@@ -2904,6 +2904,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
+#if MESHINK_GEOMETRY_DIAGNOSTICS
+    // test.8 changed non-keyboard touch geometry. Log those consumer-side
+    // releases without slowing the 4 ms keyboard sampling/typing path.
+    if(!keyboard_visible&&!keyboard_landscape)
+        Serial.printf("[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u\n",
+                      timing_screen_name(),x,y,quick_panel_active?1U:0U);
+#endif
     T5_DEBUGF(T5_LOG_TOUCH,
         "[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u keyboard=%u landscape=%u\n",
         timing_screen_name(),x,y,quick_panel_active?1U:0U,
