@@ -96,6 +96,10 @@ inline bool& t5_h752_panel_valid(){
     static bool valid=false;
     return valid;
 }
+inline bool& t5_h752_panel_white(){
+    static bool white=false;
+    return white;
+}
 inline uint8_t* t5_h752_alloc_framebuffer(){
     uint8_t* ptr=(uint8_t*)heap_caps_malloc(T5_H752_FB_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!ptr)ptr=(uint8_t*)heap_caps_malloc(T5_H752_FB_BYTES,MALLOC_CAP_8BIT);
@@ -126,7 +130,7 @@ inline H752LegacyRect t5_h752_map_rect(EpdRect rect){
     }
 }
 
-inline void t5_display_init(){epd_init();t5_h752_panel_valid()=false;}
+inline void t5_display_init(){epd_init();t5_h752_panel_valid()=false;t5_h752_panel_white()=false;}
 inline void t5_display_deinit(){
     // The official H752 driver does not expose a complete esp_lcd/RMT teardown.
     // H752 LoRa uses different pins from the display bus, so leaving the
@@ -163,11 +167,12 @@ inline EpdDrawError t5_display_update_screen(EpdiyHighlevelState* state,EpdDrawM
     // grayscale onto a white panel, so erase before every changed frame. This
     // is intentionally conservative until a real H752 can validate faster
     // differential transitions.
-    epd_clear();
+    if(!t5_h752_panel_white())epd_clear();
     H752LegacyRect full{0,0,T5_H752_EPD_WIDTH,T5_H752_EPD_HEIGHT};
     epd_draw_grayscale_image(full,state->front_fb);
     memcpy(state->back_fb,state->front_fb,T5_H752_FB_BYTES);
     t5_h752_panel_valid()=true;
+    t5_h752_panel_white()=false;
     return EPD_DRAW_SUCCESS;
 }
 inline EpdDrawError t5_display_update_area(EpdiyHighlevelState* state,EpdDrawMode mode,int temperature,EpdRect){
@@ -178,7 +183,7 @@ inline EpdDrawError t5_display_update_area(EpdiyHighlevelState* state,EpdDrawMod
 
 inline void t5_display_poweron(){epd_poweron();}
 inline void t5_display_poweroff(){epd_poweroff();}
-inline void t5_display_clear(){epd_clear();t5_h752_panel_valid()=false;}
+inline void t5_display_clear(){epd_clear();t5_h752_panel_valid()=false;t5_h752_panel_white()=true;}
 inline void t5_display_draw_pixel(int x,int y,uint8_t color,uint8_t* framebuffer){
     int px=0,py=0;t5_h752_map_point(x,y,px,py);
     epd_draw_pixel(px,py,color,framebuffer);
