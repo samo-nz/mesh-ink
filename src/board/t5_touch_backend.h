@@ -202,8 +202,8 @@ inline bool meshink_touch_read_contacts(MeshInkTouchContacts& contacts) {
     if(!read(GT911_STATUS,&status,1))return false;
     if(!(status&0x80)) {
         contacts.count=s.last_count;
-        contacts.points[0]={s.last_x0,s.last_y0};
-        contacts.points[1]={s.last_x1,s.last_y1};
+        contacts.points[0].x=s.last_x0;contacts.points[0].y=s.last_y0;
+        contacts.points[1].x=s.last_x1;contacts.points[1].y=s.last_y1;
         return true;
     }
     if(status&0x10) {
@@ -237,8 +237,8 @@ inline bool meshink_touch_read_contacts(MeshInkTouchContacts& contacts) {
     }
     s.last_count=reported;
     contacts.count=reported;
-    contacts.points[0]={s.last_x0,s.last_y0};
-    contacts.points[1]={s.last_x1,s.last_y1};
+    contacts.points[0].x=s.last_x0;contacts.points[0].y=s.last_y0;
+    contacts.points[1].x=s.last_x1;contacts.points[1].y=s.last_y1;
     write_status_clear();
     return true;
 }
