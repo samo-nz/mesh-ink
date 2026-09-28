@@ -5,6 +5,16 @@
 #include <helpers/sensors/EnvironmentSensorManager.h>
 #include <SPI.h>
 
+#ifndef T5_BOARD_H752_01
+#define T5_BOARD_H752_01 1
+#endif
+
+enum class T5RadioFailureClass : uint8_t {
+    Unknown = 0,
+    ProbableLite,
+    RadioFault
+};
+
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
     uint32_t trusted_gps_time_ = 0;
@@ -37,4 +47,5 @@ bool t5_gps_set_constellation_mode(uint8_t mode);
 
 
 bool radio_init();
+T5RadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();

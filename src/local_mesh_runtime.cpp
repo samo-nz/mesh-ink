@@ -557,6 +557,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
 void local_mesh_runtime_begin(){provider.begin();}
 void local_mesh_loop(){
     t5_mesh().loop();provider.refresh();
+#if ENV_INCLUDE_GPS == 1
     const uint32_t gps_now=millis();
     const bool gps_enabled=t5_mesh().getNodePrefs()->gps_enabled!=0;
     const uint32_t gps_interval=t5_mesh().getNodePrefs()->gps_interval;
@@ -590,8 +591,11 @@ void local_mesh_loop(){
         sensors.setSettingValue("gps","0");gps_duty_sleeping=true;
         T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
     }
+#endif
     sensors.loop();
+#if ENV_INCLUDE_GPS == 1
     t5_gps_power_probe_tick(); // executes even when MeshCore has stopped the GPS provider
+#endif
     rtc_clock.tick();
     if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
@@ -599,11 +603,13 @@ void local_mesh_loop(){
         if(pending_direct.retry>=5){provider.update_message(pending_direct.sequence,UiMessageState::Failed);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct failed after 5 retries sequence=%lu\n",(unsigned long)pending_direct.sequence);pending_direct.active=false;}
         else{pending_direct.retry++;provider.update_message(pending_direct.sequence,(UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;}}
     }
+#if ENV_INCLUDE_GPS == 1
     auto* location=sensors.getLocationProvider();
     static uint32_t next_ui_gps=0,candidate_since=0;static bool stable_fix=false,candidate_fix=false;static int stable_sats=0;static long stable_lat=0,stable_lon=0;static uint32_t stable_stamp=0;const uint32_t now=millis();if((int32_t)(now-next_ui_gps)>=0){next_ui_gps=now+(ui_is_standby()?10000:1000);const bool enabled=local_mesh_gps_enabled();const bool raw_fix=location&&location->isValid();if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}if(raw_fix==stable_fix||now-candidate_since>=3000){stable_fix=raw_fix;if(raw_fix){stable_sats=(int)location->satellitesCount();stable_lat=location->getLatitude();stable_lon=location->getLongitude();stable_stamp=(uint32_t)location->getTimestamp();}}ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp);}
 #if T5_LOG_GPS
     static bool was_waiting=true;
     if(location){const bool waiting=location->waitingTimeSync();if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location->getTimestamp());was_waiting=waiting;}
+#endif
 #endif
 #if T5_LOG_POWER
     static uint32_t radio_report_at=0;
@@ -620,14 +626,33 @@ bool local_mesh_send_channel(size_t index,const char* text){if(!provider.open_ch
 bool local_mesh_send_advert(bool flood){if(pending_advert>=0)return false;const uint8_t command[2]={7,(uint8_t)(flood?1:0)};if(!local_mesh_enqueue_command(command,sizeof(command)))return false;pending_advert=flood?1:0;return true;}
 bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=t5_mesh().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);t5_mesh().savePrefs();radio_driver.setParams(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=t5_mesh().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;t5_mesh().savePrefs();}
+#if ENV_INCLUDE_GPS == 1
 void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_enabled=enabled?1:0;t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=!enabled;reset_gps_duty_cycle();}
-bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
+bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}
+bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
 uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval;}
-bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
 uint8_t local_mesh_gps_constellation_mode(){return t5_gps_constellation_mode();}
 bool local_mesh_gps_set_constellation_mode(uint8_t mode){return t5_gps_set_constellation_mode(mode);}
-
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=t5_mesh().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
+#else
+void local_mesh_apply_gps(bool){}
+bool local_mesh_gps_enabled(){return false;}
+bool local_mesh_gps_fix(){return false;}
+uint32_t local_mesh_gps_interval(){return 0;}
+uint8_t local_mesh_gps_constellation_mode(){return 0;}
+bool local_mesh_gps_set_constellation_mode(uint8_t){return false;}
+void local_mesh_cycle_gps_interval(){}
+#endif
+bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
+bool local_mesh_my_location(long& latitude,long& longitude){
+    const auto* p=t5_mesh().getNodePrefs();
+    if(!p||!isfinite(p->node_lat)||!isfinite(p->node_lon)||
+       p->node_lat<-85.0511||p->node_lat>85.0511||p->node_lon<-180.0||p->node_lon>180.0||
+       (fabs(p->node_lat)<0.0000005&&fabs(p->node_lon)<0.0000005))return false;
+    latitude=(long)llround(p->node_lat*1000000.0);
+    longitude=(long)llround(p->node_lon*1000000.0);
+    return true;
+}
 void local_mesh_toggle_gps_advert_location(){auto* p=t5_mesh().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;t5_mesh().savePrefs();}
 uint32_t local_mesh_current_time(){return rtc_clock.getCurrentTime();}
 bool local_mesh_time_valid(){return rtc_clock.isValid();}
@@ -640,9 +665,11 @@ uint8_t local_mesh_path_hash_mode(){return min((uint8_t)2,t5_mesh().getNodePrefs
 void local_mesh_prepare_shutdown(){
     T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] stopping MeshCore peripherals");
     radio_driver.powerOff();
+#if ENV_INCLUDE_GPS == 1
     if(auto* location=sensors.getLocationProvider())location->stop();
     Serial1.end();
-    Serial.println("[T5-SHUTDOWN] SX1262 sleep requested; GPS stopped");
+#endif
+    Serial.println("[T5-SHUTDOWN] SX1262 sleep requested");
 }
 uint16_t local_mesh_direct_unread_total(){return provider.direct_unread_total();}
 uint16_t local_mesh_channel_unread_total(){return provider.channel_unread_total();}

@@ -83,7 +83,12 @@ void local_mesh_setup() {
         radio_ready=radio_init();
         if(!radio_ready){Serial.printf("[T5-MESH] SX1262 initialization attempt %u/3 failed; retrying\n",attempt);delay(500);}
     }
-    if (!radio_ready) { Serial.println("[T5-MESH] ERROR: SX1262 unavailable; stopping on hardware failure screen");ui_show_radio_failure();return; }
+    if (!radio_ready) {
+        const T5RadioFailureClass failure=t5_classify_radio_failure();
+        Serial.printf("[T5-MESH] ERROR: SX1262 unavailable; failure-class=%u\n",(unsigned)failure);
+        ui_show_radio_failure(failure==T5RadioFailureClass::ProbableLite);
+        return;
+    }
     fast_rng.begin(radio_driver.getRngSeed());
     // Probe without formatting, so an existing filesystem gets the fast
     // "STARTING UP..." splash. Only show "INITIALISING STORAGE..." if the

@@ -17,4 +17,4 @@ void ui_apply_initial_radio_preset(); // sync first-time setup radio before show
 void ui_mesh_ready();
 void ui_use_data_provider(UiDataProvider* provider);
 bool ui_is_standby();
-void ui_show_radio_failure();
+void ui_show_radio_failure(bool probable_lite=false);

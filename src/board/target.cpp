@@ -88,6 +88,10 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
 void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
 
 bool T5Board::enableRadioGpsRail(){
+#if !T5_BOARD_H752_01
+    // Original H752 powers its SX1262 without the H752-01 PCA9535 rail gate.
+    return true;
+#else
     // LilyGO maps LORA_EN (shared LoRa/GPS 3V3 rail) to PCA9535 port 0 bit 0.
     // Preserve every display-owned bit: update only IO0_0 while the panel is idle.
     constexpr uint8_t OUTPUT_PORT0=0x02,CONFIG_PORT0=0x06,LORA_EN=0x01;
@@ -109,6 +113,7 @@ bool T5Board::enableRadioGpsRail(){
     if(!verified)Serial.println("[T5-ERROR] PCA9535 shared radio/GPS rail verification failed");
     if(verified)delay(150);
     return verified;
+#endif
 }
 
 // Board mapping only. The upstream wrapper controls radio parameters and
@@ -986,12 +991,13 @@ void T5Board::begin() {
     pinMode(9, OUTPUT);
     digitalWrite(9, LOW);  // GT911 disabled in companion mode
     digitalWrite(11, LOW); // frontlight remains disabled in companion mode
+#if ENV_INCLUDE_GPS == 1
     // MeshCore's historical macro names are counterintuitive here:
-    // HardwareSerial::setPins() takes (RX, TX), so these values must be
-    // PIN_GPS_TX=44 (MCU RX) and PIN_GPS_RX=43 (MCU TX).
+    // HardwareSerial::setPins() takes (RX, TX).
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
     T5_TRACE("board: GPS UART ready; internal heap=%u\n", ESP.getFreeHeap());
+#endif
 }
 
 void T5Board::beginLocal() {
@@ -1004,18 +1010,22 @@ void T5Board::beginLocal() {
     gauge_apply_factory_profile_if_needed();
     getBattMilliVolts();
     t5_power_diagnostics_report("early-boot");
+#if ENV_INCLUDE_GPS == 1
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
+#endif
     T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
 }
 
 bool radio_init() {
     T5_TRACE("radio: begin clock and RTC\n");
     rtc_clock.begin();
-    T5_TRACE("radio: SX1262 init on SPI pins 14/21/13\n");
+    T5_TRACE("radio: SX1262 init SPI=%d/%d/%d ctrl=%d/%d/%d/%d\n",
+        P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
     const bool ready = radio.std_init(&radio_spi);
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
     if(!ready)Serial.println("[T5-ERROR] SX1262 radio initialization failed");
+#if ENV_INCLUDE_GPS == 1
     // LoRa and GPS share the PCA9535-controlled rail; radio initialization
     // ensures power is available before probing GPS. T5 boards carry either
     // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
@@ -1054,7 +1064,46 @@ bool radio_init() {
         T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
                  Serial1.baudRate(), gps_baud_locked, gps_module_name());
     }
+#endif
     return ready;
+}
+
+T5RadioFailureClass t5_classify_radio_failure() {
+#if T5_BOARD_H752_01
+    // The H752-01 Pro Lite shares the Pro PCB but leaves both SX1262 and GNSS
+    // unpopulated. There is no dedicated Lite ID pin, so this is deliberately
+    // a hardware-match classification rather than an absolute identity claim.
+    uint8_t pca_config=0;
+    if(!pca_read(0x06,pca_config)) {
+        Serial.println("[T5-HW] radio failure: PCA9535 absent; not classifying as H752-01 Lite");
+        return T5RadioFailureClass::Unknown;
+    }
+
+    // If valid NMEA is present, this is a GPS-equipped Pro whose SX1262 failed.
+    // Probe both modules/baud rates independently of MeshCore's GPS UI setting.
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    if(!Serial1.baudRate())Serial1.begin(9600);
+    bool gps_present=false;
+    for(uint8_t pass=0;pass<2&&!gps_present;++pass) {
+        for(const uint32_t baud : {9600UL,38400UL}) {
+            Serial1.updateBaudRate(baud);
+            gps_stream.clearValidation();
+            while(Serial1.available()>0)Serial1.read();
+            const uint32_t started=millis();
+            while(millis()-started<1600) {
+                while(gps_stream.available())gps_stream.read();
+                if(gps_stream.hasValidSentence()){gps_present=true;break;}
+                delay(5);
+            }
+            if(gps_present)break;
+        }
+    }
+    Serial.printf("[T5-HW] radio failure classification: H752-01=yes GPS-NMEA=%s\n",
+                  gps_present?"yes":"no");
+    return gps_present?T5RadioFailureClass::RadioFault:T5RadioFailureClass::ProbableLite;
+#else
+    return T5RadioFailureClass::Unknown;
+#endif
 }
 
 mesh::LocalIdentity radio_new_identity() {

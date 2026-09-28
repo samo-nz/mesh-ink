@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include "ui_data.h"
 
+#ifndef T5_UI_HAS_GPS
+#define T5_UI_HAS_GPS 1
+#endif
+
 void local_mesh_setup();
 void local_mesh_runtime_begin();
 void local_mesh_loop();
@@ -19,6 +23,7 @@ bool local_mesh_gps_enabled();
 bool local_mesh_gps_fix();
 uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();
+bool local_mesh_my_location(long& latitude, long& longitude);
 void local_mesh_cycle_gps_interval();
 uint8_t local_mesh_gps_constellation_mode();
 bool local_mesh_gps_set_constellation_mode(uint8_t mode);
