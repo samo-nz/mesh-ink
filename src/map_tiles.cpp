@@ -151,7 +151,7 @@ bool media_ready(bool probe=true) {
         sd_mounted=true;
         reset_sd_caches();
         ++sd_media_epoch;
-        Serial.printf("[T5-MAP] SD mounted; SPI clock requested=%lu MHz\n",
+        T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] SD mounted; SPI clock requested=%lu MHz\n",
                       (unsigned long)(MAP_SD_SPI_HZ/1000000));
     }
     if(probe) {
@@ -223,7 +223,7 @@ void add_archive(const char* parent,const char* name) {
     const size_t len=strlen(basename);
     const bool suffix=len>=8&&!strcasecmp(basename+len-8,".pmtiles");
     const bool header=has_pmtiles_magic(absolute);
-    Serial.printf("[T5-MAP] archive-scan file=%s suffix=%u header=%u\n",
+    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] archive-scan file=%s suffix=%u header=%u\n",
                   absolute,(unsigned)suffix,(unsigned)header);
     if(!suffix&&!header)return;
     strcpy(archive_paths[archive_count++],absolute);
@@ -247,7 +247,7 @@ void discover_archives() {
         const char* entry_name=candidate.name();
         const char* basename=entry_name?strrchr(entry_name,'/'):nullptr;
         basename=basename?basename+1:entry_name;
-        Serial.printf("[T5-MAP] archive-scan entry=%s dir=%u base=%s\n",
+        T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] archive-scan entry=%s dir=%u base=%s\n",
                       entry_name?entry_name:"(null)",
                       (unsigned)candidate.isDirectory(),
                       basename?basename:"(null)");
@@ -266,7 +266,7 @@ void discover_archives() {
                 if(subdir&&subdir.isDirectory()) {
                     File nested=subdir.openNextFile();
                     while(nested&&archive_count<MAX_ARCHIVES) {
-                        Serial.printf("[T5-MAP] archive-scan nested=%s dir=%u\n",
+                        T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] archive-scan nested=%s dir=%u\n",
                                       nested.name()?nested.name():"(null)",
                                       (unsigned)nested.isDirectory());
                         if(!nested.isDirectory())
@@ -288,10 +288,10 @@ void discover_archives() {
     // folder without recursively enumerating x/y tile directories.
     for(unsigned zoom=0;zoom<25U;++zoom)zoom_folder_known[zoom]=true;
     if(archive_count)
-        Serial.printf("[T5-MAP] found %u PMTiles archive(s) on SD\n",
+        T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] found %u PMTiles archive(s) on SD\n",
                       (unsigned)archive_count);
     else
-        Serial.println("[T5-MAP] no PMTiles archives found under /maps or /maps/<name>");
+        T5_DEBUGLN(T5_LOG_MAP,"[T5-MAP] no PMTiles archives found under /maps or /maps/<name>");
 }
 
 
@@ -467,7 +467,7 @@ int png_draw(PNGDRAW* row) {
             *dest++=(uint8_t)((high<<4)|low);
         }
         if(!direct_gray_logged&&row->y==0) {
-            Serial.printf("[T5-PNG-GRAY] direct-rgba=1 src-mod16=%u\n",
+            T5_DEBUGF(T5_LOG_MAP,"[T5-PNG-GRAY] direct-rgba=1 src-mod16=%u\n",
                           (unsigned)((uintptr_t)row->pPixels&15U));
             direct_gray_logged=true;
         }
@@ -491,7 +491,7 @@ int png_draw(PNGDRAW* row) {
             source=simd_source;
         }
         if(!simd_alignment_logged&&row->y==0) {
-            Serial.printf("[T5-PNG-SIMD] src-mod16=%u dst-mod16=%u staged=%u\n",
+            T5_DEBUGF(T5_LOG_MAP,"[T5-PNG-SIMD] src-mod16=%u dst-mod16=%u staged=%u\n",
                           source_mod,dest_mod,staged?1U:0U);
             simd_alignment_logged=true;
         }
@@ -855,7 +855,7 @@ void map_tiles_warm_storage(){
     bool archive_warm=false;
     if(archive_count)archive_warm=pmtiles_warm_archive(archive_paths[0]);
     const PmtilesPerfStats warm=pmtiles_perf_stats();
-    Serial.printf("[T5-MAP-WARM] elapsed=%lums loose-zooms=%u archives=%u first-pmt=%u archive-open=%luus prepare=%luus meta-read=%luus/%u\n",
+    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-WARM] elapsed=%lums loose-zooms=%u archives=%u first-pmt=%u archive-open=%luus prepare=%luus meta-read=%luus/%u\n",
                   (unsigned long)(millis()-started),loose_zooms,
                   (unsigned)archive_count,archive_warm?1U:0U,
                   (unsigned long)warm.archive_open_us,
@@ -901,7 +901,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
         result.sd_ready=storage_responds;
         result.tiles=0; // partial frame must never become cached as complete
     }
-    Serial.printf("[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
+    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned long)perf_pmt_lookup_us,
                   (unsigned long)pmt_perf.archive_open_us,
@@ -926,7 +926,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                   (unsigned long)perf_loose_decode_us,
                   (unsigned long)perf_compose_us,
                   (unsigned)result.sd_checks);
-    Serial.printf("[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u native-loose=%u native-pmt=%u parent-loose=%u parent-pmt=%u parent-edge=%u parent-full=%u parent-px=%lu decode-loose=%u decode-pmtiles=%u missing=%u\n",
+    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-FAST] zoom=%u render=%lu ms png=%u ram=%u tiles=%u native=%u parent=%u src=%u-%u loose=%u pmtiles=%u native-loose=%u native-pmt=%u parent-loose=%u parent-pmt=%u parent-edge=%u parent-full=%u parent-px=%lu decode-loose=%u decode-pmtiles=%u missing=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned)result.disk_decodes,(unsigned)result.ram_hits,
                   (unsigned)result.tiles,(unsigned)result.native,
