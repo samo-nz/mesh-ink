@@ -1574,6 +1574,7 @@ static void draw_about() {
 static void draw_screen();
 static void refresh(MeshInkRefreshMode mode,bool wake_light);
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh);
+static bool hit(int16_t x,int16_t y,const MeshInkUiRect& rect);
 
 static void draw_underlying_screen() {
     // Render the current page normally, but without allowing its controls to
