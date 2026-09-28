@@ -1685,6 +1685,24 @@ static void recover_pmic_power_path() {
 
 static void set_touch_power(bool enabled);
 
+static constexpr uint16_t CRITICAL_BATTERY_MV=3300;
+static constexpr uint32_t CRITICAL_BATTERY_POLL_MS=5000;
+static constexpr uint8_t CRITICAL_BATTERY_SAMPLES=3;
+
+static bool read_battery_voltage_mv(uint16_t& millivolts) {
+    uint8_t gauge[2]{};
+    if(!i2c_read8(0x55,0x08,gauge,sizeof(gauge)))return false;
+    const uint16_t value=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
+    if(value<2500||value>5000)return false;
+    millivolts=value;
+    return true;
+}
+
+static bool external_power_present() {
+    uint8_t reg0b=0;
+    return i2c_read8(0x6B,0x0B,&reg0b,1)&&(reg0b&(1U<<2));
+}
+
 static void deep_sleep_shutdown(const char* reason) {
     Serial.printf("[T5-SHUTDOWN] entering deep-sleep fallback reason=%s wake=BOOT/GPIO0\n",reason);
     Serial.flush();
@@ -1728,6 +1746,91 @@ static void request_hardware_shutdown() {
     Serial.println("[T5-SHUTDOWN] PMIC command returned; USB/VBUS is probably present, using deep sleep until power is removed");
     deep_sleep_shutdown("VBUS_STILL_POWERED");
 }
+
+static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
+    Serial.printf("[T5-POWER] CRITICAL battery=%umV source=%s; entering ship mode\n",
+                  (unsigned)millivolts,source?source:"unknown");
+    keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
+    text_refresh_pending=false;message_alert_active=false;
+    frontlight_deadline=0;frontlight_drive(false);
+
+    // One final persistent e-paper message replaces the boot splash/UI before
+    // battery power is cut. E-paper retains this image with zero standby power.
+    epd_hl_set_all_white(&display);
+    centred("LOW BATTERY",230,6,0,true);
+    centred("POWERED DOWN",340,5,0,true);
+    centred("CONNECT USB TO CHARGE",475,3,0,true);
+    centred("PRESS PWR AFTER CHARGING",530,2,0,true);
+    char voltage[20];
+    snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
+             (unsigned)(millivolts/1000U),(unsigned)((millivolts%1000U)/10U));
+    centred(voltage,650,2,0,true);
+    centred(UI_VERSION,900,2,0,true);
+    refresh(MODE_GL16,false);
+
+    set_touch_power(false);
+    if(local_mesh_is_running()) {
+        local_mesh_prepare_shutdown();
+        SPIFFS.end();
+        Serial.println("[T5-POWER] low-battery shutdown: mesh/storage stopped");
+    }
+
+    constexpr uint8_t REG09=0x09;
+    constexpr uint8_t BATFET_DIS=1u<<5;
+    constexpr uint8_t BATFET_DLY=1u<<3;
+    constexpr uint8_t BATFET_RST_EN=1u<<2;
+    uint8_t address=0,reg09=0;
+    for(const uint8_t candidate:{(uint8_t)0x6B,(uint8_t)0x6A}) {
+        if(i2c_read8(candidate,REG09,&reg09,1)){address=candidate;break;}
+    }
+    if(!address) {
+        Serial.println("[T5-POWER] low-battery PMIC unavailable; deep-sleep fallback");
+        deep_sleep_shutdown("LOW_BATTERY_PMIC_NOT_FOUND");
+        return;
+    }
+    const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
+    Serial.printf("[T5-POWER] low-battery ship mode PMIC=0x%02X REG09=0x%02X->0x%02X\n",
+                  address,reg09,requested);
+    Serial.flush();
+    if(!i2c_write8(address,REG09,requested)) {
+        deep_sleep_shutdown("LOW_BATTERY_PMIC_WRITE_FAILED");
+        return;
+    }
+    // On battery alone BATFET_DIS removes SYS power. If execution continues,
+    // external power appeared during shutdown; sleep rather than resuming UI.
+    delay(750);
+    deep_sleep_shutdown("LOW_BATTERY_VBUS_PRESENT");
+}
+
+static bool boot_battery_is_critical(uint16_t& millivolts) {
+    if(external_power_present())return false;
+    uint16_t first=0,second=0;
+    if(!read_battery_voltage_mv(first)||first>=CRITICAL_BATTERY_MV)return false;
+    delay(80);
+    if(external_power_present())return false;
+    if(!read_battery_voltage_mv(second)||second>=CRITICAL_BATTERY_MV)return false;
+    millivolts=(uint16_t)(((uint32_t)first+second)/2U);
+    return true;
+}
+
+static void service_critical_battery() {
+    static uint32_t sampled_at=0;
+    static uint8_t low_samples=0;
+    const uint32_t now=millis();
+    if(sampled_at&&now-sampled_at<CRITICAL_BATTERY_POLL_MS)return;
+    sampled_at=now?now:1;
+    if(external_power_present()){low_samples=0;return;}
+    uint16_t millivolts=0;
+    if(!read_battery_voltage_mv(millivolts)){low_samples=0;return;}
+    if(millivolts>=CRITICAL_BATTERY_MV){low_samples=0;return;}
+    if(low_samples<CRITICAL_BATTERY_SAMPLES)++low_samples;
+    Serial.printf("[T5-POWER] low battery sample %u/%u: %umV\n",
+                  (unsigned)low_samples,(unsigned)CRITICAL_BATTERY_SAMPLES,
+                  (unsigned)millivolts);
+    if(low_samples>=CRITICAL_BATTERY_SAMPLES)
+        critical_battery_shutdown(millivolts,"runtime");
+}
+
 static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
 static bool update_charge_state(bool* icon_changed=nullptr) {
     uint8_t charger=0;
@@ -2577,6 +2680,9 @@ void ui_setup() {
     }
     if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
     update_status_hardware();
+    uint16_t boot_battery_mv=0;
+    if(boot_battery_is_critical(boot_battery_mv))
+        critical_battery_shutdown(boot_battery_mv,"boot");
     epd_hl_set_all_white(&display);
     draw_meshink_logo(160,false);
     // Keep the original logo visible throughout MeshCore startup. Storage
@@ -2631,6 +2737,7 @@ void ui_loop() {
         static uint32_t report_at=0;if(millis()-report_at>=60000){report_at=millis();Serial.println("[T5-ERROR] radio unavailable; startup halted; press RST to retry");}
         delay(100);return;
     }
+    service_critical_battery();
     service_boot_button();
     if(map_taps.count&&
        (screen!=Screen::Maps||standby_active||
