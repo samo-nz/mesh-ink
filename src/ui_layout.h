@@ -188,7 +188,7 @@ constexpr MeshInkUiRect meshink_node_map_rect(const MeshInkUiLayout& layout) {
 constexpr MeshInkUiRect meshink_node_action_rect(const MeshInkUiLayout& layout) {
     return meshink_section_row_rect(layout,808,70);
 }
-constexpr MeshInkUiRect meshink_node_left_action_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_node_left_action_rect(const MeshInkUiLayout& layout) {
     const int gap=meshink_ui_ref_w(layout,12);
     const int width=(layout.section_width-gap)/2;
     return {layout.section_margin,meshink_ui_ref_y(layout,808),width,
