@@ -49,50 +49,41 @@ struct MeshInkUiLayout {
 };
 
 constexpr MeshInkUiLayout meshink_make_ui_layout(int width,int height) {
-    constexpr int status_height=48;
-    constexpr int bottom_nav_height=60;
-    constexpr int outer_margin=12;
-    constexpr int section_margin=24;
-    constexpr int text_inset=16;
-    constexpr int header_button_width=58;
-    constexpr int header_button_height=48;
-    constexpr int list_row_height=142;
-    constexpr int list_row_stride=150;
     return {
         width,
         height,
 
-        status_height,
-        bottom_nav_height,
-        height-bottom_nav_height,
-        status_height,
-        height-bottom_nav_height,
-        width/2,
-        (status_height+height-bottom_nav_height)/2,
-        width/4,
+        48,                 // status_height
+        60,                 // bottom_nav_height
+        height-60,          // bottom_nav_top
+        48,                 // map_top
+        height-60,          // map_bottom
+        width/2,            // map_centre_x
+        (48+height-60)/2,   // map_centre_y
+        width/4,            // tab_width
 
-        outer_margin,
-        width-2*outer_margin,
-        section_margin,
-        width-2*section_margin,
-        text_inset,
-        outer_margin+text_inset,
-        width-outer_margin,
-        width-46,
+        12,                 // outer_margin
+        width-24,           // outer_width
+        24,                 // section_margin
+        width-48,           // section_width
+        16,                 // text_inset
+        28,                 // content_text_x
+        width-12,           // content_right
+        width-46,           // settings_arrow_x
 
-        58,
-        header_button_width,
-        header_button_height,
-        outer_margin,
-        width-outer_margin-header_button_width,
-        64,
-        70,
+        58,                 // header_top
+        58,                 // header_button_width
+        48,                 // header_button_height
+        12,                 // header_back_x
+        width-70,           // header_action_x
+        64,                 // header_title_y
+        70,                 // header_text_y
 
-        120,
-        list_row_height,
-        list_row_stride,
-        height-bottom_nav_height-25,
-        112
+        120,                // list_top
+        142,                // list_row_height
+        150,                // list_row_stride
+        height-85,          // list_footer_y
+        112                 // settings_row_height
     };
 }
 
