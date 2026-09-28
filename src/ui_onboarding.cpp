@@ -832,17 +832,16 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     meshink_display_set_all_white(&display);draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
     if(back){
-        box(layout.header_back_x,layout.header_top,layout.header_button_width,
-            layout.header_button_height,true);
-        centred("",0,1);
-        text("<",layout.header_back_x+19,layout.header_text_y,3,0xFF,true);
+        const MeshInkUiRect back_rect=meshink_header_back_rect(layout);
+        box(back_rect,true);
+        text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
     }
     centred(title,layout.header_title_y,4,0,true);
     if(action){
-        box(layout.header_action_x,layout.header_top,layout.header_button_width,
-            layout.header_button_height,true);
-        text(action,layout.header_action_x+
-             (layout.header_button_width-(int)strlen(action)*18)/2,
+        const MeshInkUiRect action_rect=meshink_header_action_rect(layout);
+        box(action_rect,true);
+        text(action,action_rect.x+
+             (action_rect.width-(int)strlen(action)*18)/2,
              layout.header_text_y,3,0xFF,true);
     }
 }
@@ -875,14 +874,14 @@ static void draw_list_entry(const UiListEntry& item,int y) {
     const MeshInkUiLayout& layout=portrait_layout();
     box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);
     const bool typed=item.node_type!=0;
-    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+12);
-    text(item.title,typed?layout.content_text_x+42:layout.content_text_x,
-         y+16,3,0,true);
+    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+ui_h(12));
+    text(item.title,typed?layout.content_text_x+ui_w(42):layout.content_text_x,
+         y+ui_h(16),3,0,true);
     text(item.time,layout.content_right-(int)strlen(item.time)*12-
-         layout.text_inset,y+20,2,0,true);
-    draw_wrapped(item.subtitle,layout.content_text_x,y+60,36,2,0,false,2);
+         layout.text_inset,y+ui_h(20),2,0,true);
+    draw_wrapped(item.subtitle,layout.content_text_x,y+ui_h(60),36,2,0,false,2);
     if(item.unread){
-        meshink_display_fill_rect({layout.width-58,y+94,20,20},0,fb);
+        meshink_display_fill_rect({layout.width-ui_w(58),y+ui_h(94),ui_w(20),ui_h(20)},0,fb);
     }
 }
 
@@ -914,9 +913,8 @@ static void draw_page_indicator(size_t page,size_t pages,int y) {
     const int text_width=(int)strlen(page_text)*12;
     const int text_left=(meshink_display_logical_width()-text_width)/2;
     centred(page_text,y,2,0,true);
-    // Swipe down returns to the previous page; swipe up advances.
-    if(page>0)draw_page_arrow(text_left-24,y+7,false);
-    if(page+1<pages)draw_page_arrow(text_left+text_width+24,y+7,true);
+    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
+    if(page+1<pages)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
 
 static void draw_list_page_footer(size_t page,size_t count) {
@@ -1357,12 +1355,13 @@ static void draw_advert_menu() {
     draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",portrait_layout().section_margin,500,39,2,0,true,4);
 }
 
-static void settings_row(const char* title,const char* subtitle,int y) {
+static void settings_row(const char* title,const char* subtitle,int reference_y) {
     const MeshInkUiLayout& layout=portrait_layout();
-    box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height);
-    text(title,layout.content_text_x,y+14,3,0,true);
-    text(subtitle,layout.content_text_x,y+58,2);
-    text(">",layout.settings_arrow_x,y+42,3,0,true);
+    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
+    box(row);
+    text(title,layout.content_text_x,row.y+ui_h(14),3,0,true);
+    text(subtitle,layout.content_text_x,row.y+ui_h(58),2);
+    text(">",layout.settings_arrow_x,row.y+ui_h(42),3,0,true);
 }
 
 static void draw_settings() {
