@@ -84,6 +84,12 @@ jobs:
           grep -q '#define CONFIG_SPIRAM_USE_MALLOC 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_USE_FASTSEEK 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE 1024' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_COLORS 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
       - name: Prepare testing firmware
         run: |
