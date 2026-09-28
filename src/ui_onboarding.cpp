@@ -546,6 +546,8 @@ static void audit_ui_geometry() {
         {"preset-next",meshink_preset_next_rect(layout)},
         {"confirm-left",meshink_confirm_left_rect(layout,500)},
         {"confirm-right",meshink_confirm_right_rect(layout,500)},
+        {"shutdown-confirm-left",meshink_confirm_left_rect(layout,650)},
+        {"shutdown-confirm-right",meshink_confirm_right_rect(layout,650)},
         {"node-map",meshink_node_map_rect(layout)},
         {"node-action",meshink_node_action_rect(layout)},
         {"node-left",meshink_node_left_action_rect(layout)},
@@ -560,6 +562,7 @@ static void audit_ui_geometry() {
         {"quick-plus",meshink_quick_plus_rect(layout)},
         {"quick-advert",meshink_quick_advert_rect(layout)},
         {"quick-power",meshink_quick_power_rect(layout)},
+        {"display-edit-times",meshink_settings_inline_action_rect(layout,118)},
         {"display-brightness",meshink_display_brightness_rect(layout)},
         {"display-slider",meshink_display_slider_track_rect(layout)},
         {"display-slider-touch",meshink_display_slider_touch_rect(layout)},
@@ -575,6 +578,15 @@ static void audit_ui_geometry() {
             ok=false;
             Serial.printf("[T5-GEOM] ERROR ui %s rect=%d,%d %dx%d outside %dx%d\n",
                           item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
+                          layout.width,layout.height);
+        }
+    }
+    for(int row=0;row<PRESETS_PER_PAGE;++row) {
+        const MeshInkUiRect preset=meshink_preset_row_rect(layout,row);
+        if(!ui_rect_inside(layout.width,layout.height,preset)) {
+            ok=false;
+            Serial.printf("[T5-GEOM] ERROR preset row=%d rect=%d,%d %dx%d outside %dx%d\n",
+                          row,preset.x,preset.y,preset.width,preset.height,
                           layout.width,layout.height);
         }
     }
