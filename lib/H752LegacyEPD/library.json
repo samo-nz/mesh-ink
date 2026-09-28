@@ -1,0 +1,12 @@
+{
+  "name": "MeshInk-H752-Legacy-EPD",
+  "version": "1.0.0",
+  "description": "LILYGO H752 ED047TC1 display driver vendored for MeshInk experimental H752 support",
+  "license": "GPL-3.0",
+  "frameworks": [
+    "arduino"
+  ],
+  "platforms": [
+    "espressif32"
+  ]
+}
