@@ -241,46 +241,64 @@ constexpr MeshInkUiRect meshink_night_save_rect(const MeshInkUiLayout& layout) {
 }
 
 constexpr MeshInkUiLayout meshink_make_ui_layout(int width,int height) {
+    const int sx_status=(48*height+480)/960;
+    const int sx_nav=(60*height+480)/960;
+    const int x12=(12*width+270)/540;
+    const int x24=(24*width+270)/540;
+    const int x16=(16*width+270)/540;
+    const int x28=(28*width+270)/540;
+    const int x30=(30*width+270)/540;
+    const int x48=(48*width+270)/540;
+    const int y58=(58*height+480)/960;
+    const int w58=(58*width+270)/540;
+    const int h48=(48*height+480)/960;
+    const int y64=(64*height+480)/960;
+    const int y70=(70*height+480)/960;
+    const int y120=(120*height+480)/960;
+    const int h142=(142*height+480)/960;
+    const int h150=(150*height+480)/960;
+    const int h112=(112*height+480)/960;
+    const int footer_offset=(85*height+480)/960;
     return {
         width,
         height,
 
-        48,                 // status_height
-        60,                 // bottom_nav_height
-        height-60,          // bottom_nav_top
-        48,                 // map_top
-        height-60,          // map_bottom
-        width/2,            // map_centre_x
-        (48+height-60)/2,   // map_centre_y
-        width/4,            // tab_width
+        sx_status,
+        sx_nav,
+        height-sx_nav,
+        sx_status,
+        height-sx_nav,
+        width/2,
+        (sx_status+height-sx_nav)/2,
+        width/4,
 
-        12,                 // outer_margin
-        width-24,           // outer_width
-        24,                 // section_margin
-        width-48,           // section_width
-        16,                 // text_inset
-        28,                 // content_text_x
-        width-12,           // content_right
-        width-46,           // settings_arrow_x
+        x12,
+        width-2*x12,
+        x24,
+        width-2*x24,
+        x16,
+        x28,
+        width-x12,
+        width-(46*width+270)/540,
 
-        30,                 // form_margin
-        width-60,           // form_width
-        48,                 // form_text_x
-        width/2-40,         // detail_value_x
+        x30,
+        width-2*x30,
+        x48,
+        width/2-(40*width+270)/540,
 
-        58,                 // header_top
-        58,                 // header_button_width
-        48,                 // header_button_height
-        12,                 // header_back_x
-        width-70,           // header_action_x
-        64,                 // header_title_y
-        70,                 // header_text_y
+        y58,
+        w58,
+        h48,
+        x12,
+        width-(70*width+270)/540,
+        y64,
+        y70,
 
-        120,                // list_top
-        142,                // list_row_height
-        150,                // list_row_stride
-        height-85,          // list_footer_y
-        112                 // settings_row_height
+        y120,
+        h142,
+        h150,
+        height-footer_offset,
+        h112
     };
 }
 
