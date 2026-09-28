@@ -670,52 +670,52 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar(bool standby_quantized=false) {
-    const int status_height=portrait_layout().status_height;
-    meshink_display_fill_rect({0,0,meshink_display_logical_width(),status_height},0xFF,fb);
-    meshink_display_draw_rect({0,0,meshink_display_logical_width(),status_height},0,fb);
-    int left=6;
+    const MeshInkUiLayout& layout=portrait_layout();
+    const int status_height=layout.status_height;
+    meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
+    meshink_display_draw_rect({0,0,layout.width,status_height},0,fb);
+    int left=ui_x(6);
 #if T5_UI_HAS_GPS
-    if(!status_gps_enabled)draw_target_icon(6,9,true);
-    else if(status_gps_fix)draw_target_icon(6,9,false);
-    else draw_search_icon(6,9);
-    left=46;
-    // Show receiver-reported satellite count only while GPS is enabled.
+    if(!status_gps_enabled)draw_target_icon(ui_x(6),ui_y(9),true);
+    else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
+    else draw_search_icon(ui_x(6),ui_y(9));
+    left=ui_x(46);
     if(!standby_active&&!standby_quantized&&status_gps_enabled&&status_gps_fix) {
         char satellites[4];
         snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites)));
-        text(satellites,43,13,3,0,true);
-        left=43+(int)strlen(satellites)*18+12;
+        text(satellites,ui_x(43),ui_y(13),3,0,true);
+        left=ui_x(43)+(int)strlen(satellites)*18+ui_w(12);
     }
 #endif
-    if(status_unread){draw_envelope_icon(left,9);left+=36;char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,13,3,0,true);left+=(int)strlen(count)*18+12;}
-    if(status_channel_unread){text("#",left,13,3,0,true);left+=22;char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,13,3,0,true);}
+    if(status_unread){draw_envelope_icon(left,ui_y(9));left+=ui_w(36);char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,ui_y(13),3,0,true);left+=(int)strlen(count)*18+ui_w(12);}
+    if(status_channel_unread){text("#",left,ui_y(13),3,0,true);left+=ui_w(22);char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,ui_y(13),3,0,true);}
     char clock_text[8];
     const int shown_minute=standby_quantized&&status_minute>=0?(status_minute/10)*10:status_minute;
     if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,shown_minute);
     else snprintf(clock_text,sizeof(clock_text),"--:--");
-    centred(clock_text,13,3,0,true);
+    centred(clock_text,ui_y(13),3,0,true);
     char battery[8];
     const int shown_battery=standby_quantized&&status_battery>=0?(status_battery/5)*5:status_battery;
     if(shown_battery>=0)snprintf(battery,sizeof(battery),"%d%%",shown_battery);
     else snprintf(battery,sizeof(battery),"--%%");
-    const int battery_x=530-(int)strlen(battery)*18;
-    draw_battery_icon(battery_x-43,8,shown_battery);
-    text(battery,battery_x,13,3,0,true);
+    const int battery_x=layout.width-ui_w(10)-(int)strlen(battery)*18;
+    draw_battery_icon(battery_x-ui_w(43),ui_y(8),shown_battery);
+    text(battery,battery_x,ui_y(13),3,0,true);
 }
 
 // Share the same small black notification style between ordinary settings
 // toasts and the synchronous Maps loading message (which has no timeout).
 static MeshInkRect toast_message_rect(const char* message) {
-    const int scale=3,w=max(300,(int)strlen(message)*6*scale+48),h=72;
-    return {(meshink_display_logical_width()-w)/2,640,w,h};
+    const int scale=3,w=max(ui_w(300),(int)strlen(message)*6*scale+ui_w(48)),h=ui_h(72);
+    return {(portrait_layout().width-w)/2,ui_y(640),w,h};
 }
 static void draw_toast_message(const char* message) {
-    const int scale=3,r=12;
+    const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
     const int x=rect.x,y=rect.y,w=rect.width,h=rect.height;
     meshink_display_fill_rect({x+r,y,w-2*r,h},0,fb);meshink_display_fill_rect({x,y+r,w,h-2*r},0,fb);
-    meshink_display_fill_rect({x+5,y+5,w-10,h-10},0,fb);
-    text(message,x+(w-(int)strlen(message)*6*scale)/2,y+25,scale,0xFF,true);
+    meshink_display_fill_rect({x+ui_w(5),y+ui_h(5),w-ui_w(10),h-ui_h(10)},0,fb);
+    text(message,x+(w-(int)strlen(message)*6*scale)/2,y+ui_h(25),scale,0xFF,true);
 }
 static void draw_toast() {
     if(toast_visible)draw_toast_message(toast_message);
