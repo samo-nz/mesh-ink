@@ -125,19 +125,21 @@ constexpr int meshink_slider_width(const MeshInkUiLayout& layout) {
     return layout.width-2*meshink_slider_left(layout);
 }
 
-// Display & Power action geometry. Night Timer mode needs two actions below
-// the final 112 px settings row, so use compact 52 px buttons with 8 px gaps.
+// Display & Power action geometry.
 constexpr int meshink_shutdown_top(const MeshInkUiLayout& layout) {
     return layout.bottom_nav_top-110;
 }
-constexpr int meshink_night_action_height() {
-    return 52;
+constexpr int meshink_settings_inline_action_width() {
+    return 154;
 }
-constexpr int meshink_night_schedule_top(const MeshInkUiLayout& layout) {
-    return layout.bottom_nav_top-124;
+constexpr int meshink_settings_inline_action_height() {
+    return 56;
 }
-constexpr int meshink_night_shutdown_top(const MeshInkUiLayout& layout) {
-    return layout.bottom_nav_top-64;
+constexpr int meshink_settings_inline_action_x(const MeshInkUiLayout& layout) {
+    return layout.width-layout.outer_margin-meshink_settings_inline_action_width();
+}
+constexpr int meshink_settings_inline_action_y(int row_top) {
+    return row_top+(112-meshink_settings_inline_action_height())/2;
 }
 
 // Regression reference only. Application code derives metrics from its
@@ -184,10 +186,11 @@ static_assert(meshink_slider_left(MESHINK_T5_REFERENCE_LAYOUT)==62 &&
               "T5 slider geometry changed");
 static_assert(meshink_shutdown_top(MESHINK_T5_REFERENCE_LAYOUT)==790,
               "T5 normal shutdown position changed");
-static_assert(meshink_night_schedule_top(MESHINK_T5_REFERENCE_LAYOUT)==776 &&
-              meshink_night_shutdown_top(MESHINK_T5_REFERENCE_LAYOUT)==836 &&
-              meshink_night_action_height()==52,
-              "T5 Night Timer action geometry changed");
+static_assert(meshink_settings_inline_action_x(MESHINK_T5_REFERENCE_LAYOUT)==374 &&
+              meshink_settings_inline_action_y(118)==146 &&
+              meshink_settings_inline_action_width()==154 &&
+              meshink_settings_inline_action_height()==56,
+              "T5 inline settings action geometry changed");
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.header_action_x==470,
               "T5 header action geometry changed");
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.list_top==120 &&

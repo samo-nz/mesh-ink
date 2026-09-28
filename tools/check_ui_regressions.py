@@ -360,13 +360,12 @@ assert "box(24,460,220,76)" not in source, "night schedule pair must not hard-co
 assert "hit(x,y,24,800,180,62)" not in source, "preset pager touch must not hard-code T5 width"
 assert "hit(x,y,40,420,460,100)" not in source, "brightness slider touch must derive from logical width"
 
-# Display & Power Night Timer actions must fit below Map Scale and share draw/touch geometry.
-assert "meshink_night_schedule_top" in ui_layout_source, "Night Schedule layout helper missing"
-assert "meshink_night_shutdown_top" in ui_layout_source, "Night shutdown layout helper missing"
-assert "meshink_night_action_height()==52" in ui_layout_source, "Night action height regression guard missing"
-contains("const int schedule_y=meshink_night_schedule_top(layout);", "Night Schedule drawing uses shared vertical geometry")
-contains("const int shutdown_y=meshink_night_shutdown_top(layout);", "Night shutdown drawing uses shared vertical geometry")
-contains("hit_section_row(x,y,meshink_night_schedule_top(layout),action_height)", "Night Schedule touch matches drawn geometry")
-contains("hit_section_row(x,y,meshink_night_shutdown_top(layout),action_height)", "Night shutdown touch matches drawn geometry")
-assert "box(layout.section_margin,674,layout.section_width,70,true)" not in source, "Night Schedule must not overlap Map Scale"
-assert "hit_section_row(x,y,790,70)" not in source, "stale Night Schedule touch target must not return"
+# Night Timer schedule editing lives inside the MODE row, not below Map Scale.
+assert "meshink_settings_inline_action_x" in ui_layout_source, "inline settings action X helper missing"
+assert "meshink_settings_inline_action_y" in ui_layout_source, "inline settings action Y helper missing"
+assert "meshink_settings_inline_action_width()==154" in ui_layout_source, "inline settings action width guard missing"
+contains('text("EDIT TIMES",action_x+17,action_y+20,2,0xFF,true);', "Night Timer MODE row shows Edit Times")
+contains("hit(x,y,meshink_settings_inline_action_x(layout),", "Edit Times touch uses the same inline geometry")
+contains("open_screen(Screen::NightSchedule);return true;", "Edit Times opens Night Schedule")
+assert "meshink_night_schedule_top" not in ui_layout_source, "abandoned bottom Night Schedule geometry must be removed"
+assert 'centred("NIGHT SCHEDULE",schedule_y' not in source, "Night Schedule must not be drawn over lower settings rows"
