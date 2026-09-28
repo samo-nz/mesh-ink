@@ -275,3 +275,9 @@ assert "map_tiles_warm_storage(); // hide SD/map inventory work behind splash" i
 assert "for(unsigned zoom=0;zoom<25U;++zoom)zoom_folder_known[zoom]=true;" in map_source, "boot /maps scan records loose zoom folders"
 assert "pmtiles_warm_archive(archive_paths[0])" in map_source, "first PMTiles archive root/FAT metadata warms during splash"
 assert "bool pmtiles_warm_archive(const char* path)" in pmtiles_source, "PMTiles reader exposes retryable warmup"
+
+# Standby charger changes must not wait for the 60-second full status poll.
+contains("if(standby_active&&millis()-last_standby_charge_poll>=1000)", "standby charging icon refreshes promptly")
+contains("draw_status_bar(true);", "standby charging refresh redraws only status content")
+contains("refresh_area(MODE_DU,{0,0,540,48},false);", "standby charging refresh is limited to status bar")
+contains("update_charge_state();", "standby entry samples current charger state")
