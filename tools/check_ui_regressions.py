@@ -335,3 +335,9 @@ assert "box(12,y,516,142)" not in source, "list drawing must not hard-code T5 ca
 assert "box(12,y,516,112)" not in source, "settings drawing must not hard-code T5 card width"
 assert "hit(x,y,12,130,516,112)" not in source, "settings touch must not hard-code T5 card width"
 assert "box(470,58,58,48" not in source, "header action must derive from logical width"
+
+# UI layout access must not copy the large geometry struct onto loopTask stack.
+contains("static inline const MeshInkUiLayout& portrait_layout()", "logical layout is cached and returned by reference")
+assert "const MeshInkUiLayout layout=portrait_layout();" not in source, "UI must not copy the full layout struct onto loopTask stack"
+assert "const MeshInkUiLayout& layout=portrait_layout();" in source, "UI local layout aliases use const references"
+contains("[T5-STACK] maps remaining=%u words", "first Maps draw reports loopTask stack watermark")
