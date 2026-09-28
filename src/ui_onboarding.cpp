@@ -730,86 +730,79 @@ static void draw_welcome() {
     meshink_display_set_all_white(&display);
     draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
-    centred("MESHCORE", 62, 6, 0, true);
-    centred("SET UP YOUR T5", 116, 3, 0, true);
-    text("YOUR NAME",layout.form_margin,154,2,0,true);
-    box(layout.form_margin,180,layout.form_width,64);
-    text(node_name,layout.form_text_x,199,3);
-    text("RADIO PRESET",layout.form_margin,268,2,0,true);
-    box(layout.section_margin,292,layout.section_width,88);
-    text(PRESETS[selected_preset].title,layout.section_margin+14,303,3,0,true);
-    text(PRESETS[selected_preset].detail,layout.section_margin+14,344,2);
-    text(">",layout.width-54,319,3,0,true);
-    box(layout.form_margin,402,layout.form_width,52);
-    centred("BLUETOOTH COMPANION MODE",418,2,0,true);
-    if(keyboard_visible){centred("ENTER A NAME",586,2,0,true);draw_keyboard();}
-    else {box(layout.form_margin,840,layout.form_width,64);centred("SHOW KEYBOARD",861,3,0,true);}
+    const MeshInkUiRect name_rect=meshink_welcome_name_rect(layout);
+    const MeshInkUiRect preset_rect=meshink_welcome_preset_rect(layout);
+    const MeshInkUiRect companion_rect=meshink_welcome_companion_rect(layout);
+    centred("MESHCORE",ui_y(62),6,0,true);
+    centred("SET UP YOUR T5",ui_y(116),3,0,true);
+    text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
+    box(name_rect);
+    text(node_name,layout.form_text_x,name_rect.y+ui_h(19),3);
+    text("RADIO PRESET",layout.form_margin,ui_y(268),2,0,true);
+    box(preset_rect);
+    text(PRESETS[selected_preset].title,preset_rect.x+ui_w(14),preset_rect.y+ui_h(11),3,0,true);
+    text(PRESETS[selected_preset].detail,preset_rect.x+ui_w(14),preset_rect.y+ui_h(52),2);
+    text(">",preset_rect.x+preset_rect.width-ui_w(30),preset_rect.y+ui_h(27),3,0,true);
+    box(companion_rect);
+    centred("BLUETOOTH COMPANION MODE",companion_rect.y+ui_h(16),2,0,true);
+    if(keyboard_visible){centred("ENTER A NAME",ui_y(586),2,0,true);draw_keyboard();}
+    else {
+        const MeshInkUiRect show_rect=meshink_welcome_show_keyboard_rect(layout);
+        box(show_rect);centred("SHOW KEYBOARD",show_rect.y+ui_h(21),3,0,true);
+    }
 }
 
 static void draw_presets() {
     meshink_display_set_all_white(&display);
     draw_status_bar();
-    text("< BACK",24,62,2,0,true);
-    centred("RADIO PRESETS",92,4,0,true);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect back_rect=meshink_preset_back_rect(layout);
+    text("< BACK",back_rect.x+ui_w(12),back_rect.y+ui_h(14),2,0,true);
+    centred("RADIO PRESETS",ui_y(92),4,0,true);
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
-        const int y=132+row*128; const MeshInkUiLayout& layout=portrait_layout();
-        box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height,index==selected_preset);
+        const MeshInkUiRect row_rect=meshink_preset_row_rect(layout,row);
+        box(row_rect,index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
-        text(PRESETS[index].title,28,y+12,3,color,true);
-        text(PRESETS[index].detail,28,y+60,2,color,true);
+        text(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(12),3,color,true);
+        text(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(60),2,color,true);
     }
-    const MeshInkUiLayout& layout=portrait_layout();
-    const int pager_width=meshink_pager_button_width(layout);
-    const int pager_right=meshink_pager_right(layout);
-    box(layout.section_margin,800,pager_width,62,preset_page==0);text("PREV",layout.section_margin+51,821,2,preset_page==0?0xFF:0,true);
+    const MeshInkUiRect prev_rect=meshink_preset_prev_rect(layout);
+    const MeshInkUiRect next_rect=meshink_preset_next_rect(layout);
+    box(prev_rect,preset_page==0);
+    text("PREV",prev_rect.x+(prev_rect.width-4*12)/2,prev_rect.y+ui_h(21),2,preset_page==0?0xFF:0,true);
     const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-    box(pager_right,800,pager_width,62,preset_page+1>=page_count);text("NEXT",pager_right+49,821,2,preset_page+1>=page_count?0xFF:0,true);
+    box(next_rect,preset_page+1>=page_count);
+    text("NEXT",next_rect.x+(next_rect.width-4*12)/2,next_rect.y+ui_h(21),2,preset_page+1>=page_count?0xFF:0,true);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
-    centred(page_text,890,2,0,true);
+    centred(page_text,ui_y(890),2,0,true);
 }
 
 static void draw_companion_confirm() {
-    meshink_display_set_all_white(&display);
-    draw_status_bar();
+    meshink_display_set_all_white(&display);draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
-    const int button_width=meshink_form_pair_width(layout);
-    const int right=meshink_form_pair_right(layout);
-    centred("BLUETOOTH",120,5,0,true);centred("COMPANION MODE",180,4,0,true);
-    centred("THE LOCAL UI WILL CLOSE",300,2);centred("UNTIL THE DEVICE RESTARTS",335,2);
-    box(layout.form_margin,500,button_width,72);text("CANCEL",layout.form_margin+44,524,3,0,true);
-    box(right,500,button_width,72,true);text("START",right+48,524,3,0xFF,true);
+    const MeshInkUiRect cancel=meshink_confirm_left_rect(layout,500);
+    const MeshInkUiRect start=meshink_confirm_right_rect(layout,500);
+    centred("BLUETOOTH",ui_y(120),5,0,true);centred("COMPANION MODE",ui_y(180),4,0,true);
+    centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
+    box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
+    box(start,true);text("START",start.x+ui_w(48),start.y+ui_h(24),3,0xFF,true);
 }
 
 static void draw_shutdown_confirm() {
-    meshink_display_set_all_white(&display);
-    draw_status_bar();
+    meshink_display_set_all_white(&display);draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
-    const int button_width=meshink_form_pair_width(layout);
-    const int right=meshink_form_pair_right(layout);
-    centred("SHUT DOWN",120,5,0,true);
-    centred("FULL BATTERY POWER CUT",245,3,0,true);
-    centred("THE DEVICE WILL STOP",305,3,0,true);
-    centred("RECEIVING MESSAGES",350,3,0,true);
-    centred("PRESS PWR TO START AGAIN",445,3,0,true);
-    centred("ON USB: HOLD BOOT TO WAKE",500,3,0,true);
-    box(layout.form_margin,650,button_width,72);text("CANCEL",layout.form_margin+44,674,3,0,true);
-    box(right,650,button_width,72,true);text("SHUT DOWN",right+21,674,3,0xFF,true);
-}
-
-static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
-    const char* cursor=value;
-    for(int row=0;row<max_lines&&*cursor;++row){
-        while(*cursor==' ')++cursor;
-        if(*cursor=='\n'){++cursor;continue;}
-        const char* newline=strchr(cursor,'\n');
-        int remaining=newline?(int)(newline-cursor):(int)strlen(cursor),take=min(chars_per_line,remaining);
-        if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}
-        char line_text[64]={};memcpy(line_text,cursor,min(take,63));
-        text(line_text,x,y+row*(7*scale+8),scale,color,bold);cursor+=take;
-        if(*cursor=='\n')++cursor;
-    }
+    const MeshInkUiRect cancel=meshink_confirm_left_rect(layout,650);
+    const MeshInkUiRect shutdown=meshink_confirm_right_rect(layout,650);
+    centred("SHUT DOWN",ui_y(120),5,0,true);
+    centred("FULL BATTERY POWER CUT",ui_y(245),3,0,true);
+    centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
+    centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
+    centred("PRESS PWR TO START AGAIN",ui_y(445),3,0,true);
+    centred("ON USB: HOLD BOOT TO WAKE",ui_y(500),3,0,true);
+    box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
+    box(shutdown,true);text("SHUT DOWN",shutdown.x+ui_w(21),shutdown.y+ui_h(24),3,0xFF,true);
 }
 
 static void draw_bottom_nav(int selected) {
