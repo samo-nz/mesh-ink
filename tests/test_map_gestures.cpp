@@ -67,8 +67,8 @@ int main() {
     static_assert(meshink_pager_right(compact)==299,"compact pager right button");
     static_assert(meshink_slider_left(compact)==55,"compact slider left");
     static_assert(meshink_slider_width(compact)==370,"compact slider width");
-    static_assert(controls_left(compact)==406,"compact map control exclusion left");
-    static_assert(controls_bottom(compact)==234,"compact map control exclusion bottom");
+    assert(controls_left(compact)==406);
+    assert(controls_bottom(compact)==234);
     assert(terrain_point(100,100,compact));
     assert(terrain_point(350,300,compact));
     assert(!terrain_point(410,100,compact));
