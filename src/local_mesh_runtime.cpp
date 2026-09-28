@@ -368,12 +368,12 @@ public:
     size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;direct_unread(contacts_[i].key)=0;contacts_[i].entry.unread=0;return activate(contacts_[i],false);}
     size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;if(channels_[i].channel_index<MAX_UI_CHANNELS)channel_unread_[channels_[i].channel_index]=0;channels_[i].entry.unread=0;return activate(channels_[i],true);}
     size_t advert_count()const override{return advert_count_;}const UiListEntry& advert(size_t i)const override{return adverts_[i].entry;}
-    void cache_discovered(const uint8_t* frame,size_t len){
+    bool cache_discovered(const uint8_t* frame,size_t len){
         if(!frame||len<DISCOVERED_CONTACT_BASE_LEN||len>sizeof(discovered_[0].frame)){
             Serial.printf("[T5-MESH] rejected malformed new-advert frame bytes=%u expected=%u..%u\n",
                           (unsigned)len,(unsigned)DISCOVERED_CONTACT_BASE_LEN,
                           (unsigned)sizeof(discovered_[0].frame));
-            return;
+            return false;
         }
         DiscoveredContact* slot=nullptr;
         for(auto& item:discovered_)if(item.len&&!memcmp(item.prefix,frame+1,7)){slot=&item;break;}
@@ -383,6 +383,7 @@ public:
         memcpy(slot->prefix,frame+1,7);
         memcpy(slot->frame,frame,len);
         slot->len=(uint8_t)len;
+        return true;
     }
     bool open_advert(size_t i)override{
         if(i>=advert_count_)return false;detail_valid_=false;detail_saved_=false;detail_frame_len_=0;
@@ -602,7 +603,13 @@ bool MeshCoreUiProvider::login_active_node(const char* password,bool save_passwo
 UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
     if(!frame||!len)return;char message[150]{};
-    if(frame[0]==0x8A){provider.cache_discovered(frame,len);provider.refresh(true);ui_request_data_refresh("new-advert");T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] discovered advert cached with full MeshCore identity");}
+    if(frame[0]==0x8A){
+        if(provider.cache_discovered(frame,len)){
+            provider.refresh(true);
+            ui_request_data_refresh("new-advert");
+            T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] discovered advert cached with full MeshCore identity");
+        }
+    }
     else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x85){
         PendingLogin completed=pending_login;pending_login={};
         const bool role_known=len>=13;const uint8_t permissions=role_known?frame[12]:(frame[1]?3:0);
