@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <esp_random.h>
 #include <Preferences.h>
-#include <epdiy.h>
+#include "t5_display.h"
 #include <driver/i2c.h>
 #include <esp_heap_caps.h>
 #include <time.h>
@@ -37,10 +37,10 @@ void request_companion_mode() { Serial.println("[T5-UI] companion mode requires 
 // the MeshCore application adapter in the next milestone.
 static constexpr char UI_VERSION[] = T5_FIRMWARE_VERSION;
 static constexpr uint8_t GT911_ADDR = 0x5D;
-static constexpr gpio_num_t TOUCH_RST = GPIO_NUM_9;
-static constexpr gpio_num_t TOUCH_INT = GPIO_NUM_3;
-static constexpr gpio_num_t FRONTLIGHT = GPIO_NUM_11;
-static constexpr gpio_num_t BOOT_BUTTON = GPIO_NUM_0;
+static constexpr gpio_num_t TOUCH_RST = (gpio_num_t)T5_PIN_TOUCH_RST;
+static constexpr gpio_num_t TOUCH_INT = (gpio_num_t)T5_PIN_TOUCH_INT;
+static constexpr gpio_num_t FRONTLIGHT = (gpio_num_t)T5_PIN_FRONTLIGHT;
+static constexpr gpio_num_t BOOT_BUTTON = (gpio_num_t)T5_PIN_BOOT_BUTTON;
 static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL=6;
 
 struct Glyph { char c; uint8_t r[7]; };
@@ -463,8 +463,8 @@ static void text(const char* s, int x, int y, int scale, uint8_t color = 0, bool
         for (int ry=0; ry<7; ++ry) for (int rx=0; rx<5; ++rx)
             if (rows[ry] & (1 << (4-rx)))
                 for (int dy=0; dy<scale; ++dy) for (int dx=0; dx<scale; ++dx)
-                    { epd_draw_pixel(x+rx*scale+dx, y+ry*scale+dy, color, fb);
-                      if (bold) epd_draw_pixel(x+rx*scale+dx+1, y+ry*scale+dy, color, fb); }
+                    { t5_display_draw_pixel(x+rx*scale+dx, y+ry*scale+dy, color, fb);
+                      if (bold) t5_display_draw_pixel(x+rx*scale+dx+1, y+ry*scale+dy, color, fb); }
         x += 6*scale;
     }
 }
@@ -475,8 +475,8 @@ static void centred(const char* s, int y, int scale, uint8_t color = 0, bool bol
 
 static void box(int x, int y, int w, int h, bool selected=false) {
     EpdRect r = {x,y,w,h};
-    if (selected) epd_fill_rect(r, 0, fb);
-    else { epd_fill_rect(r, 0xFF, fb); epd_draw_rect(r, 0, fb); }
+    if (selected) t5_display_fill_rect(r, 0, fb);
+    else { t5_display_fill_rect(r, 0xFF, fb); t5_display_draw_rect(r, 0, fb); }
 }
 
 static void key(const char* label, int x, int y, int w) {
@@ -523,7 +523,7 @@ static void draw_keyboard() {
 }
 
 static void landscape_key(const char* label,int x,int y,int w){
-    EpdRect r={x,y,w,62};epd_fill_rect(r,0xFF,fb);epd_draw_rect(r,0,fb);
+    EpdRect r={x,y,w,62};t5_display_fill_rect(r,0xFF,fb);t5_display_draw_rect(r,0,fb);
     const int scale=strlen(label)<=5?3:2;text(label,x+(w-(int)strlen(label)*6*scale)/2,y+(62-7*scale)/2,scale,0,true);
 }
 static const char** active_keyboard_rows(){
@@ -533,9 +533,9 @@ static const char** active_keyboard_rows(){
     return keyboard_symbols?symbols:(keyboard_upper?upper:lower);
 }
 static void draw_landscape_keyboard(){
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
-    EpdRect entry={16,14,928,112};epd_draw_rect(entry,0,fb);
+    EpdRect entry={16,14,928,112};t5_display_draw_rect(entry,0,fb);
     draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),32,30,48,4,0,true,2);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(true);
@@ -590,37 +590,37 @@ static bool keyboard_character_at(int x,int y,bool landscape,char& character){
 
 static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
     int dx=abs(x1-x0),sx=x0<x1?1:-1,dy=-abs(y1-y0),sy=y0<y1?1:-1,err=dx+dy;
-    while(true){epd_draw_pixel(x0,y0,color,fb);if(x0==x1&&y0==y1)break;const int e2=2*err;if(e2>=dy){err+=dy;x0+=sx;}if(e2<=dx){err+=dx;y0+=sy;}}
+    while(true){t5_display_draw_pixel(x0,y0,color,fb);if(x0==x1&&y0==y1)break;const int e2=2*err;if(e2>=dy){err+=dy;x0+=sx;}if(e2<=dx){err+=dx;y0+=sy;}}
 }
 
 static void draw_target_icon(int x,int y,bool disabled) {
     // Three-pixel strokes for a clearly visible status-bar GPS icon.
-    epd_fill_rect({x+4,y+4,22,3},0,fb);
-    epd_fill_rect({x+4,y+23,22,3},0,fb);
-    epd_fill_rect({x+4,y+4,3,22},0,fb);
-    epd_fill_rect({x+23,y+4,3,22},0,fb);
-    epd_fill_rect({x+12,y+12,6,6},0,fb);
-    epd_fill_rect({x,y+14,30,3},0,fb);
-    epd_fill_rect({x+14,y,3,30},0,fb);
+    t5_display_fill_rect({x+4,y+4,22,3},0,fb);
+    t5_display_fill_rect({x+4,y+23,22,3},0,fb);
+    t5_display_fill_rect({x+4,y+4,3,22},0,fb);
+    t5_display_fill_rect({x+23,y+4,3,22},0,fb);
+    t5_display_fill_rect({x+12,y+12,6,6},0,fb);
+    t5_display_fill_rect({x,y+14,30,3},0,fb);
+    t5_display_fill_rect({x+14,y,3,30},0,fb);
     if(disabled) {
         for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);
     }
 }
 
 static void draw_search_icon(int x,int y) {
-    epd_fill_rect({x+3,y+3,20,3},0,fb);
-    epd_fill_rect({x+3,y+20,20,3},0,fb);
-    epd_fill_rect({x+3,y+3,3,20},0,fb);
-    epd_fill_rect({x+20,y+3,3,20},0,fb);
+    t5_display_fill_rect({x+3,y+3,20,3},0,fb);
+    t5_display_fill_rect({x+3,y+20,20,3},0,fb);
+    t5_display_fill_rect({x+3,y+3,3,20},0,fb);
+    t5_display_fill_rect({x+20,y+3,3,20},0,fb);
     for(int d=-1;d<=1;++d)line(x+20,y+20+d,x+29,y+29+d);
 }
 
 static void draw_envelope_icon(int x,int y) {
     // Bold three-pixel outline and flap, legible at status-bar size.
-    epd_fill_rect({x,y+5,30,3},0,fb);
-    epd_fill_rect({x,y+23,30,3},0,fb);
-    epd_fill_rect({x,y+5,3,21},0,fb);
-    epd_fill_rect({x+27,y+5,3,21},0,fb);
+    t5_display_fill_rect({x,y+5,30,3},0,fb);
+    t5_display_fill_rect({x,y+23,30,3},0,fb);
+    t5_display_fill_rect({x,y+5,3,21},0,fb);
+    t5_display_fill_rect({x+27,y+5,3,21},0,fb);
     for(int d=-1;d<=1;++d) {
         line(x+3,y+8+d,x+15,y+18+d);
         line(x+26,y+8+d,x+15,y+18+d);
@@ -628,18 +628,18 @@ static void draw_envelope_icon(int x,int y) {
 }
 
 static void draw_battery_icon(int x,int y,int level=-1) {
-    epd_draw_rect({x,y+6,31,18},0,fb);epd_fill_rect({x+31,y+11,4,8},0,fb);
-    if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;epd_fill_rect({x+2,y+8,fill,14},0,fb);}
+    t5_display_draw_rect({x,y+6,31,18},0,fb);t5_display_fill_rect({x+31,y+11,4,8},0,fb);
+    if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;t5_display_fill_rect({x+2,y+8,fill,14},0,fb);}
     if(status_charge_state==1||status_charge_state==2){
-        epd_fill_rect({x+10,y+6,14,17},0xFF,fb);
+        t5_display_fill_rect({x+10,y+6,14,17},0xFF,fb);
         // Wide, bold lightning bolt for the low-resolution status bar.
         for(int d=-2;d<=2;++d){line(x+22+d,y+5,x+12+d,y+16);line(x+12+d,y+16,x+20+d,y+16);line(x+20+d,y+16,x+10+d,y+27);}
     }
 }
 
 static void draw_status_bar(bool standby_quantized=false) {
-    epd_fill_rect({0,0,540,48},0xFF,fb);
-    epd_draw_rect({0,0,540,48},0,fb);
+    t5_display_fill_rect({0,0,540,48},0xFF,fb);
+    t5_display_draw_rect({0,0,540,48},0,fb);
     int left=6;
 #if T5_UI_HAS_GPS
     if(!status_gps_enabled)draw_target_icon(6,9,true);
@@ -680,8 +680,8 @@ static void draw_toast_message(const char* message) {
     const int scale=3,r=12;
     const EpdRect rect=toast_message_rect(message);
     const int x=rect.x,y=rect.y,w=rect.width,h=rect.height;
-    epd_fill_rect({x+r,y,w-2*r,h},0,fb);epd_fill_rect({x,y+r,w,h-2*r},0,fb);
-    epd_fill_rect({x+5,y+5,w-10,h-10},0,fb);
+    t5_display_fill_rect({x+r,y,w-2*r,h},0,fb);t5_display_fill_rect({x,y+r,w,h-2*r},0,fb);
+    t5_display_fill_rect({x+5,y+5,w-10,h-10},0,fb);
     text(message,x+(w-(int)strlen(message)*6*scale)/2,y+25,scale,0xFF,true);
 }
 static void draw_toast() {
@@ -694,7 +694,7 @@ static void show_toast(const char* message) {
 }
 
 static void draw_welcome() {
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     draw_status_bar();
     centred("MESHCORE", 62, 6, 0, true);
     centred("SET UP YOUR T5", 116, 3, 0, true);
@@ -713,7 +713,7 @@ static void draw_welcome() {
 }
 
 static void draw_presets() {
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     draw_status_bar();
     text("< BACK",24,62,2,0,true);
     centred("RADIO PRESETS",92,4,0,true);
@@ -733,7 +733,7 @@ static void draw_presets() {
 }
 
 static void draw_companion_confirm() {
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     draw_status_bar();
     centred("BLUETOOTH",120,5,0,true);centred("COMPANION MODE",180,4,0,true);
     centred("THE LOCAL UI WILL CLOSE",300,2);centred("UNTIL THE DEVICE RESTARTS",335,2);
@@ -742,7 +742,7 @@ static void draw_companion_confirm() {
 }
 
 static void draw_shutdown_confirm() {
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     draw_status_bar();
     centred("SHUT DOWN",120,5,0,true);
     centred("FULL BATTERY POWER CUT",245,3,0,true);
@@ -774,12 +774,12 @@ static void draw_bottom_nav(int selected) {
         box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;
         text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);
         const bool unread=(i==0&&status_unread)||(i==1&&status_channel_unread);
-        if(unread)epd_fill_rect({i*135+118,908,11,11},color,fb);
+        if(unread)t5_display_fill_rect({i*135+118,908,11,11},color,fb);
     }
 }
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
-    epd_hl_set_all_white(&display);draw_status_bar();
+    t5_display_set_all_white(&display);draw_status_bar();
     if(back){box(12,58,58,48,true);centred("",0,1);text("<",31,70,3,0xFF,true);}
     centred(title,64,4,0,true);
     if(action){box(470,58,58,48,true);text(action,470+(58-(int)strlen(action)*18)/2,70,3,0xFF,true);}
@@ -800,13 +800,13 @@ static void thick_line(int x1,int y1,int x2,int y2){
     for(int d=-1;d<=1;++d){line(x1+d,y1,x2+d,y2);line(x1,y1+d,x2,y2+d);}
 }
 static void thick_rect(int x,int y,int w,int h){
-    for(int d=0;d<3;++d)epd_draw_rect({x+d,y+d,w-2*d,h-2*d},0,fb);
+    for(int d=0;d<3;++d)t5_display_draw_rect({x+d,y+d,w-2*d,h-2*d},0,fb);
 }
 static void draw_node_role_icon(uint8_t type,int x,int y){
     if(type==(uint8_t)UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
-    else if(type==(uint8_t)UiNodeRole::Repeater){epd_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);epd_fill_rect({x+7,y+28,15,5},0,fb);}
-    else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);epd_fill_rect({x+8,y+8,5,5},0,fb);epd_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
-    else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);epd_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
+    else if(type==(uint8_t)UiNodeRole::Repeater){t5_display_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);t5_display_fill_rect({x+7,y+28,15,5},0,fb);}
+    else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);t5_display_fill_rect({x+8,y+8,5,5},0,fb);t5_display_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
+    else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);t5_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
     else {thick_rect(x+2,y+3,25,27);text("?",x+8,y+8,2,0,true);}
 }
 static void draw_list_entry(const UiListEntry& item,int y) {
@@ -816,7 +816,7 @@ static void draw_list_entry(const UiListEntry& item,int y) {
     text(item.title,typed?70:28,y+16,3,0,true);
     text(item.time,528-(int)strlen(item.time)*12-16,y+20,2,0,true);
     draw_wrapped(item.subtitle,28,y+60,36,2,0,false,2);
-    if(item.unread){epd_fill_rect({482,y+94,20,20},0,fb);}
+    if(item.unread){t5_display_fill_rect({482,y+94,20,20},0,fb);}
 }
 
 static size_t list_page_count(size_t count) {
@@ -831,7 +831,7 @@ static void clamp_list_page(size_t& page,size_t count) {
 static void draw_page_arrow(int centre_x,int centre_y,bool up) {
     // A compact swipe-direction hint beside the page counter. Three-pixel
     // strokes remain legible on e-paper without consuming another row.
-    epd_fill_rect({centre_x-1,centre_y-7,3,15},0,fb);
+    t5_display_fill_rect({centre_x-1,centre_y-7,3,15},0,fb);
     const int tip_y=up?centre_y-9:centre_y+9;
     const int wing_y=up?centre_y-2:centre_y+2;
     for(int d=-1;d<=1;++d){
@@ -945,7 +945,7 @@ static void draw_map_nodes() {
         }
         if(!placed)continue; // Keep the true-position dot even if labels collide.
         occupied[occupied_count++]={lx,ly,w,34};
-        epd_fill_rect({lx,ly,w,34},0xFF,fb);
+        t5_display_fill_rect({lx,ly,w,34},0xFF,fb);
         text(short_name,lx+4,ly+2,2,0,true);
         text(age,lx+4,ly+18,2,0,true);
     }
@@ -953,10 +953,10 @@ static void draw_map_nodes() {
     // obscure a marker. Each circle has a white halo for contrast.
     for(size_t i=0;i<count;++i) {
         const auto& n=visible[i];
-        epd_fill_rect({n.x-6,n.y-6,13,13},0xFF,fb);
+        t5_display_fill_rect({n.x-6,n.y-6,13,13},0xFF,fb);
         for(int dy=-4;dy<=4;++dy) {
             const int half=abs(dy)==4?1:abs(dy)==3?3:4;
-            epd_fill_rect({n.x-half,n.y+dy,half*2+1,1},0,fb);
+            t5_display_fill_rect({n.x-half,n.y+dy,half*2+1,1},0,fb);
         }
         map_marker_hits[map_marker_hit_count++]={n.x,n.y,n.index};
     }
@@ -993,7 +993,7 @@ static void draw_device_location_marker() {
     // Same bold 30x30 crosshair as the GPS-fix status icon, at real
     // coordinates (not an always-centred marker). White backing stays
     // legible on dark map tiles; the icon works for last-known fixes too.
-    epd_fill_rect({sx-17,sy-17,35,35},0xFF,fb);
+    t5_display_fill_rect({sx-17,sy-17,35,35},0xFF,fb);
     draw_target_icon(sx-15,sy-15,false);
     map_device_marker_x=sx;map_device_marker_y=sy;
     map_device_marker_visible=true;
@@ -1023,7 +1023,7 @@ static void draw_maps() {
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar(); // clock, battery and unread counts are live.
     } else {
-        epd_hl_set_all_white(&display);
+        t5_display_set_all_white(&display);
         // Only the compact status bar remains above the terrain. The map
         // starts directly below it and fills the view down to bottom nav.
         draw_status_bar();
@@ -1033,12 +1033,12 @@ static void draw_maps() {
             map_base_valid=false;
             map_base_media_epoch=map_tiles_media_epoch();
             if(!result.sd_ready)
-                epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0xFF,fb);
+                t5_display_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0xFF,fb);
         }
         // 4 bits per pixel in the high-level EPD framebuffer. A full base
         // snapshot also preserves exact panel row ordering and rotation.
         if(result.sd_ready&&result.tiles) {
-            const size_t bytes=(size_t)epd_width()*epd_height()/2;
+            const size_t bytes=(size_t)t5_display_width()*t5_display_height()/2;
             if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
             if(map_base_cache) {
                 memcpy(map_base_cache,fb,bytes);map_base_bytes=bytes;
@@ -1052,22 +1052,22 @@ static void draw_maps() {
     // Show missing-map coverage when needed. Keep detailed source statistics
     // in serial diagnostics, but expose a compact source badge beside ZOOM.
     if(result.sd_ready&&!result.tiles) {
-        epd_fill_rect({18,774,232,30},0xFF,fb);
+        t5_display_fill_rect({18,774,232,30},0xFF,fb);
         text("NO MAP TILES HERE",22,778,2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
     // Scale-2 text advances 12 px per character. Keep only a 4 px margin on
     // each side so the white label backing follows the actual badge width.
     const int zoom_label_width=(int)strlen(zoom)*12+8;
-    epd_fill_rect({18,812,zoom_label_width,30},0xFF,fb);text(zoom,22,816,2,0,true);
+    t5_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // The three map controls share their 66x66 size, black background and
     // white glyphs. Keep their touch rectangles in sync below.
     constexpr int control_x=462;
     box(control_x,58,66,66,true);
-    epd_fill_rect({control_x+20,88,26,5},0xFF,fb);
-    epd_fill_rect({control_x+30,78,5,26},0xFF,fb);
+    t5_display_fill_rect({control_x+20,88,26,5},0xFF,fb);
+    t5_display_fill_rect({control_x+30,78,5,26},0xFF,fb);
     box(control_x,133,66,66,true);
-    epd_fill_rect({control_x+20,163,26,5},0xFF,fb);
+    t5_display_fill_rect({control_x+20,163,26,5},0xFF,fb);
     long own_latitude=0,own_longitude=0;bool own_current_fix=false;
     const bool has_own_location=map_device_position(own_latitude,own_longitude,own_current_fix);
     if(has_own_location){
@@ -1075,18 +1075,18 @@ static void draw_maps() {
         // A large, entirely white crosshair. GPS-less H752 builds expose this
         // only when MeshCore has a configured static My Location.
         const int target_x=control_x+12,target_y=220;
-        epd_fill_rect({target_x+6,target_y+6,33,5},0xFF,fb);
-        epd_fill_rect({target_x+6,target_y+34,33,5},0xFF,fb);
-        epd_fill_rect({target_x+6,target_y+6,5,33},0xFF,fb);
-        epd_fill_rect({target_x+34,target_y+6,5,33},0xFF,fb);
-        epd_fill_rect({target_x+18,target_y+18,9,9},0xFF,fb);
-        epd_fill_rect({target_x,target_y+21,45,5},0xFF,fb);
-        epd_fill_rect({target_x+21,target_y,5,45},0xFF,fb);
+        t5_display_fill_rect({target_x+6,target_y+6,33,5},0xFF,fb);
+        t5_display_fill_rect({target_x+6,target_y+34,33,5},0xFF,fb);
+        t5_display_fill_rect({target_x+6,target_y+6,5,33},0xFF,fb);
+        t5_display_fill_rect({target_x+34,target_y+6,5,33},0xFF,fb);
+        t5_display_fill_rect({target_x+18,target_y+18,9,9},0xFF,fb);
+        t5_display_fill_rect({target_x,target_y+21,45,5},0xFF,fb);
+        t5_display_fill_rect({target_x+21,target_y,5,45},0xFF,fb);
     }
     const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
     char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
-    epd_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
-    if(!result.sd_ready){epd_fill_rect({80,300,380,80},0xFF,fb);centred("SD CARD / MAPS UNAVAILABLE",328,2,0,true);}
+    t5_display_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
+    if(!result.sd_ready){t5_display_fill_rect({80,300,380,80},0xFF,fb);centred("SD CARD / MAPS UNAVAILABLE",328,2,0,true);}
     draw_bottom_nav(2);
 }
 
@@ -1223,7 +1223,7 @@ static void draw_contact_details() {
         // Password entry is a full lower-screen layer. Clear the underlying
         // Node Info controls/page footer so the keyboard has a clean white
         // background between keys and across its bottom action row.
-        epd_fill_rect({0,486,540,474},0xFF,fb);
+        t5_display_fill_rect({0,486,540,474},0xFF,fb);
         box(24,504,28,28,save_remote_password);if(save_remote_password)text("X",30,509,2,0xFF,true);
         text("SAVE PASSWORD",66,510,2,0,true);
         box(12,544,516,70);text(remote_password[0]?remote_password:"REMOTE PASSWORD",28,568,2,0,true);draw_keyboard();
@@ -1326,7 +1326,7 @@ static void draw_display_settings() {
     draw_app_header("DISPLAY & POWER",true);
     settings_row("MODE",frontlight_mode_name(),118);settings_row("LIGHT TIMEOUT",frontlight_timeout_name(),238);
     box(12,358,516,160);text("BRIGHTNESS",28,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
-    epd_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;epd_fill_rect({knob-12,449,24,35},0,fb);text("-",28,452,3,0,true);text("+",492,452,3,0,true);
+    t5_display_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;t5_display_fill_rect({knob-12,449,24,35},0,fb);text("-",28,452,3,0,true);text("+",492,452,3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
@@ -1351,7 +1351,7 @@ static void draw_help() {
 }
 
 static void draw_standby(){
-    epd_hl_set_all_white(&display);draw_status_bar(true);centred("STANDBY",126,5,0,true);
+    t5_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",126,5,0,true);
     box(24,240,492,150);draw_envelope_icon(48,282);text("PRIVATE MESSAGES",100,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,100,318,4,0,true);
     box(24,420,492,150);text("#",48,464,4,0,true);text("CHANNEL MESSAGES",100,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,100,498,4,0,true);
     centred("HOLD BOOT 2 SECONDS TO WAKE",820,2,0,true);
@@ -1387,7 +1387,7 @@ static void draw_meshink_logo(int top,bool compact=false) {
                 if(((MESHINK_LOGO_PIXELS[next>>2]>>(6-2*(next&3)))&3)!=shade)break;
                 ++x;
             }
-            epd_fill_rect({left+run,top+y,x-run,1},shades[shade],fb);
+            t5_display_fill_rect({left+run,top+y,x-run,1},shades[shade],fb);
         }
     }
 }
@@ -1430,10 +1430,10 @@ static void draw_quick_panel() {
     // while making it clear that tapping it only dismisses quick settings.
     for(int y=QUICK_PANEL_BOTTOM;y<960;++y)
         for(int x=((y&1)?1:0);x<540;x+=2)
-            if((y&1)==0) epd_draw_pixel(x,y,0x00,fb);
+            if((y&1)==0) t5_display_draw_pixel(x,y,0x00,fb);
 
-    epd_fill_rect({0,0,540,QUICK_PANEL_BOTTOM},0xFF,fb);
-    epd_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
+    t5_display_fill_rect({0,0,540,QUICK_PANEL_BOTTOM},0xFF,fb);
+    t5_display_fill_rect({0,QUICK_PANEL_BOTTOM-4,540,4},0x00,fb);
 
     centred("QUICK SETTINGS",34,4,0,true);
     centred("FRONT LIGHT",92,3,0,true);
@@ -1445,9 +1445,9 @@ static void draw_quick_panel() {
     box(QUICK_SLIDER_LEFT,track_y-8,track_w,16);
     const int thumb_x=QUICK_SLIDER_LEFT+
         ((int)frontlight_brightness*track_w)/100;
-    epd_fill_rect({QUICK_SLIDER_LEFT,track_y-5,
+    t5_display_fill_rect({QUICK_SLIDER_LEFT,track_y-5,
         max(1,thumb_x-QUICK_SLIDER_LEFT),10},0x00,fb);
-    epd_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
+    t5_display_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
 
     centred("TAP OR DRAG TO SELECT",221,2,0,true);
 
@@ -1455,10 +1455,10 @@ static void draw_quick_panel() {
     box(24,256,112,70);
     // Draw the symbols as primitives so their visual centres are exact and
     // independent of font glyph metrics.
-    epd_fill_rect({61,289,38,4},0x00,fb);
+    t5_display_fill_rect({61,289,38,4},0x00,fb);
     box(404,256,112,70);
-    epd_fill_rect({441,289,38,4},0x00,fb);
-    epd_fill_rect({458,272,4,38},0x00,fb);
+    t5_display_fill_rect({441,289,38,4},0x00,fb);
+    t5_display_fill_rect({458,272,4,38},0x00,fb);
     char level[16];
     if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
@@ -1479,7 +1479,7 @@ static void close_quick_panel() {
     if(quick_panel_restore_landscape) {
         quick_panel_restore_landscape=false;
         keyboard_landscape=true;
-        epd_set_rotation(EPD_ROT_LANDSCAPE);
+        t5_display_set_rotation(EPD_ROT_LANDSCAPE);
     }
     draw_screen();refresh(MODE_GL16,true);
 }
@@ -1490,7 +1490,7 @@ static void open_quick_panel() {
     quick_panel_restore_landscape=keyboard_landscape;
     if(keyboard_landscape) {
         keyboard_landscape=false;
-        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     }
     quick_panel_active=true;
     draw_quick_panel();
@@ -1539,7 +1539,7 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
     if(hit(x,y,278,410,238,100)) {
         quick_panel_active=false;quick_panel_restore_landscape=false;
         keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
-        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
         screen=Screen::ShutdownConfirm;draw_screen();refresh(MODE_GL16,true);return true;
     }
     return true;
@@ -1584,11 +1584,11 @@ static void refresh(EpdDrawMode mode,bool wake_light=true) {
     if(active_map&&mode==MODE_GL16)mode=MODE_DU;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
     set_cpu_target(240,"display-refresh",false);
-    epd_poweron();
-    const EpdDrawError err = epd_hl_update_screen(&display,mode,(int)epd_ambient_temperature());
+    t5_display_poweron();
+    const EpdDrawError err = t5_display_update_screen(&display,mode,(int)t5_display_ambient_temperature());
     // The map stays clear when the panel is powered down as soon as EPDiy's
     // synchronous DU waveform completes. Do not reintroduce a powered hold.
-    epd_poweroff();
+    t5_display_poweroff();
     set_cpu_target(standby_active?80:160,"display-complete",false);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
@@ -1604,10 +1604,10 @@ static void refresh_area(EpdDrawMode mode,EpdRect area,bool wake_light=true) {
     if(active_map&&mode==MODE_GL16)mode=MODE_DU;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
     set_cpu_target(240,"display-area-refresh",false);
-    epd_poweron();
-    const EpdDrawError err=epd_hl_update_area(
-        &display,mode,(int)epd_ambient_temperature(),area);
-    epd_poweroff();
+    t5_display_poweron();
+    const EpdDrawError err=t5_display_update_area(
+        &display,mode,(int)t5_display_ambient_temperature(),area);
+    t5_display_poweroff();
     set_cpu_target(standby_active?80:160,"display-area-complete",false);
     const uint32_t elapsed=millis()-started;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
@@ -1617,7 +1617,7 @@ static void refresh_area(EpdDrawMode mode,EpdRect area,bool wake_light=true) {
 }
 
 static void invalidate_display_back_buffer() {
-    const size_t bytes=(size_t)epd_width()*epd_height()/2;
+    const size_t bytes=(size_t)t5_display_width()*t5_display_height()/2;
     for(size_t i=0;i<bytes;++i)display.back_fb[i]=(uint8_t)~display.front_fb[i];
 }
 
@@ -1652,7 +1652,7 @@ static void load_map_with_feedback(bool already_on_map) {
         if(map_base_valid&&map_base_cache&&map_base_bytes)
             memcpy(fb,map_base_cache,map_base_bytes);
         else
-            epd_hl_set_all_white(&display);
+            t5_display_set_all_white(&display);
         draw_status_bar();
         draw_bottom_nav(2);
     }
@@ -1676,7 +1676,7 @@ static void load_map_with_feedback(bool already_on_map) {
     // Prepare the completed terrain black, then reveal the finished map.
     // This preserves the stable black->map DU transition that prevents
     // progressive darkening of unchanged terrain on repeated map updates.
-    epd_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
+    t5_display_fill_rect({0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP},0x00,fb);
     refresh(MODE_DU,false); // intentional transient black prep
     draw_screen(); // same decoded map_base_cache; no second tile decode
     fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
@@ -1744,7 +1744,7 @@ static void deep_sleep_shutdown(const char* reason) {
 static void request_hardware_shutdown() {
     Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     centred("POWERED OFF",250,6,0,true);
     centred("PRESS PWR BUTTON",370,4,0,true);
     centred("TO POWER ON",425,4,0,true);
@@ -1786,7 +1786,7 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
 
     // One final persistent e-paper message replaces the boot splash/UI before
     // battery power is cut. E-paper retains this image with zero standby power.
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     centred("LOW BATTERY",230,6,0,true);
     centred("POWERED DOWN",340,5,0,true);
     centred("CONNECT USB TO CHARGE",475,3,0,true);
@@ -2185,7 +2185,7 @@ static void queue_text_refresh(){
 }
 static void set_keyboard_orientation(bool landscape){
     keyboard_landscape=landscape;
-    epd_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
+    t5_display_set_rotation(landscape?EPD_ROT_LANDSCAPE:EPD_ROT_INVERTED_PORTRAIT);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] keyboard orientation=%s\n",landscape?"landscape":"portrait");
     draw_screen();refresh(MODE_GL16);
 }
@@ -2201,7 +2201,7 @@ static void save_node_name(){
 static void show_contacts_after_setup(){
     if(keyboard_landscape){
         keyboard_landscape=false;
-        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     }
     keyboard_visible=false;keyboard_message_mode=false;
     replace_name_on_type=false;
@@ -2238,7 +2238,7 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         if(keyboard_password_mode){
             const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
             memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
-            keyboard_landscape=false;epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+            keyboard_landscape=false;t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MODE_GL16);return true;
         }
         if(keyboard_message_mode){
@@ -2603,7 +2603,7 @@ static void enter_standby(const char* reason){
     standby_restore_landscape=restore_landscape;
     if(restore_landscape){
         keyboard_landscape=false;
-        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     }
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
     // Enter standby with the latest charger state even if the normal 15 s
@@ -2617,9 +2617,9 @@ static void leave_standby(){
     if(standby_restore_landscape){
         standby_restore_landscape=false;
         keyboard_landscape=true;
-        epd_set_rotation(EPD_ROT_LANDSCAPE);
+        t5_display_set_rotation(EPD_ROT_LANDSCAPE);
     } else {
-        epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+        t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     }
     set_cpu_target(160,"wake");T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
 }
@@ -2638,14 +2638,14 @@ static void service_message_alert(){
         case 0:
         case 2:
             ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
-            memset(display.front_fb,0x00,(size_t)epd_width()*epd_height()/2);
+            memset(display.front_fb,0x00,(size_t)t5_display_width()*t5_display_height()/2);
             force_redraw(MODE_DU,"MESSAGE_ALERT_BLACK",false);
             message_alert_deadline=millis()+100;
             break;
         case 1:
         case 3:
             ledcWrite(FRONTLIGHT_PWM_CHANNEL,255);frontlight_lit=true;
-            epd_hl_set_all_white(&display);
+            t5_display_set_all_white(&display);
             force_redraw(MODE_DU,"MESSAGE_ALERT_WHITE",false);
             message_alert_deadline=millis()+100;
             break;
@@ -2678,10 +2678,10 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);
     pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
-    epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);epd_set_lcd_pixel_clock_MHz(17);
+    epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);t5_display_set_pixel_clock_mhz(17);
     recover_pmic_power_path();
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
-    display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=epd_hl_get_framebuffer(&display);
+    display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=t5_display_framebuffer(&display);
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
@@ -2722,7 +2722,7 @@ void ui_setup() {
     uint16_t boot_battery_mv=0;
     if(boot_battery_is_critical(boot_battery_mv))
         critical_battery_shutdown(boot_battery_mv,"boot");
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     draw_meshink_logo(160,false);
     // Keep the original logo visible throughout MeshCore startup. Storage
     // is normally already mounted, so use the generic boot status by default.
@@ -2731,14 +2731,14 @@ void ui_setup() {
     centred("STARTING UP...",716,3,0,true);
     if(node_name[0])centred(node_name,830,3,0,true);
     centred(UI_VERSION,885,2,0,true);
-    epd_poweron();epd_clear();epd_poweroff();refresh(MODE_GL16);
+    t5_display_poweron();t5_display_clear();t5_display_poweroff();refresh(MODE_GL16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
 
 void ui_show_storage_initializing() {
     // Called only after a non-formatting mount fails. Update the existing
     // splash before SPIFFS.begin(true) may block while preparing storage.
-    epd_fill_rect({0,704,540,65},0xFF,fb);
+    t5_display_fill_rect({0,704,540,65},0xFF,fb);
     centred("INITIALISING STORAGE...",716,3,0,true);
     refresh(MODE_GL16);
     Serial.println("[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
@@ -2821,7 +2821,7 @@ void ui_loop() {
             keyboard_visible=false;keyboard_message_mode=false;
             if(keyboard_landscape){
                 keyboard_landscape=false;
-                epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+                t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
             }
             details_page=0;details_from_discovery=false;chat_page=0;
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
@@ -3007,7 +3007,7 @@ bool ui_is_standby(){return standby_active;}
 
 void ui_show_radio_failure(bool probable_lite){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
-    epd_hl_set_all_white(&display);
+    t5_display_set_all_white(&display);
     if(probable_lite){
         centred("MESHINK CANNOT START",120,4,0,true);
         centred("NO MESHCORE RADIO",190,4,0,true);
