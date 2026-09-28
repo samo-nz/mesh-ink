@@ -42,6 +42,9 @@ struct Metrics {
     int letter_top;
     int bottom_top;
     int dismiss_above;
+    int history_bottom;
+    int clear_top;
+    Rect entry;
     Row number_row;
     Row letter_rows[3];
     Row symbol_bottom_row;
@@ -96,6 +99,12 @@ inline Metrics make_metrics(int width,int height,bool landscape,
         ? Row{153,81,76,8,149,805}
         : Row{93,45,42,8,91,457};
 
+    const Rect entry_reference=landscape
+        ? Rect{16,14,928,112}
+        : Rect{12,544,516,70};
+    const int history_bottom_reference=landscape?0:526;
+    const int clear_top_reference=landscape?0:486;
+
     const Rect mode_reference=landscape
         ? Rect{15,355,130,62}
         : Rect{12,828,76,62};
@@ -126,6 +135,14 @@ inline Metrics make_metrics(int width,int height,bool landscape,
     metrics.letter_top=metrics.number_top+metrics.row_step;
     metrics.bottom_top=metrics.letter_top+3*metrics.row_step;
     metrics.dismiss_above=metrics.number_top;
+    metrics.history_bottom=history_bottom_reference?
+        scale_axis(history_bottom_reference,height,reference_height)+tuning.y_offset:0;
+    metrics.clear_top=clear_top_reference?
+        scale_axis(clear_top_reference,height,reference_height)+tuning.y_offset:0;
+    metrics.entry=scale_rect(entry_reference,width,height,reference_width,reference_height,tuning);
+    if(!landscape){
+        metrics.entry.height=scale_axis(70,height,reference_height);
+    }
     metrics.number_row=scale_row(number_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[0]=scale_row(top_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[1]=scale_row(home_reference,width,reference_width,tuning.x_offset);
