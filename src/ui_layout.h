@@ -31,6 +31,12 @@ struct MeshInkUiLayout {
     int content_right;
     int settings_arrow_x;
 
+    // Shared setup/detail geometry.
+    int form_margin;
+    int form_width;
+    int form_text_x;
+    int detail_value_x;
+
     // App header geometry.
     int header_top;
     int header_button_width;
@@ -71,6 +77,11 @@ constexpr MeshInkUiLayout meshink_make_ui_layout(int width,int height) {
         width-12,           // content_right
         width-46,           // settings_arrow_x
 
+        30,                 // form_margin
+        width-60,           // form_width
+        48,                 // form_text_x
+        width/2-40,         // detail_value_x
+
         58,                 // header_top
         58,                 // header_button_width
         48,                 // header_button_height
@@ -85,6 +96,33 @@ constexpr MeshInkUiLayout meshink_make_ui_layout(int width,int height) {
         height-85,          // list_footer_y
         112                 // settings_row_height
     };
+}
+
+// Reusable horizontal split helpers. Gaps preserve the current T5 visual
+// proportions but widths adapt to the logical viewport.
+constexpr int meshink_form_pair_width(const MeshInkUiLayout& layout) {
+    return (layout.form_width-40)/2;
+}
+constexpr int meshink_form_pair_right(const MeshInkUiLayout& layout) {
+    return layout.width-layout.form_margin-meshink_form_pair_width(layout);
+}
+constexpr int meshink_section_pair_width(const MeshInkUiLayout& layout) {
+    return (layout.section_width-52)/2;
+}
+constexpr int meshink_section_pair_right(const MeshInkUiLayout& layout) {
+    return layout.width-layout.section_margin-meshink_section_pair_width(layout);
+}
+constexpr int meshink_pager_button_width(const MeshInkUiLayout& layout) {
+    return (layout.section_width-132)/2;
+}
+constexpr int meshink_pager_right(const MeshInkUiLayout& layout) {
+    return layout.width-layout.section_margin-meshink_pager_button_width(layout);
+}
+constexpr int meshink_slider_left(const MeshInkUiLayout& layout) {
+    return layout.section_margin+38;
+}
+constexpr int meshink_slider_width(const MeshInkUiLayout& layout) {
+    return layout.width-2*meshink_slider_left(layout);
 }
 
 // Regression reference only. Application code derives metrics from its
@@ -111,6 +149,24 @@ static_assert(MESHINK_T5_REFERENCE_LAYOUT.section_margin==24 &&
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.content_text_x==28 &&
               MESHINK_T5_REFERENCE_LAYOUT.settings_arrow_x==494,
               "T5 content inset geometry changed");
+static_assert(MESHINK_T5_REFERENCE_LAYOUT.form_margin==30 &&
+              MESHINK_T5_REFERENCE_LAYOUT.form_width==480 &&
+              MESHINK_T5_REFERENCE_LAYOUT.form_text_x==48,
+              "T5 setup form geometry changed");
+static_assert(MESHINK_T5_REFERENCE_LAYOUT.detail_value_x==230,
+              "T5 detail value column changed");
+static_assert(meshink_form_pair_width(MESHINK_T5_REFERENCE_LAYOUT)==220 &&
+              meshink_form_pair_right(MESHINK_T5_REFERENCE_LAYOUT)==290,
+              "T5 confirmation button geometry changed");
+static_assert(meshink_section_pair_width(MESHINK_T5_REFERENCE_LAYOUT)==220 &&
+              meshink_section_pair_right(MESHINK_T5_REFERENCE_LAYOUT)==296,
+              "T5 section pair geometry changed");
+static_assert(meshink_pager_button_width(MESHINK_T5_REFERENCE_LAYOUT)==180 &&
+              meshink_pager_right(MESHINK_T5_REFERENCE_LAYOUT)==336,
+              "T5 pager button geometry changed");
+static_assert(meshink_slider_left(MESHINK_T5_REFERENCE_LAYOUT)==62 &&
+              meshink_slider_width(MESHINK_T5_REFERENCE_LAYOUT)==416,
+              "T5 slider geometry changed");
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.header_action_x==470,
               "T5 header action geometry changed");
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.list_top==120 &&

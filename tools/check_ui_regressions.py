@@ -340,10 +340,22 @@ assert "box(470,58,58,48" not in source, "header action must derive from logical
 contains("static inline const MeshInkUiLayout& portrait_layout()", "logical layout is cached and returned by reference")
 assert "const MeshInkUiLayout layout=portrait_layout();" not in source, "UI must not copy the full layout struct onto loopTask stack"
 assert "const MeshInkUiLayout& layout=portrait_layout();" in source, "UI local layout aliases use const references"
-contains("[T5-STACK] maps high-water=%u", "first Maps draw reports loopTask stack watermark")
+assert "[T5-STACK]" not in source, "temporary Maps stack diagnostic should be removed after validation"
 
 # Maps marker rendering must keep complete UiMapNode records off loopTask stack.
 assert "Visible visible[50]" not in source, "Maps must not retain 50 complete node records on loopTask stack"
 assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};" in source, "Maps reuses compact projected marker storage"
 assert "struct Bounds {int16_t x,y,w,h;};" in source, "Maps collision bounds use compact 16-bit coordinates"
 assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
+
+# Shared X-axis interior geometry must derive from logical width.
+assert "form_width==480" in ui_layout_source, "T5 setup form width guard missing"
+assert "detail_value_x==230" in ui_layout_source, "T5 detail value column guard missing"
+assert "meshink_form_pair_width" in ui_layout_source and "meshink_section_pair_width" in ui_layout_source, "responsive split-button helpers missing"
+assert "meshink_pager_button_width" in ui_layout_source, "responsive pager helper missing"
+assert "meshink_slider_width" in ui_layout_source, "responsive slider helper missing"
+assert "box(30,180,480,64)" not in source, "setup name field must not hard-code T5 width"
+assert "box(30,500,220,72)" not in source, "confirmation buttons must not hard-code T5 width"
+assert "box(24,460,220,76)" not in source, "night schedule pair must not hard-code T5 width"
+assert "hit(x,y,24,800,180,62)" not in source, "preset pager touch must not hard-code T5 width"
+assert "hit(x,y,40,420,460,100)" not in source, "brightness slider touch must derive from logical width"

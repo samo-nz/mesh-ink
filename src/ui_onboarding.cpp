@@ -703,21 +703,21 @@ static void show_toast(const char* message) {
 static void draw_welcome() {
     meshink_display_set_all_white(&display);
     draw_status_bar();
+    const MeshInkUiLayout& layout=portrait_layout();
     centred("MESHCORE", 62, 6, 0, true);
     centred("SET UP YOUR T5", 116, 3, 0, true);
-    text("YOUR NAME", 30, 154, 2, 0, true);
-    box(30,180,480,64);
-    text(node_name, 48,199,3);
-    text("RADIO PRESET", 30, 268, 2, 0, true);
-    {const MeshInkUiLayout& layout=portrait_layout();
-     box(layout.section_margin,292,layout.section_width,88);}
-    text(PRESETS[selected_preset].title,38,303,3,0,true);
-    text(PRESETS[selected_preset].detail,38,344,2);
-    text(">",486,319,3,0,true);
-    box(30,402,480,52);
+    text("YOUR NAME",layout.form_margin,154,2,0,true);
+    box(layout.form_margin,180,layout.form_width,64);
+    text(node_name,layout.form_text_x,199,3);
+    text("RADIO PRESET",layout.form_margin,268,2,0,true);
+    box(layout.section_margin,292,layout.section_width,88);
+    text(PRESETS[selected_preset].title,layout.section_margin+14,303,3,0,true);
+    text(PRESETS[selected_preset].detail,layout.section_margin+14,344,2);
+    text(">",layout.width-54,319,3,0,true);
+    box(layout.form_margin,402,layout.form_width,52);
     centred("BLUETOOTH COMPANION MODE",418,2,0,true);
     if(keyboard_visible){centred("ENTER A NAME",586,2,0,true);draw_keyboard();}
-    else {box(30,840,480,64);centred("SHOW KEYBOARD",861,3,0,true);}
+    else {box(layout.form_margin,840,layout.form_width,64);centred("SHOW KEYBOARD",861,3,0,true);}
 }
 
 static void draw_presets() {
@@ -734,9 +734,12 @@ static void draw_presets() {
         text(PRESETS[index].title,28,y+12,3,color,true);
         text(PRESETS[index].detail,28,y+60,2,color,true);
     }
-    box(24,800,180,62,preset_page==0);text("PREV",75,821,2,preset_page==0?0xFF:0,true);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const int pager_width=meshink_pager_button_width(layout);
+    const int pager_right=meshink_pager_right(layout);
+    box(layout.section_margin,800,pager_width,62,preset_page==0);text("PREV",layout.section_margin+51,821,2,preset_page==0?0xFF:0,true);
     const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-    box(336,800,180,62,preset_page+1>=page_count);text("NEXT",385,821,2,preset_page+1>=page_count?0xFF:0,true);
+    box(pager_right,800,pager_width,62,preset_page+1>=page_count);text("NEXT",pager_right+49,821,2,preset_page+1>=page_count?0xFF:0,true);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
     centred(page_text,890,2,0,true);
 }
@@ -744,23 +747,29 @@ static void draw_presets() {
 static void draw_companion_confirm() {
     meshink_display_set_all_white(&display);
     draw_status_bar();
+    const MeshInkUiLayout& layout=portrait_layout();
+    const int button_width=meshink_form_pair_width(layout);
+    const int right=meshink_form_pair_right(layout);
     centred("BLUETOOTH",120,5,0,true);centred("COMPANION MODE",180,4,0,true);
     centred("THE LOCAL UI WILL CLOSE",300,2);centred("UNTIL THE DEVICE RESTARTS",335,2);
-    box(30,500,220,72);text("CANCEL",74,524,3,0,true);
-    box(290,500,220,72,true);text("START",338,524,3,0xFF,true);
+    box(layout.form_margin,500,button_width,72);text("CANCEL",layout.form_margin+44,524,3,0,true);
+    box(right,500,button_width,72,true);text("START",right+48,524,3,0xFF,true);
 }
 
 static void draw_shutdown_confirm() {
     meshink_display_set_all_white(&display);
     draw_status_bar();
+    const MeshInkUiLayout& layout=portrait_layout();
+    const int button_width=meshink_form_pair_width(layout);
+    const int right=meshink_form_pair_right(layout);
     centred("SHUT DOWN",120,5,0,true);
     centred("FULL BATTERY POWER CUT",245,3,0,true);
     centred("THE DEVICE WILL STOP",305,3,0,true);
     centred("RECEIVING MESSAGES",350,3,0,true);
     centred("PRESS PWR TO START AGAIN",445,3,0,true);
     centred("ON USB: HOLD BOOT TO WAKE",500,3,0,true);
-    box(30,650,220,72);text("CANCEL",74,674,3,0,true);
-    box(290,650,220,72,true);text("SHUT DOWN",311,674,3,0xFF,true);
+    box(layout.form_margin,650,button_width,72);text("CANCEL",layout.form_margin+44,674,3,0,true);
+    box(right,650,button_width,72,true);text("SHUT DOWN",right+21,674,3,0xFF,true);
 }
 
 static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
@@ -1125,12 +1134,6 @@ static void draw_maps() {
     meshink_display_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
     if(!result.sd_ready){meshink_display_fill_rect({80,300,380,80},0xFF,fb);centred("SD CARD / MAPS UNAVAILABLE",328,2,0,true);}
     draw_bottom_nav(2);
-    static bool map_stack_reported=false;
-    if(!map_stack_reported){
-        map_stack_reported=true;
-        Serial.printf("[T5-STACK] maps high-water=%u\n",
-                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
-    }
 }
 
 static int wrapped_line_count(const char* value,int chars_per_line) {
@@ -1218,52 +1221,52 @@ static void draw_contact_details() {
     const int action_half=(layout.section_width-action_gap)/2;
 
     if(page!=NodeInfoPage::Overview&&!node.saved_contact){
-        text("ADD CONTACT FIRST",24,250,3,0,true);
-        draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",24,304,39,2,0,false,4);
+        text("ADD CONTACT FIRST",layout.section_margin,250,3,0,true);
+        draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",layout.section_margin,304,39,2,0,false,4);
         draw_page_indicator(details_page,pages,770);
         return;
     }
     if(page==NodeInfoPage::Overview){
-        text("OVERVIEW",24,206,3,0,true);
-        text("LAST ADVERT",24,258,2,0,true);text(node.advert_age,230,258,2);
-        text("ROUTE",24,326,2,0,true);text(node.route,230,326,2);
-        text("POSITION",24,394,2,0,true);draw_wrapped(node.position,230,394,25,2,0,false,2);
-        draw_wrapped(node.position_source,230,438,25,2,0,false,1);
-        text("LAST HEARD",24,480,2,0,true);draw_wrapped(node.last_seen,230,480,25,2,0,false,1);
-        text("IDENTITY",24,526,2,0,true);text(node.identity,230,526,2);
+        text("OVERVIEW",layout.section_margin,206,3,0,true);
+        text("LAST ADVERT",layout.section_margin,258,2,0,true);text(node.advert_age,layout.detail_value_x,258,2);
+        text("ROUTE",layout.section_margin,326,2,0,true);text(node.route,layout.detail_value_x,326,2);
+        text("POSITION",layout.section_margin,394,2,0,true);draw_wrapped(node.position,layout.detail_value_x,394,25,2,0,false,2);
+        draw_wrapped(node.position_source,layout.detail_value_x,438,25,2,0,false,1);
+        text("LAST HEARD",layout.section_margin,480,2,0,true);draw_wrapped(node.last_seen,layout.detail_value_x,480,25,2,0,false,1);
+        text("IDENTITY",layout.section_margin,526,2,0,true);text(node.identity,layout.detail_value_x,526,2);
         if(node.latitude||node.longitude){box(layout.section_margin,590,layout.section_width,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
         if(node.saved_contact){action_button("CHAT",layout.section_margin,808,action_half,70);
             action_button("DELETE",layout.section_margin+action_half+action_gap,
                           808,action_half,70);}
         else action_button("ADD CONTACT",layout.section_margin,808,layout.section_width,70,true);
     } else if(page==NodeInfoPage::Status){
-        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",24,220,3,0,true);
+        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,220,3,0,true);
         if(!node.authenticated){
-            draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
-            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",24,410,2,0,true);
+            draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",layout.section_margin,282,39,2,0,false,5);
+            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",layout.section_margin,410,2,0,true);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",layout.section_margin,808,layout.section_width,70,true);
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
-            text(login_text,24,258,2,0,true);
-            draw_wrapped(node.status,24,294,27,3,0,true,14);
+            text(login_text,layout.section_margin,258,2,0,true);
+            draw_wrapped(node.status,layout.section_margin,294,27,3,0,true,14);
             action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),layout.section_margin,808,layout.section_width,70,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
-        text("TELEMETRY / POSITION",24,220,3,0,true);
+        text("TELEMETRY / POSITION",layout.section_margin,220,3,0,true);
         if(login_required&&!node.authenticated){
-            draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
+            draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",layout.section_margin,282,39,2,0,false,3);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",layout.section_margin,808,layout.section_width,70,true);
         }else{
-            draw_wrapped(node.telemetry,24,270,27,3,0,true,4);
-            text("POSITION",24,420,2,0,true);draw_wrapped(node.position,24,454,27,3,0,true,2);
-            draw_wrapped(node.position_source,24,522,39,2,0,false,1);
+            draw_wrapped(node.telemetry,layout.section_margin,270,27,3,0,true,4);
+            text("POSITION",layout.section_margin,420,2,0,true);draw_wrapped(node.position,layout.section_margin,454,27,3,0,true,2);
+            draw_wrapped(node.position_source,layout.section_margin,522,39,2,0,false,1);
             if(node.latitude||node.longitude){box(layout.section_margin,590,layout.section_width,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
             action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),layout.section_margin,808,layout.section_width,70,true);
         }
     } else {
-        text("DISCOVERED PATH",24,220,3,0,true);
-        draw_wrapped(node.path,24,270,27,3,0,true,5);
-        text("SAVED ROUTE",24,458,2,0,true);draw_wrapped(node.route,24,492,27,3,0,true,2);
+        text("DISCOVERED PATH",layout.section_margin,220,3,0,true);
+        draw_wrapped(node.path,layout.section_margin,270,27,3,0,true,5);
+        text("SAVED ROUTE",layout.section_margin,458,2,0,true);draw_wrapped(node.route,layout.section_margin,492,27,3,0,true,2);
         action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),layout.section_margin,808,layout.section_width,70,true);
     }
     draw_page_indicator(details_page,pages,770);
@@ -1297,7 +1300,7 @@ static void draw_more() {
 static void draw_advert_menu() {
     draw_app_header("ADVERTISE",true);
     settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
-    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",24,500,39,2,0,true,4);
+    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",portrait_layout().section_margin,500,39,2,0,true,4);
 }
 
 static void settings_row(const char* title,const char* subtitle,int y) {
@@ -1364,7 +1367,7 @@ static void draw_gps_tuning(){
     text("RMC + GGA (AUTOMATIC)",28,296,2,0,true);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
     draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",24,515,45,2,0,true,5);
-    draw_wrapped("COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.",24,700,45,2,0,true,4);
+    draw_wrapped("COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.",portrait_layout().section_margin,700,45,2,0,true,4);
 }
 
 static void draw_timezone(){
@@ -1392,7 +1395,9 @@ static void draw_display_settings() {
     {const MeshInkUiLayout& layout=portrait_layout();
      box(layout.outer_margin,358,layout.outer_width,160);
      text("BRIGHTNESS",layout.content_text_x,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
-    meshink_display_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;meshink_display_fill_rect({knob-12,449,24,35},0,fb);text("-",layout.content_text_x,452,3,0,true);text("+",layout.width-48,452,3,0,true);}
+    const int slider_left=meshink_slider_left(layout);
+    const int slider_width=meshink_slider_width(layout);
+    meshink_display_fill_rect({slider_left,464,slider_width,5},0,fb);const int knob=slider_left+(frontlight_brightness*slider_width)/100;meshink_display_fill_rect({knob-12,449,24,35},0,fb);text("-",layout.content_text_x,452,3,0,true);text("+",layout.width-48,452,3,0,true);}
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
@@ -1410,23 +1415,23 @@ static void draw_help() {
     draw_app_header("USING MESHINK",true);
     // Keep each heading close to its paragraph; 2x body text is the largest
     // size that fits the complete guide, including the final "UI.".
-    text("QUICK SETTINGS",24,142,3,0,true);
+    text("QUICK SETTINGS",portrait_layout().section_margin,142,3,0,true);
     draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,176,39,2,0,false,3);
-    text("BOOT BUTTON",24,266,3,0,true);
-    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",24,300,39,2,0,false,5);
-    text("KEYBOARD",24,444,3,0,true);
-    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",24,478,39,2,0,false,4);
-    text("MAPS",24,586,3,0,true);
-    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",24,620,39,2,0,false,4);
-    text("BLUETOOTH COMPANION MODE",24,728,3,0,true);
-    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",24,762,39,2,0,false,5);
+    text("BOOT BUTTON",portrait_layout().section_margin,266,3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",portrait_layout().section_margin,300,39,2,0,false,5);
+    text("KEYBOARD",portrait_layout().section_margin,444,3,0,true);
+    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",portrait_layout().section_margin,478,39,2,0,false,4);
+    text("MAPS",portrait_layout().section_margin,586,3,0,true);
+    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",portrait_layout().section_margin,620,39,2,0,false,4);
+    text("BLUETOOTH COMPANION MODE",portrait_layout().section_margin,728,3,0,true);
+    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",portrait_layout().section_margin,762,39,2,0,false,5);
 }
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",126,5,0,true);
     {const MeshInkUiLayout& layout=portrait_layout();
-     box(layout.section_margin,240,layout.section_width,150);draw_envelope_icon(48,282);text("PRIVATE MESSAGES",100,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,100,318,4,0,true);
-    box(layout.section_margin,420,layout.section_width,150);text("#",48,464,4,0,true);text("CHANNEL MESSAGES",100,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,100,498,4,0,true);}
+     box(layout.section_margin,240,layout.section_width,150);draw_envelope_icon(layout.section_margin+24,282);text("PRIVATE MESSAGES",layout.section_margin+76,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,layout.section_margin+76,318,4,0,true);
+    box(layout.section_margin,420,layout.section_width,150);text("#",layout.section_margin+24,464,4,0,true);text("CHANNEL MESSAGES",layout.section_margin+76,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,layout.section_margin+76,498,4,0,true);}
     centred("HOLD BOOT 2 SECONDS TO WAKE",820,2,0,true);
 }
 
@@ -1434,11 +1439,13 @@ static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%0
 static void draw_night_schedule(){
     draw_app_header("NIGHT SCHEDULE",true);char start[8],end[8];format_minutes(night_start_minutes,start);format_minutes(night_end_minutes,end);
     {const MeshInkUiLayout& layout=portrait_layout();
-     box(layout.section_margin,150,layout.section_width,112,night_edit_field==0);text("START",42,166,3,night_edit_field==0?0xFF:0,true);text(start,360,166,3,night_edit_field==0?0xFF:0,true);
-    box(layout.section_margin,286,layout.section_width,112,night_edit_field==1);text("END",42,302,3,night_edit_field==1?0xFF:0,true);text(end,360,302,3,night_edit_field==1?0xFF:0,true);
-    box(24,460,220,76);text("-30 MIN",62,486,3,0,true);box(296,460,220,76);text("+30 MIN",334,486,3,0,true);
+     const int pair_width=meshink_section_pair_width(layout);
+     const int pair_right=meshink_section_pair_right(layout);
+     box(layout.section_margin,150,layout.section_width,112,night_edit_field==0);text("START",layout.section_margin+18,166,3,night_edit_field==0?0xFF:0,true);text(start,layout.width-180,166,3,night_edit_field==0?0xFF:0,true);
+    box(layout.section_margin,286,layout.section_width,112,night_edit_field==1);text("END",layout.section_margin+18,302,3,night_edit_field==1?0xFF:0,true);text(end,layout.width-180,302,3,night_edit_field==1?0xFF:0,true);
+    box(layout.section_margin,460,pair_width,76);text("-30 MIN",layout.section_margin+38,486,3,0,true);box(pair_right,460,pair_width,76);text("+30 MIN",pair_right+38,486,3,0,true);
     box(layout.section_margin,600,layout.section_width,76,true);centred("SAVE SCHEDULE",626,3,0xFF,true);}
-    draw_wrapped("The selected timezone from GPS settings is used automatically.",24,740,39,2,0,true,3);
+    draw_wrapped("The selected timezone from GPS settings is used automatically.",portrait_layout().section_margin,740,39,2,0,true,3);
 }
 
 static void draw_meshink_logo(int top,bool compact=false) {
@@ -2585,7 +2592,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,118)){frontlight_mode=(FrontlightMode)(((uint8_t)frontlight_mode+1)%3);save_frontlight_settings();if(frontlight_mode==FrontlightMode::Off)frontlight_drive(false);else frontlight_event();show_toast(frontlight_mode_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,238)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,40,420,460,100)){int value=((int)x-62)*100/416;frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_slider_left(portrait_layout())-22,420,
+                   meshink_slider_width(portrait_layout())+44,100)){
+                int value=((int)x-meshink_slider_left(portrait_layout()))*100/
+                    meshink_slider_width(portrait_layout());
+                frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&hit_section_row(x,y,790,70)){open_screen(Screen::NightSchedule);return true;}
@@ -2594,8 +2605,10 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::DisplaySettings);return true;}
             if(hit_section_row(x,y,150,112)){night_edit_field=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_section_row(x,y,286,112)){night_edit_field=1;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,24,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,296,460,220,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            {const MeshInkUiLayout& layout=portrait_layout();
+             const int pair_width=meshink_section_pair_width(layout);
+             if(hit(x,y,layout.section_margin,460,pair_width,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+             if(hit(x,y,meshink_section_pair_right(layout),460,pair_width,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}}
             if(hit_section_row(x,y,600,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
         case Screen::Help:
             if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::More);return true;}break;
@@ -2637,24 +2650,31 @@ static void handle_tap(int16_t x,int16_t y) {
             return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-        if(hit(x,y,24,800,180,62)&&preset_page>0){preset_page--;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-        if(hit(x,y,336,800,180,62)&&preset_page+1<page_count){preset_page++;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+        const MeshInkUiLayout& layout=portrait_layout();
+        const int pager_width=meshink_pager_button_width(layout);
+        if(hit(x,y,layout.section_margin,800,pager_width,62)&&preset_page>0){preset_page--;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+        if(hit(x,y,meshink_pager_right(layout),800,pager_width,62)&&preset_page+1<page_count){preset_page++;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
         return;
     }
     if(screen==Screen::CompanionConfirm){
-        if(hit(x,y,30,500,220,72)){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
-        if(hit(x,y,290,500,220,72)){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");request_companion_mode();return;}
+        const MeshInkUiLayout& layout=portrait_layout();
+        const int width=meshink_form_pair_width(layout);
+        if(hit(x,y,layout.form_margin,500,width,72)){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
+        if(hit(x,y,meshink_form_pair_right(layout),500,width,72)){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");request_companion_mode();return;}
         return;
     }
     if(screen==Screen::ShutdownConfirm){
-        if(hit(x,y,30,650,220,72)){open_screen(Screen::DisplaySettings);return;}
-        if(hit(x,y,290,650,220,72)){request_hardware_shutdown();return;}
+        const MeshInkUiLayout& layout=portrait_layout();
+        const int width=meshink_form_pair_width(layout);
+        if(hit(x,y,layout.form_margin,650,width,72)){open_screen(Screen::DisplaySettings);return;}
+        if(hit(x,y,meshink_form_pair_right(layout),650,width,72)){request_hardware_shutdown();return;}
         return;
     }
-    if(hit(x,y,30,180,480,64)){replace_name_on_type=true;keyboard_visible=true;T5_DEBUGLN(T5_LOG_UI,"[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
+    const MeshInkUiLayout& layout=portrait_layout();
+    if(hit(x,y,layout.form_margin,180,layout.form_width,64)){replace_name_on_type=true;keyboard_visible=true;T5_DEBUGLN(T5_LOG_UI,"[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
     if(hit_section_row(x,y,292,88)){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-    if(hit(x,y,30,402,480,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-    if(!keyboard_visible){if(hit(x,y,30,840,480,64)){keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return;}
+    if(hit(x,y,layout.form_margin,402,layout.form_width,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+    if(!keyboard_visible){if(hit(x,y,layout.form_margin,840,layout.form_width,64)){keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return;}
     handle_name_keyboard(x,y);
 }
 

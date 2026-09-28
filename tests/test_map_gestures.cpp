@@ -57,6 +57,16 @@ int main() {
     static_assert(compact.section_width==432,"compact section width");
     static_assert(compact.content_text_x==28,"compact text inset");
     static_assert(compact.header_action_x==410,"compact header action position");
+    static_assert(compact.form_width==420,"compact setup form width");
+    static_assert(compact.detail_value_x==200,"compact detail value column");
+    static_assert(meshink_form_pair_width(compact)==190,"compact confirmation button width");
+    static_assert(meshink_form_pair_right(compact)==260,"compact confirmation right button");
+    static_assert(meshink_section_pair_width(compact)==190,"compact section pair width");
+    static_assert(meshink_section_pair_right(compact)==266,"compact section pair right button");
+    static_assert(meshink_pager_button_width(compact)==150,"compact pager width");
+    static_assert(meshink_pager_right(compact)==306,"compact pager right button");
+    static_assert(meshink_slider_left(compact)==62,"compact slider left");
+    static_assert(meshink_slider_width(compact)==356,"compact slider width");
     assert(terrain_point(100,100,compact));
     assert(terrain_point(350,300,compact));
     assert(!terrain_point(410,100,compact));
