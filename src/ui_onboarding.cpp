@@ -1181,21 +1181,44 @@ static void chat_page_bounds(size_t count,int available,uint8_t requested,size_t
     if(!count){first=end=0;pages=1;}else if(requested>=pages){chat_page=pages-1;chat_page_bounds(count,available,chat_page,first,end,pages);}
 }
 
-static constexpr int CHAT_HISTORY_AVAILABLE=674;
+static int chat_history_bottom_no_keyboard(){
+    return portrait_layout().bottom_nav_top-100;
+}
+static int chat_history_available(){
+    return chat_history_bottom_no_keyboard()-126;
+}
+
+static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
+    box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
+    const int text_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,540);
+    if(compose_text[0])
+        draw_wrapped(compose_text,text_x,metrics.entry.y+8,25,3,0,true,2);
+    else
+        text("Enter text",text_x,metrics.entry.y+24,2,0,false);
+}
 
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
     const uint32_t timing_history_started=micros();
     const size_t count=ui_data?ui_data->active_message_count():0;
-    const bool keyboard=keyboard_visible&&keyboard_message_mode;const int history_bottom=keyboard?526:800;const int available=history_bottom-126;
+    const bool keyboard=keyboard_visible&&keyboard_message_mode;
+    const auto keyboard_layout=keyboard_metrics(false);
+    const int history_bottom=keyboard?keyboard_layout.history_bottom:chat_history_bottom_no_keyboard();
+    const int available=history_bottom-126;
     size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
     if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
     const uint32_t timing_keyboard_started=micros();
-    if(keyboard){box(12,544,516,70);if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);else text("Enter text",28,568,2,0,false);draw_keyboard();}
-    else{
-        draw_page_indicator(chat_page,pages,840);
-        box(12,888,516,62);text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",28,908,2,0,true);
+    if(keyboard){
+        draw_compose_entry(keyboard_layout);
+        draw_keyboard();
+    }else{
+        const MeshInkUiLayout& layout=portrait_layout();
+        const int compose_y=layout.bottom_nav_top-12;
+        draw_page_indicator(chat_page,pages,layout.bottom_nav_top-60);
+        box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height);
+        text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",
+             layout.content_text_x,compose_y+20,2,0,true);
     }
     t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
@@ -1205,9 +1228,8 @@ static void draw_message_entry_fast() {
     // bar, message bubbles and bottom navigation for every character.
     const uint32_t timing_draw_started=micros();
     const uint32_t timing_keyboard_started=micros();
-    box(12,544,516,70);
-    if(compose_text[0])draw_wrapped(compose_text,28,552,25,3,0,true,2);
-    else text("Enter text",28,568,2,0,false);
+    const auto metrics=keyboard_metrics(false);
+    draw_compose_entry(metrics);
     if(message_keyboard_case_dirty){
         draw_keyboard();
         message_keyboard_case_dirty=false;
@@ -2497,12 +2519,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
-            if(hit(x,y,12,888,516,62)){
+            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=layout.bottom_nav_top-12;
+            if(hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
                 keyboard_message_mode=true;keyboard_visible=true;chat_page=0;
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
                 text_refresh_pending=false;
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
-            }break;
+            }}break;
         case Screen::ContactDetails:
             if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
@@ -3050,7 +3073,7 @@ void ui_loop() {
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=ui_data?ui_data->active_message_count():0;
             size_t first=0,end=0;uint8_t pages=1;
-            chat_page_bounds(count,CHAT_HISTORY_AVAILABLE,chat_page,first,end,pages);
+            chat_page_bounds(count,chat_history_available(),chat_page,first,end,pages);
             int next=(int)chat_page+(tap.dy<0?1:-1);
             if(next<0)next=0;if(next>=pages)next=pages-1;
             if((uint8_t)next!=chat_page){
