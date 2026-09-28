@@ -91,6 +91,9 @@ jobs:
       - name: Build H752 fake-V1 UI test firmware
         run: python -m platformio run -e t5-unified-cache64-fake-h752
 
+      - name: Build original H752 experimental firmware
+        run: python -m platformio run -e t5-unified-cache64-h752-experimental
+
       - name: Read firmware version
         id: version
         run: |
@@ -132,6 +135,8 @@ jobs:
           cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
           test -s ".pio/build/t5-unified-cache64-fake-h752/firmware.bin"
           cp ".pio/build/t5-unified-cache64-fake-h752/firmware.bin" "meshink-$VERSION-fake-h752-ui-update.bin"
+          test -s ".pio/build/t5-unified-cache64-h752-experimental/firmware.bin"
+          cp ".pio/build/t5-unified-cache64-h752-experimental/firmware.bin" "meshink-$VERSION-h752-experimental-update.bin"
           python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
             --flash_mode keep --flash_freq keep --flash_size 16MB \
             --fill-flash-size 16MB \
@@ -142,7 +147,7 @@ jobs:
             0x10000 "$BUILD/firmware.bin"
           test -s "meshink-$VERSION-full-wipe.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
-          sha256sum "meshink-$VERSION-update.bin" "meshink-$VERSION-fake-h752-ui-update.bin" "meshink-$VERSION-full-wipe.bin" > SHA256SUMS.txt
+          sha256sum "meshink-$VERSION-update.bin" "meshink-$VERSION-fake-h752-ui-update.bin" "meshink-$VERSION-h752-experimental-update.bin" "meshink-$VERSION-full-wipe.bin" > SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
