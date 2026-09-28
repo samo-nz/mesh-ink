@@ -73,6 +73,13 @@ void companion_loop() {
     interface_manager.loop();
     sensors.loop();
     rtc_clock.tick();
+
+    // The cache64 release uses Arduino + ESP-IDF with the task watchdog
+    // enabled. Unlike the local UI path, companion mode previously returned
+    // here without ever blocking/yielding, so loopTask could starve IDLE1
+    // until the watchdog fired. A 1 ms delay yields CPU1 to FreeRTOS while
+    // keeping MeshCore/BLE servicing effectively continuous.
+    delay(1);
 }
 
 void local_mesh_setup() {
