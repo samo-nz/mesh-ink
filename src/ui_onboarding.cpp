@@ -2678,10 +2678,10 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);
     pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
-    epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);t5_display_set_pixel_clock_mhz(17);
+    t5_display_init();t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);t5_display_set_pixel_clock_mhz(17);
     recover_pmic_power_path();
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
-    display=epd_hl_init(EPD_BUILTIN_WAVEFORM);fb=t5_display_framebuffer(&display);
+    display=t5_display_hl_init();fb=t5_display_framebuffer(&display);
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
