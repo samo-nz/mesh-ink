@@ -25,9 +25,6 @@
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.3.0"
 #endif
-#ifndef T5_FAKE_H752_UI
-#define T5_FAKE_H752_UI 0
-#endif
 
 void request_companion_mode() __attribute__((weak));
 void request_companion_mode() { Serial.println("[T5-UI] companion mode requires unified build"); }
@@ -1399,11 +1396,7 @@ static void draw_about() {
     if(node_name[0])centred(node_name,600,3,0,true);
     centred(UI_VERSION,642,3,0,true);
     text("HARDWARE",24,720,2,0,true);
-#if T5_FAKE_H752_UI
-    text("H752 UI TEST / V2 WIRING",170,720,2);
-#else
     text("LILYGO T5 PRO",170,720,2);
-#endif
     text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",170,770,2);
 }
 
