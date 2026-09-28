@@ -211,7 +211,10 @@ constexpr MeshInkUiRect meshink_quick_slider_track_rect(const MeshInkUiLayout& l
     return meshink_ui_ref_rect(layout,44,182,452,16);
 }
 constexpr MeshInkUiRect meshink_quick_slider_touch_rect(const MeshInkUiLayout& layout) {
-    return meshink_ui_ref_rect(layout,28,146,484,80);
+    const MeshInkUiRect visual=meshink_quick_slider_track_rect(layout);
+    return meshink_ui_expand_rect(
+        visual,meshink_ui_ref_w(layout,16),meshink_ui_ref_h(layout,36),
+        meshink_ui_ref_w(layout,16),meshink_ui_ref_h(layout,28));
 }
 constexpr MeshInkUiRect meshink_quick_minus_rect(const MeshInkUiLayout& layout) {
     return meshink_ui_ref_rect(layout,24,256,112,70);
@@ -233,7 +236,10 @@ constexpr MeshInkUiRect meshink_display_brightness_rect(const MeshInkUiLayout& l
     return meshink_ui_ref_rect(layout,12,358,516,160);
 }
 constexpr MeshInkUiRect meshink_display_slider_touch_rect(const MeshInkUiLayout& layout) {
-    return meshink_ui_ref_rect(layout,40,420,460,100);
+    const MeshInkUiRect visual=meshink_display_slider_track_rect(layout);
+    return meshink_ui_expand_rect(
+        visual,meshink_ui_ref_w(layout,22),meshink_ui_ref_h(layout,44),
+        meshink_ui_ref_w(layout,22),meshink_ui_ref_h(layout,51));
 }
 constexpr MeshInkUiRect meshink_night_start_rect(const MeshInkUiLayout& layout) {
     return meshink_section_row_rect(layout,150,112);
