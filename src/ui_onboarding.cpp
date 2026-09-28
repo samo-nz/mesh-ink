@@ -167,10 +167,6 @@ static bool status_wake_light=false;
 static bool message_alert_active=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
-static constexpr int QUICK_PANEL_BOTTOM=620;
-static constexpr int QUICK_SLIDER_LEFT=44;
-static constexpr int QUICK_SLIDER_RIGHT=496;
-static constexpr int QUICK_SLIDER_Y=190;
 static volatile bool quick_slider_dragging=false;
 static volatile uint8_t quick_slider_preview=30;
 static uint8_t message_alert_phase=0;
@@ -1561,57 +1557,59 @@ static void draw_underlying_screen() {
 }
 
 static void draw_quick_panel() {
-    // Keep the previous page visible below the sheet. E-paper has no alpha,
-    // so this is a normal redraw followed by an opaque top overlay.
     draw_underlying_screen();
 
-    // Visually disable the exposed page with a sparse 25% black dither.
-    // One pixel in each 2x2 cell is darkened, preserving the page beneath
-    // while making it clear that tapping it only dismisses quick settings.
+    const MeshInkUiLayout& layout=portrait_layout();
+    const int panel_bottom=meshink_quick_panel_bottom(layout);
+    const MeshInkUiRect slider=meshink_quick_slider_track_rect(layout);
+    const MeshInkUiRect minus_button=meshink_quick_minus_rect(layout);
+    const MeshInkUiRect plus_button=meshink_quick_plus_rect(layout);
+    const MeshInkUiRect advert_button=meshink_quick_advert_rect(layout);
+    const MeshInkUiRect power_button=meshink_quick_power_rect(layout);
+
     const int display_width=meshink_display_logical_width();
     const int display_height=meshink_display_logical_height();
-    for(int y=QUICK_PANEL_BOTTOM;y<display_height;++y)
+    for(int y=panel_bottom;y<display_height;++y)
         for(int x=((y&1)?1:0);x<display_width;x+=2)
             if((y&1)==0) meshink_display_draw_pixel(x,y,0x00,fb);
 
-    meshink_display_fill_rect({0,0,display_width,QUICK_PANEL_BOTTOM},0xFF,fb);
-    meshink_display_fill_rect({0,QUICK_PANEL_BOTTOM-4,display_width,4},0x00,fb);
+    meshink_display_fill_rect({0,0,display_width,panel_bottom},0xFF,fb);
+    meshink_display_fill_rect({0,panel_bottom-ui_h(4),display_width,ui_h(4)},0x00,fb);
 
-    centred("QUICK SETTINGS",34,4,0,true);
-    centred("FRONT LIGHT",92,3,0,true);
+    centred("QUICK SETTINGS",ui_y(34),4,0,true);
+    centred("FRONT LIGHT",ui_y(92),3,0,true);
 
-    // Full-width release-driven slider. The filled track and thumb show the
-    // persisted brightness; dragging does not redraw until the finger lifts.
-    const int track_y=QUICK_SLIDER_Y;
-    const int track_w=QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT;
-    box(QUICK_SLIDER_LEFT,track_y-8,track_w,16);
-    const int thumb_x=QUICK_SLIDER_LEFT+
-        ((int)frontlight_brightness*track_w)/100;
-    meshink_display_fill_rect({QUICK_SLIDER_LEFT,track_y-5,
-        max(1,thumb_x-QUICK_SLIDER_LEFT),10},0x00,fb);
-    meshink_display_fill_rect({max(QUICK_SLIDER_LEFT,thumb_x-7),track_y-18,14,36},0x00,fb);
+    box(slider);
+    const int thumb_x=slider.x+((int)frontlight_brightness*slider.width)/100;
+    const int track_centre_y=slider.y+slider.height/2;
+    meshink_display_fill_rect({slider.x,track_centre_y-ui_h(5),
+        max(1,thumb_x-slider.x),ui_h(10)},0x00,fb);
+    meshink_display_fill_rect({max(slider.x,thumb_x-ui_w(7)),
+        track_centre_y-ui_h(18),ui_w(14),ui_h(36)},0x00,fb);
 
-    centred("TAP OR DRAG TO SELECT",221,2,0,true);
+    centred("TAP OR DRAG TO SELECT",ui_y(221),2,0,true);
 
-    // End controls and the current value share one row beneath the slider.
-    box(24,256,112,70);
-    // Draw the symbols as primitives so their visual centres are exact and
-    // independent of font glyph metrics.
-    meshink_display_fill_rect({61,289,38,4},0x00,fb);
-    box(404,256,112,70);
-    meshink_display_fill_rect({441,289,38,4},0x00,fb);
-    meshink_display_fill_rect({458,272,4,38},0x00,fb);
+    box(minus_button);
+    meshink_display_fill_rect({
+        minus_button.x+ui_w(37),minus_button.y+ui_h(33),ui_w(38),ui_h(4)},0x00,fb);
+    box(plus_button);
+    meshink_display_fill_rect({
+        plus_button.x+ui_w(37),plus_button.y+ui_h(33),ui_w(38),ui_h(4)},0x00,fb);
+    meshink_display_fill_rect({
+        plus_button.x+ui_w(54),plus_button.y+ui_h(16),ui_w(4),ui_h(38)},0x00,fb);
     char level[16];
     if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
-    centred(level,273,4,0,true);
+    centred(level,ui_y(273),4,0,true);
 
-    box(24,410,238,100,true);
-    text("ADVERT FLOOD",24+(238-12*12)/2,449,2,0xFF,true);
-    box(278,410,238,100);
-    text("POWER OFF",278+(238-9*12)/2,449,2,0,true);
+    box(advert_button,true);
+    text("ADVERT FLOOD",advert_button.x+(advert_button.width-12*12)/2,
+         advert_button.y+ui_h(39),2,0xFF,true);
+    box(power_button);
+    text("POWER OFF",power_button.x+(power_button.width-9*12)/2,
+         power_button.y+ui_h(39),2,0,true);
 
-    centred("TAP BELOW OR SWIPE UP TO CLOSE",560,2,0,true);
+    centred("TAP BELOW OR SWIPE UP TO CLOSE",ui_y(560),2,0,true);
     draw_toast();
 }
 
@@ -1651,34 +1649,31 @@ static void quick_set_brightness(int value) {
 
 static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_t start_y=-1) {
     if(!quick_panel_active)return false;
-    // Once a gesture starts on the slider, always commit its final clamped X
-    // on release. This includes releasing beyond either end or outside the
-    // slider vertically, matching the live PWM preview seen during the drag.
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect slider=meshink_quick_slider_track_rect(layout);
+    const MeshInkUiRect slider_touch=meshink_quick_slider_touch_rect(layout);
+    const int slider_right=slider.x+slider.width;
+
     const bool slider_drag_release=
-        start_x>=QUICK_SLIDER_LEFT-16&&start_x<=QUICK_SLIDER_RIGHT+16&&
-        start_y>=146&&start_y<=226;
-    const bool slider_tap_release=
-        start_y<0&&y>=146&&y<=226&&
-        x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+        start_x>=slider_touch.x&&start_x<slider_touch.x+slider_touch.width&&
+        start_y>=slider_touch.y&&start_y<slider_touch.y+slider_touch.height;
+    const bool slider_tap_release=start_y<0&&hit(x,y,slider_touch);
     if(slider_drag_release||slider_tap_release) {
-        const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
-        const int value=((clamped-QUICK_SLIDER_LEFT)*100+
-            (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
-            (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
+        const int clamped=max(slider.x,min(slider_right,(int)x));
+        const int value=((clamped-slider.x)*100+slider.width/2)/slider.width;
         quick_set_brightness(value);
         return true;
     }
 
-    // Everything below the sheet is intentionally inert except dismissal.
-    if(y>=QUICK_PANEL_BOTTOM) { close_quick_panel();return true; }
+    if(y>=meshink_quick_panel_bottom(layout)) { close_quick_panel();return true; }
 
-    if(hit(x,y,24,256,112,70)) { quick_set_brightness((int)frontlight_brightness-1);return true; }
-    if(hit(x,y,404,256,112,70)) { quick_set_brightness((int)frontlight_brightness+1);return true; }
-    if(hit(x,y,24,410,238,100)) {
+    if(hit(x,y,meshink_quick_minus_rect(layout))) { quick_set_brightness((int)frontlight_brightness-1);return true; }
+    if(hit(x,y,meshink_quick_plus_rect(layout))) { quick_set_brightness((int)frontlight_brightness+1);return true; }
+    if(hit(x,y,meshink_quick_advert_rect(layout))) {
         show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
     }
-    if(hit(x,y,278,410,238,100)) {
+    if(hit(x,y,meshink_quick_power_rect(layout))) {
         quick_panel_active=false;quick_panel_restore_landscape=false;
         keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
         meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
