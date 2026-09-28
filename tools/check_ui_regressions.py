@@ -116,7 +116,7 @@ contains('page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)', "telemetry act
 contains('page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)', "path action touch follows lowered button")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
-contains('meshink_display_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
+contains('meshink_display_fill_rect({0,486,meshink_display_logical_width(),474},0xFF,fb);', "password keyboard clears the lower Node Info background")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
 contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
