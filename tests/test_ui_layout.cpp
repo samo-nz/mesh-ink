@@ -14,6 +14,13 @@ static bool in_bounds(const MeshInkUiLayout& layout,MeshInkUiRect rect) {
            rect.y+rect.height<=layout.height;
 }
 
+static void expect_rect(MeshInkUiRect rect,int x,int y,int width,int height) {
+    assert(rect.x==x);
+    assert(rect.y==y);
+    assert(rect.width==width);
+    assert(rect.height==height);
+}
+
 static void check_layout(const MeshInkUiLayout& layout) {
     assert(layout.status_height>0);
     assert(layout.bottom_nav_height>0);
@@ -86,24 +93,56 @@ int main() {
     assert(t5.form_margin==30&&t5.form_width==480);
     assert(t5.header_top==58&&t5.header_action_x==470);
 
-    MeshInkUiRect r=meshink_welcome_name_rect(t5);
-    assert(r.x==30&&r.y==180&&r.width==480&&r.height==64);
-    r=meshink_map_control_rect(t5,0);
-    assert(r.x==462&&r.y==58&&r.width==66&&r.height==66);
-    r=meshink_map_control_rect(t5,2);
-    assert(r.x==462&&r.y==208&&r.width==66&&r.height==66);
-    r=meshink_quick_minus_rect(t5);
-    assert(r.x==24&&r.y==256&&r.width==112&&r.height==70);
-    r=meshink_quick_advert_rect(t5);
-    assert(r.x==24&&r.y==410&&r.width==238&&r.height==100);
-    r=meshink_node_left_action_rect(t5);
-    assert(r.x==24&&r.y==808&&r.width==240&&r.height==70);
-    r=meshink_node_right_action_rect(t5);
-    assert(r.x==276&&r.y==808&&r.width==240&&r.height==70);
-    r=meshink_display_slider_track_rect(t5);
-    assert(r.x==62&&r.y==464&&r.width==416&&r.height==5);
-    r=meshink_night_minus_rect(t5);
-    assert(r.x==24&&r.y==460&&r.width==220&&r.height==76);
+    expect_rect(meshink_header_back_rect(t5),12,58,58,48);
+    expect_rect(meshink_header_back_touch_rect(t5),0,48,110,70);
+    expect_rect(meshink_header_action_rect(t5),470,58,58,48);
+    expect_rect(meshink_header_action_touch_rect(t5),450,48,90,70);
+
+    expect_rect(meshink_welcome_name_rect(t5),30,180,480,64);
+    expect_rect(meshink_welcome_preset_rect(t5),24,292,492,88);
+    expect_rect(meshink_welcome_companion_rect(t5),30,402,480,52);
+    expect_rect(meshink_welcome_show_keyboard_rect(t5),30,840,480,64);
+
+    expect_rect(meshink_preset_back_rect(t5),12,48,110,84);
+    expect_rect(meshink_preset_row_rect(t5,0),12,132,516,112);
+    expect_rect(meshink_preset_row_rect(t5,4),12,644,516,112);
+    expect_rect(meshink_preset_prev_rect(t5),24,800,180,62);
+    expect_rect(meshink_preset_next_rect(t5),336,800,180,62);
+
+    expect_rect(meshink_confirm_left_rect(t5,500),30,500,220,72);
+    expect_rect(meshink_confirm_right_rect(t5,500),290,500,220,72);
+    expect_rect(meshink_confirm_left_rect(t5,650),30,650,220,72);
+    expect_rect(meshink_confirm_right_rect(t5,650),290,650,220,72);
+
+    expect_rect(meshink_node_map_rect(t5),24,590,492,62);
+    expect_rect(meshink_node_action_rect(t5),24,808,492,70);
+    expect_rect(meshink_node_left_action_rect(t5),24,808,240,70);
+    expect_rect(meshink_node_right_action_rect(t5),276,808,240,70);
+    expect_rect(meshink_password_save_rect(t5),20,496,260,46);
+
+    expect_rect(meshink_map_control_rect(t5,0),462,58,66,66);
+    expect_rect(meshink_map_control_rect(t5,1),462,133,66,66);
+    expect_rect(meshink_map_control_rect(t5,2),462,208,66,66);
+
+    expect_rect(meshink_quick_slider_track_rect(t5),44,182,452,16);
+    expect_rect(meshink_quick_slider_touch_rect(t5),28,146,484,80);
+    expect_rect(meshink_quick_minus_rect(t5),24,256,112,70);
+    expect_rect(meshink_quick_plus_rect(t5),404,256,112,70);
+    expect_rect(meshink_quick_advert_rect(t5),24,410,238,100);
+    expect_rect(meshink_quick_power_rect(t5),278,410,238,100);
+
+    expect_rect(meshink_settings_inline_action_rect(t5,118),374,146,154,56);
+    expect_rect(meshink_display_brightness_rect(t5),12,358,516,160);
+    expect_rect(meshink_display_slider_track_rect(t5),62,464,416,5);
+    expect_rect(meshink_display_slider_touch_rect(t5),40,420,460,100);
+    expect_rect(meshink_shutdown_rect(t5),24,790,492,70);
+
+    expect_rect(meshink_night_start_rect(t5),24,150,492,112);
+    expect_rect(meshink_night_end_rect(t5),24,286,492,112);
+    expect_rect(meshink_night_minus_rect(t5),24,460,220,76);
+    expect_rect(meshink_night_plus_rect(t5),296,460,220,76);
+    expect_rect(meshink_night_save_rect(t5),24,600,492,76);
+
 
     // Synthetic displays prove both axes scale rather than retaining T5 pixels.
     const MeshInkUiLayout compact=meshink_make_ui_layout(480,800);
