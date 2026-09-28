@@ -1251,15 +1251,16 @@ static void draw_message_entry_fast() {
 
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
-    if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",300,3,0,true);return;}
+    if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.node_type,details_page);
-    centred(node.name,126,4,0,true);centred(node_role_label(node.node_type),174,2,0,true);
-    auto action_button=[](const char* label,int x,int y,int w,int h,bool selected=false) {
-        box(x,y,w,h,selected);
+    centred(node.name,ui_y(126),4,0,true);centred(node_role_label(node.node_type),ui_y(174),2,0,true);
+    auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
+        box(rect,selected);
         const int scale=2;
         const int label_width=(int)strlen(label)*6*scale;
-        text(label,x+(w-label_width)/2,y+(h-7*scale)/2,scale,selected?0xFF:0,true);
+        text(label,rect.x+(rect.width-label_width)/2,
+             rect.y+(rect.height-7*scale)/2,scale,selected?0xFF:0,true);
     };
     auto request_label=[&](UiNodeInfoRequest request,const char* idle) {
         return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
@@ -1268,73 +1269,73 @@ static void draw_contact_details() {
     const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
     const bool login_required=repeater||room_server;
     const MeshInkUiLayout& layout=portrait_layout();
-    const int action_gap=12;
-    const int action_half=(layout.section_width-action_gap)/2;
+    const MeshInkUiRect map_action=meshink_node_map_rect(layout);
+    const MeshInkUiRect full_action=meshink_node_action_rect(layout);
+    const MeshInkUiRect left_action=meshink_node_left_action_rect(layout);
+    const MeshInkUiRect right_action=meshink_node_right_action_rect(layout);
 
     if(page!=NodeInfoPage::Overview&&!node.saved_contact){
-        text("ADD CONTACT FIRST",layout.section_margin,250,3,0,true);
-        draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",layout.section_margin,304,39,2,0,false,4);
-        draw_page_indicator(details_page,pages,770);
+        text("ADD CONTACT FIRST",layout.section_margin,ui_y(250),3,0,true);
+        draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",layout.section_margin,ui_y(304),39,2,0,false,4);
+        draw_page_indicator(details_page,pages,ui_y(770));
         return;
     }
     if(page==NodeInfoPage::Overview){
-        text("OVERVIEW",layout.section_margin,206,3,0,true);
-        text("LAST ADVERT",layout.section_margin,258,2,0,true);text(node.advert_age,layout.detail_value_x,258,2);
-        text("ROUTE",layout.section_margin,326,2,0,true);text(node.route,layout.detail_value_x,326,2);
-        text("POSITION",layout.section_margin,394,2,0,true);draw_wrapped(node.position,layout.detail_value_x,394,25,2,0,false,2);
-        draw_wrapped(node.position_source,layout.detail_value_x,438,25,2,0,false,1);
-        text("LAST HEARD",layout.section_margin,480,2,0,true);draw_wrapped(node.last_seen,layout.detail_value_x,480,25,2,0,false,1);
-        text("IDENTITY",layout.section_margin,526,2,0,true);text(node.identity,layout.detail_value_x,526,2);
-        if(node.latitude||node.longitude){box(layout.section_margin,590,layout.section_width,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
-        if(node.saved_contact){action_button("CHAT",layout.section_margin,808,action_half,70);
-            action_button("DELETE",layout.section_margin+action_half+action_gap,
-                          808,action_half,70);}
-        else action_button("ADD CONTACT",layout.section_margin,808,layout.section_width,70,true);
+        text("OVERVIEW",layout.section_margin,ui_y(206),3,0,true);
+        text("LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);text(node.advert_age,layout.detail_value_x,ui_y(258),2);
+        text("ROUTE",layout.section_margin,ui_y(326),2,0,true);text(node.route,layout.detail_value_x,ui_y(326),2);
+        text("POSITION",layout.section_margin,ui_y(394),2,0,true);draw_wrapped(node.position,layout.detail_value_x,ui_y(394),25,2,0,false,2);
+        draw_wrapped(node.position_source,layout.detail_value_x,ui_y(438),25,2,0,false,1);
+        text("LAST HEARD",layout.section_margin,ui_y(480),2,0,true);draw_wrapped(node.last_seen,layout.detail_value_x,ui_y(480),25,2,0,false,1);
+        text("IDENTITY",layout.section_margin,ui_y(526),2,0,true);text(node.identity,layout.detail_value_x,ui_y(526),2);
+        if(node.latitude||node.longitude){box(map_action);centred("OPEN POSITION ON MAP",map_action.y+ui_h(21),2,0,true);}
+        if(node.saved_contact){action_button("CHAT",left_action);
+            action_button("DELETE",right_action);}
+        else action_button("ADD CONTACT",full_action,true);
     } else if(page==NodeInfoPage::Status){
-        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,220,3,0,true);
+        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,ui_y(220),3,0,true);
         if(!node.authenticated){
-            draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",layout.section_margin,282,39,2,0,false,5);
-            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",layout.section_margin,410,2,0,true);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",layout.section_margin,808,layout.section_width,70,true);
+            draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",layout.section_margin,ui_y(282),39,2,0,false,5);
+            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
-            text(login_text,layout.section_margin,258,2,0,true);
-            draw_wrapped(node.status,layout.section_margin,294,27,3,0,true,14);
-            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),layout.section_margin,808,layout.section_width,70,true);
+            text(login_text,layout.section_margin,ui_y(258),2,0,true);
+            draw_wrapped(node.status,layout.section_margin,ui_y(294),27,3,0,true,14);
+            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),full_action,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
-        text("TELEMETRY / POSITION",layout.section_margin,220,3,0,true);
+        text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
         if(login_required&&!node.authenticated){
-            draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",layout.section_margin,282,39,2,0,false,3);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",layout.section_margin,808,layout.section_width,70,true);
+            draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",layout.section_margin,ui_y(282),39,2,0,false,3);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
-            draw_wrapped(node.telemetry,layout.section_margin,270,27,3,0,true,4);
-            text("POSITION",layout.section_margin,420,2,0,true);draw_wrapped(node.position,layout.section_margin,454,27,3,0,true,2);
-            draw_wrapped(node.position_source,layout.section_margin,522,39,2,0,false,1);
-            if(node.latitude||node.longitude){box(layout.section_margin,590,layout.section_width,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
-            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),layout.section_margin,808,layout.section_width,70,true);
+            draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);
+            text("POSITION",layout.section_margin,ui_y(420),2,0,true);draw_wrapped(node.position,layout.section_margin,ui_y(454),27,3,0,true,2);
+            draw_wrapped(node.position_source,layout.section_margin,ui_y(522),39,2,0,false,1);
+            if(node.latitude||node.longitude){box(map_action);centred("OPEN POSITION ON MAP",map_action.y+ui_h(21),2,0,true);}
+            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
         }
     } else {
-        text("DISCOVERED PATH",layout.section_margin,220,3,0,true);
-        draw_wrapped(node.path,layout.section_margin,270,27,3,0,true,5);
-        text("SAVED ROUTE",layout.section_margin,458,2,0,true);draw_wrapped(node.route,layout.section_margin,492,27,3,0,true,2);
-        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),layout.section_margin,808,layout.section_width,70,true);
+        text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
+        draw_wrapped(node.path,layout.section_margin,ui_y(270),27,3,0,true,5);
+        text("SAVED ROUTE",layout.section_margin,ui_y(458),2,0,true);draw_wrapped(node.route,layout.section_margin,ui_y(492),27,3,0,true,2);
+        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),full_action,true);
     }
-    draw_page_indicator(details_page,pages,770);
+    draw_page_indicator(details_page,pages,ui_y(770));
     if(keyboard_visible&&keyboard_password_mode){
-        // Password entry is a full lower-screen layer. Clear the underlying
-        // Node Info controls/page footer so the keyboard has a clean white
-        // background between keys and across its bottom action row.
         const auto metrics=keyboard_metrics(false);
-        const MeshInkUiLayout& keyboard_layout=portrait_layout();
-        meshink_display_fill_rect({0,metrics.clear_top,keyboard_layout.width,
-                                   keyboard_layout.height-metrics.clear_top},0xFF,fb);
-        const int checkbox_y=metrics.clear_top+18;
-        box(24,checkbox_y,28,28,save_remote_password);if(save_remote_password)text("X",30,checkbox_y+5,2,0xFF,true);
-        text("SAVE PASSWORD",66,checkbox_y+6,2,0,true);
+        meshink_display_fill_rect({0,metrics.clear_top,layout.width,
+                                   layout.height-metrics.clear_top},0xFF,fb);
+        const MeshInkUiRect save_rect=meshink_password_save_rect(layout);
+        const MeshInkUiRect checkbox={
+            save_rect.x+ui_w(4),save_rect.y+ui_h(8),ui_w(28),ui_h(28)};
+        box(checkbox,save_remote_password);
+        if(save_remote_password)text("X",checkbox.x+ui_w(6),checkbox.y+ui_h(5),2,0xFF,true);
+        text("SAVE PASSWORD",save_rect.x+ui_w(46),save_rect.y+ui_h(14),2,0,true);
         box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
         text(remote_password[0]?remote_password:"REMOTE PASSWORD",
-             metrics.entry.x+16,metrics.entry.y+24,2,0,true);draw_keyboard();
+             metrics.entry.x+ui_w(16),metrics.entry.y+ui_h(24),2,0,true);draw_keyboard();
     }
 }
 
