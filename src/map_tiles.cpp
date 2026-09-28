@@ -2,7 +2,7 @@
 #include "t5_logging.h"
 #include <SD.h>
 #include <PNGdec.h>
-#include <epdiy.h>
+#include "t5_display.h"
 #include <esp_heap_caps.h>
 #include <math.h>
 #include <string.h>
@@ -444,7 +444,7 @@ void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
     const int left=max(0,x0),top=max(48,y0);
     const int right=min(540,x1),bottom=min(900,y1);
     if(left<right&&top<bottom)
-        epd_fill_rect({left,top,right-left,bottom-top},colour,target);
+        t5_display_fill_rect({left,top,right-left,bottom-top},colour,target);
 }
 // PNG callbacks keep source luminance in PSRAM. If allocation fails,
 // decode directly to the framebuffer with the SAME monochrome map palette.
@@ -535,7 +535,7 @@ int png_draw(PNGDRAW* row) {
             const int x1=min(540,ctx.dx+
                 (sx-ctx.crop_x+1)*TILE_SIZE/ctx.crop_size);
             for(int px=x0;px<x1;++px)
-                epd_fill_rect({px,py,1,1},
+                t5_display_fill_rect({px,py,1,1},
                     map_black(level,ctx.tile_x*TILE_SIZE+px-ctx.dx,
                                    ctx.tile_y*TILE_SIZE+py-ctx.dy)?0x00:0xFF,
                     target);
@@ -728,22 +728,22 @@ void draw_cached_epdiy(const Tile& tile,const DrawContext& draw) {
         for(int px=x0+1;px<x1;++px) {
             const bool next_black=is_black(px);
             if(next_black!=black) {
-                epd_fill_rect({run_x,py,px-run_x,1},
+                t5_display_fill_rect({run_x,py,px-run_x,1},
                               black?0x00:0xFF,target);
                 run_x=px;
                 black=next_black;
             }
         }
-        epd_fill_rect({run_x,py,x1-run_x,1},black?0x00:0xFF,target);
+        t5_display_fill_rect({run_x,py,x1-run_x,1},black?0x00:0xFF,target);
     }
 }
 
 void draw_cached(const Tile& tile,const DrawContext& draw) {
     // Maps is portrait-only. EPDiy stores two 4-bit physical pixels per byte;
     // inverted portrait maps logical (x,y) -> physical (y, H-1-x). Writing the
-    // packed framebuffer directly avoids ~460k calls through epd_draw_pixel()
+    // packed framebuffer directly avoids ~460k calls through t5_display_draw_pixel()
     // per viewport while preserving exactly the same world-anchored dither.
-    if(epd_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT) {
+    if(t5_display_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT) {
         draw_cached_epdiy(tile,draw);
         return;
     }
@@ -754,8 +754,8 @@ void draw_cached(const Tile& tile,const DrawContext& draw) {
     while((TILE_SIZE>>shift)>draw.crop_size)++shift;
     const uint16_t* masks=map_black_masks();
     const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
-    const int physical_width=epd_width();
-    const int physical_height=epd_height();
+    const int physical_width=t5_display_width();
+    const int physical_height=t5_display_height();
     const size_t row_bytes=(size_t)physical_width/2U;
 
     for(int px=x0;px<x1;++px) {
