@@ -14,6 +14,8 @@ map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
+display_backend_source = (root / "src" / "board" / "meshink_display_backend.h").read_text(encoding="utf-8")
+display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -114,7 +116,7 @@ contains('page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)', "telemetry act
 contains('page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)', "path action touch follows lowered button")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
-contains('t5_display_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
+contains('meshink_display_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
 contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
@@ -135,15 +137,15 @@ assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited 
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
 contains("for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);", "bold GPS-off slash")
-contains("t5_display_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
+contains("meshink_display_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
 contains("for(int d=-1;d<=1;++d) {\n        line(x+3,y+8+d", "bold envelope flap")
 for y in (58,133,208):
     contains(f"box(control_x,{y},66,66", f"draw 1.5x map button at y={y}")
     contains(f"if(hit(x,y,462,{y},66,66))", f"matching map touch target at y={y}")
 assert 'text("ME",control_x+' not in source, "locate icon must not display text"
 contains("box(control_x,208,66,66,true);", "black locate button matches zoom buttons")
-contains("t5_display_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
-contains("t5_display_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
+contains("meshink_display_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
+contains("meshink_display_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
 contains("draw_target_icon(sx-15,sy-15,false);", "device marker same icon as GPS fix")
 contains("if(map_zoom<meshink_map_gestures::MAX_ZOOM)", "Maps plus button uses shared maximum zoom")
 contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reaches shared minimum zoom")
@@ -159,14 +161,14 @@ contains("!(tap.x>=456&&tap.y<281)", "larger map controls excluded from swipe")
 contains("static constexpr int MAP_TOP=48;", "map starts below compact status bar")
 contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
 contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
-contains('refresh_area(MODE_DU,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
-contains('else\n        refresh(MODE_DU);', "first Maps entry retains full Loading refresh")
-contains('t5_display_update_area(', "partial Loading path uses display backend area update API")
+contains('refresh_area(MeshInkRefreshMode::Direct,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
+contains('else\n        refresh(MeshInkRefreshMode::Direct);', "first Maps entry retains full Loading refresh")
+contains('meshink_display_update_area(', "partial Loading path uses display backend area update API")
 contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
-contains('refresh(MODE_DU,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
+contains('refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
 contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
 contains("static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;", "map projection centre matches viewport")
-contains("result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,", "map fills entire viewport")
+contains("result=map_tiles_render(fb,0,MAP_TOP,meshink_display_logical_width(),MAP_BOTTOM-MAP_TOP,", "map fills entire logical viewport")
 assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
 tiles = (Path(__file__).resolve().parents[1] / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 assert "max(48," in tiles and "max(118," not in tiles, "map tile clipping still leaves a header strip"
@@ -181,10 +183,10 @@ assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default 
 # dismisses by tapping above the keyboard instead.
 contains('key("SPACE",120,898,298);', "space-capable portrait keyboards use a wide space bar")
 contains('key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);', "message/password action remains isolated at far right")
-contains('if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}', "message keyboard dismisses quickly by tapping above it")
+contains('if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "message keyboard dismisses quickly by tapping above it")
 assert source.count("if(x<422){append(' ');queue_text_refresh();return true;}")>=2, "message and password former HIDE regions belong to SPACE"
 contains('key("SAVE",120,898,408);', "name entry uses a wide SAVE action instead of a dead space bar")
-contains('if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}', "Radio Settings keyboard dismisses quickly by tapping above it")
+contains('if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Radio Settings keyboard dismisses quickly by tapping above it")
 assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
 
 # 1.8.4 interaction-latency fixes and sentence-style message keyboard.
@@ -201,7 +203,7 @@ contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", 
 contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
 contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
 contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
-contains("draw_screen();refresh(MODE_DU);return true;", "same-page keyboard transitions use DU")
+contains("draw_screen();refresh(MeshInkRefreshMode::Direct);return true;", "same-page keyboard transitions use DU")
 
 # 1.8.3 correlated timing instrumentation must remain wired without adding
 # synchronous Serial writes to the touch producer.
@@ -228,10 +230,13 @@ assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timi
 assert "preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu" in map_source, "map separates PMTiles sequential preload timing"
 assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map retains callback range timing for preload fallback"
 assert "png.openRAM(pmt_png_buffer" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
-assert "t5_display_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT" in map_source, "direct map framebuffer path is guarded by portrait rotation"
-assert "const int physical_y=physical_height-px-1;" in map_source, "direct map framebuffer path matches EPDiy inverted portrait transform"
-assert "out_row[(unsigned)py>>1]=(uint8_t)(low|high);" in map_source, "direct map composition packs two 4-bit panel pixels per byte"
-assert "draw_cached_epdiy(tile,draw);" in map_source, "direct map composition retains generic EPDiy fallback"
+assert "meshink_display_blit_gray4_dithered(target,blit);" in map_source, "Maps delegates packed framebuffer composition to display backend"
+assert "physical_width" not in map_source and "physical_height" not in map_source, "Maps must not know physical panel geometry"
+assert "EPD_ROT_" not in map_source and "Epd" not in map_source, "Maps must not depend on EPDiy types"
+assert "const int physical_y=physical_height-px-1;" in display_backend_source, "T5 backend preserves inverted-portrait direct framebuffer fast path"
+assert "out_row[(unsigned)py>>1]=(uint8_t)(low|high);" in display_backend_source, "T5 backend preserves packed 4-bit map composition"
+assert "MeshInkRotation::InvertedPortrait" in display_backend_source, "T5 direct map path remains rotation guarded"
+assert "struct MeshInkDisplayGeometry" in display_types_source, "display geometry is board-independent application vocabulary"
 assert "alignas(4) uint8_t pmt_io_stage[4096]" in map_source, "PMTiles SD payload reads use aligned 4 KB internal staging"
 assert "pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u" in map_source, "map separates decode and composition timing"
 assert "struct PmtilesPerfStats" in pmtiles_header, "PMTiles reader exposes metadata performance counters"
@@ -280,7 +285,7 @@ assert "bool pmtiles_warm_archive(const char* path)" in pmtiles_source, "PMTiles
 # Standby charger changes must not wait for the 60-second full status poll.
 contains("if(standby_active&&millis()-last_standby_charge_poll>=1000)", "standby charging icon refreshes promptly")
 contains("draw_status_bar(true);", "standby charging refresh redraws only status content")
-contains("refresh_area(MODE_DU,{0,0,540,48},false);", "standby charging refresh is limited to status bar")
+contains("refresh_area(MeshInkRefreshMode::Direct,{0,0,meshink_display_logical_width(),48},false);", "standby charging refresh is limited to status bar")
 contains("update_charge_state();", "standby entry samples current charger state")
 
 # Critical-battery protection must stop repeated brownout boots before the
@@ -296,5 +301,13 @@ contains("if(external_power_present()){low_samples=0;return;}", "external power 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
 contains("const int zoom_label_width=(int)strlen(zoom)*12+8;", "zoom label backing tracks rendered text width")
-contains("t5_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
-assert "t5_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
+contains("meshink_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
+assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
+
+# Hardware-portability display boundary.
+assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
+assert "EpdiyHighlevelState" not in source and "EpdDrawMode" not in source and "EpdRect" not in source, "UI must not depend on EPDiy display types"
+assert "EPD_ROT_" not in source, "UI must use board-independent rotation vocabulary"
+assert "meshink_display_invalidate_previous(&display);" in source, "backend owns previous-frame invalidation"
+assert "meshink_display_fill_framebuffer(&display,0x00);" in source, "backend owns physical framebuffer fill"
+assert "MESHINK_DISPLAY_BACKEND_HEADER" in (root / "src" / "hardware" / "display.h").read_text(encoding="utf-8"), "display backend is compile-time selectable"

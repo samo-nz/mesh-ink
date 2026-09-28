@@ -2,7 +2,7 @@
 #include "t5_logging.h"
 #include <SD.h>
 #include <PNGdec.h>
-#include "t5_display.h"
+#include "hardware/display.h"
 #include <esp_heap_caps.h>
 #include <math.h>
 #include <string.h>
@@ -442,9 +442,9 @@ uint8_t tile_level(const Tile& tile,int sx,int sy) {
 }
 void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
     const int left=max(0,x0),top=max(48,y0);
-    const int right=min(540,x1),bottom=min(900,y1);
+    const int right=min(meshink_display_logical_width(),x1),bottom=min(900,y1);
     if(left<right&&top<bottom)
-        t5_display_fill_rect({left,top,right-left,bottom-top},colour,target);
+        meshink_display_fill_rect({left,top,right-left,bottom-top},colour,target);
 }
 // PNG callbacks keep source luminance in PSRAM. If allocation fails,
 // decode directly to the framebuffer with the SAME monochrome map palette.
@@ -532,10 +532,10 @@ int png_draw(PNGDRAW* row) {
             const uint8_t level=gray_level(pixels[sx]);
             const int x0=max(0,ctx.dx+
                 (sx-ctx.crop_x)*TILE_SIZE/ctx.crop_size);
-            const int x1=min(540,ctx.dx+
+            const int x1=min(meshink_display_logical_width(),ctx.dx+
                 (sx-ctx.crop_x+1)*TILE_SIZE/ctx.crop_size);
             for(int px=x0;px<x1;++px)
-                t5_display_fill_rect({px,py,1,1},
+                meshink_display_fill_rect({px,py,1,1},
                     map_black(level,ctx.tile_x*TILE_SIZE+px-ctx.dx,
                                    ctx.tile_y*TILE_SIZE+py-ctx.dy)?0x00:0xFF,
                     target);
@@ -701,94 +701,18 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     } else direct=true;
     return true;
 }
-void draw_cached_epdiy(const Tile& tile,const DrawContext& draw) {
-    // Generic fallback preserving EPDiy's own rotation/pixel handling.
-    const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
-    const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
-    if(x0>=x1||y0>=y1)return;
-    unsigned shift=0;
-    while((TILE_SIZE>>shift)>draw.crop_size)++shift;
-    const uint16_t* masks=map_black_masks();
-    const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
-    for(int py=y0;py<y1;++py) {
-        const int sy=draw.crop_y+((py-draw.dy)>>shift);
-        const uint8_t* source_row=tile.bits+(size_t)sy*(TILE_SIZE/2);
-        const int world_y=draw.tile_y*TILE_SIZE+py-draw.dy;
-        const unsigned row_phase=((unsigned)world_y&3U)<<2;
-        const auto is_black=[&](int px)->bool {
-            const int sx=draw.crop_x+((px-draw.dx)>>shift);
-            const uint8_t packed=source_row[sx>>1];
-            const unsigned level=(sx&1)?(packed&0x0FU):(packed>>4);
-            const unsigned phase=row_phase|
-                                 ((unsigned)(world_x_base+px)&3U);
-            return (masks[level]&(1U<<phase))!=0;
-        };
-        int run_x=x0;
-        bool black=is_black(x0);
-        for(int px=x0+1;px<x1;++px) {
-            const bool next_black=is_black(px);
-            if(next_black!=black) {
-                t5_display_fill_rect({run_x,py,px-run_x,1},
-                              black?0x00:0xFF,target);
-                run_x=px;
-                black=next_black;
-            }
-        }
-        t5_display_fill_rect({run_x,py,x1-run_x,1},black?0x00:0xFF,target);
-    }
-}
-
 void draw_cached(const Tile& tile,const DrawContext& draw) {
-    // Maps is portrait-only. EPDiy stores two 4-bit physical pixels per byte;
-    // inverted portrait maps logical (x,y) -> physical (y, H-1-x). Writing the
-    // packed framebuffer directly avoids ~460k calls through t5_display_draw_pixel()
-    // per viewport while preserving exactly the same world-anchored dither.
-    if(t5_display_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT) {
-        draw_cached_epdiy(tile,draw);
-        return;
-    }
-    const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
-    const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
-    if(x0>=x1||y0>=y1)return;
-    unsigned shift=0;
-    while((TILE_SIZE>>shift)>draw.crop_size)++shift;
-    const uint16_t* masks=map_black_masks();
-    const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
-    const int physical_width=t5_display_width();
-    const int physical_height=t5_display_height();
-    const size_t row_bytes=(size_t)physical_width/2U;
-
-    for(int px=x0;px<x1;++px) {
-        const int sx=draw.crop_x+((px-draw.dx)>>shift);
-        const unsigned x_phase=(unsigned)(world_x_base+px)&3U;
-        const int physical_y=physical_height-px-1;
-        uint8_t* out_row=target+(size_t)physical_y*row_bytes;
-        const auto black_at=[&](int py)->bool {
-            const int sy=draw.crop_y+((py-draw.dy)>>shift);
-            const uint8_t packed=
-                tile.bits[(size_t)sy*(TILE_SIZE/2)+(sx>>1)];
-            const unsigned level=(sx&1)?(packed&0x0FU):(packed>>4);
-            const int world_y=draw.tile_y*TILE_SIZE+py-draw.dy;
-            const unsigned phase=(((unsigned)world_y&3U)<<2)|x_phase;
-            return (masks[level]&(1U<<phase))!=0;
-        };
-
-        int py=y0;
-        if(py&1) {
-            uint8_t& out=out_row[(unsigned)py>>1];
-            out=(uint8_t)((out&0x0FU)|(black_at(py)?0x00U:0xF0U));
-            ++py;
-        }
-        for(;py+1<y1;py+=2) {
-            const uint8_t low=black_at(py)?0x00U:0x0FU;
-            const uint8_t high=black_at(py+1)?0x00U:0xF0U;
-            out_row[(unsigned)py>>1]=(uint8_t)(low|high);
-        }
-        if(py<y1) {
-            uint8_t& out=out_row[(unsigned)py>>1];
-            out=(uint8_t)((out&0xF0U)|(black_at(py)?0x00U:0x0FU));
-        }
-    }
+    const MeshInkGray4DitherBlit blit={
+        tile.bits,
+        TILE_SIZE,
+        {draw.crop_x,draw.crop_y,draw.crop_size,draw.crop_size},
+        {draw.dx,draw.dy,TILE_SIZE,TILE_SIZE},
+        {0,48,meshink_display_logical_width(),900-48},
+        draw.tile_x*TILE_SIZE,
+        draw.tile_y*TILE_SIZE,
+        map_black_masks()
+    };
+    meshink_display_blit_gray4_dithered(target,blit);
 }
 bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
     const int n=1<<zoom;
@@ -821,7 +745,7 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             else ++result.parent_loose;
             const int visible_x0=max(0,dx);
             const int visible_y0=max(48,dy);
-            const int visible_x1=min(540,dx+TILE_SIZE);
+            const int visible_x1=min(meshink_display_logical_width(),dx+TILE_SIZE);
             const int visible_y1=min(900,dy+TILE_SIZE);
             const int visible_w=max(0,visible_x1-visible_x0);
             const int visible_h=max(0,visible_y1-visible_y0);
