@@ -707,7 +707,8 @@ static void draw_welcome() {
     box(30,180,480,64);
     text(node_name, 48,199,3);
     text("RADIO PRESET", 30, 268, 2, 0, true);
-    box(24,292,492,88);
+    {const MeshInkUiLayout layout=portrait_layout();
+     box(layout.section_margin,292,layout.section_width,88);}
     text(PRESETS[selected_preset].title,38,303,3,0,true);
     text(PRESETS[selected_preset].detail,38,344,2);
     text(">",486,319,3,0,true);
@@ -725,7 +726,8 @@ static void draw_presets() {
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
-        const int y=132+row*128; box(12,y,516,112,index==selected_preset);
+        const int y=132+row*128; const MeshInkUiLayout layout=portrait_layout();
+        box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height,index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
         text(PRESETS[index].title,28,y+12,3,color,true);
         text(PRESETS[index].detail,28,y+60,2,color,true);
@@ -1198,6 +1200,9 @@ static void draw_contact_details() {
     const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
     const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
     const bool login_required=repeater||room_server;
+    const MeshInkUiLayout layout=portrait_layout();
+    const int action_gap=12;
+    const int action_half=(layout.section_width-action_gap)/2;
 
     if(page!=NodeInfoPage::Overview&&!node.saved_contact){
         text("ADD CONTACT FIRST",24,250,3,0,true);
@@ -1213,38 +1218,40 @@ static void draw_contact_details() {
         draw_wrapped(node.position_source,230,438,25,2,0,false,1);
         text("LAST HEARD",24,480,2,0,true);draw_wrapped(node.last_seen,230,480,25,2,0,false,1);
         text("IDENTITY",24,526,2,0,true);text(node.identity,230,526,2);
-        if(node.latitude||node.longitude){box(24,590,492,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
-        if(node.saved_contact){action_button("CHAT",24,808,240,70);action_button("DELETE",276,808,240,70);}
-        else action_button("ADD CONTACT",24,808,492,70,true);
+        if(node.latitude||node.longitude){box(layout.section_margin,590,layout.section_width,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
+        if(node.saved_contact){action_button("CHAT",layout.section_margin,808,action_half,70);
+            action_button("DELETE",layout.section_margin+action_half+action_gap,
+                          808,action_half,70);}
+        else action_button("ADD CONTACT",layout.section_margin,808,layout.section_width,70,true);
     } else if(page==NodeInfoPage::Status){
         text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",24,220,3,0,true);
         if(!node.authenticated){
             draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",24,282,39,2,0,false,5);
             if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",24,410,2,0,true);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,808,492,70,true);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",layout.section_margin,808,layout.section_width,70,true);
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
             text(login_text,24,258,2,0,true);
             draw_wrapped(node.status,24,294,27,3,0,true,14);
-            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),24,808,492,70,true);
+            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),layout.section_margin,808,layout.section_width,70,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
         text("TELEMETRY / POSITION",24,220,3,0,true);
         if(login_required&&!node.authenticated){
             draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",24,282,39,2,0,false,3);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",24,808,492,70,true);
+            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",layout.section_margin,808,layout.section_width,70,true);
         }else{
             draw_wrapped(node.telemetry,24,270,27,3,0,true,4);
             text("POSITION",24,420,2,0,true);draw_wrapped(node.position,24,454,27,3,0,true,2);
             draw_wrapped(node.position_source,24,522,39,2,0,false,1);
-            if(node.latitude||node.longitude){box(24,590,492,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
-            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),24,808,492,70,true);
+            if(node.latitude||node.longitude){box(layout.section_margin,590,layout.section_width,62);centred("OPEN POSITION ON MAP",611,2,0,true);}
+            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),layout.section_margin,808,layout.section_width,70,true);
         }
     } else {
         text("DISCOVERED PATH",24,220,3,0,true);
         draw_wrapped(node.path,24,270,27,3,0,true,5);
         text("SAVED ROUTE",24,458,2,0,true);draw_wrapped(node.route,24,492,27,3,0,true,2);
-        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),24,808,492,70,true);
+        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),layout.section_margin,808,layout.section_width,70,true);
     }
     draw_page_indicator(details_page,pages,770);
     if(keyboard_visible&&keyboard_password_mode){
@@ -1376,8 +1383,14 @@ static void draw_display_settings() {
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
-    if(frontlight_mode==FrontlightMode::NightTimer){box(24,674,492,70,true);centred("NIGHT SCHEDULE",697,3,0xFF,true);}
-    box(24,shutdown_y,492,70);centred("SHUT DOWN",shutdown_y+23,3,0,true);
+    {const MeshInkUiLayout layout=portrait_layout();
+     if(frontlight_mode==FrontlightMode::NightTimer){
+         box(layout.section_margin,674,layout.section_width,70,true);
+         centred("NIGHT SCHEDULE",697,3,0xFF,true);
+     }
+     box(layout.section_margin,shutdown_y,layout.section_width,70);
+     centred("SHUT DOWN",shutdown_y+23,3,0,true);
+    }
 }
 
 static void draw_help() {
@@ -1398,18 +1411,20 @@ static void draw_help() {
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",126,5,0,true);
-    box(24,240,492,150);draw_envelope_icon(48,282);text("PRIVATE MESSAGES",100,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,100,318,4,0,true);
-    box(24,420,492,150);text("#",48,464,4,0,true);text("CHANNEL MESSAGES",100,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,100,498,4,0,true);
+    {const MeshInkUiLayout layout=portrait_layout();
+     box(layout.section_margin,240,layout.section_width,150);draw_envelope_icon(48,282);text("PRIVATE MESSAGES",100,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,100,318,4,0,true);
+    box(layout.section_margin,420,layout.section_width,150);text("#",48,464,4,0,true);text("CHANNEL MESSAGES",100,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,100,498,4,0,true);}
     centred("HOLD BOOT 2 SECONDS TO WAKE",820,2,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
 static void draw_night_schedule(){
     draw_app_header("NIGHT SCHEDULE",true);char start[8],end[8];format_minutes(night_start_minutes,start);format_minutes(night_end_minutes,end);
-    box(24,150,492,112,night_edit_field==0);text("START",42,166,3,night_edit_field==0?0xFF:0,true);text(start,360,166,3,night_edit_field==0?0xFF:0,true);
-    box(24,286,492,112,night_edit_field==1);text("END",42,302,3,night_edit_field==1?0xFF:0,true);text(end,360,302,3,night_edit_field==1?0xFF:0,true);
+    {const MeshInkUiLayout layout=portrait_layout();
+     box(layout.section_margin,150,layout.section_width,112,night_edit_field==0);text("START",42,166,3,night_edit_field==0?0xFF:0,true);text(start,360,166,3,night_edit_field==0?0xFF:0,true);
+    box(layout.section_margin,286,layout.section_width,112,night_edit_field==1);text("END",42,302,3,night_edit_field==1?0xFF:0,true);text(end,360,302,3,night_edit_field==1?0xFF:0,true);
     box(24,460,220,76);text("-30 MIN",62,486,3,0,true);box(296,460,220,76);text("+30 MIN",334,486,3,0,true);
-    box(24,600,492,76,true);centred("SAVE SCHEDULE",626,3,0xFF,true);
+    box(layout.section_margin,600,layout.section_width,76,true);centred("SAVE SCHEDULE",626,3,0xFF,true);}
     draw_wrapped("The selected timezone from GPS settings is used automatically.",24,740,39,2,0,true,3);
 }
 
@@ -2429,7 +2444,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
                 for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
                     const size_t index=first+row;
-                    if(hit(x,y,12,portrait_layout().list_top+row*portrait_layout().list_row_stride,516,142)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}
+                    if(hit_outer_row(x,y,portrait_layout().list_top+
+                        row*portrait_layout().list_row_stride,
+                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}
                 }
             }
             break;
@@ -2559,7 +2576,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&hit_section_row(x,y,790,70)){open_screen(Screen::NightSchedule);return true;}
-            if(hit(x,y,24,frontlight_mode==FrontlightMode::NightTimer?806:790,492,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
+            if(hit_section_row(x,y,frontlight_mode==FrontlightMode::NightTimer?806:790,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
         case Screen::NightSchedule:
             if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::DisplaySettings);return true;}
             if(hit_section_row(x,y,150,112)){night_edit_field=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
