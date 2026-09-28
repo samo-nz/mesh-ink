@@ -485,52 +485,66 @@ static void box(int x, int y, int w, int h, bool selected=false) {
     else { meshink_display_fill_rect(r, 0xFF, fb); meshink_display_draw_rect(r, 0, fb); }
 }
 
-static void key(const char* label, int x, int y, int w) {
-    box(x,y,w,62);
-    int scale=((int)strlen(label)*18+8<=w)?3:2;
-    text(label,x+(w-(int)strlen(label)*6*scale)/2,y+(62-7*scale)/2,scale,0,true);
+static meshink_keyboard::Metrics keyboard_metrics(bool landscape) {
+    const meshink_keyboard::Tuning tuning={
+        landscape?MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET:MESHINK_KEYBOARD_PORTRAIT_X_OFFSET,
+        landscape?MESHINK_KEYBOARD_LANDSCAPE_Y_OFFSET:MESHINK_KEYBOARD_PORTRAIT_Y_OFFSET,
+        MESHINK_KEYBOARD_KEY_HEIGHT_DELTA,
+        MESHINK_KEYBOARD_ROW_GAP_DELTA
+    };
+    return meshink_keyboard::make_metrics(
+        landscape?meshink_display_portrait_height():meshink_display_portrait_width(),
+        landscape?meshink_display_portrait_width():meshink_display_portrait_height(),
+        landscape,tuning);
+}
+
+static void key(const char* label,const meshink_keyboard::Rect& rect) {
+    box(rect.x,rect.y,rect.width,rect.height);
+    int scale=((int)strlen(label)*18+8<=rect.width)?3:2;
+    text(label,rect.x+(rect.width-(int)strlen(label)*6*scale)/2,
+         rect.y+(rect.height-7*scale)/2,scale,0,true);
 }
 
 static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines);
 
 static void draw_keyboard() {
+    const auto metrics=keyboard_metrics(false);
     const char* numbers="1234567890";
-    const auto digits=meshink_keyboard::numbers(false);
+    const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;numbers[i];++i){
         char label[2]={numbers[i],0};
-        key(label,digits.start+i*digits.pitch,618,digits.width);
+        key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
     const char* letter_rows_upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
     const char* letter_rows_lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
     const char* symbol_rows[]={"!@#$%^&*()","-_+=/\\:;\"",".,?'[]{}"};
     const char** rows=keyboard_symbols?symbol_rows:(keyboard_upper?letter_rows_upper:letter_rows_lower);
-    const int ys[]={688,758,828};
     for(int r=0;r<3;++r){
-        const auto layout=meshink_keyboard::letters(false,r,(int)strlen(rows[r]));
+        const auto layout=meshink_keyboard::letters(metrics,r,(int)strlen(rows[r]));
+        const int y=metrics.letter_top+r*metrics.row_step;
         for(int i=0;rows[r][i];++i){
             char label[2]={rows[r][i],0};
-            key(label,layout.start+i*layout.pitch,ys[r],layout.width);
+            key(label,{layout.start+i*layout.pitch,y,layout.width,metrics.key_height});
         }
     }
-    key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),12,828,76);
-    key("DEL",460,828,68);
-    key("LAND",12,898,100);
+    key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),metrics.mode_key);
+    key("DEL",metrics.delete_key);
+    key("LAND",metrics.orientation_key);
     if(keyboard_message_mode||keyboard_password_mode){
         // Space is valid for message/password entry. Match familiar phone
         // keyboards with a wide space bar and an isolated action at right.
-        key("SPACE",120,898,298);
-        key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);
+        key("SPACE",metrics.space_key);
+        key(keyboard_password_mode?"LOGIN":"SEND",metrics.action_key);
     }else{
         // MeshCore node names do not accept spaces. Use the entire remaining
         // row for SAVE instead of showing dead SPACE/HIDE controls.
-        key("SAVE",120,898,408);
+        key("SAVE",metrics.wide_action_key);
     }
     if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
 
-static void landscape_key(const char* label,int x,int y,int w){
-    MeshInkRect r={x,y,w,62};meshink_display_fill_rect(r,0xFF,fb);meshink_display_draw_rect(r,0,fb);
-    const int scale=strlen(label)<=5?3:2;text(label,x+(w-(int)strlen(label)*6*scale)/2,y+(62-7*scale)/2,scale,0,true);
+static void landscape_key(const char* label,const meshink_keyboard::Rect& rect){
+    key(label,rect);
 }
 static const char** active_keyboard_rows(){
     static const char* upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
@@ -539,53 +553,58 @@ static const char** active_keyboard_rows(){
     return keyboard_symbols?symbols:(keyboard_upper?upper:lower);
 }
 static void draw_landscape_keyboard(){
+    const auto metrics=keyboard_metrics(true);
     meshink_display_set_all_white(&display);
     const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
-    MeshInkRect entry={16,14,928,112};meshink_display_draw_rect(entry,0,fb);
-    draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),32,30,48,4,0,true,2);
+    MeshInkRect entry={metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height};
+    meshink_display_draw_rect(entry,0,fb);
+    const int entry_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,960);
+    const int entry_y=metrics.entry.y+meshink_keyboard::scale_axis(16,metrics.height,540);
+    draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),entry_x,entry_y,48,4,0,true,2);
     const char* numbers="1234567890";
-    const auto digits=meshink_keyboard::numbers(true);
+    const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
-        char s[2]={numbers[i],0};
-        landscape_key(s,digits.start+i*digits.pitch,145,digits.width);
+        char label[2]={numbers[i],0};
+        landscape_key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
-    const char** rows=active_keyboard_rows();const int ys[]={215,285,355};
+    const char** rows=active_keyboard_rows();
     for(int r=0;r<3;++r){
-        const auto layout=meshink_keyboard::letters(true,r,(int)strlen(rows[r]));
+        const auto layout=meshink_keyboard::letters(metrics,r,(int)strlen(rows[r]));
+        const int y=metrics.letter_top+r*metrics.row_step;
         for(int i=0;rows[r][i];++i){
-            char s[2]={rows[r][i],0};
-            landscape_key(s,layout.start+i*layout.pitch,ys[r],layout.width);
+            char label[2]={rows[r][i],0};
+            landscape_key(label,{layout.start+i*layout.pitch,y,layout.width,metrics.key_height});
         }
     }
-    landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),15,355,130);
-    landscape_key("DEL",812,355,133);
-    landscape_key("PORTRAIT",15,425,180);landscape_key("SPACE",203,425,500);
-    landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),711,425,234);
+    landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),metrics.mode_key);
+    landscape_key("DEL",metrics.delete_key);
+    landscape_key("PORTRAIT",metrics.orientation_key);
+    landscape_key("SPACE",metrics.space_key);
+    landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),metrics.action_key);
     if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
 
-// The number and letter hitboxes are calculated from the EXACT geometry used
-// when drawing them. This also divides gaps at the midpoint and prevents
-// symbols in the 8-key bottom row overlapping the mode / Delete buttons.
+// Drawing and touch use the same scaled metrics. Gaps are divided at their
+// midpoint, so scaling cannot make a visible key type its neighbour.
 static bool keyboard_character_at(int x,int y,bool landscape,char& character){
-    const int number_top=landscape?145:618;
-    if(meshink_keyboard::in_row(y,number_top)){
-        const int i=meshink_keyboard::key_index(meshink_keyboard::numbers(landscape),x);
+    const auto metrics=keyboard_metrics(landscape);
+    if(meshink_keyboard::in_row(y,metrics.number_top,metrics)){
+        const int i=meshink_keyboard::key_index(meshink_keyboard::numbers(metrics),x);
         if(i<0)return false;
         character="1234567890"[i];
         return true;
     }
     const char** rows=active_keyboard_rows();
-    const int top=landscape?215:688;
     for(int r=0;r<3;++r){
-        if(!meshink_keyboard::in_row(y,top+r*70))continue;
+        const int top=metrics.letter_top+r*metrics.row_step;
+        if(!meshink_keyboard::in_row(y,top,metrics))continue;
         const auto layout=meshink_keyboard::letters(
-            landscape,r,(int)strlen(rows[r]));
+            metrics,r,(int)strlen(rows[r]));
         // A/L are the only alphabetic home-row keys bordering unused screen
         // margin. Make that blank area useful without changing what is drawn.
         const int i=(r==1&&!keyboard_symbols)
             ? meshink_keyboard::key_index_edge_extended(
-                layout,x,meshink_display_logical_width())
+                layout,x,metrics.width)
             : meshink_keyboard::key_index(layout,x);
         if(i<0)return false;
         character=rows[r][i];
