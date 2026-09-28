@@ -329,7 +329,7 @@ assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache 
 assert 'memset(&detail_contact_,0,sizeof(detail_contact_));' in runtime_source, "Node Info advert parse must start from zeroed contact state"
 assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malformed advert rejection must remain observable"
 contains("static void audit_ui_geometry()", "test8 boot-time geometry self-audit")
-contains("[T5-GEOM] board=%s logical=%dx%d physical=%dx%d", "geometry audit emits board/display summary")
+contains("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d", "geometry audit emits versioned board/display summary")
 contains("[T5-TOUCH] tap screen=%s x=%d y=%d", "touch diagnostics identify screen and coordinates")
 assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" in cache64_build_flags, "test8 cache64 build must run boot geometry audit"
 assert "-DT5_LOG_UI=1" in cache64_build_flags, "test8 cache64 build must include targeted UI logs"
