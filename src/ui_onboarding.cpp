@@ -512,7 +512,19 @@ static void key(const char* label,const meshink_keyboard::Rect& rect) {
          rect.y+(rect.height-7*scale)/2,scale,0,true);
 }
 
-static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines);
+static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
+    const char* cursor=value;
+    for(int row=0;row<max_lines&&*cursor;++row){
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n'){++cursor;continue;}
+        const char* newline=strchr(cursor,'\n');
+        int remaining=newline?(int)(newline-cursor):(int)strlen(cursor),take=min(chars_per_line,remaining);
+        if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}
+        char line_text[64]={};memcpy(line_text,cursor,min(take,63));
+        text(line_text,x,y+row*(7*scale+8),scale,color,bold);cursor+=take;
+        if(*cursor=='\n')++cursor;
+    }
+}
 
 static void draw_keyboard() {
     const auto metrics=keyboard_metrics(false);
