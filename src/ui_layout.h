@@ -69,7 +69,7 @@ struct MeshInkUiRect {
     int height;
 };
 
-constexpr MeshInkUiRect meshink_display_slider_track_rect(const MeshInkUiLayout& layout);
+inline MeshInkUiRect meshink_display_slider_track_rect(const MeshInkUiLayout& layout);
 
 constexpr int meshink_ui_ref_x(const MeshInkUiLayout& layout,int reference_x) {
     return (reference_x*layout.width+270)/540;
@@ -109,7 +109,7 @@ constexpr MeshInkUiRect meshink_header_action_rect(const MeshInkUiLayout& layout
     return {layout.header_action_x,layout.header_top,
             layout.header_button_width,layout.header_button_height};
 }
-constexpr MeshInkUiRect meshink_header_back_touch_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_header_back_touch_rect(const MeshInkUiLayout& layout) {
     const MeshInkUiRect visual=meshink_header_back_rect(layout);
     return meshink_ui_expand_rect(
         visual,
@@ -118,7 +118,7 @@ constexpr MeshInkUiRect meshink_header_back_touch_rect(const MeshInkUiLayout& la
         meshink_ui_ref_w(layout,40),
         meshink_ui_ref_h(layout,12));
 }
-constexpr MeshInkUiRect meshink_header_action_touch_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_header_action_touch_rect(const MeshInkUiLayout& layout) {
     const MeshInkUiRect visual=meshink_header_action_rect(layout);
     return meshink_ui_expand_rect(
         visual,
@@ -194,7 +194,7 @@ constexpr MeshInkUiRect meshink_node_left_action_rect(const MeshInkUiLayout& lay
     return {layout.section_margin,meshink_ui_ref_y(layout,808),width,
             meshink_ui_ref_h(layout,70)};
 }
-constexpr MeshInkUiRect meshink_node_right_action_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_node_right_action_rect(const MeshInkUiLayout& layout) {
     const MeshInkUiRect left=meshink_node_left_action_rect(layout);
     const int gap=meshink_ui_ref_w(layout,12);
     return {left.x+left.width+gap,left.y,left.width,left.height};
@@ -212,7 +212,7 @@ constexpr MeshInkUiRect meshink_map_control_rect(
 constexpr MeshInkUiRect meshink_quick_slider_track_rect(const MeshInkUiLayout& layout) {
     return meshink_ui_ref_rect(layout,44,182,452,16);
 }
-constexpr MeshInkUiRect meshink_quick_slider_touch_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_quick_slider_touch_rect(const MeshInkUiLayout& layout) {
     const MeshInkUiRect visual=meshink_quick_slider_track_rect(layout);
     return meshink_ui_expand_rect(
         visual,meshink_ui_ref_w(layout,16),meshink_ui_ref_h(layout,36),
@@ -237,7 +237,7 @@ constexpr int meshink_quick_panel_bottom(const MeshInkUiLayout& layout) {
 constexpr MeshInkUiRect meshink_display_brightness_rect(const MeshInkUiLayout& layout) {
     return meshink_ui_ref_rect(layout,12,358,516,160);
 }
-constexpr MeshInkUiRect meshink_display_slider_touch_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_display_slider_touch_rect(const MeshInkUiLayout& layout) {
     const MeshInkUiRect visual=meshink_display_slider_track_rect(layout);
     return meshink_ui_expand_rect(
         visual,meshink_ui_ref_w(layout,22),meshink_ui_ref_h(layout,44),
@@ -262,64 +262,46 @@ constexpr MeshInkUiRect meshink_night_save_rect(const MeshInkUiLayout& layout) {
 }
 
 constexpr MeshInkUiLayout meshink_make_ui_layout(int width,int height) {
-    const int sx_status=(48*height+480)/960;
-    const int sx_nav=(60*height+480)/960;
-    const int x12=(12*width+270)/540;
-    const int x24=(24*width+270)/540;
-    const int x16=(16*width+270)/540;
-    const int x28=(28*width+270)/540;
-    const int x30=(30*width+270)/540;
-    const int x48=(48*width+270)/540;
-    const int y58=(58*height+480)/960;
-    const int w58=(58*width+270)/540;
-    const int h48=(48*height+480)/960;
-    const int y64=(64*height+480)/960;
-    const int y70=(70*height+480)/960;
-    const int y120=(120*height+480)/960;
-    const int h142=(142*height+480)/960;
-    const int h150=(150*height+480)/960;
-    const int h112=(112*height+480)/960;
-    const int footer_offset=(85*height+480)/960;
     return {
         width,
         height,
 
-        sx_status,
-        sx_nav,
-        height-sx_nav,
-        sx_status,
-        height-sx_nav,
+        (48*height+480)/960,
+        (60*height+480)/960,
+        height-(60*height+480)/960,
+        (48*height+480)/960,
+        height-(60*height+480)/960,
         width/2,
-        (sx_status+height-sx_nav)/2,
+        ((48*height+480)/960+height-(60*height+480)/960)/2,
         width/4,
 
-        x12,
-        width-2*x12,
-        x24,
-        width-2*x24,
-        x16,
-        x28,
-        width-x12,
+        (12*width+270)/540,
+        width-2*((12*width+270)/540),
+        (24*width+270)/540,
+        width-2*((24*width+270)/540),
+        (16*width+270)/540,
+        (28*width+270)/540,
+        width-(12*width+270)/540,
         width-(46*width+270)/540,
 
-        x30,
-        width-2*x30,
-        x48,
+        (30*width+270)/540,
+        width-2*((30*width+270)/540),
+        (48*width+270)/540,
         width/2-(40*width+270)/540,
 
-        y58,
-        w58,
-        h48,
-        x12,
+        (58*height+480)/960,
+        (58*width+270)/540,
+        (48*height+480)/960,
+        (12*width+270)/540,
         width-(70*width+270)/540,
-        y64,
-        y70,
+        (64*height+480)/960,
+        (70*height+480)/960,
 
-        y120,
-        h142,
-        h150,
-        height-footer_offset,
-        h112
+        (120*height+480)/960,
+        (142*height+480)/960,
+        (150*height+480)/960,
+        height-(85*height+480)/960,
+        (112*height+480)/960
     };
 }
 
@@ -367,7 +349,7 @@ constexpr int meshink_settings_inline_action_y(int row_top) {
     return row_top+(112-meshink_settings_inline_action_height())/2;
 }
 
-constexpr MeshInkUiRect meshink_settings_inline_action_rect(
+inline MeshInkUiRect meshink_settings_inline_action_rect(
     const MeshInkUiLayout& layout,int reference_row_top) {
     const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_row_top,112);
     const int width=meshink_ui_ref_w(layout,154);
@@ -375,7 +357,7 @@ constexpr MeshInkUiRect meshink_settings_inline_action_rect(
     return {row.x+row.width-width,
             row.y+(row.height-height)/2,width,height};
 }
-constexpr MeshInkUiRect meshink_display_slider_track_rect(const MeshInkUiLayout& layout) {
+inline MeshInkUiRect meshink_display_slider_track_rect(const MeshInkUiLayout& layout) {
     return {meshink_slider_left(layout),meshink_ui_ref_y(layout,464),
             meshink_slider_width(layout),meshink_ui_ref_h(layout,5)};
 }
