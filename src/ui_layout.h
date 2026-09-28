@@ -116,6 +116,15 @@ constexpr MeshInkUiRect meshink_header_back_touch_rect(const MeshInkUiLayout& la
         meshink_ui_ref_w(layout,40),
         meshink_ui_ref_h(layout,12));
 }
+constexpr MeshInkUiRect meshink_header_action_touch_rect(const MeshInkUiLayout& layout) {
+    const MeshInkUiRect visual=meshink_header_action_rect(layout);
+    return meshink_ui_expand_rect(
+        visual,
+        meshink_ui_ref_w(layout,20),
+        meshink_ui_ref_h(layout,10),
+        meshink_ui_ref_w(layout,12),
+        meshink_ui_ref_h(layout,12));
+}
 constexpr MeshInkUiRect meshink_outer_row_rect(
     const MeshInkUiLayout& layout,int reference_top,int reference_height=112) {
     return {layout.outer_margin,meshink_ui_ref_y(layout,reference_top),
