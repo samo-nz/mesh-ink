@@ -12,14 +12,17 @@ constexpr int TAP_SLOP_PX=16;
 constexpr uint32_t TAP_MAX_HOLD_MS=260;
 
 inline int controls_left(const MeshInkUiLayout& layout) {
-    // Preserve the T5's 84 px right-side control reservation while expressing
-    // it relative to the logical viewport width.
-    return layout.width-84;
+    const MeshInkUiRect first=meshink_map_control_rect(layout,0);
+    return first.x-meshink_ui_ref_w(layout,6);
+}
+inline int controls_bottom(const MeshInkUiLayout& layout) {
+    const MeshInkUiRect last=meshink_map_control_rect(layout,2);
+    return last.y+last.height+meshink_ui_ref_h(layout,7);
 }
 inline bool terrain_point(int x,int y,const MeshInkUiLayout& layout) {
     return x>=0 && x<layout.width &&
         y>=layout.map_top && y<layout.map_bottom &&
-        !(x>=controls_left(layout) && y<281);
+        !(x>=controls_left(layout) && y<controls_bottom(layout));
 }
 inline bool terrain_point(int x,int y) {
     return terrain_point(x,y,MESHINK_T5_REFERENCE_LAYOUT);
