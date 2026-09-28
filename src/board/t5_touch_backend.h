@@ -154,11 +154,11 @@ inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
     using namespace meshink_t5_touch_detail;
     State& s=state();
     MeshInkTouchPrimarySample sample{};
-    sample.x=s.cached_x;
-    sample.y=s.cached_y;
 
     uint8_t status=0;
     if(!read(GT911_STATUS,&status,1) || !(status&0x80)) {
+        sample.x=s.cached_x;
+        sample.y=s.cached_y;
         sample.pressed=s.was_pressed;
         return sample;
     }
@@ -172,6 +172,8 @@ inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
 
     const uint8_t count=status&0x0F;
     if(!count||count>5) {
+        sample.x=s.cached_x;
+        sample.y=s.cached_y;
         write_status_clear();
         s.was_pressed=false;
         return sample;
