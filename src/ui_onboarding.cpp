@@ -1908,12 +1908,12 @@ static void request_hardware_shutdown() {
     Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
-    centred("POWERED OFF",250,6,0,true);
-    centred("PRESS PWR BUTTON",370,4,0,true);
-    centred("TO POWER ON",425,4,0,true);
-    centred("IF STILL POWERED BY USB",560,3,0,true);
-    centred("HOLD BOOT TO WAKE",610,3,0,true);
-    centred(UI_VERSION,900,2,0,true);
+    centred("POWERED OFF",ui_y(250),6,0,true);
+    centred("PRESS PWR BUTTON",ui_y(370),4,0,true);
+    centred("TO POWER ON",ui_y(425),4,0,true);
+    centred("IF STILL POWERED BY USB",ui_y(560),3,0,true);
+    centred("HOLD BOOT TO WAKE",ui_y(610),3,0,true);
+    centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);
     set_touch_power(false);
@@ -1950,14 +1950,14 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
     // One final persistent e-paper message replaces the boot splash/UI before
     // battery power is cut. E-paper retains this image with zero standby power.
     meshink_display_set_all_white(&display);
-    centred("LOW BATTERY",230,6,0,true);
-    centred("POWERED DOWN",340,5,0,true);
-    centred("CONNECT USB TO CHARGE",475,3,0,true);
+    centred("LOW BATTERY",ui_y(230),6,0,true);
+    centred("POWERED DOWN",ui_y(340),5,0,true);
+    centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
     char voltage[20];
     snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
              (unsigned)(millivolts/1000U),(unsigned)((millivolts%1000U)/10U));
-    centred(voltage,650,2,0,true);
-    centred(UI_VERSION,900,2,0,true);
+    centred(voltage,ui_y(650),2,0,true);
+    centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
 
     set_touch_power(false);
@@ -2934,9 +2934,9 @@ void ui_setup() {
     // is normally already mounted, so use the generic boot status by default.
     // local_mesh_setup() changes it only if SPIFFS fails to mount and must
     // attempt first-time initialization/recovery.
-    centred("STARTING UP...",716,3,0,true);
-    if(node_name[0])centred(node_name,830,3,0,true);
-    centred(UI_VERSION,885,2,0,true);
+    centred("STARTING UP...",ui_y(716),3,0,true);
+    if(node_name[0])centred(node_name,ui_y(830),3,0,true);
+    centred(UI_VERSION,ui_y(885),2,0,true);
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
@@ -2944,8 +2944,8 @@ void ui_setup() {
 void ui_show_storage_initializing() {
     // Called only after a non-formatting mount fails. Update the existing
     // splash before SPIFFS.begin(true) may block while preparing storage.
-    meshink_display_fill_rect({0,704,meshink_display_logical_width(),65},0xFF,fb);
-    centred("INITIALISING STORAGE...",716,3,0,true);
+    meshink_display_fill_rect({0,ui_y(704),portrait_layout().width,ui_h(65)},0xFF,fb);
+    centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
     refresh(MeshInkRefreshMode::FastGray16);
     Serial.println("[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
 }
@@ -3216,24 +3216,24 @@ void ui_show_radio_failure(bool probable_lite){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
     if(probable_lite){
-        centred("MESHINK CANNOT START",120,4,0,true);
-        centred("NO MESHCORE RADIO",190,4,0,true);
-        centred("LORA AND GPS NOT FOUND",290,3,0,true);
-        centred("THIS MATCHES T5 PRO LITE",340,3,0,true);
-        centred("PRO LITE IS NOT SUPPORTED",430,3,0,true);
-        centred("IT HAS NO LORA RADIO",480,3,0,true);
-        centred("IF THIS IS A PRO WITH LORA",585,2,0,true);
-        centred("PLEASE REPORT THIS ERROR",620,2,0,true);
-        centred("PRESS RST TO RETRY",720,3,0,true);
+        centred("MESHINK CANNOT START",ui_y(120),4,0,true);
+        centred("NO MESHCORE RADIO",ui_y(190),4,0,true);
+        centred("LORA AND GPS NOT FOUND",ui_y(290),3,0,true);
+        centred("THIS MATCHES T5 PRO LITE",ui_y(340),3,0,true);
+        centred("PRO LITE IS NOT SUPPORTED",ui_y(430),3,0,true);
+        centred("IT HAS NO LORA RADIO",ui_y(480),3,0,true);
+        centred("IF THIS IS A PRO WITH LORA",ui_y(585),2,0,true);
+        centred("PLEASE REPORT THIS ERROR",ui_y(620),2,0,true);
+        centred("PRESS RST TO RETRY",ui_y(720),3,0,true);
     }else{
-        centred("RADIO STARTUP",190,5,0,true);
-        centred("FAILED",255,6,0,true);
-        centred("SX1262 NOT DETECTED",390,4,0,true);
-        centred("IF THIS IS A PRO MODEL",475,2,0,true);
-        centred("PLEASE REPORT THIS ERROR",510,2,0,true);
-        centred("PRESS RST TO RETRY",600,3,0,true);
+        centred("RADIO STARTUP",ui_y(190),5,0,true);
+        centred("FAILED",ui_y(255),6,0,true);
+        centred("SX1262 NOT DETECTED",ui_y(390),4,0,true);
+        centred("IF THIS IS A PRO MODEL",ui_y(475),2,0,true);
+        centred("PLEASE REPORT THIS ERROR",ui_y(510),2,0,true);
+        centred("PRESS RST TO RETRY",ui_y(600),3,0,true);
     }
-    centred(UI_VERSION,900,2,0,true);
+    centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; probable-lite=%d; UI and touch stopped\n",probable_lite);
