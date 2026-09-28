@@ -318,25 +318,25 @@ constexpr MeshInkUiLayout meshink_make_ui_layout(int width,int height) {
 // Reusable horizontal split helpers. Gaps preserve the current T5 visual
 // proportions but widths adapt to the logical viewport.
 constexpr int meshink_form_pair_width(const MeshInkUiLayout& layout) {
-    return (layout.form_width-40)/2;
+    return (layout.form_width-meshink_ui_ref_w(layout,40))/2;
 }
 constexpr int meshink_form_pair_right(const MeshInkUiLayout& layout) {
     return layout.width-layout.form_margin-meshink_form_pair_width(layout);
 }
 constexpr int meshink_section_pair_width(const MeshInkUiLayout& layout) {
-    return (layout.section_width-52)/2;
+    return (layout.section_width-meshink_ui_ref_w(layout,52))/2;
 }
 constexpr int meshink_section_pair_right(const MeshInkUiLayout& layout) {
     return layout.width-layout.section_margin-meshink_section_pair_width(layout);
 }
 constexpr int meshink_pager_button_width(const MeshInkUiLayout& layout) {
-    return (layout.section_width-132)/2;
+    return (layout.section_width-meshink_ui_ref_w(layout,132))/2;
 }
 constexpr int meshink_pager_right(const MeshInkUiLayout& layout) {
     return layout.width-layout.section_margin-meshink_pager_button_width(layout);
 }
 constexpr int meshink_slider_left(const MeshInkUiLayout& layout) {
-    return layout.section_margin+38;
+    return layout.section_margin+meshink_ui_ref_w(layout,38);
 }
 constexpr int meshink_slider_width(const MeshInkUiLayout& layout) {
     return layout.width-2*meshink_slider_left(layout);
@@ -344,7 +344,7 @@ constexpr int meshink_slider_width(const MeshInkUiLayout& layout) {
 
 // Display & Power action geometry.
 constexpr int meshink_shutdown_top(const MeshInkUiLayout& layout) {
-    return layout.bottom_nav_top-110;
+    return layout.bottom_nav_top-meshink_ui_ref_h(layout,110);
 }
 constexpr int meshink_settings_inline_action_width() {
     return 154;
@@ -357,6 +357,23 @@ constexpr int meshink_settings_inline_action_x(const MeshInkUiLayout& layout) {
 }
 constexpr int meshink_settings_inline_action_y(int row_top) {
     return row_top+(112-meshink_settings_inline_action_height())/2;
+}
+
+constexpr MeshInkUiRect meshink_settings_inline_action_rect(
+    const MeshInkUiLayout& layout,int reference_row_top) {
+    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_row_top,112);
+    const int width=meshink_ui_ref_w(layout,154);
+    const int height=meshink_ui_ref_h(layout,56);
+    return {row.x+row.width-width,
+            row.y+(row.height-height)/2,width,height};
+}
+constexpr MeshInkUiRect meshink_display_slider_track_rect(const MeshInkUiLayout& layout) {
+    return {meshink_slider_left(layout),meshink_ui_ref_y(layout,464),
+            meshink_slider_width(layout),meshink_ui_ref_h(layout,5)};
+}
+constexpr MeshInkUiRect meshink_shutdown_rect(const MeshInkUiLayout& layout) {
+    return {layout.section_margin,meshink_shutdown_top(layout),
+            layout.section_width,meshink_ui_ref_h(layout,70)};
 }
 
 // Regression reference only. Application code derives metrics from its
