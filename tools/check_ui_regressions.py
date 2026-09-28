@@ -291,3 +291,9 @@ contains('centred("LOW BATTERY",230,6,0,true);', "critical low battery persisten
 contains("BATFET_DIS=1u<<5", "critical low battery enters ship mode")
 contains("service_critical_battery();", "runtime critical battery monitor remains active")
 contains("if(external_power_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
+
+# Map zoom/source label backing should hug the rendered text rather than
+# leaving a wide opaque block over the terrain.
+contains("const int zoom_label_width=(int)strlen(zoom)*12+8;", "zoom label backing tracks rendered text width")
+contains("epd_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
+assert "epd_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
