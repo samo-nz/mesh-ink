@@ -1769,7 +1769,7 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
     refresh(MODE_GL16,false);
 
     set_touch_power(false);
-    if(local_mesh_is_running()) {
+    if(mesh_is_ready) {
         local_mesh_prepare_shutdown();
         SPIFFS.end();
         Serial.println("[T5-POWER] low-battery shutdown: mesh/storage stopped");
