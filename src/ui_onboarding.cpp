@@ -814,10 +814,11 @@ static void draw_bottom_nav(int selected) {
             i==selected);
         const uint8_t color=i==selected?0xFF:0;
         text(labels[i],left+(layout.tab_width-(int)strlen(labels[i])*12)/2,
-             layout.bottom_nav_top+20,2,color,true);
+             layout.bottom_nav_top+ui_h(20),2,color,true);
         const bool unread=(i==0&&status_unread)||(i==1&&status_channel_unread);
         if(unread)meshink_display_fill_rect(
-            {left+layout.tab_width-17,layout.bottom_nav_top+8,11,11},color,fb);
+            {left+layout.tab_width-ui_w(17),layout.bottom_nav_top+ui_h(8),
+             ui_w(11),ui_h(11)},color,fb);
     }
 }
 
