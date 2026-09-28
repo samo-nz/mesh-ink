@@ -80,10 +80,11 @@ struct StoredMessage{uint32_t sequence;uint32_t timestamp;uint32_t ack;uint8_t k
 struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char time[10]{};uint8_t key[7]{};uint8_t channel_index=0;};
 struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};};
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
-struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[192]{};uint8_t len=0;};
+constexpr size_t DISCOVERED_CONTACT_CACHE_BYTES=192;
+struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[DISCOVERED_CONTACT_CACHE_BYTES]{};uint8_t len=0;};
 constexpr size_t DISCOVERED_CONTACT_BASE_LEN=
     1+PUB_KEY_SIZE+3+MAX_PATH_SIZE+32+4; // through last_advert_timestamp
-static_assert(DISCOVERED_CONTACT_BASE_LEN<=sizeof(DiscoveredContact::frame),
+static_assert(DISCOVERED_CONTACT_BASE_LEN<=DISCOVERED_CONTACT_CACHE_BYTES,
               "discovered contact base frame must fit cache");
 
 static void format_time(uint32_t timestamp,char out[10]){
