@@ -2266,6 +2266,12 @@ static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&
 static bool hit(int16_t x,int16_t y,const MeshInkUiRect& rect) {
     return hit(x,y,rect.x,rect.y,rect.width,rect.height);
 }
+static bool hit_header_back(int16_t x,int16_t y) {
+    return hit(x,y,meshink_header_back_touch_rect(portrait_layout()));
+}
+static bool hit_header_action(int16_t x,int16_t y) {
+    return hit(x,y,meshink_header_action_touch_rect(portrait_layout()));
+}
 static bool hit_outer_row(int16_t x,int16_t y,int reference_top,int reference_height=112) {
     return hit(x,y,meshink_outer_row_rect(portrait_layout(),reference_top,reference_height));
 }
@@ -2491,8 +2497,8 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
 
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
-    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit(x,y,0,portrait_layout().status_height,110,70)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
-    if(screen==Screen::ContactChat&&hit(x,y,portrait_layout().width-90,portrait_layout().status_height,90,70)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
+    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
+    if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
@@ -2536,7 +2542,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }}break;
         case Screen::ContactDetails:
-            if(hit(x,y,0,48,90,70)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
+            if(hit_header_back(x,y)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
                 const NodeInfoPage page=node_info_page(node.node_type,details_page);
                 const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
@@ -2584,7 +2590,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::Discovery:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::More);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(ui_data)for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)if(hit_outer_row(x,y,portrait_layout().list_top+
                     i*portrait_layout().list_row_stride,
                     portrait_layout().list_row_height)){if(ui_data->open_advert(i)){details_from_discovery=true;details_page=0;open_screen(Screen::ContactDetails);}return true;}break;
@@ -2595,11 +2601,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,520)){open_screen(Screen::CompanionConfirm);return true;}
             if(hit_outer_row(x,y,650)){open_screen(Screen::Help);return true;}break;
         case Screen::AdvertMenu:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::More);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit_outer_row(x,y,180)){show_toast(local_mesh_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,320)){show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
         case Screen::Settings:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::More);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit_outer_row(x,y,118)){open_screen(Screen::RadioSettings);return true;}
 #if T5_UI_HAS_GPS
             if(hit_outer_row(x,y,238)){open_screen(Screen::GpsSettings);return true;}
@@ -2613,13 +2619,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 #endif
             break;
         case Screen::RadioSettings:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,120)){replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,250)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}
             if(hit_outer_row(x,y,510)){local_mesh_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             return true;
         case Screen::GpsSettings:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,120)){local_mesh_apply_gps(!local_mesh_gps_enabled());show_toast(local_mesh_gps_enabled()?"GPS ENABLED":"GPS DISABLED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,356)){
                 if(centre_map_on_device())open_screen(Screen::Maps,true);
@@ -2630,7 +2636,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,710)){open_screen(Screen::GpsTuning);return true;}break;
         case Screen::GpsTuning:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::GpsSettings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             if(hit_outer_row(x,y,120)){
                 const uint8_t mode=local_mesh_gps_constellation_mode();
                 const uint8_t next=mode==0?1:mode==1?5:mode==5?3:mode==3?7:1;
@@ -2640,13 +2646,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             // NMEA output is automatic; this informational row has no action.
             if(hit_outer_row(x,y,356)){open_screen(Screen::Timezone);return true;}break;
         case Screen::Timezone:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::GpsTuning);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::GpsTuning);return true;}
             for(uint8_t i=0;i<TIMEZONE_COUNT;++i)if(hit_outer_row(x,y,118+i*102,92)){timezone_index=i;apply_timezone();prefs.begin("t5-ui",false);prefs.putUChar("timezone",timezone_index);prefs.end();show_toast("TIMEZONE SAVED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}break;
         case Screen::PrivacySettings:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             for(uint8_t i=0;i<6;++i)if(hit_outer_row(x,y,130+i*118)){local_mesh_toggle_privacy(i);show_toast("SETTING SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}return true;
         case Screen::DisplaySettings:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::Settings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer){
                 const MeshInkUiLayout& layout=portrait_layout();
                 if(hit(x,y,meshink_settings_inline_action_x(layout),
@@ -2670,7 +2676,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::NightSchedule:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::DisplaySettings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::DisplaySettings);return true;}
             if(hit_section_row(x,y,150,112)){night_edit_field=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_section_row(x,y,286,112)){night_edit_field=1;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             {const MeshInkUiLayout& layout=portrait_layout();
@@ -2679,9 +2685,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
              if(hit(x,y,meshink_section_pair_right(layout),460,pair_width,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}}
             if(hit_section_row(x,y,600,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
         case Screen::Help:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::More);return true;}break;
+            if(hit_header_back(x,y)){open_screen(Screen::More);return true;}break;
         case Screen::About:
-            if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::Settings);return true;}break;
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}break;
         default:break;
     }
     return true;
@@ -2694,8 +2700,9 @@ static void handle_tap(int16_t x,int16_t y) {
     if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
-        if(y>=48&&y<132){screen=preset_return_screen;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-        for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit_outer_row(x,y,132+row*128)){
+        const MeshInkUiLayout& layout=portrait_layout();
+        if(hit(x,y,meshink_preset_back_rect(layout))){screen=preset_return_screen;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+        for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,meshink_preset_row_rect(layout,row))){
             const int index=preset_page*PRESETS_PER_PAGE+row;
             if(index<PRESET_COUNT){
                 const uint8_t previous=selected_preset;
@@ -2708,7 +2715,6 @@ static void handle_tap(int16_t x,int16_t y) {
                         prefs.end();
                     }
                 }else{
-                    // Do not highlight or persist a radio preset that failed.
                     selected_preset=previous;
                 }
                 screen=preset_return_screen;
@@ -2718,31 +2724,27 @@ static void handle_tap(int16_t x,int16_t y) {
             return;
         }
         const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-        const MeshInkUiLayout& layout=portrait_layout();
-        const int pager_width=meshink_pager_button_width(layout);
-        if(hit(x,y,layout.section_margin,800,pager_width,62)&&preset_page>0){preset_page--;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-        if(hit(x,y,meshink_pager_right(layout),800,pager_width,62)&&preset_page+1<page_count){preset_page++;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+        if(hit(x,y,meshink_preset_prev_rect(layout))&&preset_page>0){preset_page--;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+        if(hit(x,y,meshink_preset_next_rect(layout))&&preset_page+1<page_count){preset_page++;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
         return;
     }
     if(screen==Screen::CompanionConfirm){
         const MeshInkUiLayout& layout=portrait_layout();
-        const int width=meshink_form_pair_width(layout);
-        if(hit(x,y,layout.form_margin,500,width,72)){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
-        if(hit(x,y,meshink_form_pair_right(layout),500,width,72)){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");request_companion_mode();return;}
+        if(hit(x,y,meshink_confirm_left_rect(layout,500))){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
+        if(hit(x,y,meshink_confirm_right_rect(layout,500))){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");request_companion_mode();return;}
         return;
     }
     if(screen==Screen::ShutdownConfirm){
         const MeshInkUiLayout& layout=portrait_layout();
-        const int width=meshink_form_pair_width(layout);
-        if(hit(x,y,layout.form_margin,650,width,72)){open_screen(Screen::DisplaySettings);return;}
-        if(hit(x,y,meshink_form_pair_right(layout),650,width,72)){request_hardware_shutdown();return;}
+        if(hit(x,y,meshink_confirm_left_rect(layout,650))){open_screen(Screen::DisplaySettings);return;}
+        if(hit(x,y,meshink_confirm_right_rect(layout,650))){request_hardware_shutdown();return;}
         return;
     }
     const MeshInkUiLayout& layout=portrait_layout();
-    if(hit(x,y,layout.form_margin,180,layout.form_width,64)){replace_name_on_type=true;keyboard_visible=true;T5_DEBUGLN(T5_LOG_UI,"[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
-    if(hit_section_row(x,y,292,88)){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-    if(hit(x,y,layout.form_margin,402,layout.form_width,52)){screen=Screen::CompanionConfirm;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
-    if(!keyboard_visible){if(hit(x,y,layout.form_margin,840,layout.form_width,64)){keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return;}
+    if(hit(x,y,meshink_welcome_name_rect(layout))){replace_name_on_type=true;keyboard_visible=true;T5_DEBUGLN(T5_LOG_UI,"[T5-UI] name selected; keyboard shown; next character replaces current name");draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
+    if(hit(x,y,meshink_welcome_preset_rect(layout))){preset_return_screen=Screen::Welcome;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+    if(hit(x,y,meshink_welcome_companion_rect(layout))){screen=Screen::CompanionConfirm;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
+    if(!keyboard_visible){if(hit(x,y,meshink_welcome_show_keyboard_rect(layout))){keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return;}
     handle_name_keyboard(x,y);
 }
 
