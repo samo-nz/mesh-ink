@@ -83,7 +83,7 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
-contains("draw_page_indicator(chat_page,pages,840);", "conversation history shows swipe page indicator")
+contains("draw_page_indicator(chat_page,pages,layout.bottom_nav_top-60);", "conversation history shows swipe page indicator")
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
 contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
