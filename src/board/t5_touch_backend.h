@@ -116,13 +116,18 @@ inline void meshink_touch_finish_boot() {
     const bool product_ok=read(GT911_PRODUCT_ID,product,sizeof(product));
     const bool config_ok=read(GT911_CONFIG_VERSION,&config,1);
     if(product_ok) {
-        Serial.printf("[T5-TOUCH] backend=GT911 address=0x%02X product=%02X%02X%02X%02X config=%s",
-                      (unsigned)GT911_ADDR,
-                      (unsigned)product[0],(unsigned)product[1],
-                      (unsigned)product[2],(unsigned)product[3],
-                      config_ok?"0x":"?");
-        if(config_ok)Serial.printf("%02X",(unsigned)config);
-        Serial.println(" ready");
+        if(config_ok) {
+            Serial.printf("[T5-TOUCH] backend=GT911 address=0x%02X product=%02X%02X%02X%02X config=0x%02X ready\n",
+                          (unsigned)GT911_ADDR,
+                          (unsigned)product[0],(unsigned)product[1],
+                          (unsigned)product[2],(unsigned)product[3],
+                          (unsigned)config);
+        } else {
+            Serial.printf("[T5-TOUCH] backend=GT911 address=0x%02X product=%02X%02X%02X%02X config=? ready\n",
+                          (unsigned)GT911_ADDR,
+                          (unsigned)product[0],(unsigned)product[1],
+                          (unsigned)product[2],(unsigned)product[3]);
+        }
     } else {
         Serial.printf("[T5-TOUCH] backend=GT911 address=0x%02X identity probe unavailable; runtime retry active\n",
                       (unsigned)GT911_ADDR);
