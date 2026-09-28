@@ -918,11 +918,11 @@ static void draw_contacts() {
     draw_app_header("CONTACTS");
     // The model is fully populated before ui_use_data_provider() attaches it.
     // A missing provider means STARTUP, not a completed empty contact list.
-    if(!ui_data)centred("LOADING CONTACT INFO..",300,3,0,true);
+    if(!ui_data)centred("LOADING CONTACT INFO..",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->contact_count();
         clamp_list_page(contacts_page,count);
-        if(!count)centred("NO SAVED CONTACTS",300,3,0,true);
+        if(!count)centred("NO SAVED CONTACTS",ui_y(300),3,0,true);
         else {
             const size_t first=contacts_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
@@ -935,11 +935,11 @@ static void draw_contacts() {
 
 static void draw_channels() {
     draw_app_header("CHANNELS");
-    if(!ui_data)centred("NO CONFIGURED CHANNELS",300,3,0,true);
+    if(!ui_data)centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->channel_count();
         clamp_list_page(channels_page,count);
-        if(!count)centred("NO CONFIGURED CHANNELS",300,3,0,true);
+        if(!count)centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
         else {
             const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
@@ -1343,7 +1343,7 @@ static void settings_row(const char* title,const char* subtitle,int y);
 
 static void draw_discovery() {
     draw_app_header("DISCOVERED",true);
-    if(!ui_data||!ui_data->advert_count()){centred("NO ADVERTS HEARD",300,3,0,true);centred("SEND AN ADVERT OR WAIT",350,2);}
+    if(!ui_data||!ui_data->advert_count()){centred("NO ADVERTS HEARD",ui_y(300),3,0,true);centred("SEND AN ADVERT OR WAIT",ui_y(350),2);}
     else for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)draw_list_entry(ui_data->advert(i),120+i*150);
 }
 
@@ -1358,7 +1358,7 @@ static void draw_more() {
 static void draw_advert_menu() {
     draw_app_header("ADVERTISE",true);
     settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
-    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",portrait_layout().section_margin,500,39,2,0,true,4);
+    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",portrait_layout().section_margin,ui_y(500),39,2,0,true,4);
 }
 
 static void settings_row(const char* title,const char* subtitle,int reference_y) {
@@ -1419,25 +1419,25 @@ static const char* gps_constellation_label(){
 static void draw_gps_tuning(){
     draw_app_header("GPS POWER SAVING",true);
     settings_row("CONSTELLATIONS",gps_constellation_label(),120);
-    // Informational only: output is configured automatically, not selectable.
-    {const MeshInkUiLayout& layout=portrait_layout();
-     box(layout.outer_margin,238,layout.outer_width,layout.settings_row_height);
-     text("NMEA OUTPUT",layout.content_text_x,252,3,0,true);}
-    text("RMC + GGA (AUTOMATIC)",28,296,2,0,true);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect nmea=meshink_outer_row_rect(layout,238,112);
+    box(nmea);
+    text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(14),3,0,true);
+    text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(296),2,0,true);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
-    draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",24,515,45,2,0,true,5);
-    draw_wrapped("COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.",portrait_layout().section_margin,700,45,2,0,true,4);
+    draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",layout.section_margin,ui_y(515),45,2,0,true,5);
+    draw_wrapped("COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.",layout.section_margin,ui_y(700),45,2,0,true,4);
 }
 
 static void draw_timezone(){
     draw_app_header("TIMEZONE",true);
     const MeshInkUiLayout& layout=portrait_layout();
     for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
-        const int y=118+i*102;
-        box(layout.outer_margin,y,layout.outer_width,92,i==timezone_index);
+        const MeshInkUiRect row=meshink_outer_row_rect(layout,118+i*102,92);
+        box(row,i==timezone_index);
         const uint8_t c=i==timezone_index?0xFF:0;
-        text(TIMEZONES[i].label,layout.content_text_x,y+10,3,c,true);
-        text(TIMEZONES[i].detail,layout.content_text_x,y+54,2,c,true);
+        text(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(10),3,c,true);
+        text(TIMEZONES[i].detail,layout.content_text_x,row.y+ui_h(54),2,c,true);
     }
 }
 
@@ -1478,18 +1478,17 @@ static void draw_display_settings() {
 
 static void draw_help() {
     draw_app_header("USING MESHINK",true);
-    // Keep each heading close to its paragraph; 2x body text is the largest
-    // size that fits the complete guide, including the final "UI.".
-    text("QUICK SETTINGS",portrait_layout().section_margin,142,3,0,true);
-    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",24,176,39,2,0,false,3);
-    text("BOOT BUTTON",portrait_layout().section_margin,266,3,0,true);
-    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",portrait_layout().section_margin,300,39,2,0,false,5);
-    text("KEYBOARD",portrait_layout().section_margin,444,3,0,true);
-    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",portrait_layout().section_margin,478,39,2,0,false,4);
-    text("MAPS",portrait_layout().section_margin,586,3,0,true);
-    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",portrait_layout().section_margin,620,39,2,0,false,4);
-    text("BLUETOOTH COMPANION MODE",portrait_layout().section_margin,728,3,0,true);
-    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",portrait_layout().section_margin,762,39,2,0,false,5);
+    const MeshInkUiLayout& layout=portrait_layout();
+    text("QUICK SETTINGS",layout.section_margin,ui_y(142),3,0,true);
+    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",layout.section_margin,ui_y(176),39,2,0,false,3);
+    text("BOOT BUTTON",layout.section_margin,ui_y(266),3,0,true);
+    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",layout.section_margin,ui_y(300),39,2,0,false,5);
+    text("KEYBOARD",layout.section_margin,ui_y(444),3,0,true);
+    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",layout.section_margin,ui_y(478),39,2,0,false,4);
+    text("MAPS",layout.section_margin,ui_y(586),3,0,true);
+    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",layout.section_margin,ui_y(620),39,2,0,false,4);
+    text("BLUETOOTH COMPANION MODE",layout.section_margin,ui_y(728),3,0,true);
+    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",layout.section_margin,ui_y(762),39,2,0,false,5);
 }
 
 static void draw_standby(){
