@@ -1450,29 +1450,30 @@ static void draw_privacy_settings() {
 
 static void draw_display_settings() {
     draw_app_header("DISPLAY & POWER",true);
+    const MeshInkUiLayout& layout=portrait_layout();
     settings_row("MODE",frontlight_mode_name(),118);
     if(frontlight_mode==FrontlightMode::NightTimer){
-        const MeshInkUiLayout& layout=portrait_layout();
-        const int action_x=meshink_settings_inline_action_x(layout);
-        const int action_y=meshink_settings_inline_action_y(118);
-        box(action_x,action_y,meshink_settings_inline_action_width(),
-            meshink_settings_inline_action_height(),true);
-        text("EDIT TIMES",action_x+17,action_y+20,2,0xFF,true);
+        const MeshInkUiRect action=meshink_settings_inline_action_rect(layout,118);
+        box(action,true);
+        text("EDIT TIMES",action.x+ui_w(17),action.y+ui_h(20),2,0xFF,true);
     }
     settings_row("LIGHT TIMEOUT",frontlight_timeout_name(),238);
-    {const MeshInkUiLayout& layout=portrait_layout();
-     box(layout.outer_margin,358,layout.outer_width,160);
-     text("BRIGHTNESS",layout.content_text_x,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
-    const int slider_left=meshink_slider_left(layout);
-    const int slider_width=meshink_slider_width(layout);
-    meshink_display_fill_rect({slider_left,464,slider_width,5},0,fb);const int knob=slider_left+(frontlight_brightness*slider_width)/100;meshink_display_fill_rect({knob-12,449,24,35},0,fb);text("-",layout.content_text_x,452,3,0,true);text("+",layout.width-48,452,3,0,true);}
+    const MeshInkUiRect brightness=meshink_display_brightness_rect(layout);
+    box(brightness);
+    text("BRIGHTNESS",layout.content_text_x,brightness.y+ui_h(16),3,0,true);
+    char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);
+    text(level,layout.width-ui_w(12)-(int)strlen(level)*18-ui_w(8),brightness.y+ui_h(16),3,0,true);
+    const MeshInkUiRect slider=meshink_display_slider_track_rect(layout);
+    meshink_display_fill_rect({slider.x,slider.y,slider.width,slider.height},0,fb);
+    const int knob=slider.x+(frontlight_brightness*slider.width)/100;
+    meshink_display_fill_rect({knob-ui_w(12),slider.y-ui_h(15),ui_w(24),ui_h(35)},0,fb);
+    text("-",layout.content_text_x,ui_y(452),3,0,true);
+    text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
-    {const MeshInkUiLayout& layout=portrait_layout();
-     const int shutdown_y=meshink_shutdown_top(layout);
-     box(layout.section_margin,shutdown_y,layout.section_width,70);
-     centred("SHUT DOWN",shutdown_y+23,3,0,true);
-    }
+    const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
+    box(shutdown);
+    centred("SHUT DOWN",shutdown.y+ui_h(23),3,0,true);
 }
 
 static void draw_help() {
@@ -1501,15 +1502,24 @@ static void draw_standby(){
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
 static void draw_night_schedule(){
-    draw_app_header("NIGHT SCHEDULE",true);char start[8],end[8];format_minutes(night_start_minutes,start);format_minutes(night_end_minutes,end);
-    {const MeshInkUiLayout& layout=portrait_layout();
-     const int pair_width=meshink_section_pair_width(layout);
-     const int pair_right=meshink_section_pair_right(layout);
-     box(layout.section_margin,150,layout.section_width,112,night_edit_field==0);text("START",layout.section_margin+18,166,3,night_edit_field==0?0xFF:0,true);text(start,layout.width-180,166,3,night_edit_field==0?0xFF:0,true);
-    box(layout.section_margin,286,layout.section_width,112,night_edit_field==1);text("END",layout.section_margin+18,302,3,night_edit_field==1?0xFF:0,true);text(end,layout.width-180,302,3,night_edit_field==1?0xFF:0,true);
-    box(layout.section_margin,460,pair_width,76);text("-30 MIN",layout.section_margin+38,486,3,0,true);box(pair_right,460,pair_width,76);text("+30 MIN",pair_right+38,486,3,0,true);
-    box(layout.section_margin,600,layout.section_width,76,true);centred("SAVE SCHEDULE",626,3,0xFF,true);}
-    draw_wrapped("The selected timezone from GPS settings is used automatically.",portrait_layout().section_margin,740,39,2,0,true,3);
+    draw_app_header("NIGHT SCHEDULE",true);
+    char start[8],end[8];format_minutes(night_start_minutes,start);format_minutes(night_end_minutes,end);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect start_rect=meshink_night_start_rect(layout);
+    const MeshInkUiRect end_rect=meshink_night_end_rect(layout);
+    const MeshInkUiRect minus_rect=meshink_night_minus_rect(layout);
+    const MeshInkUiRect plus_rect=meshink_night_plus_rect(layout);
+    const MeshInkUiRect save_rect=meshink_night_save_rect(layout);
+    box(start_rect,night_edit_field==0);
+    text("START",start_rect.x+ui_w(18),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    text(start,start_rect.x+start_rect.width-ui_w(156),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    box(end_rect,night_edit_field==1);
+    text("END",end_rect.x+ui_w(18),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    text(end,end_rect.x+end_rect.width-ui_w(156),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    box(minus_rect);text("-30 MIN",minus_rect.x+ui_w(38),minus_rect.y+ui_h(26),3,0,true);
+    box(plus_rect);text("+30 MIN",plus_rect.x+ui_w(38),plus_rect.y+ui_h(26),3,0,true);
+    box(save_rect,true);centred("SAVE SCHEDULE",save_rect.y+ui_h(26),3,0xFF,true);
+    draw_wrapped("The selected timezone from GPS settings is used automatically.",layout.section_margin,ui_y(740),39,2,0,true,3);
 }
 
 static void draw_meshink_logo(int top,bool compact=false) {
