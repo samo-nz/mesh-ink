@@ -153,31 +153,20 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION substantially improves offline Maps performance
-          and interaction. Map storage metadata and the PMTiles root index are
-          warmed during the startup splash, RGBA PNG tiles decode directly to
-          the packed 4-bit grayscale cache, and the ESP32-S3 cache64 build is
-          now the field-tested release target. Loose XYZ PNG tiles retain
-          priority over PMTiles and the existing parent-tile fallback.
+          MeshInk $VERSION is an important Bluetooth Companion Mode hotfix.
 
-          Pinch gestures now change exactly one zoom level per gesture, Maps
-          can zoom down to level 2 consistently from touch and physical
-          controls, and the e-paper loading sequence keeps the previous map
-          visible while new tiles are prepared. The vertical map seam seen in
-          earlier cache64 tests is fixed by aligned PNG decoder input.
+          The 1.9.0 cache64 release could starve the ESP32-S3 CPU1 idle task
+          while running Bluetooth Companion Mode, causing repeated task-watchdog
+          reports and making companion mode unusable. The companion service loop
+          now yields to FreeRTOS each cycle while continuing to service MeshCore,
+          Bluetooth, sensors and the RTC.
 
-          Standby now checks charger state separately from its low-frequency
-          full status poll, so the charging bolt appears or disappears promptly
-          with only a status-bar e-paper refresh.
+          This fix was confirmed on-device: Bluetooth Companion Mode remained
+          stable through connection, normal operation, disconnect and return to
+          the local MeshInk UI without the previous IDLE1 watchdog failure.
 
-          Critical battery protection now shuts the device down cleanly before
-          brownout boot loops. On battery power, a confirmed voltage below
-          3.30 V shows a persistent LOW BATTERY screen and places the BQ25896
-          in BATFET ship mode. USB/MagSafe power bypasses the cutoff so a flat
-          device can boot and charge normally.
-
-          The update image does not intentionally erase existing MeshCore
-          settings, contacts, message history, or saved MeshInk credentials.
+          No map, radio preset, UI, contact, message-history or saved MeshInk
+          setting migrations are introduced by this hotfix.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
