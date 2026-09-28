@@ -198,6 +198,10 @@ constexpr MeshInkUiRect meshink_node_right_action_rect(const MeshInkUiLayout& la
     return {left.x+left.width+gap,left.y,left.width,left.height};
 }
 
+constexpr MeshInkUiRect meshink_password_save_rect(const MeshInkUiLayout& layout) {
+    return meshink_ui_ref_rect(layout,20,496,260,46);
+}
+
 constexpr MeshInkUiRect meshink_map_control_rect(
     const MeshInkUiLayout& layout,int index) {
     return meshink_ui_ref_rect(layout,462,58+index*75,66,66);
