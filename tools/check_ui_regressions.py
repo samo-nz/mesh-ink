@@ -33,7 +33,7 @@ assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved 
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
 contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
 contains('fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);', "full e-paper redraw on first Contacts")
-contains('landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),711,425,234);', "landscape keyboard preserves DONE for name entry and LOGIN for repeater auth")
+contains('landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),metrics.action_key);', "landscape keyboard preserves DONE for name entry and LOGIN for repeater auth")
 assert 'if(was_setup)show_contacts_after_setup();' not in source, "landscape keyboard must not complete setup"
 assert source.count('save_node_name();')==1, "only the portrait SAVE may persist setup"
 contains('keyboard_visible=true;set_keyboard_orientation(false);\n        return true;', "landscape DONE returns to portrait without saving")
@@ -121,7 +121,7 @@ contains('page==NodeInfoPage::Telemetry&&hit_section_row(x,y,808,70)', "telemetr
 contains('page==NodeInfoPage::Path&&hit_section_row(x,y,808,70)', "path action touch follows shared section geometry")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
-contains('meshink_display_fill_rect({0,486,meshink_display_logical_width(),474},0xFF,fb);', "password keyboard clears the lower Node Info background")
+contains('meshink_display_fill_rect({0,metrics.clear_top,keyboard_layout.width,', "password keyboard clear area follows shared geometry")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
 contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
@@ -187,12 +187,21 @@ assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default 
 # Portrait keyboard ergonomics: message entry uses a wide space bar with no
 # adjacent HIDE key; Radio Settings name entry has a wide SAVE action and
 # dismisses by tapping above the keyboard instead.
-contains('key("SPACE",120,898,298);', "space-capable portrait keyboards use a wide space bar")
-contains('key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);', "message/password action remains isolated at far right")
-contains('if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "message keyboard dismisses quickly by tapping above it")
-assert source.count("if(x<422){append(' ');queue_text_refresh();return true;}")>=2, "message and password former HIDE regions belong to SPACE"
-contains('key("SAVE",120,898,408);', "name entry uses a wide SAVE action instead of a dead space bar")
-contains('if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Radio Settings keyboard dismisses quickly by tapping above it")
+# Keyboard drawing, touch and message entry now share one scalable geometry
+# source. The T5 reference remains exact while board profiles can tune offsets.
+contains("static meshink_keyboard::Metrics keyboard_metrics(bool landscape)", "UI builds keyboard metrics from the active display")
+contains("meshink_keyboard::make_metrics(", "UI uses shared scalable keyboard geometry")
+contains("MESHINK_KEYBOARD_PORTRAIT_X_OFFSET", "board profile exposes portrait keyboard tuning")
+contains("MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET", "board profile exposes landscape keyboard tuning")
+contains("draw_compose_entry(keyboard_layout);", "chat compose box follows keyboard entry geometry")
+assert "meshink_keyboard::in_row(y,828)" not in source, "portrait third-row touch must not use fixed T5 y coordinates"
+assert "meshink_keyboard::in_row(y,425)" not in source, "landscape action-row touch must not use fixed T5 y coordinates"
+contains('key("SPACE",metrics.space_key);', "space-capable keyboards use the shared wide space key")
+contains('key(keyboard_password_mode?"LOGIN":"SEND",metrics.action_key);', "message/password action remains isolated at far right")
+contains('if(y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "message keyboard dismiss boundary follows shared geometry")
+assert source.count("x<meshink_keyboard::action_split(metrics)")>=3, "portrait/landscape SPACE boundaries come from shared geometry"
+contains('key("SAVE",metrics.wide_action_key);', "name entry uses the shared wide SAVE action instead of a dead space bar")
+contains('if(screen==Screen::RadioSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Radio Settings dismiss boundary follows shared geometry")
 assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
 
 # 1.8.4 interaction-latency fixes and sentence-style message keyboard.
