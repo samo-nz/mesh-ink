@@ -1,4 +1,5 @@
 #include "pmtiles_reader.h"
+#include "t5_logging.h"
 
 #include <Arduino.h>
 #include <SD.h>
@@ -342,7 +343,7 @@ bool prepare(File& file, const char* path) {
     archive.supported = parse_directory(file, archive.root_offset,
                                         archive.root_length, root);
     if(archive.supported)
-        Serial.printf("[T5-PMT] ready path=%s zoom=%u-%u compression=%u\n",
+        T5_DEBUGF(T5_LOG_MAP,"[T5-PMT] ready path=%s zoom=%u-%u compression=%u\n",
                       path,(unsigned)archive.min_zoom,
                       (unsigned)archive.max_zoom,(unsigned)archive.compression);
     return archive.supported;
