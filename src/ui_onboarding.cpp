@@ -1169,15 +1169,18 @@ static int wrapped_line_count(const char* value,int chars_per_line) {
     return max(1,lines);
 }
 
-static int message_bubble_height(const UiMessage& message){return max(104,wrapped_line_count(message.text,23)*29+48);}
+static int message_bubble_height(const UiMessage& message){
+    return max(ui_h(104),wrapped_line_count(message.text,23)*ui_h(29)+ui_h(48));
+}
 
 static void draw_message_bubble(const UiMessage& message,int y,int h) {
-    const int x=message.outgoing?82:12,w=446;box(x,y,w,h,message.outgoing);
-    draw_wrapped(message.text,x+16,y+12,23,3,message.outgoing?0xFF:0,true,8);
+    const int x=message.outgoing?ui_x(82):ui_x(12),w=ui_w(446);
+    box(x,y,w,h,message.outgoing);
+    draw_wrapped(message.text,x+ui_w(16),y+ui_h(12),23,3,message.outgoing?0xFF:0,true,8);
     char footer[26];const char* state="";
     if(message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;case UiMessageState::Retrying1:state="RETRYING 1/5";break;case UiMessageState::Retrying2:state="RETRYING 2/5";break;case UiMessageState::Retrying3:state="RETRYING 3/5";break;case UiMessageState::Retrying4:state="RETRYING 4/5";break;case UiMessageState::Retrying5:state="RETRYING 5/5";break;default:break;}}
     snprintf(footer,sizeof(footer),"%s%s%s",message.time,state[0]?"  ":"",state);
-    text(footer,x+w-(int)strlen(footer)*12-12,y+h-28,2,message.outgoing?0xFF:0,true);
+    text(footer,x+w-(int)strlen(footer)*12-ui_w(12),y+h-ui_h(28),2,message.outgoing?0xFF:0,true);
 }
 
 static void chat_page_bounds(size_t count,int available,uint8_t requested,size_t& first,size_t& end,uint8_t& pages){
@@ -1189,19 +1192,19 @@ static void chat_page_bounds(size_t count,int available,uint8_t requested,size_t
 }
 
 static int chat_history_bottom_no_keyboard(){
-    return portrait_layout().bottom_nav_top-100;
+    return portrait_layout().bottom_nav_top-ui_h(100);
 }
 static int chat_history_available(){
-    return chat_history_bottom_no_keyboard()-126;
+    return chat_history_bottom_no_keyboard()-ui_h(126);
 }
 
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
     const int text_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,540);
     if(compose_text[0])
-        draw_wrapped(compose_text,text_x,metrics.entry.y+8,25,3,0,true,2);
+        draw_wrapped(compose_text,text_x,metrics.entry.y+ui_h(8),25,3,0,true,2);
     else
-        text("Enter text",text_x,metrics.entry.y+24,2,0,false);
+        text("Enter text",text_x,metrics.entry.y+ui_h(24),2,0,false);
 }
 
 static void draw_chat(bool channel) {
@@ -1211,9 +1214,9 @@ static void draw_chat(bool channel) {
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
     const int history_bottom=keyboard?keyboard_layout.history_bottom:chat_history_bottom_no_keyboard();
-    const int available=history_bottom-126;
+    const int available=history_bottom-ui_h(126);
     size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
-    if(!count)centred("NO MESSAGES YET",300,3,0,true);else{int y=126;for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+8;}}
+    if(!count)centred("NO MESSAGES YET",ui_y(300),3,0,true);else{int y=ui_y(126);for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+ui_h(8);}}
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
     const uint32_t timing_keyboard_started=micros();
     if(keyboard){
@@ -1221,11 +1224,11 @@ static void draw_chat(bool channel) {
         draw_keyboard();
     }else{
         const MeshInkUiLayout& layout=portrait_layout();
-        const int compose_y=layout.bottom_nav_top-12;
-        draw_page_indicator(chat_page,pages,layout.bottom_nav_top-60);
+        const int compose_y=layout.bottom_nav_top-ui_h(12);
+        draw_page_indicator(chat_page,pages,layout.bottom_nav_top-ui_h(60));
         box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height);
         text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",
-             layout.content_text_x,compose_y+20,2,0,true);
+             layout.content_text_x,compose_y+ui_h(20),2,0,true);
     }
     t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
