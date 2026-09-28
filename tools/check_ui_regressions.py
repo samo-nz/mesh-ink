@@ -340,4 +340,4 @@ assert "box(470,58,58,48" not in source, "header action must derive from logical
 contains("static inline const MeshInkUiLayout& portrait_layout()", "logical layout is cached and returned by reference")
 assert "const MeshInkUiLayout layout=portrait_layout();" not in source, "UI must not copy the full layout struct onto loopTask stack"
 assert "const MeshInkUiLayout& layout=portrait_layout();" in source, "UI local layout aliases use const references"
-contains("[T5-STACK] maps remaining=%u words", "first Maps draw reports loopTask stack watermark")
+contains("[T5-STACK] maps high-water=%u", "first Maps draw reports loopTask stack watermark")
