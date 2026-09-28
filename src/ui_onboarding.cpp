@@ -1073,7 +1073,7 @@ static void pan_map_by_pixels(int dx,int dy) {
     map_latitude=atan(sinh(PI*(1.0-2.0*y/world)))*180.0/PI;
 }
 static void draw_maps() {
-    // Even a perfect framebuffer cache is stale after SD removal/remount.
+    const MeshInkUiLayout& layout=portrait_layout();
     const bool media_ready=map_tiles_media_ready();
     const uint32_t media_epoch=map_tiles_media_epoch();
     if(!media_ready||map_base_media_epoch!=media_epoch) {
@@ -1084,22 +1084,18 @@ static void draw_maps() {
     if(media_ready&&map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
-        draw_status_bar(); // clock, battery and unread counts are live.
+        draw_status_bar();
     } else {
         meshink_display_set_all_white(&display);
-        // Only the compact status bar remains above the terrain. The map
-        // starts directly below it and fills the view down to bottom nav.
         draw_status_bar();
-        result=map_tiles_render(fb,0,map_top(),portrait_layout().width,map_bottom()-map_top(),
+        result=map_tiles_render(fb,0,map_top(),layout.width,map_bottom()-map_top(),
                                 map_latitude,map_longitude,map_zoom);
         if(!result.sd_ready||map_base_media_epoch!=map_tiles_media_epoch()) {
             map_base_valid=false;
             map_base_media_epoch=map_tiles_media_epoch();
             if(!result.sd_ready)
-                meshink_display_fill_rect({0,map_top(),portrait_layout().width,map_bottom()-map_top()},0xFF,fb);
+                meshink_display_fill_rect({0,map_top(),layout.width,map_bottom()-map_top()},0xFF,fb);
         }
-        // Cache the backend-owned framebuffer byte-for-byte. UI code does not
-        // need to know physical dimensions, packing, or panel row ordering.
         if(result.sd_ready&&result.tiles) {
             const size_t bytes=meshink_display_framebuffer_bytes();
             if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
@@ -1112,44 +1108,57 @@ static void draw_maps() {
     }
     draw_map_nodes();
     draw_device_location_marker();
-    // Show missing-map coverage when needed. Keep detailed source statistics
-    // in serial diagnostics, but expose a compact source badge beside ZOOM.
+
     if(result.sd_ready&&!result.tiles) {
-        meshink_display_fill_rect({18,774,232,30},0xFF,fb);
-        text("NO MAP TILES HERE",22,778,2,0,true);
+        const MeshInkUiRect missing=ui_rect(18,774,232,30);
+        meshink_display_fill_rect({missing.x,missing.y,missing.width,missing.height},0xFF,fb);
+        text("NO MAP TILES HERE",ui_x(22),ui_y(778),2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
-    // Scale-2 text advances 12 px per character. Keep only a 4 px margin on
-    // each side so the white label backing follows the actual badge width.
-    const int zoom_label_width=(int)strlen(zoom)*12+8;
-    meshink_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);text(zoom,22,816,2,0,true);
-    // The three map controls share their 66x66 size, black background and
-    // white glyphs. Keep their touch rectangles in sync below.
-    const int control_x=portrait_layout().width-78;
-    box(control_x,58,66,66,true);
-    meshink_display_fill_rect({control_x+20,88,26,5},0xFF,fb);
-    meshink_display_fill_rect({control_x+30,78,5,26},0xFF,fb);
-    box(control_x,133,66,66,true);
-    meshink_display_fill_rect({control_x+20,163,26,5},0xFF,fb);
+    const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);
+    meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);
+    text(zoom,ui_x(22),ui_y(816),2,0,true);
+
+    const MeshInkUiRect zoom_in=meshink_map_control_rect(layout,0);
+    const MeshInkUiRect zoom_out=meshink_map_control_rect(layout,1);
+    const MeshInkUiRect locate=meshink_map_control_rect(layout,2);
+    box(zoom_in,true);
+    meshink_display_fill_rect({zoom_in.x+ui_w(20),zoom_in.y+ui_h(30),ui_w(26),ui_h(5)},0xFF,fb);
+    meshink_display_fill_rect({zoom_in.x+ui_w(30),zoom_in.y+ui_h(20),ui_w(5),ui_h(26)},0xFF,fb);
+    box(zoom_out,true);
+    meshink_display_fill_rect({zoom_out.x+ui_w(20),zoom_out.y+ui_h(30),ui_w(26),ui_h(5)},0xFF,fb);
     long own_latitude=0,own_longitude=0;bool own_current_fix=false;
     const bool has_own_location=map_device_position(own_latitude,own_longitude,own_current_fix);
     if(has_own_location){
-        box(control_x,208,66,66,true);
-        // A large, entirely white crosshair. GPS-less H752 builds expose this
-        // only when MeshCore has a configured static My Location.
-        const int target_x=control_x+12,target_y=220;
-        meshink_display_fill_rect({target_x+6,target_y+6,33,5},0xFF,fb);
-        meshink_display_fill_rect({target_x+6,target_y+34,33,5},0xFF,fb);
-        meshink_display_fill_rect({target_x+6,target_y+6,5,33},0xFF,fb);
-        meshink_display_fill_rect({target_x+34,target_y+6,5,33},0xFF,fb);
-        meshink_display_fill_rect({target_x+18,target_y+18,9,9},0xFF,fb);
-        meshink_display_fill_rect({target_x,target_y+21,45,5},0xFF,fb);
-        meshink_display_fill_rect({target_x+21,target_y,5,45},0xFF,fb);
+        box(locate,true);
+        const int target_x=locate.x+ui_w(12),target_y=locate.y+ui_h(12);
+        meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(6),ui_w(33),ui_h(5)},0xFF,fb);
+        meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(34),ui_w(33),ui_h(5)},0xFF,fb);
+        meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(6),ui_w(5),ui_h(33)},0xFF,fb);
+        meshink_display_fill_rect({target_x+ui_w(34),target_y+ui_h(6),ui_w(5),ui_h(33)},0xFF,fb);
+        meshink_display_fill_rect({target_x+ui_w(18),target_y+ui_h(18),ui_w(9),ui_h(9)},0xFF,fb);
+        meshink_display_fill_rect({target_x,target_y+ui_h(21),ui_w(45),ui_h(5)},0xFF,fb);
+        meshink_display_fill_rect({target_x+ui_w(21),target_y,ui_w(5),ui_h(45)},0xFF,fb);
     }
-    const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));double target=metres_per_pixel*120.0,nice=1.0;while(nice*10.0<=target)nice*=10.0;if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;int pixels=(int)(nice/metres_per_pixel);
-    char scale[24];if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
-    meshink_display_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
-    if(!result.sd_ready){meshink_display_fill_rect({80,300,380,80},0xFF,fb);centred("SD CARD / MAPS UNAVAILABLE",328,2,0,true);}
+
+    const double metres_per_pixel=cos(map_latitude*PI/180.0)*2.0*PI*6378137.0/(256.0*(1<<map_zoom));
+    double target=metres_per_pixel*ui_w(120),nice=1.0;
+    while(nice*10.0<=target)nice*=10.0;
+    if(target/nice>=5)nice*=5;else if(target/nice>=2)nice*=2;
+    int pixels=(int)(nice/metres_per_pixel);
+    char scale[24];
+    if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}
+    else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
+    meshink_display_fill_rect({ui_x(20),ui_y(850),pixels+ui_w(12),ui_h(34)},0xFF,fb);
+    line(ui_x(26),ui_y(872),ui_x(26)+pixels,ui_y(872));
+    line(ui_x(26),ui_y(866),ui_x(26),ui_y(878));
+    line(ui_x(26)+pixels,ui_y(866),ui_x(26)+pixels,ui_y(878));
+    text(scale,ui_x(28),ui_y(850),2,0,true);
+    if(!result.sd_ready){
+        const MeshInkUiRect warning=ui_rect(80,300,380,80);
+        meshink_display_fill_rect({warning.x,warning.y,warning.width,warning.height},0xFF,fb);
+        centred("SD CARD / MAPS UNAVAILABLE",ui_y(328),2,0,true);
+    }
     draw_bottom_nav(2);
 }
 
