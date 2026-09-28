@@ -9,7 +9,9 @@ on:
       - 'src/ui_data.h'
       - 'src/local_mesh_runtime.cpp'
       - 'src/map_gestures.h'
+      - 'src/ui_layout.h'
       - 'tests/test_map_gestures.cpp'
+      - 'tests/test_ui_layout.cpp'
       - 'src/map_gray.h'
       - 'tests/test_map_gray.cpp'
       - 'platformio.ini'
@@ -55,6 +57,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_map_gestures.cpp -o /tmp/map-gestures-test
           /tmp/map-gestures-test
+      - name: Shared UI drawing and touch geometry regression
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
+            tests/test_ui_layout.cpp -o /tmp/ui-layout-test
+          /tmp/ui-layout-test
       - name: Map grayscale equivalence regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
