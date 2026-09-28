@@ -2,7 +2,7 @@
 
 The firmware build catches C++ errors; these checks ensure the intended
 screen/navigation behaviours and matching draw/touch targets remain wired.
-They do not replace a physical GT911, GPS, or e-paper test.
+They do not replace a physical touch controller, GPS, or e-paper test.
 """
 from pathlib import Path
 import re
@@ -18,6 +18,9 @@ unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
+touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encoding="utf-8")
+touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
+touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
 platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
 cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].split("; Generic portability", 1)[0]
 
@@ -50,19 +53,21 @@ contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
 contains('draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);', "BOOT refresh without home navigation")
 assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
-# Keep non-Maps typing and Home release on the original single-touch path.
-# Map gestures use a separate GT911 two-point parser and must not leak into
-# the keyboard or other app screens. The old one-branch sampler text check
-# predates the map-only split and would reject a working two-point sampler.
+# Keep the application gesture/event layer independent from the physical touch
+# controller. Maps consumes multi-contact frames; other screens consume the
+# legacy primary-contact semantics supplied by the selected touch backend.
+contains('#include "hardware/touch.h"', "UI includes generic touch hardware boundary")
 contains("bool held=false,home_held=false,map_previous=false;", "independent home touch latch")
 contains("const bool on_map=screen==Screen::Maps&&!standby_active&&\n            !keyboard_landscape&&!quick_panel_active;", "Maps yields touch sampling to Quick Settings")
-contains("if(!map_touch_points(count,x0,y0,x1,y1,home))", "Maps reads two touch points")
+contains("MeshInkTouchContacts contacts{};", "Maps consumes board-independent contact frames")
+contains("if(!meshink_touch_read_contacts(contacts))", "Maps reads multi-contact touch backend")
+contains("const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();", "non-Maps consumes primary touch backend")
 contains("r==1&&!keyboard_symbols", "alphabetic A/L edge expansion is isolated from symbols")
 contains("key_index_edge_extended(", "A/L use edge-expanded home-row hit targets")
-non_map_sampler = source.split("// Non-Maps keeps the legacy single-touch GT911 parser.", 1)[1].split(
+non_map_sampler = source.split("// Non-Maps keeps the legacy single-contact semantics supplied by the touch", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
-assert "const bool pressed=touch_point(x,y,home);" in non_map_sampler, "non-Maps must keep the original single-touch parser"
+assert "const bool home=sample.home,pressed=sample.pressed;" in non_map_sampler, "non-Maps preserves primary press/Home semantics"
 assert "held=false;\n            }else if(home_held){\n                if(!pressed)home_held=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
 assert "int16_t event_x=last_x,event_y=last_y;" in non_map_sampler, "ordinary non-keyboard UI release position remains the default"
 assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "keyboard-only thumb-roll gate"
@@ -71,6 +76,30 @@ assert "event_x=start_x;" in non_map_sampler and "event_y=start_y;" in non_map_s
 assert "QueuedTap tap{event_x,event_y,dx,dy,false};" in non_map_sampler, "stabilized non-Maps release event path"
 assert "quick_slider_dragging=quick_panel_active&&" in non_map_sampler, "Quick Settings slider enters live-drag mode"
 assert "frontlight_preview(quick_slider_preview);" in non_map_sampler, "Quick Settings slider previews brightness during movement"
+
+# GT911 belongs entirely to the T5 hardware backend. Application/UI code must
+# not regain controller registers, address selection, reset/INT pins or cached
+# controller state.
+for controller_detail in (
+    "GT911", "0x814E", "0x814F", "T5_PIN_TOUCH_RST", "T5_PIN_TOUCH_INT",
+    "cached_touch_x", "map_last_count", "was_pressed"
+):
+    assert controller_detail not in source, f"UI leaked touch-controller detail: {controller_detail}"
+assert 'MESHINK_TOUCH_BACKEND_HEADER' in touch_selector_source, "touch selector must support a replaceable board backend"
+assert 'struct MeshInkTouchPrimarySample' in touch_types_source, "generic primary touch sample type"
+assert 'struct MeshInkTouchContacts' in touch_types_source, "generic multi-contact touch type"
+for backend_detail in (
+    "GT911_ADDR", "GT911_STATUS", "GT911_FIRST_POINT",
+    "T5_PIN_TOUCH_RST", "T5_PIN_TOUCH_INT",
+    "meshink_touch_prepare_boot", "meshink_touch_finish_boot",
+    "meshink_touch_set_power", "meshink_touch_read_primary",
+    "meshink_touch_read_contacts"
+):
+    assert backend_detail in touch_backend_source, f"T5 touch backend missing {backend_detail}"
+assert "meshink_touch_prepare_boot();" in source and "meshink_touch_finish_boot();" in source, "UI delegates boot touch sequencing"
+assert "meshink_touch_set_power(enabled);" in source, "UI delegates touch power sequencing"
+assert "meshink_touch_reset_tracking();" in source, "UI resets backend tracking on sampling-mode changes"
+
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
 contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
@@ -321,8 +350,8 @@ contains("const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);", "zoom label
 contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
 
-# test.8 pre-hardware audit: external frames are bounded, and the field
-# build carries narrowly scoped geometry/touch observability.
+# Pre-hardware audit: external frames are bounded, and the field build
+# carries narrowly scoped geometry/touch observability.
 assert "DISCOVERED_CONTACT_BASE_LEN" in runtime_source, "discovered advert parser must define a complete base frame length"
 assert 'len<DISCOVERED_CONTACT_BASE_LEN' in runtime_source, "truncated discovered adverts must be rejected"
 assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache must clear stale optional bytes"
