@@ -281,3 +281,13 @@ contains("if(standby_active&&millis()-last_standby_charge_poll>=1000)", "standby
 contains("draw_status_bar(true);", "standby charging refresh redraws only status content")
 contains("refresh_area(MODE_DU,{0,0,540,48},false);", "standby charging refresh is limited to status bar")
 contains("update_charge_state();", "standby entry samples current charger state")
+
+# Critical-battery protection must stop repeated brownout boots before the
+# BQ25896's much lower hardware-depletion threshold is reached.
+contains("static constexpr uint16_t CRITICAL_BATTERY_MV=3300;", "critical battery cutoff is 3.30 V")
+contains("CRITICAL_BATTERY_SAMPLES=3;", "runtime low-battery cutoff is debounced")
+contains("if(boot_battery_is_critical(boot_battery_mv))", "critical battery is checked before splash startup work")
+contains('centred("LOW BATTERY",230,6,0,true);', "critical low battery persistent screen")
+contains("BATFET_DIS=1u<<5", "critical low battery enters ship mode")
+contains("service_critical_battery();", "runtime critical battery monitor remains active")
+contains("if(external_power_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
