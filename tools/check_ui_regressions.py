@@ -5,6 +5,7 @@ screen/navigation behaviours and matching draw/touch targets remain wired.
 They do not replace a physical GT911, GPS, or e-paper test.
 """
 from pathlib import Path
+import re
 
 root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
@@ -83,7 +84,7 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
-contains("draw_page_indicator(chat_page,pages,layout.bottom_nav_top-60);", "conversation history shows swipe page indicator")
+contains("draw_page_indicator(chat_page,pages,layout.bottom_nav_top-ui_h(60));", "conversation history page indicator follows scaled geometry")
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
 contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
@@ -93,7 +94,7 @@ contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes 
 contains('UiNodeInfoRequest::Path,"REQUEST PATH"', "Node Info exposes an individual path request")
 assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once"
 contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node role icons")
-contains("box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height);", "settings rows use shared interior geometry")
+contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
 contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
 contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
@@ -113,15 +114,15 @@ contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbo
 contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
 contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use thicker line primitives")
 contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
-contains("draw_wrapped(node.status,layout.section_margin,294,27,3,0,true,14);", "received status text is larger and bold")
-contains("draw_wrapped(node.telemetry,layout.section_margin,270,27,3,0,true,4);", "received telemetry text is larger and bold")
-contains("draw_wrapped(node.path,layout.section_margin,270,27,3,0,true,5);", "received path text is larger and bold")
-contains('page==NodeInfoPage::Status&&hit_section_row(x,y,808,70)', "status action touch follows shared section geometry")
-contains('page==NodeInfoPage::Telemetry&&hit_section_row(x,y,808,70)', "telemetry action touch follows shared section geometry")
-contains('page==NodeInfoPage::Path&&hit_section_row(x,y,808,70)', "path action touch follows shared section geometry")
+contains("draw_wrapped(node.status,layout.section_margin,ui_y(294),27,3,0,true,14);", "received status text is larger and scaled")
+contains("draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);", "received telemetry text is larger and scaled")
+contains("draw_wrapped(node.path,layout.section_margin,ui_y(270),27,3,0,true,5);", "received path text is larger and scaled")
+contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
+contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
+contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "path action touch follows shared control geometry")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
-contains('meshink_display_fill_rect({0,metrics.clear_top,keyboard_layout.width,', "password keyboard clear area follows shared geometry")
+contains('meshink_display_fill_rect({0,metrics.clear_top,layout.width,', "password keyboard clear area follows shared geometry")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
 contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
@@ -144,13 +145,12 @@ contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
 contains("for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);", "bold GPS-off slash")
 contains("meshink_display_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
 contains("for(int d=-1;d<=1;++d) {\n        line(x+3,y+8+d", "bold envelope flap")
-for y in (58,133,208):
-    contains(f"box(control_x,{y},66,66", f"draw 1.5x map button at y={y}")
-    contains(f"if(hit(x,y,462,{y},66,66))", f"matching map touch target at y={y}")
-assert 'text("ME",control_x+' not in source, "locate icon must not display text"
-contains("box(control_x,208,66,66,true);", "black locate button matches zoom buttons")
-contains("meshink_display_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
-contains("meshink_display_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
+for index in range(3):
+    contains(f"meshink_map_control_rect(layout,{index})", f"map control {index} draws from shared geometry")
+    contains(f"meshink_map_control_rect(portrait_layout(),{index})", f"map control {index} touch uses shared geometry")
+assert 'text("ME",' not in source, "locate icon must not display text"
+contains("meshink_display_fill_rect({target_x,target_y+ui_h(21),ui_w(45),ui_h(5)},0xFF,fb);", "large white locate crosshair horizontal")
+contains("meshink_display_fill_rect({target_x+ui_w(21),target_y,ui_w(5),ui_h(45)},0xFF,fb);", "large white locate crosshair vertical")
 contains("draw_target_icon(sx-15,sy-15,false);", "device marker same icon as GPS fix")
 contains("if(map_zoom<meshink_map_gestures::MAX_ZOOM)", "Maps plus button uses shared maximum zoom")
 contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reaches shared minimum zoom")
@@ -173,7 +173,7 @@ contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independen
 contains('refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
 contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
 contains("static inline int map_centre_y(){return portrait_layout().map_centre_y;}", "map projection centre derives from logical layout")
-contains("result=map_tiles_render(fb,0,map_top(),portrait_layout().width,map_bottom()-map_top(),", "map fills logical viewport")
+contains("result=map_tiles_render(fb,0,map_top(),layout.width,map_bottom()-map_top(),", "map fills logical viewport")
 assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
 tiles = (Path(__file__).resolve().parents[1] / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 assert "render_clip={x,y,width,height};" in tiles, "map clipping derives from requested viewport"
@@ -308,15 +308,15 @@ contains("update_charge_state();", "standby entry samples current charger state"
 contains("static constexpr uint16_t CRITICAL_BATTERY_MV=3300;", "critical battery cutoff is 3.30 V")
 contains("CRITICAL_BATTERY_SAMPLES=3;", "runtime low-battery cutoff is debounced")
 contains("if(boot_battery_is_critical(boot_battery_mv))", "critical battery is checked before splash startup work")
-contains('centred("LOW BATTERY",230,6,0,true);', "critical low battery persistent screen")
+contains('centred("LOW BATTERY",ui_y(230),6,0,true);', "critical low battery persistent screen follows scaled geometry")
 contains("BATFET_DIS=1u<<5", "critical low battery enters ship mode")
 contains("service_critical_battery();", "runtime critical battery monitor remains active")
 contains("if(external_power_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
-contains("const int zoom_label_width=(int)strlen(zoom)*12+8;", "zoom label backing tracks rendered text width")
-contains("meshink_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
+contains("const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);", "zoom label backing tracks rendered text width")
+contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
 
 # Hardware-portability display boundary.
@@ -328,11 +328,32 @@ assert "meshink_display_fill_framebuffer(&display,0x00);" in source, "backend ow
 assert "MESHINK_DISPLAY_BACKEND_HEADER" in (root / "src" / "hardware" / "display.h").read_text(encoding="utf-8"), "display backend is compile-time selectable"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
-# proving screen-edge calculations can be generated for other dimensions.
+# scaling both axes for other display dimensions.
 assert "meshink_make_ui_layout" in ui_layout_source, "logical layout factory missing"
 assert "meshink_make_ui_layout(540,960)" in ui_layout_source, "T5 layout regression reference missing"
 assert "meshink_make_ui_layout(480,800)" in (root / "tests" / "test_map_gestures.cpp").read_text(encoding="utf-8"), "compact logical layout host test missing"
+assert "meshink_ui_ref_x" in ui_layout_source and "meshink_ui_ref_y" in ui_layout_source, "two-axis reference scaling helpers missing"
+assert "meshink_ui_ref_rect" in ui_layout_source, "shared reference rectangle helper missing"
 assert "box(i*135,900,135,60" not in source, "bottom navigation must not hard-code T5 screen edge"
+
+# Except for the keyboard's deliberate extended hit ownership, visual controls
+# and touch targets must consume the same named geometry.
+for helper in (
+    "meshink_welcome_name_rect", "meshink_welcome_preset_rect",
+    "meshink_confirm_left_rect", "meshink_preset_row_rect",
+    "meshink_node_action_rect", "meshink_node_map_rect",
+    "meshink_map_control_rect", "meshink_quick_slider_track_rect",
+    "meshink_quick_minus_rect", "meshink_quick_plus_rect",
+    "meshink_quick_advert_rect", "meshink_quick_power_rect",
+    "meshink_display_slider_track_rect", "meshink_shutdown_rect",
+    "meshink_night_start_rect", "meshink_night_end_rect",
+    "meshink_night_minus_rect", "meshink_night_plus_rect",
+    "meshink_night_save_rect",
+):
+    assert helper in ui_layout_source, f"{helper} shared geometry helper missing"
+assert "QUICK_SLIDER_LEFT" not in source and "QUICK_SLIDER_RIGHT" not in source, "Quick Settings must not keep duplicate fixed slider geometry"
+assert "QUICK_PANEL_BOTTOM" not in source, "Quick Settings panel edge must derive from layout"
+assert not re.search(r"\bhit\(x,y,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+", source), "non-keyboard touch target still hard-codes a screen rectangle"
 
 # Shared interior layout keeps T5 drawing and touch targets aligned while
 # allowing future logical widths to generate different card/header dimensions.
@@ -370,11 +391,9 @@ assert "hit(x,y,24,800,180,62)" not in source, "preset pager touch must not hard
 assert "hit(x,y,40,420,460,100)" not in source, "brightness slider touch must derive from logical width"
 
 # Night Timer schedule editing lives inside the MODE row, not below Map Scale.
-assert "meshink_settings_inline_action_x" in ui_layout_source, "inline settings action X helper missing"
-assert "meshink_settings_inline_action_y" in ui_layout_source, "inline settings action Y helper missing"
-assert "meshink_settings_inline_action_width()==154" in ui_layout_source, "inline settings action width guard missing"
-contains('text("EDIT TIMES",action_x+17,action_y+20,2,0xFF,true);', "Night Timer MODE row shows Edit Times")
-contains("hit(x,y,meshink_settings_inline_action_x(layout),", "Edit Times touch uses the same inline geometry")
+assert "meshink_settings_inline_action_rect" in ui_layout_source, "inline settings action rectangle missing"
+contains('text("EDIT TIMES",action.x+ui_w(17),action.y+ui_h(20),2,0xFF,true);', "Night Timer MODE row shows Edit Times")
+contains("hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),118))", "Edit Times touch uses the same inline geometry")
 contains("open_screen(Screen::NightSchedule);return true;", "Edit Times opens Night Schedule")
 assert "meshink_night_schedule_top" not in ui_layout_source, "abandoned bottom Night Schedule geometry must be removed"
 assert 'centred("NIGHT SCHEDULE",schedule_y' not in source, "Night Schedule must not be drawn over lower settings rows"
