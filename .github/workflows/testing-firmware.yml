@@ -74,6 +74,11 @@ jobs:
           g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
             tools/test_keyboard_geometry.cpp -o /tmp/meshink-keyboard-test
           /tmp/meshink-keyboard-test
+      - name: Board-independent touch backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_touch_contract.cpp -o /tmp/meshink-touch-contract-test
+          /tmp/meshink-touch-contract-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
       - name: Verify cache64 SDK config
