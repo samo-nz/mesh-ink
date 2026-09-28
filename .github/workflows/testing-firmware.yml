@@ -10,8 +10,15 @@ on:
       - 'src/local_mesh_runtime.cpp'
       - 'src/map_gestures.h'
       - 'src/ui_layout.h'
+      - 'src/hardware/touch.h'
+      - 'src/hardware/touch_types.h'
+      - 'src/board/t5_touch_backend.h'
       - 'tests/test_map_gestures.cpp'
       - 'tests/test_ui_layout.cpp'
+      - 'tests/test_touch_contract.cpp'
+      - 'tests/test_t5_touch_backend.cpp'
+      - 'tests/touch_mock_backend.h'
+      - 'tests/touch_backend_stubs/**'
       - 'src/map_gray.h'
       - 'tests/test_map_gray.cpp'
       - 'platformio.ini'
@@ -79,6 +86,12 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_touch_contract.cpp -o /tmp/meshink-touch-contract-test
           /tmp/meshink-touch-contract-test
+      - name: T5 GT911 backend state regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Itests/touch_backend_stubs -Isrc \
+            tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
+          /tmp/meshink-t5-touch-backend-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
       - name: Verify cache64 SDK config
