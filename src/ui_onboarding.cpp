@@ -2676,37 +2676,29 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             for(uint8_t i=0;i<6;++i)if(hit_outer_row(x,y,130+i*118)){local_mesh_toggle_privacy(i);show_toast("SETTING SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}return true;
         case Screen::DisplaySettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
-            if(frontlight_mode==FrontlightMode::NightTimer){
-                const MeshInkUiLayout& layout=portrait_layout();
-                if(hit(x,y,meshink_settings_inline_action_x(layout),
-                       meshink_settings_inline_action_y(118),
-                       meshink_settings_inline_action_width(),
-                       meshink_settings_inline_action_height())){
-                    open_screen(Screen::NightSchedule);return true;
-                }
+            if(frontlight_mode==FrontlightMode::NightTimer&&
+               hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),118))){
+                open_screen(Screen::NightSchedule);return true;
             }
             if(hit_outer_row(x,y,118)){frontlight_mode=(FrontlightMode)(((uint8_t)frontlight_mode+1)%3);save_frontlight_settings();if(frontlight_mode==FrontlightMode::Off)frontlight_drive(false);else frontlight_event();show_toast(frontlight_mode_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,238)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,meshink_slider_left(portrait_layout())-22,420,
-                   meshink_slider_width(portrait_layout())+44,100)){
-                int value=((int)x-meshink_slider_left(portrait_layout()))*100/
-                    meshink_slider_width(portrait_layout());
+            if(hit(x,y,meshink_display_slider_touch_rect(portrait_layout()))){
+                const MeshInkUiRect slider=meshink_display_slider_track_rect(portrait_layout());
+                int value=((int)x-slider.x)*100/slider.width;
                 frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_section_row(x,y,meshink_shutdown_top(portrait_layout()),70)){
+            if(hit(x,y,meshink_shutdown_rect(portrait_layout()))){
                 open_screen(Screen::ShutdownConfirm);return true;
             }
             break;
         case Screen::NightSchedule:
             if(hit_header_back(x,y)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit_section_row(x,y,150,112)){night_edit_field=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_section_row(x,y,286,112)){night_edit_field=1;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            {const MeshInkUiLayout& layout=portrait_layout();
-             const int pair_width=meshink_section_pair_width(layout);
-             if(hit(x,y,layout.section_margin,460,pair_width,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-             if(hit(x,y,meshink_section_pair_right(layout),460,pair_width,76)){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}}
-            if(hit_section_row(x,y,600,76)){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
+            if(hit(x,y,meshink_night_start_rect(portrait_layout()))){night_edit_field=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_night_end_rect(portrait_layout()))){night_edit_field=1;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_night_minus_rect(portrait_layout()))){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+1410)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_night_plus_rect(portrait_layout()))){uint16_t& value=night_edit_field ? night_end_minutes : night_start_minutes;value=(value+30)%1440;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_night_save_rect(portrait_layout()))){save_frontlight_settings();frontlight_event();show_toast("SCHEDULE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
         case Screen::Help:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}break;
         case Screen::About:
