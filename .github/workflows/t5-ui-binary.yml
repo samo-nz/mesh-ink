@@ -63,6 +63,12 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_touch_contract.cpp -o /tmp/meshink-touch-contract-test
           /tmp/meshink-touch-contract-test
+      - name: T5 GT911 backend state regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Itests/touch_backend_stubs -Isrc \
+            tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
+          /tmp/meshink-t5-touch-backend-test
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
 
