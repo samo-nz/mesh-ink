@@ -928,7 +928,7 @@ static void notice_centred(const char* message, int y, int scale, uint8_t* fb, b
 
 static void show_companion_notice() {
     T5_TRACE("notice: epd_init, internal heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
-    epd_init(&epd_board_v7, &ED047TC1, EPD_LUT_64K);
+    t5_display_init();
     T5_TRACE("notice: panel initialized\n");
     t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     t5_display_set_pixel_clock_mhz(17);
