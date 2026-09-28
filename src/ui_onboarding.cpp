@@ -595,6 +595,16 @@ static void audit_ui_geometry() {
         ok=false;Serial.println("[T5-GEOM] ERROR display slider touch does not contain visual");
     }
 
+    for(int index=0;index<3;++index) {
+        const MeshInkUiRect control=meshink_map_control_rect(layout,index);
+        if(control.y<layout.map_top||control.y+control.height>layout.map_bottom) {
+            ok=false;
+            Serial.printf("[T5-GEOM] ERROR map control %d y=%d..%d outside viewport=%d..%d\n",
+                          index,control.y,control.y+control.height,
+                          layout.map_top,layout.map_bottom);
+        }
+    }
+
     const auto portrait=keyboard_metrics(false);
     const auto landscape=keyboard_metrics(true);
     struct NamedKeyboardRect { const char* name; meshink_keyboard::Rect rect; };
@@ -655,7 +665,7 @@ static void audit_ui_geometry() {
                   "map=%d..%d kbP=%d..%d kbL=%d..%d result=%s\n",
                   T5_BOARD_LABEL,layout.width,layout.height,
                   meshink_display_physical_width(),meshink_display_physical_height(),
-                  fb,(unsigned)meshink_display_framebuffer_bytes(),reference?1U:0U,
+                  (void*)fb,(unsigned)meshink_display_framebuffer_bytes(),reference?1U:0U,
                   layout.map_top,layout.map_bottom,
                   portrait.number_top,portrait.bottom_top+portrait.key_height,
                   landscape.number_top,landscape.bottom_top+landscape.key_height,
