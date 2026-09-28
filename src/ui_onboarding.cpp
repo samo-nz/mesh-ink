@@ -2,6 +2,7 @@
 #include <esp_random.h>
 #include <Preferences.h>
 #include "hardware/display.h"
+#include "board/board_profile.h"
 #include <driver/i2c.h>
 #include <esp_heap_caps.h>
 #include <time.h>
@@ -1032,10 +1033,10 @@ static void draw_maps() {
             if(!result.sd_ready)
                 meshink_display_fill_rect({0,MAP_TOP,meshink_display_logical_width(),MAP_BOTTOM-MAP_TOP},0xFF,fb);
         }
-        // 4 bits per pixel in the high-level EPD framebuffer. A full base
-        // snapshot also preserves exact panel row ordering and rotation.
+        // Cache the backend-owned framebuffer byte-for-byte. UI code does not
+        // need to know physical dimensions, packing, or panel row ordering.
         if(result.sd_ready&&result.tiles) {
-            const size_t bytes=(size_t)meshink_display_width()*meshink_display_height()/2;
+            const size_t bytes=meshink_display_framebuffer_bytes();
             if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
             if(map_base_cache) {
                 memcpy(map_base_cache,fb,bytes);map_base_bytes=bytes;
