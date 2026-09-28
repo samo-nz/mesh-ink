@@ -5,6 +5,10 @@
 #include "board_profile.h"
 #include "../hardware/touch_types.h"
 
+#ifndef MESHINK_TOUCH_DIAGNOSTICS
+#define MESHINK_TOUCH_DIAGNOSTICS 0
+#endif
+
 // LILYGO T5 H752/H752-01 GT911 backend.
 //
 // Preserve the field-tested MeshInk semantics:
@@ -107,10 +111,10 @@ inline void meshink_touch_prepare_boot() {
 inline void meshink_touch_finish_boot() {
     using namespace meshink_t5_touch_detail;
     release_reset_sequence();
-
-    // Diagnostic-only identity probe. Do not block startup if the controller
-    // is absent/transiently unavailable; the normal reader keeps its legacy
-    // retry behavior and will report rate-limited I2C errors if needed.
+#if MESHINK_TOUCH_DIAGNOSTICS
+    // Test-build identity probe. Do not block startup if the controller is
+    // absent/transiently unavailable; normal reads retain legacy retry
+    // behavior and operation errors remain rate-limited below.
     uint8_t product[4]{};
     uint8_t config=0;
     const bool product_ok=read(GT911_PRODUCT_ID,product,sizeof(product));
@@ -132,6 +136,7 @@ inline void meshink_touch_finish_boot() {
         Serial.printf("[T5-TOUCH] backend=GT911 address=0x%02X identity probe unavailable; runtime retry active\n",
                       (unsigned)GT911_ADDR);
     }
+#endif
 }
 
 inline bool meshink_touch_clear() {
