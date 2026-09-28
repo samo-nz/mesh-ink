@@ -53,3 +53,26 @@
 #ifndef T5_UI_HAS_GPS
 #define T5_UI_HAS_GPS T5_HAS_GPS
 #endif
+
+// Optional keyboard tuning hooks. Shared keyboard geometry scales from the
+// active logical display size; a future board profile only needs to override
+// these when its bezel/touch/display proportions need a small correction.
+// Zeroes preserve the field-tested H752-01 and H752 T5 layout exactly.
+#ifndef MESHINK_KEYBOARD_PORTRAIT_X_OFFSET
+#define MESHINK_KEYBOARD_PORTRAIT_X_OFFSET 0
+#endif
+#ifndef MESHINK_KEYBOARD_PORTRAIT_Y_OFFSET
+#define MESHINK_KEYBOARD_PORTRAIT_Y_OFFSET 0
+#endif
+#ifndef MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET
+#define MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET 0
+#endif
+#ifndef MESHINK_KEYBOARD_LANDSCAPE_Y_OFFSET
+#define MESHINK_KEYBOARD_LANDSCAPE_Y_OFFSET 0
+#endif
+#ifndef MESHINK_KEYBOARD_KEY_HEIGHT_DELTA
+#define MESHINK_KEYBOARD_KEY_HEIGHT_DELTA 0
+#endif
+#ifndef MESHINK_KEYBOARD_ROW_GAP_DELTA
+#define MESHINK_KEYBOARD_ROW_GAP_DELTA 0
+#endif
