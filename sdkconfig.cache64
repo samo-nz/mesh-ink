@@ -25,6 +25,17 @@ CONFIG_DEFAULT_PSRAM_CLK_IO=30
 CONFIG_DEFAULT_PSRAM_CS_IO=26
 CONFIG_ESP_SLEEP_PSRAM_LEAKAGE_WORKAROUND=y
 
+# Keep release serial output focused on warnings/errors. MeshInk's own
+# deliberate [T5-*] Serial messages are unaffected by the ESP-IDF log level.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+# CONFIG_BOOTLOADER_LOG_LEVEL_INFO is not set
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+# CONFIG_LOG_DEFAULT_LEVEL_INFO is not set
+CONFIG_LOG_DEFAULT_LEVEL=2
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
+CONFIG_LOG_MAXIMUM_LEVEL=2
+
 # Keep serial output plain text. ESP-IDF otherwise wraps log lines in ANSI
 # colour escapes that show up as visible garbage in simple serial monitors.
 # CONFIG_LOG_COLORS is not set
