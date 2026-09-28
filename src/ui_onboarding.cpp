@@ -2337,8 +2337,9 @@ static void touch_sampler_task(void*){
                     t5_timing_note_touch_queue_drop();
             }
         } else {
-            // Non-Maps keeps the legacy single-touch GT911 parser. Keyboard releases
-            // get a small thumb-roll stabilization below; other UI releases remain unchanged.
+            // Non-Maps keeps the legacy single-contact semantics supplied by the touch
+            // backend. Keyboard releases get a small thumb-roll stabilization below;
+            // other UI releases remain unchanged.
             const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();
             const int16_t x=sample.x,y=sample.y;
             const bool home=sample.home,pressed=sample.pressed;
