@@ -27,6 +27,13 @@ static bool log_contains(const char* needle) {
     return false;
 }
 
+static size_t error_log_count() {
+    size_t count=0;
+    for(const auto& line:touch_stub::serial_lines)
+        if(line.find("ERROR GT911")!=std::string::npos)++count;
+    return count;
+}
+
 static void reset_all() {
     touch_stub::reset_arduino();
     touch_stub::reset_i2c();
@@ -99,6 +106,13 @@ int main() {
     touch_stub::queue_read_failure(GT911_FIRST_POINT);
     primary=meshink_touch_read_primary();
     assert(primary.pressed&&primary.x==0&&primary.y==0);
+    assert(error_log_count()==1);
+
+    touch_stub::now_ms=2000;
+    touch_stub::queue_read_failure(GT911_STATUS);
+    primary=meshink_touch_read_primary();
+    assert(primary.pressed);
+    assert(error_log_count()==2);
 
     // Maps contact path: one finger persists until release/new frame.
     reset_all();
