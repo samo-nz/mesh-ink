@@ -116,9 +116,9 @@ contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thic
 contains("draw_wrapped(node.status,24,294,27,3,0,true,14);", "received status text is larger and bold")
 contains("draw_wrapped(node.telemetry,24,270,27,3,0,true,4);", "received telemetry text is larger and bold")
 contains("draw_wrapped(node.path,24,270,27,3,0,true,5);", "received path text is larger and bold")
-contains('page==NodeInfoPage::Status&&hit(x,y,24,808,492,70)', "status action touch follows lowered button")
-contains('page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)', "telemetry action touch follows lowered button")
-contains('page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)', "path action touch follows lowered button")
+contains('page==NodeInfoPage::Status&&hit_section_row(x,y,808,70)', "status action touch follows shared section geometry")
+contains('page==NodeInfoPage::Telemetry&&hit_section_row(x,y,808,70)', "telemetry action touch follows shared section geometry")
+contains('page==NodeInfoPage::Path&&hit_section_row(x,y,808,70)', "path action touch follows shared section geometry")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
 contains('meshink_display_fill_rect({0,486,meshink_display_logical_width(),474},0xFF,fb);', "password keyboard clears the lower Node Info background")
