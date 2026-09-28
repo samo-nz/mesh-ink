@@ -235,6 +235,13 @@ static inline int map_top(){return portrait_layout().map_top;}
 static inline int map_bottom(){return portrait_layout().map_bottom;}
 static inline int map_centre_x(){return portrait_layout().map_centre_x;}
 static inline int map_centre_y(){return portrait_layout().map_centre_y;}
+static inline int ui_x(int reference_x){return meshink_ui_ref_x(portrait_layout(),reference_x);}
+static inline int ui_y(int reference_y){return meshink_ui_ref_y(portrait_layout(),reference_y);}
+static inline int ui_w(int reference_w){return meshink_ui_ref_w(portrait_layout(),reference_w);}
+static inline int ui_h(int reference_h){return meshink_ui_ref_h(portrait_layout(),reference_h);}
+static inline MeshInkUiRect ui_rect(int x,int y,int w,int h){
+    return meshink_ui_ref_rect(portrait_layout(),x,y,w,h);
+}
 static double map_latitude=-41.2865,map_longitude=174.7762;
 static uint8_t map_zoom=12;
 static bool map_imperial=false;
@@ -483,6 +490,10 @@ static void box(int x, int y, int w, int h, bool selected=false) {
     MeshInkRect r = {x,y,w,h};
     if (selected) meshink_display_fill_rect(r, 0, fb);
     else { meshink_display_fill_rect(r, 0xFF, fb); meshink_display_draw_rect(r, 0, fb); }
+}
+
+static void box(const MeshInkUiRect& rect,bool selected=false) {
+    box(rect.x,rect.y,rect.width,rect.height,selected);
 }
 
 static meshink_keyboard::Metrics keyboard_metrics(bool landscape) {
@@ -2260,14 +2271,14 @@ static void append(char c) {
     size_t n=strlen(node_name); if (n<20) { node_name[n]=c; node_name[n+1]=0; saved=false; }
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
-static bool hit_outer_row(int16_t x,int16_t y,int top,int height=-1) {
-    const MeshInkUiLayout& layout=portrait_layout();
-    if(height<0)height=layout.settings_row_height;
-    return hit(x,y,layout.outer_margin,top,layout.outer_width,height);
+static bool hit(int16_t x,int16_t y,const MeshInkUiRect& rect) {
+    return hit(x,y,rect.x,rect.y,rect.width,rect.height);
 }
-static bool hit_section_row(int16_t x,int16_t y,int top,int height) {
-    const MeshInkUiLayout& layout=portrait_layout();
-    return hit(x,y,layout.section_margin,top,layout.section_width,height);
+static bool hit_outer_row(int16_t x,int16_t y,int reference_top,int reference_height=112) {
+    return hit(x,y,meshink_outer_row_rect(portrait_layout(),reference_top,reference_height));
+}
+static bool hit_section_row(int16_t x,int16_t y,int reference_top,int reference_height) {
+    return hit(x,y,meshink_section_row_rect(portrait_layout(),reference_top,reference_height));
 }
 
 static void open_screen(Screen next,bool preserve_map_centre=false) {
