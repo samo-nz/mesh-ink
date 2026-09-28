@@ -62,6 +62,8 @@ constexpr int meshink_section_pair_right(const MeshInkUiLayout& layout);
 constexpr int meshink_pager_button_width(const MeshInkUiLayout& layout);
 constexpr int meshink_pager_right(const MeshInkUiLayout& layout);
 
+constexpr MeshInkUiRect meshink_display_slider_track_rect(const MeshInkUiLayout& layout);
+
 struct MeshInkUiRect {
     int x;
     int y;
