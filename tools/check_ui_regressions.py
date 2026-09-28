@@ -379,6 +379,12 @@ assert not re.search(r"\bcentred\([^,]+,\s*\d+", source), "centred text still ha
 assert not re.search(r"\btext\([^,]+,\s*\d+\s*,\s*\d+", source), "text still hard-codes an absolute screen position"
 assert not re.search(r"\bdraw_wrapped\([^,]+,\s*\d+\s*,\s*\d+", source), "wrapped text still hard-codes an absolute screen position"
 
+raw_absolute_rects = list(re.finditer(
+    r"meshink_display_(?:fill_rect|draw_rect)\(\{\s*(-?\d+)\s*,\s*(-?\d+)", source))
+assert all(m.group(1) == "0" and m.group(2) == "0" for m in raw_absolute_rects),     "raw display rectangle still hard-codes a non-origin screen position"
+assert not re.search(r"\bline\(\s*-?\d+\s*,\s*-?\d+", source),     "line primitive still hard-codes an absolute screen position"
+assert not re.search(r"\b(?:draw_target_icon|draw_search_icon|draw_envelope_icon|draw_battery_icon)\(\s*-?\d+\s*,\s*-?\d+", source),     "icon primitive still hard-codes an absolute screen position"
+
 # Shared interior layout keeps T5 drawing and touch targets aligned while
 # allowing future logical widths to generate different card/header dimensions.
 assert "outer_width==516" in ui_layout_source, "T5 outer card width regression guard missing"
