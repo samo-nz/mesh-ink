@@ -1,5 +1,5 @@
-# Experimental ESP32-S3 cache configuration for EPDiy LCD/DMA output.
-# This file is only used by the Arduino+ESP-IDF cache64 test environment.
+# ESP32-S3 cache configuration for the field-tested EPDiy LCD/DMA release target.
+# This file is used by the Arduino+ESP-IDF t5-unified-cache64 environment.
 CONFIG_FREERTOS_HZ=1000
 CONFIG_AUTOSTART_ARDUINO=y
 CONFIG_ARDUINO_VARIANT="esp32s3"
