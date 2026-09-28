@@ -29,6 +29,10 @@ namespace {
 constexpr size_t MAX_DIRECTORY_BYTES = 512 * 1024;
 constexpr uint32_t MAX_ROOT_BYTES = 16384;
 constexpr uint32_t MAX_DIRECTORY_HOPS = 4;
+// A supported source tile is a single 256x256 PNG. Four MiB is deliberately
+// far above any legitimate raster tile while bounding corrupt removable-media
+// metadata before it reaches allocation/PNG decoding.
+constexpr uint32_t MAX_PNG_TILE_BYTES = 4U*1024U*1024U;
 struct Entry {
     uint64_t id;
     uint64_t offset;
@@ -481,6 +485,12 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
         const Entry* entry = select_entry(*directory, id);
         if (!entry) break;
         if (entry->run) {
+            if(entry->length>MAX_PNG_TILE_BYTES) {
+                T5_DEBUGF(T5_LOG_MAP,
+                    "[T5-PMT] rejected oversized PNG range bytes=%lu limit=%lu\n",
+                    (unsigned long)entry->length,(unsigned long)MAX_PNG_TILE_BYTES);
+                break;
+            }
             if (id >= entry->id && id - entry->id < entry->run &&
                 within(entry->offset, entry->length, archive.tile_length)) {
                 const uint64_t absolute = archive.tile_offset + entry->offset;
