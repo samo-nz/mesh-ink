@@ -1580,7 +1580,7 @@ static void refresh_area(EpdDrawMode mode,EpdRect area,bool wake_light=true) {
     epd_poweroff();
     set_cpu_target(standby_active?80:160,"display-area-complete",false);
     const uint32_t elapsed=millis()-started;
-    Serial.printf("[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
+    T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
         (long)area.x,(long)area.y,(unsigned long)elapsed,(int)err);
     t5_timing_display_end(timing_display_started);
@@ -1823,7 +1823,7 @@ static void service_critical_battery() {
     if(!read_battery_voltage_mv(millivolts)){low_samples=0;return;}
     if(millivolts>=CRITICAL_BATTERY_MV){low_samples=0;return;}
     if(low_samples<CRITICAL_BATTERY_SAMPLES)++low_samples;
-    Serial.printf("[T5-POWER] low battery sample %u/%u: %umV\n",
+    T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] low battery sample %u/%u: %umV\n",
                   (unsigned)low_samples,(unsigned)CRITICAL_BATTERY_SAMPLES,
                   (unsigned)millivolts);
     if(low_samples>=CRITICAL_BATTERY_SAMPLES)
