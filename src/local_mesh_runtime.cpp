@@ -121,20 +121,70 @@ static void format_last_seen(uint32_t timestamp,char out[72]){
 class MessageStore{
     StoreHeader header_{STORE_MAGIC,STORE_VERSION,MAX_STORED_MESSAGES,0,0,0};
     StoredMessage records_[MAX_STORED_MESSAGES]{};
-    void write_header(){File f=SPIFFS.open(STORE_PATH,"r+");if(!f)return;f.seek(0);f.write((uint8_t*)&header_,sizeof(header_));f.close();}
-    void write_record(uint16_t physical){File f=SPIFFS.open(STORE_PATH,"r+");if(!f)return;f.seek(sizeof(StoreHeader)+physical*sizeof(StoredMessage));f.write((uint8_t*)&records_[physical],sizeof(StoredMessage));f.close();}
+    void write_header(){
+        File f=SPIFFS.open(STORE_PATH,"r+");
+        if(!f){Serial.println("[T5-STORE] ERROR opening message header for write");return;}
+        const bool seek_ok=f.seek(0);
+        const size_t written=seek_ok?f.write((uint8_t*)&header_,sizeof(header_)):0;
+        f.close();
+        if(!seek_ok||written!=sizeof(header_))
+            Serial.printf("[T5-STORE] ERROR writing message header seek=%u bytes=%u/%u\n",
+                          seek_ok?1U:0U,(unsigned)written,(unsigned)sizeof(header_));
+    }
+    void write_record(uint16_t physical){
+        if(physical>=MAX_STORED_MESSAGES){
+            Serial.printf("[T5-STORE] ERROR invalid record index=%u\n",(unsigned)physical);
+            return;
+        }
+        File f=SPIFFS.open(STORE_PATH,"r+");
+        if(!f){Serial.println("[T5-STORE] ERROR opening message record for write");return;}
+        const size_t offset=sizeof(StoreHeader)+physical*sizeof(StoredMessage);
+        const bool seek_ok=f.seek(offset);
+        const size_t written=seek_ok?f.write((uint8_t*)&records_[physical],sizeof(StoredMessage)):0;
+        f.close();
+        if(!seek_ok||written!=sizeof(StoredMessage))
+            Serial.printf("[T5-STORE] ERROR writing record=%u seek=%u bytes=%u/%u\n",
+                          (unsigned)physical,seek_ok?1U:0U,
+                          (unsigned)written,(unsigned)sizeof(StoredMessage));
+    }
     void create(){
         header_={STORE_MAGIC,STORE_VERSION,MAX_STORED_MESSAGES,0,0,0};memset(records_,0,sizeof(records_));
-        File f=SPIFFS.open(STORE_PATH,"w");if(!f){Serial.println("[T5-STORE] unable to create message store");return;}
-        f.write((uint8_t*)&header_,sizeof(header_));f.write((uint8_t*)records_,sizeof(records_));f.close();
+        File f=SPIFFS.open(STORE_PATH,"w");if(!f){Serial.println("[T5-STORE] ERROR unable to create message store");return;}
+        const size_t header_written=f.write((uint8_t*)&header_,sizeof(header_));
+        const size_t records_written=f.write((uint8_t*)records_,sizeof(records_));
+        f.close();
+        if(header_written!=sizeof(header_)||records_written!=sizeof(records_)){
+            Serial.printf("[T5-STORE] ERROR creating store header=%u/%u records=%u/%u\n",
+                          (unsigned)header_written,(unsigned)sizeof(header_),
+                          (unsigned)records_written,(unsigned)sizeof(records_));
+            return;
+        }
         Serial.printf("[T5-STORE] created fixed store: %u messages, %u bytes\n",(unsigned)MAX_STORED_MESSAGES,(unsigned)(sizeof(header_)+sizeof(records_)));
     }
 public:
     void begin(){
         File f=SPIFFS.open(STORE_PATH,"r");
-        if(!f||f.size()!=(int)(sizeof(header_)+sizeof(records_))){if(f)f.close();create();return;}
-        f.read((uint8_t*)&header_,sizeof(header_));f.read((uint8_t*)records_,sizeof(records_));f.close();
-        if(header_.magic!=STORE_MAGIC||header_.version!=STORE_VERSION||header_.capacity!=MAX_STORED_MESSAGES||header_.head>=MAX_STORED_MESSAGES||header_.count>MAX_STORED_MESSAGES){create();return;}
+        if(!f||f.size()!=(int)(sizeof(header_)+sizeof(records_))){
+            if(f)f.close();
+            Serial.println("[T5-STORE] message store missing/size mismatch; recreating");
+            create();return;
+        }
+        const size_t header_read=f.read((uint8_t*)&header_,sizeof(header_));
+        const size_t records_read=f.read((uint8_t*)records_,sizeof(records_));
+        f.close();
+        if(header_read!=sizeof(header_)||records_read!=sizeof(records_)){
+            Serial.printf("[T5-STORE] ERROR short read header=%u/%u records=%u/%u; recreating\n",
+                          (unsigned)header_read,(unsigned)sizeof(header_),
+                          (unsigned)records_read,(unsigned)sizeof(records_));
+            create();return;
+        }
+        if(header_.magic!=STORE_MAGIC||header_.version!=STORE_VERSION||header_.capacity!=MAX_STORED_MESSAGES||header_.head>=MAX_STORED_MESSAGES||header_.count>MAX_STORED_MESSAGES){
+            Serial.printf("[T5-STORE] invalid header magic=%08lx version=%u capacity=%u head=%u count=%u; recreating\n",
+                          (unsigned long)header_.magic,(unsigned)header_.version,
+                          (unsigned)header_.capacity,(unsigned)header_.head,
+                          (unsigned)header_.count);
+            create();return;
+        }
         T5_DEBUGF(T5_LOG_MESH,"[T5-STORE] loaded %u/%u messages; oldest records evicted at capacity\n",header_.count,header_.capacity);
     }
     size_t count()const{return header_.count;}
