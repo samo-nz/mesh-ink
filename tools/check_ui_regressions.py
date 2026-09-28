@@ -19,6 +19,7 @@ ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
 platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
+cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].split("; Generic portability", 1)[0]
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -330,10 +331,10 @@ assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malfo
 contains("static void audit_ui_geometry()", "test8 boot-time geometry self-audit")
 contains("[T5-GEOM] board=%s logical=%dx%d physical=%dx%d", "geometry audit emits board/display summary")
 contains("[T5-TOUCH] tap screen=%s x=%d y=%d", "touch diagnostics identify screen and coordinates")
-assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" in platformio_source, "test8 cache64 build must run boot geometry audit"
-assert "-DT5_LOG_UI=1" in platformio_source, "test8 cache64 build must include targeted UI logs"
+assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" in cache64_build_flags, "test8 cache64 build must run boot geometry audit"
+assert "-DT5_LOG_UI=1" in cache64_build_flags, "test8 cache64 build must include targeted UI logs"
 assert 'if(!keyboard_visible&&!keyboard_landscape)' in source and '[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u' in source, "test8 non-keyboard touch logging must remain consumer-side"
-assert "-DT5_LOG_MAP=1" not in platformio_source, "test8 must not enable high-volume map diagnostics globally"
+assert "-DT5_LOG_MAP=1" not in cache64_build_flags, "test8 must not enable high-volume map diagnostics in cache64 build"
 
 # Hardware-portability display boundary.
 assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
