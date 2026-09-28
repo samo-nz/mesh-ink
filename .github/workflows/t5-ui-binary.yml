@@ -42,6 +42,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_map_gestures.cpp -o /tmp/map-gestures-test
           /tmp/map-gestures-test
+      - name: Shared UI drawing and touch geometry regression
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
+            tests/test_ui_layout.cpp -o /tmp/ui-layout-test
+          /tmp/ui-layout-test
       - name: Map grayscale equivalence regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
