@@ -253,6 +253,7 @@ assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan r
 board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 timing_source = (root / "src" / "t5_timing.cpp").read_text(encoding="utf-8")
 assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
+assert "delay(1);" in companion, "Bluetooth companion loop must yield so cache64 watchdog does not starve IDLE1"
 assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
 assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
 assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics use 5 second warm-up"
