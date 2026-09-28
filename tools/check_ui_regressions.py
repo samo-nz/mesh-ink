@@ -18,6 +18,7 @@ unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
+platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -318,6 +319,20 @@ contains("if(external_power_present()){low_samples=0;return;}", "external power 
 contains("const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);", "zoom label backing tracks rendered text width")
 contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
+
+# test.8 pre-hardware audit: external frames are bounded, and the field
+# build carries narrowly scoped geometry/touch observability.
+assert "DISCOVERED_CONTACT_BASE_LEN" in runtime_source, "discovered advert parser must define a complete base frame length"
+assert 'len<DISCOVERED_CONTACT_BASE_LEN' in runtime_source, "truncated discovered adverts must be rejected"
+assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache must clear stale optional bytes"
+assert 'memset(&detail_contact_,0,sizeof(detail_contact_));' in runtime_source, "Node Info advert parse must start from zeroed contact state"
+assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malformed advert rejection must remain observable"
+contains("static void audit_ui_geometry()", "test8 boot-time geometry self-audit")
+contains("[T5-GEOM] board=%s logical=%dx%d physical=%dx%d", "geometry audit emits board/display summary")
+contains("[T5-TOUCH] tap screen=%s x=%d y=%d", "touch diagnostics identify screen and coordinates")
+assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" in platformio_source, "test8 cache64 build must run boot geometry audit"
+assert "-DT5_LOG_UI=1" in platformio_source and "-DT5_LOG_TOUCH=1" in platformio_source, "test8 cache64 build must include targeted UI/touch logs"
+assert "-DT5_LOG_MAP=1" not in platformio_source, "test8 must not enable high-volume map diagnostics globally"
 
 # Hardware-portability display boundary.
 assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
