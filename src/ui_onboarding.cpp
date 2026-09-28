@@ -1760,7 +1760,6 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
     centred("LOW BATTERY",230,6,0,true);
     centred("POWERED DOWN",340,5,0,true);
     centred("CONNECT USB TO CHARGE",475,3,0,true);
-    centred("PRESS PWR IF NEEDED",530,2,0,true);
     char voltage[20];
     snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
              (unsigned)(millivolts/1000U),(unsigned)((millivolts%1000U)/10U));
