@@ -64,6 +64,12 @@ jobs:
           grep -q '#define CONFIG_BT_BLUEDROID_ENABLED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_SPIRAM_MODE_OCT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_USE_FASTSEEK 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
 
       - name: Read firmware version
         id: version
