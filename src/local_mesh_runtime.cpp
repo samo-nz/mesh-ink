@@ -81,6 +81,10 @@ struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char
 struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};};
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
 struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[192]{};uint8_t len=0;};
+constexpr size_t DISCOVERED_CONTACT_BASE_LEN=
+    1+PUB_KEY_SIZE+3+MAX_PATH_SIZE+32+4; // through last_advert_timestamp
+static_assert(DISCOVERED_CONTACT_BASE_LEN<=sizeof(DiscoveredContact::frame),
+              "discovered contact base frame must fit cache");
 
 static void format_time(uint32_t timestamp,char out[10]){
     time_t raw=timestamp?(time_t)timestamp:time(nullptr);struct tm value{};localtime_r(&raw,&value);
@@ -314,15 +318,31 @@ public:
     size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;if(channels_[i].channel_index<MAX_UI_CHANNELS)channel_unread_[channels_[i].channel_index]=0;channels_[i].entry.unread=0;return activate(channels_[i],true);}
     size_t advert_count()const override{return advert_count_;}const UiListEntry& advert(size_t i)const override{return adverts_[i].entry;}
     void cache_discovered(const uint8_t* frame,size_t len){
-        if(!frame||len<36||len>sizeof(discovered_[0].frame))return;DiscoveredContact* slot=nullptr;
+        if(!frame||len<DISCOVERED_CONTACT_BASE_LEN||len>sizeof(discovered_[0].frame)){
+            Serial.printf("[T5-MESH] rejected malformed new-advert frame bytes=%u expected=%u..%u\n",
+                          (unsigned)len,(unsigned)DISCOVERED_CONTACT_BASE_LEN,
+                          (unsigned)sizeof(discovered_[0].frame));
+            return;
+        }
+        DiscoveredContact* slot=nullptr;
         for(auto& item:discovered_)if(item.len&&!memcmp(item.prefix,frame+1,7)){slot=&item;break;}
-        if(!slot)for(auto& item:discovered_)if(!item.len){slot=&item;break;}if(!slot)slot=&discovered_[0];
-        memcpy(slot->prefix,frame+1,7);memcpy(slot->frame,frame,len);slot->len=(uint8_t)len;
+        if(!slot)for(auto& item:discovered_)if(!item.len){slot=&item;break;}
+        if(!slot)slot=&discovered_[0];
+        *slot=DiscoveredContact{};
+        memcpy(slot->prefix,frame+1,7);
+        memcpy(slot->frame,frame,len);
+        slot->len=(uint8_t)len;
     }
     bool open_advert(size_t i)override{
         if(i>=advert_count_)return false;detail_valid_=false;detail_saved_=false;detail_frame_len_=0;
         if(auto* saved=t5_mesh().lookupContactByPubKey(adverts_[i].key,7)){detail_contact_=*saved;detail_valid_=detail_saved_=true;return true;}
         for(const auto& item:discovered_)if(item.len&&!memcmp(item.prefix,adverts_[i].key,7)){
+            if(item.len<DISCOVERED_CONTACT_BASE_LEN){
+                Serial.printf("[T5-MESH] cached advert rejected at open bytes=%u expected>=%u\n",
+                              (unsigned)item.len,(unsigned)DISCOVERED_CONTACT_BASE_LEN);
+                return false;
+            }
+            memset(&detail_contact_,0,sizeof(detail_contact_));
             memcpy(detail_frame_,item.frame,item.len);detail_frame_len_=item.len;size_t p=1;
             memcpy(detail_contact_.id.pub_key,item.frame+p,PUB_KEY_SIZE);p+=PUB_KEY_SIZE;detail_contact_.type=item.frame[p++];detail_contact_.flags=item.frame[p++];detail_contact_.out_path_len=item.frame[p++];
             memcpy(detail_contact_.out_path,item.frame+p,MAX_PATH_SIZE);p+=MAX_PATH_SIZE;memcpy(detail_contact_.name,item.frame+p,32);detail_contact_.name[31]=0;p+=32;
