@@ -1401,8 +1401,10 @@ static void draw_about() {
     text("HARDWARE",24,720,2,0,true);
 #if T5_FAKE_H752_UI
     text("H752 UI TEST / V2 WIRING",170,720,2);
+#elif T5_BOARD_H752
+    text("LILYGO T5 PRO / H752",170,720,2);
 #else
-    text("LILYGO T5 PRO",170,720,2);
+    text("LILYGO T5 PRO / H752-01",170,720,2);
 #endif
     text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",170,770,2);
 }
@@ -1688,6 +1690,31 @@ static void full_display_clean(const char* reason) {
     force_redraw(MODE_GC16,reason,false);
     T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
+
+#if !T5_BOARD_H752_01
+static bool init_h752_shared_i2c() {
+    i2c_config_t config{};
+    config.mode=I2C_MODE_MASTER;
+    config.sda_io_num=(gpio_num_t)T5_PIN_I2C_SDA;
+    config.scl_io_num=(gpio_num_t)T5_PIN_I2C_SCL;
+    config.sda_pullup_en=GPIO_PULLUP_ENABLE;
+    config.scl_pullup_en=GPIO_PULLUP_ENABLE;
+    config.master.clk_speed=400000;
+    const esp_err_t configured=i2c_param_config(I2C_NUM_0,&config);
+    if(configured!=ESP_OK){
+        Serial.printf("[T5-H752] I2C config failed err=%d\n",(int)configured);
+        return false;
+    }
+    const esp_err_t installed=i2c_driver_install(I2C_NUM_0,I2C_MODE_MASTER,0,0,0);
+    if(installed!=ESP_OK&&installed!=ESP_ERR_INVALID_STATE){
+        Serial.printf("[T5-H752] I2C driver install failed err=%d\n",(int)installed);
+        return false;
+    }
+    Serial.printf("[T5-H752] shared I2C ready SDA=%d SCL=%d\n",
+                  T5_PIN_I2C_SDA,T5_PIN_I2C_SCL);
+    return true;
+}
+#endif
 
 static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
     uint8_t address[2] = {(uint8_t)(reg>>8),(uint8_t)reg};
@@ -2678,6 +2705,9 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);
     pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
+#if !T5_BOARD_H752_01
+    init_h752_shared_i2c();
+#endif
     t5_display_init();t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);t5_display_set_pixel_clock_mhz(17);
     recover_pmic_power_path();
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
