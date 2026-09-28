@@ -4,10 +4,8 @@
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
 #include <SPI.h>
+#include "board_profile.h"
 
-#ifndef T5_BOARD_H752_01
-#define T5_BOARD_H752_01 1
-#endif
 
 enum class T5RadioFailureClass : uint8_t {
     Unknown = 0,
@@ -33,7 +31,7 @@ public:
     void beginLocal();
     bool enableRadioGpsRail();
     uint16_t getBattMilliVolts() override;
-    const char* getManufacturerName() const override { return "LILYGO T5 E-Paper S3 Pro"; }
+    const char* getManufacturerName() const override { return T5_BOARD_H752_01 ? "LILYGO T5 E-Paper S3 Pro (H752-01)" : "LILYGO T5 E-Paper S3 Pro (H752)"; }
 };
 
 extern T5Board board;
