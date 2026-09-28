@@ -1123,7 +1123,7 @@ static void draw_maps() {
     static bool map_stack_reported=false;
     if(!map_stack_reported){
         map_stack_reported=true;
-        Serial.printf("[T5-STACK] maps remaining=%u words\n",
+        Serial.printf("[T5-STACK] maps high-water=%u\n",
                       (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     }
 }
