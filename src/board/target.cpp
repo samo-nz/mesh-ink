@@ -480,8 +480,12 @@ public:
 #endif
     }
 };
+#if ENV_INCLUDE_GPS == 1
 static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
+#else
+EnvironmentSensorManager sensors;
+#endif
 
 // Run independently of T5GPS::loop(): MeshCore stops calling the provider
 // when GPS is OFF. Consume UART bytes ONLY while the provider is inactive,
