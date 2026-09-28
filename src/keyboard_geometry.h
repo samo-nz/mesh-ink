@@ -140,9 +140,7 @@ inline Metrics make_metrics(int width,int height,bool landscape,
     metrics.clear_top=clear_top_reference?
         scale_axis(clear_top_reference,height,reference_height)+tuning.y_offset:0;
     metrics.entry=scale_rect(entry_reference,width,height,reference_width,reference_height,tuning);
-    if(!landscape){
-        metrics.entry.height=scale_axis(70,height,reference_height);
-    }
+    metrics.entry.height=scale_axis(landscape?112:70,height,reference_height);
     metrics.number_row=scale_row(number_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[0]=scale_row(top_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[1]=scale_row(home_reference,width,reference_width,tuning.x_offset);
