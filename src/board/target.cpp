@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <Preferences.h>
-#include <epdiy.h>
+#include "../t5_display.h"
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
@@ -155,7 +155,7 @@ public:
         if(added==ESP_OK)return;
 
         // No global IDF service is active (normal in companion mode after
-        // epd_deinit), so let Arduino install and own it in the usual way.
+        // t5_display_deinit), so let Arduino install and own it in the usual way.
         if(added==ESP_ERR_INVALID_STATE){
             callbacks_[interruptNum]=nullptr;
             arduino_owned_[interruptNum]=true;
@@ -909,9 +909,9 @@ static void notice_text(const char* message, int x, int y, int scale, uint8_t* f
                     if (!(glyph.rows[row] & (1 << (4 - col)))) continue;
                     for (int dy = 0; dy < scale; ++dy) {
                         for (int dx = 0; dx < scale; ++dx) {
-                            epd_draw_pixel(x + col * scale + dx,
+                            t5_display_draw_pixel(x + col * scale + dx,
                                            y + row * scale + dy, 0, fb);
-                            if (bold) epd_draw_pixel(x + col * scale + dx + 1,
+                            if (bold) t5_display_draw_pixel(x + col * scale + dx + 1,
                                                      y + row * scale + dy, 0, fb);
                         }
                     }
@@ -930,30 +930,30 @@ static void show_companion_notice() {
     T5_TRACE("notice: epd_init, internal heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
     epd_init(&epd_board_v7, &ED047TC1, EPD_LUT_64K);
     T5_TRACE("notice: panel initialized\n");
-    epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
-    epd_set_lcd_pixel_clock_MHz(17);
-    EpdiyHighlevelState display = epd_hl_init(EPD_BUILTIN_WAVEFORM);
-    uint8_t* fb = epd_hl_get_framebuffer(&display);
+    t5_display_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
+    t5_display_set_pixel_clock_mhz(17);
+    EpdiyHighlevelState display = t5_display_hl_init();
+    uint8_t* fb = t5_display_framebuffer(&display);
     T5_TRACE("notice: framebuffer=%p, heap=%u, psram=%u\n", fb, ESP.getFreeHeap(), ESP.getFreePsram());
     if (fb) {
-        epd_hl_set_all_white(&display);
+        t5_display_set_all_white(&display);
         notice_centred("MESHCORE", 290, 7, fb, true);
         notice_centred("BT COMPANION MODE", 410, 4, fb);
         notice_centred("PRESS AND HOLD BOOT BUTTON", 770, 2, fb);
         notice_centred("2 SECONDS TO EXIT", 805, 2, fb);
         notice_centred(T5_FIRMWARE_VERSION, 900, 2, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
-        epd_poweron();
+        t5_display_poweron();
         T5_TRACE("notice: full panel clear start\n");
-        epd_clear();
+        t5_display_clear();
         T5_TRACE("notice: full panel clear complete\n");
         T5_TRACE("notice: refresh start\n");
-        const EpdDrawError result = epd_hl_update_screen(
-            &display, MODE_GL16, static_cast<int>(epd_ambient_temperature()));
-        epd_poweroff();
+        const EpdDrawError result = t5_display_update_screen(
+            &display, MODE_GL16, static_cast<int>(t5_display_ambient_temperature()));
+        t5_display_poweroff();
         T5_TRACE("notice: refresh result=%d; panel power off\n", result);
     } else {
-        epd_poweroff();
+        t5_display_poweroff();
         T5_TRACE("notice: framebuffer unavailable; panel power off\n");
     }
     // EPDiy 2.0 has no high-level teardown API. Its one-time buffers are
@@ -966,19 +966,19 @@ static void show_companion_notice() {
     T5_TRACE("notice: framebuffers reclaimed\n");
     // LCD data lines overlap the SX1262 SPI pins: release every display
     // peripheral before upstream MeshCore calls radio_init().
-    epd_deinit();
+    t5_display_deinit();
     T5_TRACE("notice: display deinitialized, heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
 }
 
 void T5Board::begin() {
     // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board
     // calls Wire.begin() on this same bus, so initialize MeshCore only after
-    // epd_deinit() releases EPDiy's driver and interrupts.
-    pinMode(11, OUTPUT);
-    digitalWrite(11, HIGH);
+    // t5_display_deinit() releases EPDiy's driver and interrupts.
+    pinMode(T5_PIN_FRONTLIGHT, OUTPUT);
+    digitalWrite(T5_PIN_FRONTLIGHT, HIGH);
     T5_TRACE("board: begin; frontlight on; display notice before MeshCore I2C\n");
     show_companion_notice();
-    digitalWrite(11, LOW);
+    digitalWrite(T5_PIN_FRONTLIGHT, LOW);
     T5_TRACE("board: display rendered; frontlight off; handing control to MeshCore\n");
     T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
     ESP32Board::begin();
@@ -988,9 +988,9 @@ void T5Board::begin() {
     getBattMilliVolts();
     t5_power_diagnostics_report("early-boot");
     T5_TRACE("board: disabling touch and frontlight\n");
-    pinMode(9, OUTPUT);
-    digitalWrite(9, LOW);  // GT911 disabled in companion mode
-    digitalWrite(11, LOW); // frontlight remains disabled in companion mode
+    pinMode(T5_PIN_TOUCH_RST, OUTPUT);
+    digitalWrite(T5_PIN_TOUCH_RST, LOW);  // GT911 disabled in companion mode
+    digitalWrite(T5_PIN_FRONTLIGHT, LOW); // frontlight remains disabled in companion mode
 #if ENV_INCLUDE_GPS == 1
     // MeshCore's historical macro names are counterintuitive here:
     // HardwareSerial::setPins() takes (RX, TX).
