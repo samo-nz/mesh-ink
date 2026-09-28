@@ -53,6 +53,10 @@ int main() {
     static_assert(compact.map_centre_x==240,"compact horizontal centre");
     static_assert(compact.map_centre_y==394,"compact vertical centre");
     static_assert(compact.tab_width==120,"compact tab width");
+    static_assert(compact.outer_width==456,"compact outer card width");
+    static_assert(compact.section_width==432,"compact section width");
+    static_assert(compact.content_text_x==28,"compact text inset");
+    static_assert(compact.header_action_x==410,"compact header action position");
     assert(terrain_point(100,100,compact));
     assert(terrain_point(350,300,compact));
     assert(!terrain_point(410,100,compact));
