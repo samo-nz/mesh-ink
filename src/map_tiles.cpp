@@ -68,6 +68,14 @@ uint32_t perf_pmt_decode_us=0,perf_loose_decode_us=0,perf_compose_us=0;
 uint32_t perf_pmt_range_bytes=0,perf_pmt_preload_bytes=0;
 uint16_t perf_pmt_seek_calls=0,perf_pmt_read_calls=0,perf_pmt_preload_reads=0;
 
+inline uint32_t map_perf_now_us() {
+#if T5_LOG_MAP
+    return micros();
+#else
+    return 0;
+#endif
+}
+
 // PMTiles payload scratch lives in PSRAM. SD reads are staged through aligned
 // internal RAM because direct SD DMA into PSRAM has previously been unreliable
 // on this combined Arduino+ESP-IDF/cache64 build.
@@ -95,16 +103,16 @@ bool ensure_pmt_png_buffer(size_t n) {
 }
 bool preload_pmt_png(File* archive,uint32_t offset,uint32_t length) {
     if(!archive||!length||!ensure_pmt_png_buffer(length))return false;
-    const uint32_t seek_started=micros();
+    const uint32_t seek_started=map_perf_now_us();
     const bool seek_ok=archive->position()==offset||archive->seek(offset);
-    perf_pmt_preload_seek_us+=(uint32_t)(micros()-seek_started);
+    perf_pmt_preload_seek_us+=(uint32_t)(map_perf_now_us()-seek_started);
     if(!seek_ok){map_io_failed=true;return false;}
     uint32_t copied=0;
     while(copied<length) {
         const size_t chunk=min((size_t)(length-copied),sizeof(pmt_io_stage));
-        const uint32_t read_started=micros();
+        const uint32_t read_started=map_perf_now_us();
         const size_t got=archive->read(pmt_io_stage,chunk);
-        perf_pmt_preload_read_us+=(uint32_t)(micros()-read_started);
+        perf_pmt_preload_read_us+=(uint32_t)(map_perf_now_us()-read_started);
         ++perf_pmt_preload_reads;
         perf_pmt_preload_bytes+=(uint32_t)got;
         if(got!=chunk){map_io_failed=true;return false;}
@@ -317,9 +325,9 @@ void* png_open(const char* name,int32_t* size) {
         if(valid_range&&png_file->position()==png_range_start) {
             range_seek_ok=true;
         } else if(valid_range) {
-            const uint32_t seek_started=micros();
+            const uint32_t seek_started=map_perf_now_us();
             range_seek_ok=png_file->seek(png_range_start);
-            perf_pmt_range_seek_us+=(uint32_t)(micros()-seek_started);
+            perf_pmt_range_seek_us+=(uint32_t)(map_perf_now_us()-seek_started);
             ++perf_pmt_seek_calls;
         }
         if(!range_seek_ok){
@@ -354,10 +362,10 @@ int32_t png_read(PNGFILE*,uint8_t* data,int32_t length) {
     }
     if(pos>=end)return 0;
     const int32_t allowed=(int32_t)min((uint64_t)length,end-pos);
-    const uint32_t read_started=png_range_active?micros():0;
+    const uint32_t read_started=png_range_active?map_perf_now_us():0;
     const int32_t n=png_file->read(data,allowed);
     if(png_range_active) {
-        perf_pmt_range_read_us+=(uint32_t)(micros()-read_started);
+        perf_pmt_range_read_us+=(uint32_t)(map_perf_now_us()-read_started);
         ++perf_pmt_read_calls;
         if(n>0)perf_pmt_range_bytes+=(uint32_t)n;
     }
@@ -379,10 +387,10 @@ int32_t png_seek(PNGFILE*,int32_t position) {
     if(absolute<=UINT32_MAX&&png_file->position()==(uint32_t)absolute) {
         seek_ok=true;
     } else if(absolute<=UINT32_MAX) {
-        const uint32_t seek_started=png_range_active?micros():0;
+        const uint32_t seek_started=png_range_active?map_perf_now_us():0;
         seek_ok=png_file->seek((uint32_t)absolute);
         if(png_range_active) {
-            perf_pmt_range_seek_us+=(uint32_t)(micros()-seek_started);
+            perf_pmt_range_seek_us+=(uint32_t)(map_perf_now_us()-seek_started);
             ++perf_pmt_seek_calls;
         }
     }
@@ -618,9 +626,9 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         bool found=false;
         for(size_t i=0;i<archive_count;++i) {
             ++result.sd_checks;
-            const uint32_t lookup_started=micros();
+            const uint32_t lookup_started=map_perf_now_us();
             const bool found_in_archive=pmtiles_find_png(archive_paths[i],z,x,y,range);
-            perf_pmt_lookup_us+=(uint32_t)(micros()-lookup_started);
+            perf_pmt_lookup_us+=(uint32_t)(map_perf_now_us()-lookup_started);
             if(found_in_archive) {
                 snprintf(path,sizeof(path),"%s",archive_paths[i]);
                 found=true;
@@ -665,9 +673,9 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     Tile* slot=acquire_slot();
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
-    const uint32_t decode_started=micros();
+    const uint32_t decode_started=map_perf_now_us();
     const int decode_status=png.decode(nullptr,0);
-    const uint32_t decode_elapsed=(uint32_t)(micros()-decode_started);
+    const uint32_t decode_elapsed=(uint32_t)(map_perf_now_us()-decode_started);
     if(selected_pmtiles)perf_pmt_decode_us+=decode_elapsed;
     else perf_loose_decode_us+=decode_elapsed;
     png.close();
@@ -799,9 +807,9 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
                         from_pmtiles))
             continue;
         if(tile) {
-            const uint32_t compose_started=micros();
+            const uint32_t compose_started=map_perf_now_us();
             draw_cached(*tile,draw);
-            perf_compose_us+=(uint32_t)(micros()-compose_started);
+            perf_compose_us+=(uint32_t)(map_perf_now_us()-compose_started);
         }
         // A low-memory decode drew the same requested tile directly.
         ++result.tiles;
