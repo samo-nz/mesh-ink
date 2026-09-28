@@ -11,11 +11,11 @@ constexpr int TAP_RADIUS_PX=60;
 constexpr int TAP_SLOP_PX=16;
 constexpr uint32_t TAP_MAX_HOLD_MS=260;
 
-constexpr int controls_left(const MeshInkUiLayout& layout) {
+inline int controls_left(const MeshInkUiLayout& layout) {
     const MeshInkUiRect first=meshink_map_control_rect(layout,0);
     return first.x-meshink_ui_ref_w(layout,6);
 }
-constexpr int controls_bottom(const MeshInkUiLayout& layout) {
+inline int controls_bottom(const MeshInkUiLayout& layout) {
     const MeshInkUiRect last=meshink_map_control_rect(layout,2);
     return last.y+last.height+meshink_ui_ref_h(layout,7);
 }
