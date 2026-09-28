@@ -1729,6 +1729,21 @@ static void request_hardware_shutdown() {
     deep_sleep_shutdown("VBUS_STILL_POWERED");
 }
 static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
+static bool update_charge_state(bool* icon_changed=nullptr) {
+    uint8_t charger=0;
+    if(!i2c_read8(0x6B,0x0B,&charger,1)) {
+        if(icon_changed)*icon_changed=false;
+        return false;
+    }
+    const uint8_t previous=status_charge_state;
+    const uint8_t next=(charger>>3)&0x03;
+    status_charge_state=next;
+    const bool was_charging=previous==1||previous==2;
+    const bool now_charging=next==1||next==2;
+    if(icon_changed)*icon_changed=was_charging!=now_charging;
+    return previous!=next;
+}
+
 static bool update_status_hardware() {
     const int8_t old_hour=status_hour,old_minute=status_minute;
     const int16_t old_battery=status_battery;const uint8_t old_charge=status_charge_state;
@@ -1739,7 +1754,7 @@ static bool update_status_hardware() {
         const uint16_t soc=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
         if(soc<=100)status_battery=(int16_t)soc;
     }
-    uint8_t charger=0;if(i2c_read8(0x6B,0x0B,&charger,1))status_charge_state=(charger>>3)&0x03;
+    update_charge_state();
     const bool clock_changed=standby_active?(old_hour!=status_hour||old_minute/10!=status_minute/10):(old_hour!=status_hour||old_minute!=status_minute);
     const bool battery_changed=standby_active?(old_battery/5!=status_battery/5):(old_battery!=status_battery);
     const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
@@ -2449,6 +2464,9 @@ static void enter_standby(const char* reason){
         epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     }
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
+    // Enter standby with the latest charger state even if the normal 15 s
+    // foreground status poll has not run since USB was connected.
+    update_charge_state();
     T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
@@ -2765,6 +2783,24 @@ void ui_loop() {
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MODE_GL16);
         }else handle_tap(tap.x,tap.y);
     }
+    // Charger plug/unplug is user-visible state and should not wait for the
+    // deliberately slow 60 s standby status poll. A one-byte PMIC read once
+    // per second is cheap; refresh only the 48 px status bar and only when the
+    // lightning-bolt visibility changes.
+    static uint32_t last_standby_charge_poll=0;
+    if(standby_active&&millis()-last_standby_charge_poll>=1000){
+        last_standby_charge_poll=millis();
+        bool icon_changed=false;
+        update_charge_state(&icon_changed);
+        if(icon_changed&&!message_alert_active){
+            T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] charging icon=%s state=%u\n",
+                (status_charge_state==1||status_charge_state==2)?"ON":"OFF",
+                (unsigned)status_charge_state);
+            draw_status_bar(true);
+            refresh_area(MODE_DU,{0,0,540,48},false);
+        }
+    }
+
     static uint32_t last_status_poll=0;
     const uint32_t status_poll_interval=standby_active?60000:15000;
     if(millis()-last_status_poll>=status_poll_interval){
