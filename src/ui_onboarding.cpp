@@ -1045,7 +1045,10 @@ static void draw_maps() {
         text("NO MAP TILES HERE",22,778,2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
-    epd_fill_rect({18,812,260,30},0xFF,fb);text(zoom,22,816,2,0,true);
+    // Scale-2 text advances 12 px per character. Keep only a 4 px margin on
+    // each side so the white label backing follows the actual badge width.
+    const int zoom_label_width=(int)strlen(zoom)*12+8;
+    epd_fill_rect({18,812,zoom_label_width,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // The three map controls share their 66x66 size, black background and
     // white glyphs. Keep their touch rectangles in sync below.
     constexpr int control_x=462;
