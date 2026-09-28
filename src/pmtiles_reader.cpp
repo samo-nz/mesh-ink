@@ -49,7 +49,7 @@ struct Archive {
 };
 Archive archive;
 Directory root;
-// Experimental larger leaf cache: the observed cold zoom traversed five
+// Eight-slot leaf cache: the observed cold zoom traversed five
 // separate leaf directories. Retain eight to avoid re-reading/gunzipping
 // a recently crossed leaf when panning or returning to a nearby zoom.
 constexpr size_t LEAF_CACHE_SLOTS = 8;
