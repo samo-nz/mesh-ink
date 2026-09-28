@@ -69,7 +69,7 @@ File frame_file;
 char frame_path[160]{};
 PmtilesPerfStats perf{};
 uint32_t perf_now_us() {
-#ifdef ESP32
+#if T5_LOG_MAP && defined(ESP32)
     return (uint32_t)esp_timer_get_time();
 #else
     return 0;
