@@ -2,6 +2,7 @@
 #include <esp_random.h>
 #include <Preferences.h>
 #include "hardware/display.h"
+#include "hardware/touch.h"
 #include "board/board_profile.h"
 #include <driver/i2c.h>
 #include <esp_heap_caps.h>
@@ -39,9 +40,6 @@ void request_companion_mode() { Serial.println("[T5-UI] companion mode requires 
 // started in this target. Saved values are device-owned and will be handed to
 // the MeshCore application adapter in the next milestone.
 static constexpr char UI_VERSION[] = T5_FIRMWARE_VERSION;
-static constexpr uint8_t GT911_ADDR = 0x5D;
-static constexpr gpio_num_t TOUCH_RST = (gpio_num_t)T5_PIN_TOUCH_RST;
-static constexpr gpio_num_t TOUCH_INT = (gpio_num_t)T5_PIN_TOUCH_INT;
 static constexpr gpio_num_t FRONTLIGHT = (gpio_num_t)T5_PIN_FRONTLIGHT;
 static constexpr gpio_num_t BOOT_BUTTON = (gpio_num_t)T5_PIN_BOOT_BUTTON;
 static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL=6;
@@ -100,7 +98,6 @@ static Preferences prefs;
 static char node_name[21] = "MeshInk-";
 static uint8_t selected_preset = 17;
 static bool saved = false;
-static bool was_pressed = false;
 static bool replace_name_on_type = false;
 static bool keyboard_visible = true;
 static bool keyboard_upper = true;
@@ -144,7 +141,6 @@ static size_t selected_channel = 0;
 static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
 static size_t contacts_page = 0;
 static size_t channels_page = 0;
-static int16_t cached_touch_x = 0, cached_touch_y = 0;
 static uint8_t chat_page = 0;
 static uint8_t timezone_index = 0;
 static bool mesh_is_ready = false;
@@ -2046,10 +2042,6 @@ static void full_display_clean(const char* reason) {
     T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
 
-static bool i2c_read(uint16_t reg, uint8_t* data, size_t len) {
-    uint8_t address[2] = {(uint8_t)(reg>>8),(uint8_t)reg};
-    return i2c_master_write_read_device(I2C_NUM_0,GT911_ADDR,address,2,data,len,pdMS_TO_TICKS(20)) == ESP_OK;
-}
 static bool i2c_read8(uint8_t device,uint8_t reg,uint8_t* data,size_t len) {
     return i2c_master_write_read_device(I2C_NUM_0,device,&reg,1,data,len,pdMS_TO_TICKS(20))==ESP_OK;
 }
@@ -2252,64 +2244,6 @@ static bool update_status_hardware() {
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
     return changed;
 }
-static void clear_touch() {
-    uint8_t data[3] = {0x81,0x4E,0};
-    i2c_master_write_to_device(I2C_NUM_0,GT911_ADDR,data,3,pdMS_TO_TICKS(20));
-}
-static bool touch_point(int16_t& x, int16_t& y,bool& home) {
-    uint8_t status=0;
-    home=false;if (!i2c_read(0x814E,&status,1) || !(status&0x80)) { x=cached_touch_x; y=cached_touch_y; return was_pressed; }
-    if(status&0x10){home=true;clear_touch();was_pressed=false;return true;}
-    const uint8_t count=status&0x0F;
-    if (!count || count>5) { clear_touch(); was_pressed=false; x=cached_touch_x; y=cached_touch_y; return false; }
-    uint8_t p[8]={};
-    if (!i2c_read(0x814F,p,sizeof(p))) return was_pressed;
-    x=(int16_t)(p[1]|((uint16_t)p[2]<<8)); y=(int16_t)(p[3]|((uint16_t)p[4]<<8));
-    cached_touch_x=x; cached_touch_y=y;
-    clear_touch(); was_pressed=true; return true;
-}
-
-// Maps-only GT911 reader. Unlike touch_point() above, fetch BOTH of the
-// controller's eight-byte coordinate records from 0x814F when count=2.
-// No other screen or keyboard calls this function, and touch_point() remains
-// byte-for-byte identical to the previously tested single-finger reader.
-static uint8_t map_last_count=0;
-static int16_t map_last_x0=0,map_last_y0=0,map_last_x1=0,map_last_y1=0;
-static bool map_touch_points(uint8_t& count,int16_t& x0,int16_t& y0,
-                             int16_t& x1,int16_t& y1,bool& home) {
-    uint8_t status=0;
-    home=false;
-    if(!i2c_read(0x814E,&status,1))return false;
-    if(!(status&0x80)) {
-        count=map_last_count;x0=map_last_x0;y0=map_last_y0;
-        x1=map_last_x1;y1=map_last_y1;
-        return true; // no new frame; keep the previous press until release
-    }
-    if(status&0x10) {
-        home=true;map_last_count=0;count=0;clear_touch();return true;
-    }
-    const uint8_t reported=status&0x0F;
-    if(reported>5) {map_last_count=0;count=0;clear_touch();return true;}
-    if(reported==0) {map_last_count=0;count=0;clear_touch();return true;}
-    if(reported>2) {
-        // Multi-contact outside supported two-point gesture: suppress any
-        // accidental tap or pan until ALL fingers are lifted.
-        map_last_count=3;count=3;clear_touch();return true;
-    }
-    uint8_t points[16]{};
-    if(!i2c_read(0x814F,points,reported*8))return false;
-    map_last_x0=(int16_t)(points[1]|((uint16_t)points[2]<<8));
-    map_last_y0=(int16_t)(points[3]|((uint16_t)points[4]<<8));
-    if(reported==2) {
-        map_last_x1=(int16_t)(points[9]|((uint16_t)points[10]<<8));
-        map_last_y1=(int16_t)(points[11]|((uint16_t)points[12]<<8));
-    }
-    map_last_count=reported;count=reported;
-    x0=map_last_x0;y0=map_last_y0;x1=map_last_x1;y1=map_last_y1;
-    clear_touch();
-    return true;
-}
-
 static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
     bool map_multi=false,map_pinch_allowed=false;
@@ -2320,7 +2254,7 @@ static void touch_sampler_task(void*){
     for(;;){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
-            map_last_count=0;
+            meshink_touch_reset_tracking();
             t5_timing_touch_reset();
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
@@ -2337,16 +2271,19 @@ static void touch_sampler_task(void*){
             !keyboard_landscape&&!quick_panel_active;
         if(on_map!=map_previous) {
             held=false;home_held=false;map_multi=false;
-            was_pressed=false;map_last_count=0;
+            meshink_touch_reset_tracking();
             map_previous=on_map;
         }
         if(on_map) {
-            uint8_t count=0;int16_t x0=0,y0=0,x1=0,y1=0;
-            bool home=false;
-            if(!map_touch_points(count,x0,y0,x1,y1,home)) {
+            MeshInkTouchContacts contacts{};
+            if(!meshink_touch_read_contacts(contacts)) {
                 t5_timing_touch_end(timing_touch_started);
                 vTaskDelay(pdMS_TO_TICKS(8));continue;
             }
+            const uint8_t count=contacts.count;
+            const int16_t x0=contacts.points[0].x,y0=contacts.points[0].y;
+            const int16_t x1=contacts.points[1].x,y1=contacts.points[1].y;
+            const bool home=contacts.home;
             if(home) {
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;held=false;map_multi=false;
@@ -2402,8 +2339,9 @@ static void touch_sampler_task(void*){
         } else {
             // Non-Maps keeps the legacy single-touch GT911 parser. Keyboard releases
             // get a small thumb-roll stabilization below; other UI releases remain unchanged.
-            int16_t x=0,y=0;bool home=false;
-            const bool pressed=touch_point(x,y,home);
+            const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();
+            const int16_t x=sample.x,y=sample.y;
+            const bool home=sample.home,pressed=sample.pressed;
             if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;
@@ -2586,7 +2524,7 @@ static void show_contacts_after_setup(){
     text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
     status_dirty=false;status_wake_light=false;
     if(touch_queue)xQueueReset(touch_queue);
-    clear_touch();
+    meshink_touch_clear();
     screen=Screen::Contacts;
     draw_screen();
     fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);
@@ -2994,9 +2932,16 @@ static void finish_map_tap_sequence() {
 }
 
 static void set_touch_power(bool enabled){
-    touch_enabled=false;delay(20);was_pressed=false;
-    if(enabled){pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);clear_touch();touch_enabled=true;if(touch_task_handle)xTaskNotifyGive(touch_task_handle);T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] touch controller enabled");}
-    else{pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] touch controller disabled");}
+    touch_enabled=false;
+    delay(20); // let the sampler observe the disabled state before rail/reset changes
+    meshink_touch_set_power(enabled);
+    if(enabled){
+        touch_enabled=true;
+        if(touch_task_handle)xTaskNotifyGive(touch_task_handle);
+        T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] touch backend %s enabled\n",meshink_touch_backend_name());
+    }else{
+        T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] touch backend %s disabled\n",meshink_touch_backend_name());
+    }
 }
 
 static void enter_standby(const char* reason){
@@ -3087,10 +3032,10 @@ void ui_setup() {
     // Stay off until preferences have been loaded. The splash refresh then
     // uses the saved brightness or the new 30% first-install default.
     ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);
-    pinMode(TOUCH_RST,OUTPUT);digitalWrite(TOUCH_RST,LOW);pinMode(TOUCH_INT,OUTPUT);digitalWrite(TOUCH_INT,LOW);
+    meshink_touch_prepare_boot();
     meshink_display_init();meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);meshink_display_set_pixel_clock_mhz(17);
     recover_pmic_power_path();
-    delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
+    meshink_touch_finish_boot();
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
 #if MESHINK_GEOMETRY_DIAGNOSTICS
     audit_ui_geometry();
@@ -3161,7 +3106,7 @@ void ui_finish_startup() {
     if(hardware_failure)return;
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
-    clear_touch();
+    meshink_touch_clear();
     draw_screen();
     if(screen==Screen::Welcome)
         fast_full_redraw("FIRST_SETUP_SCREEN",false);
