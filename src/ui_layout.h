@@ -55,6 +55,13 @@ struct MeshInkUiLayout {
 };
 
 
+constexpr int meshink_form_pair_width(const MeshInkUiLayout& layout);
+constexpr int meshink_form_pair_right(const MeshInkUiLayout& layout);
+constexpr int meshink_section_pair_width(const MeshInkUiLayout& layout);
+constexpr int meshink_section_pair_right(const MeshInkUiLayout& layout);
+constexpr int meshink_pager_button_width(const MeshInkUiLayout& layout);
+constexpr int meshink_pager_right(const MeshInkUiLayout& layout);
+
 struct MeshInkUiRect {
     int x;
     int y;
