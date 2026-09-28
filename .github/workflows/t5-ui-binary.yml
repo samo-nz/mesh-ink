@@ -164,6 +164,12 @@ jobs:
           full status poll, so the charging bolt appears or disappears promptly
           with only a status-bar e-paper refresh.
 
+          Critical battery protection now shuts the device down cleanly before
+          brownout boot loops. On battery power, a confirmed voltage below
+          3.30 V shows a persistent LOW BATTERY screen and places the BQ25896
+          in BATFET ship mode. USB/MagSafe power bypasses the cutoff so a flat
+          device can boot and charge normally.
+
           The update image does not intentionally erase existing MeshCore
           settings, contacts, message history, or saved MeshInk credentials.
           EOF
