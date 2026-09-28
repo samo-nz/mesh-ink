@@ -14,7 +14,7 @@ map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
-display_backend_source = (root / "src" / "board" / "meshink_display_backend.h").read_text(encoding="utf-8")
+display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
 
 def contains(fragment, label):
