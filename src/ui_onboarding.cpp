@@ -2193,14 +2193,19 @@ static void touch_sampler_task(void*){
                 last_x=x;last_y=y;
                 if(!held){
                     held=true;start_x=x;start_y=y;frontlight_event();
+                    const MeshInkUiRect slider_touch=
+                        meshink_quick_slider_touch_rect(portrait_layout());
                     quick_slider_dragging=quick_panel_active&&
-                        y>=146&&y<=226&&x>=QUICK_SLIDER_LEFT-16&&x<=QUICK_SLIDER_RIGHT+16;
+                        x>=slider_touch.x&&x<slider_touch.x+slider_touch.width&&
+                        y>=slider_touch.y&&y<slider_touch.y+slider_touch.height;
                 }
                 if(quick_slider_dragging) {
-                    const int clamped=max(QUICK_SLIDER_LEFT,min(QUICK_SLIDER_RIGHT,(int)x));
-                    const int value=((clamped-QUICK_SLIDER_LEFT)*100+
-                        (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT)/2)/
-                        (QUICK_SLIDER_RIGHT-QUICK_SLIDER_LEFT);
+                    const MeshInkUiRect slider=
+                        meshink_quick_slider_track_rect(portrait_layout());
+                    const int slider_right=slider.x+slider.width;
+                    const int clamped=max(slider.x,min(slider_right,(int)x));
+                    const int value=((clamped-slider.x)*100+slider.width/2)/
+                        slider.width;
                     quick_slider_preview=(uint8_t)max(0,min(100,value));
                     frontlight_preview(quick_slider_preview);
                 }
