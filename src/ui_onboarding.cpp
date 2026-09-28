@@ -1315,10 +1315,16 @@ static void draw_contact_details() {
         // Password entry is a full lower-screen layer. Clear the underlying
         // Node Info controls/page footer so the keyboard has a clean white
         // background between keys and across its bottom action row.
-        meshink_display_fill_rect({0,486,meshink_display_logical_width(),474},0xFF,fb);
-        box(24,504,28,28,save_remote_password);if(save_remote_password)text("X",30,509,2,0xFF,true);
-        text("SAVE PASSWORD",66,510,2,0,true);
-        box(12,544,516,70);text(remote_password[0]?remote_password:"REMOTE PASSWORD",28,568,2,0,true);draw_keyboard();
+        const auto metrics=keyboard_metrics(false);
+        const MeshInkUiLayout& keyboard_layout=portrait_layout();
+        meshink_display_fill_rect({0,metrics.clear_top,keyboard_layout.width,
+                                   keyboard_layout.height-metrics.clear_top},0xFF,fb);
+        const int checkbox_y=metrics.clear_top+18;
+        box(24,checkbox_y,28,28,save_remote_password);if(save_remote_password)text("X",30,checkbox_y+5,2,0xFF,true);
+        text("SAVE PASSWORD",66,checkbox_y+6,2,0,true);
+        box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
+        text(remote_password[0]?remote_password:"REMOTE PASSWORD",
+             metrics.entry.x+16,metrics.entry.y+24,2,0,true);draw_keyboard();
     }
 }
 
