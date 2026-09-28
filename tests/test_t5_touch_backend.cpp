@@ -95,6 +95,11 @@ int main() {
     assert(state().i2c_errors==1);
     assert(log_contains("ERROR GT911 read"));
 
+    touch_stub::queue_read(GT911_STATUS,{0x81});
+    touch_stub::queue_read_failure(GT911_FIRST_POINT);
+    primary=meshink_touch_read_primary();
+    assert(primary.pressed&&primary.x==0&&primary.y==0);
+
     // Maps contact path: one finger persists until release/new frame.
     reset_all();
     MeshInkTouchContacts contacts{};
