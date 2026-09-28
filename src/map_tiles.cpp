@@ -15,7 +15,7 @@
 namespace {
 constexpr int TILE_SIZE=256;
 constexpr size_t TILE_BYTES=TILE_SIZE*TILE_SIZE/2;
-// Experimental wider pan/zoom cache: 96 native 4-bit source tiles can
+// Wide pan/zoom cache: 96 native 4-bit source tiles can
 // occupy up to 3 MiB PSRAM. A failed allocation falls back to direct decode.
 constexpr size_t CACHE_SLOTS=96;
 constexpr size_t ABSENT_SLOTS=128;
@@ -58,7 +58,7 @@ bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
-// Experimental SD clock: the verified firmware used 10 MHz. No map writes.
+// Field-tested read-only SD clock for loose PNG and PMTiles map access.
 constexpr uint32_t MAP_SD_SPI_HZ=25000000;
 // Per-render PMTiles/PNG timing. PNG decode includes its nested range I/O;
 // range seek/read counters are logged separately so CPU decode can be inferred.
@@ -151,7 +151,7 @@ bool media_ready(bool probe=true) {
         sd_mounted=true;
         reset_sd_caches();
         ++sd_media_epoch;
-        Serial.printf("[T5-MAP] SD mounted; experimental SPI clock requested=%lu MHz\n",
+        Serial.printf("[T5-MAP] SD mounted; SPI clock requested=%lu MHz\n",
                       (unsigned long)(MAP_SD_SPI_HZ/1000000));
     }
     if(probe) {
@@ -867,7 +867,7 @@ uint32_t map_tiles_media_epoch(){return sd_media_epoch;}
 
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
-    const uint32_t started=millis(); // experimental A/B measurement only
+    const uint32_t started=millis(); // per-render performance instrumentation
     reset_map_perf();
     const bool ready=media_ready(false);
     MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
