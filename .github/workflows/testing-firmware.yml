@@ -1,0 +1,107 @@
+name: MeshInk testing firmware
+
+on:
+  pull_request:
+    paths:
+      - 'src/pmtiles_reader.*'
+      - 'src/map_tiles.cpp'
+      - 'src/ui_onboarding.cpp'
+      - 'src/ui_data.h'
+      - 'src/local_mesh_runtime.cpp'
+      - 'src/map_gestures.h'
+      - 'tests/test_map_gestures.cpp'
+      - 'src/map_gray.h'
+      - 'tests/test_map_gray.cpp'
+      - 'platformio.ini'
+      - 'tools/check_ui_regressions.py'
+      - 'tools/test_keyboard_geometry.cpp'
+      - 'src/keyboard_geometry.h'
+      - 'src/t5_timing.*'
+      - 'src/unified_main.cpp'
+      - 'src/cache64_compat.cpp'
+      - 'src/CMakeLists.txt'
+      - 'CMakeLists.txt'
+      - 'sdkconfig.cache64'
+      - 'cache64_include/**'
+      - '.github/workflows/testing-firmware.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meshink-testing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install platformio Pillow
+      - name: Host map archive reader tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
+            src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
+            -lz -o /tmp/map-archive-test
+          /tmp/map-archive-test
+      - name: Maps-only gesture geometry regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_map_gestures.cpp -o /tmp/map-gestures-test
+          /tmp/map-gestures-test
+      - name: Map grayscale equivalence regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_map_gray.cpp -o /tmp/map-gray-test
+          /tmp/map-gray-test
+      - name: UI interaction regression checks
+        run: python tools/check_ui_regressions.py
+      - name: Portrait and landscape keyboard target regression
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
+            tools/test_keyboard_geometry.cpp -o /tmp/meshink-keyboard-test
+          /tmp/meshink-keyboard-test
+      - name: Build primary cache64 firmware
+        run: python -m platformio run -e t5-unified-cache64
+      - name: Verify cache64 SDK config
+        run: |
+          test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
+          echo "Relevant generated SDK configuration:"
+          grep -E 'CONFIG_(ESP32S3_DATA_CACHE_LINE|BT_BLUEDROID_ENABLED|BT_BLE_42_FEATURES_SUPPORTED|ESP32S3_SPIRAM_SUPPORT|SPIRAM_MODE_OCT|SPIRAM_BOOT_INIT|SPIRAM_USE_MALLOC|FATFS_USE_FASTSEEK|FATFS_FAST_SEEK_BUFFER_SIZE|LOG_COLORS)' .pio/build/t5-unified-cache64/config/sdkconfig.h || true
+          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE 64' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_64B 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BT_BLUEDROID_ENABLED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BT_BLE_42_FEATURES_SUPPORTED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_ESP32S3_SPIRAM_SUPPORT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_SPIRAM_MODE_OCT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_SPIRAM_BOOT_INIT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_SPIRAM_USE_MALLOC 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_USE_FASTSEEK 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE 1024' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          ! grep -q '#define CONFIG_LOG_COLORS 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+      - name: Prepare testing firmware
+        run: |
+          test -s .pio/build/t5-unified-cache64/firmware.bin
+          cp .pio/build/t5-unified-cache64/firmware.bin meshink-testing-update.bin
+          sha256sum meshink-testing-update.bin > meshink-testing-SHA256.txt
+      - name: Downloadable testing firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshink-testing-firmware
+          path: |
+            meshink-testing-update.bin
+            meshink-testing-SHA256.txt
+          if-no-files-found: error
+          retention-days: 14

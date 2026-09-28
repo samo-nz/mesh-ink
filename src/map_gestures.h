@@ -6,7 +6,7 @@
 // All coordinates are portrait screen pixels in the existing 540x960 view.
 namespace meshink_map_gestures {
 constexpr int MAP_TOP=48, MAP_BOTTOM=900, MAP_CENTRE_Y=474;
-constexpr int MIN_ZOOM=8, MAX_ZOOM=18;
+constexpr int MIN_ZOOM=2, MAX_ZOOM=18;
 constexpr uint32_t TAP_WINDOW_MS=350;
 constexpr int TAP_RADIUS_PX=60;
 constexpr int TAP_SLOP_PX=16;
@@ -29,16 +29,13 @@ inline int32_t distance_squared(int x0,int y0,int x1,int y1) {
     const int32_t dx=x1-x0,dy=y1-y0;
     return dx*dx+dy*dy;
 }
-// A 30% fingers-apart change is an intentional pinch, not touch jitter;
-// larger pinches can request up to three discrete levels in one e-paper update.
+// A 30% fingers-apart change is an intentional pinch, not touch jitter.
+// One continuous pinch always changes exactly one zoom level; the user must
+// release and start a new pinch for another level.
 inline int pinch_zoom_steps(int32_t initial_squared,int32_t final_squared) {
     if(initial_squared<2500 || final_squared<0)return 0;
     const int64_t start=initial_squared,finish=final_squared;
-    if(finish>=start*9)return 3;
-    if(finish>=start*4)return 2;
     if(finish*100>=start*169)return 1;
-    if(finish*9<=start)return -3;
-    if(finish*4<=start)return -2;
     if(finish*169<=start*100)return -1;
     return 0;
 }

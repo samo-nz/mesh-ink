@@ -45,6 +45,17 @@ inline int key_index(Row row,int x) {
     return index;
 }
 
+// The alphabetic home row has no controls beside A/L, so let those two
+// outer keys own the otherwise-dead margin all the way to the display edge.
+// Keep this separate from key_index() so symbols and every other row retain
+// their exact visual/midpoint geometry.
+inline int key_index_edge_extended(Row row,int x,int screen_width) {
+    if(row.count<=0||x<0||x>=screen_width)return -1;
+    if(x<row.left)return 0;
+    if(x>=row.right)return row.count-1;
+    return key_index(row,x);
+}
+
 inline bool in_row(int y,int top) {
     // Extend each 62-pixel key to the midpoint of the 8-pixel row gap.
     return y>=top-4&&y<top+66;

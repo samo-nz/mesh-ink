@@ -1,8 +1,12 @@
 #include "pmtiles_reader.h"
+#include "t5_logging.h"
 
 #include <Arduino.h>
 #include <SD.h>
 #include <esp_heap_caps.h>
+#ifdef ESP32
+#include <esp_timer.h>
+#endif
 // ESP32-S3's tinfl_decompress() resolves to the built-in ROM function
 // (0x40000828), NOT to the externally installed richgel999/miniz library.
 // Its tinfl_decompressor layout is different. Using <miniz.h> allocated an
@@ -46,7 +50,7 @@ struct Archive {
 };
 Archive archive;
 Directory root;
-// Experimental larger leaf cache: the observed cold zoom traversed five
+// Eight-slot leaf cache: the observed cold zoom traversed five
 // separate leaf directories. Retain eight to avoid re-reading/gunzipping
 // a recently crossed leaf when panning or returning to a nearby zoom.
 constexpr size_t LEAF_CACHE_SLOTS = 8;
@@ -63,6 +67,14 @@ bool prepared = false;
 bool frame_active = false, io_failed = false;
 File frame_file;
 char frame_path[160]{};
+PmtilesPerfStats perf{};
+uint32_t perf_now_us() {
+#if T5_LOG_MAP && defined(ESP32)
+    return (uint32_t)esp_timer_get_time();
+#else
+    return 0;
+#endif
+}
 
 uint64_t little64(const uint8_t* p) {
     uint64_t v = 0;
@@ -99,14 +111,22 @@ bool within(uint64_t start, uint64_t length, uint64_t total) {
 // potentially unaligned PSRAM allocations directly to the SD driver.
 bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
     if (!dst || start > UINT32_MAX) return false;
-    if (!file.seek((uint32_t)start)) {
+    const uint32_t seek_started=perf_now_us();
+    const bool seek_ok=file.seek((uint32_t)start);
+    perf.metadata_seek_us+=(uint32_t)(perf_now_us()-seek_started);
+    if (!seek_ok) {
         io_failed = true;
         return false;
     }
     alignas(4) static uint8_t stage[256];
     while (n) {
         const size_t chunk = n < sizeof(stage) ? n : sizeof(stage);
-        if (file.read(stage, chunk) != chunk) {
+        const uint32_t read_started=perf_now_us();
+        const size_t got=file.read(stage, chunk);
+        perf.metadata_read_us+=(uint32_t)(perf_now_us()-read_started);
+        ++perf.metadata_reads;
+        perf.metadata_bytes+=(uint32_t)got;
+        if (got != chunk) {
             io_failed = true;
             return false;
         }
@@ -191,9 +211,11 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     tinfl_init(decoder);
     size_t input_length = in_size - 8 - pos;
     size_t actual = output_size;
+    const uint32_t inflate_started=perf_now_us();
     const tinfl_status status = tinfl_decompress(
         decoder, in + pos, &input_length, output, output, &actual,
         TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    perf.inflate_us+=(uint32_t)(perf_now_us()-inflate_started);
     for (size_t i = 0; i < OUTPUT_GUARD; ++i) {
         if (output[output_size + i] != 0xa5) {
             Serial.printf("[T5-PMT] gzip output exceeded buffer at +%u\n",
@@ -239,6 +261,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
         }
         free(compressed);
     }
+    const uint32_t parse_started=perf_now_us();
     const uint8_t* cur = decoded;
     const uint8_t* end = decoded + decoded_size;
     uint64_t count = 0;
@@ -284,6 +307,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
     if (!ok) { free(entries); return false; }
     output.entries = entries;
     output.count = (size_t)count;
+    perf.index_parse_us+=(uint32_t)(perf_now_us()-parse_started);
     return true;
 }
 bool prepare(File& file, const char* path) {
@@ -318,6 +342,10 @@ bool prepare(File& file, const char* path) {
         return false;
     archive.supported = parse_directory(file, archive.root_offset,
                                         archive.root_length, root);
+    if(archive.supported)
+        T5_DEBUGF(T5_LOG_MAP,"[T5-PMT] ready path=%s zoom=%u-%u compression=%u\n",
+                      path,(unsigned)archive.min_zoom,
+                      (unsigned)archive.max_zoom,(unsigned)archive.compression);
     return archive.supported;
 }
 // Use the PMTiles Hilbert ordering, not a row-major or TMS tile address.
@@ -347,14 +375,49 @@ const Entry* select_entry(const Directory& d, uint64_t id) {
 } // namespace
 
 void pmtiles_begin_frame() {
-    close_frame_file();
+    // Keep the active archive handle open across map renders. With FATFS
+    // fast-seek, opening a large archive also builds its cluster-link map and
+    // costs about 112 ms on this card; retaining the same read-only handle
+    // preserves that work until media reset/remount or archive switching.
+    perf = PmtilesPerfStats{};
     frame_active = true;
     io_failed = false;
 }
 
 void pmtiles_end_frame() {
-    close_frame_file();
+    // PNGdec may only borrow the handle while a map frame is active, but the
+    // reader itself keeps ownership so the FAT fast-seek map survives.
     frame_active = false;
+}
+
+bool pmtiles_warm_archive(const char* path) {
+    if(!path||!*path)return false;
+    perf=PmtilesPerfStats{};
+    io_failed=false;
+    if(!frame_file||strcmp(frame_path,path)) {
+        close_frame_file();
+        const uint32_t open_started=perf_now_us();
+        frame_file=SD.open(path,FILE_READ);
+        perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
+        if(!frame_file){io_failed=true;return false;}
+        strncpy(frame_path,path,sizeof(frame_path)-1);
+        frame_path[sizeof(frame_path)-1]=0;
+    }
+    const uint32_t prepare_started=perf_now_us();
+    const bool ok=prepare(frame_file,path);
+    perf.prepare_us+=(uint32_t)(perf_now_us()-prepare_started);
+    if(!ok&&io_failed) {
+        // A transient warmup read must not cache this archive permanently as
+        // unsupported. Leave later Maps access free to reopen and retry it.
+        close_frame_file();
+        clear_directory(root);
+        clear_leaves();
+        archive=Archive{};
+        cached_path[0]=0;
+        prepared=false;
+        io_failed=false;
+    }
+    return ok;
 }
 
 File* pmtiles_frame_file(const char* path) {
@@ -365,15 +428,18 @@ File* pmtiles_frame_file(const char* path) {
 }
 
 bool pmtiles_had_io_error() { return io_failed; }
+PmtilesPerfStats pmtiles_perf_stats() { return perf; }
 
 void pmtiles_reset() {
-    pmtiles_end_frame();
+    frame_active = false;
+    close_frame_file();
     clear_directory(root);
     clear_leaves();
     archive = Archive{};
     cached_path[0] = 0;
     prepared = false;
     io_failed = false;
+    perf = PmtilesPerfStats{};
 }
 
 bool pmtiles_find_png(const char* path, int zoom, int x, int y,
@@ -387,7 +453,9 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
     if (frame_active) {
         if (!frame_file || strcmp(frame_path, path)) {
             close_frame_file();
+            const uint32_t open_started=perf_now_us();
             frame_file = SD.open(path, FILE_READ);
+            perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
             if (!frame_file) { io_failed = true; return false; }
             strncpy(frame_path, path, sizeof(frame_path) - 1);
             frame_path[sizeof(frame_path) - 1] = 0;
@@ -398,7 +466,10 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
         if (!local_file) { io_failed = true; return false; }
         file = &local_file;
     }
-    const bool ready = prepare(*file, path) &&
+    const uint32_t prepare_started=perf_now_us();
+    const bool prepared_ok=prepare(*file, path);
+    perf.prepare_us+=(uint32_t)(perf_now_us()-prepare_started);
+    const bool ready = prepared_ok &&
         zoom >= archive.min_zoom && zoom <= archive.max_zoom;
     if (!ready) {
         if (local_file) local_file.close();
@@ -447,6 +518,7 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             clear_directory(slot->directory);
             slot->offset = UINT64_MAX;
             slot->length = 0;
+            ++perf.leaf_loads;
             if (!parse_directory(*file, archive.leaf_offset + entry->offset,
                                  entry->length, slot->directory))
                 break;

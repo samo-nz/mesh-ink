@@ -10,6 +10,10 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
+map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
+pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
+pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
+unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
@@ -45,14 +49,22 @@ assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
 # the keyboard or other app screens. The old one-branch sampler text check
 # predates the map-only split and would reject a working two-point sampler.
 contains("bool held=false,home_held=false,map_previous=false;", "independent home touch latch")
-contains("const bool on_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;", "map-only multitouch gate")
+contains("const bool on_map=screen==Screen::Maps&&!standby_active&&\n            !keyboard_landscape&&!quick_panel_active;", "Maps yields touch sampling to Quick Settings")
 contains("if(!map_touch_points(count,x0,y0,x1,y1,home))", "Maps reads two touch points")
-non_map_sampler = source.split("// Original non-Maps sampling and release logic is unchanged.", 1)[1].split(
+contains("r==1&&!keyboard_symbols", "alphabetic A/L edge expansion is isolated from symbols")
+contains("key_index_edge_extended(", "A/L use edge-expanded home-row hit targets")
+non_map_sampler = source.split("// Non-Maps keeps the legacy single-touch GT911 parser.", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
 assert "const bool pressed=touch_point(x,y,home);" in non_map_sampler, "non-Maps must keep the original single-touch parser"
 assert "held=false;\n            }else if(home_held){\n                if(!pressed)home_held=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
-assert "QueuedTap tap{last_x,last_y,(int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};" in non_map_sampler, "ordinary non-Maps release-driven tap path must remain intact"
+assert "int16_t event_x=last_x,event_y=last_y;" in non_map_sampler, "ordinary non-keyboard UI release position remains the default"
+assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "keyboard-only thumb-roll gate"
+assert "constexpr int16_t KEYBOARD_TOUCH_SLOP=28;" in non_map_sampler, "bounded keyboard thumb-roll tolerance"
+assert "event_x=start_x;" in non_map_sampler and "event_y=start_y;" in non_map_sampler, "small keyboard releases anchor to touch-down"
+assert "QueuedTap tap{event_x,event_y,dx,dy,false};" in non_map_sampler, "stabilized non-Maps release event path"
+assert "quick_slider_dragging=quick_panel_active&&" in non_map_sampler, "Quick Settings slider enters live-drag mode"
+assert "frontlight_preview(quick_slider_preview);" in non_map_sampler, "Quick Settings slider previews brightness during movement"
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
 contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
@@ -133,6 +145,9 @@ contains("box(control_x,208,66,66,true);", "black locate button matches zoom but
 contains("epd_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
 contains("epd_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
 contains("draw_target_icon(sx-15,sy-15,false);", "device marker same icon as GPS fix")
+contains("if(map_zoom<meshink_map_gestures::MAX_ZOOM)", "Maps plus button uses shared maximum zoom")
+contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reaches shared minimum zoom")
+assert "if(map_zoom>8)" not in source, "stale Maps minimum zoom 8 must not return"
 contains("if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)", "automatic map recenter")
 contains("open_screen(Screen::Maps,true);", "explicit node position preserved")
 contains('prefs.getBool("map_fix_saved",false)', "reload last known position")
@@ -143,6 +158,13 @@ contains('show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "s
 contains("!(tap.x>=456&&tap.y<281)", "larger map controls excluded from swipe")
 contains("static constexpr int MAP_TOP=48;", "map starts below compact status bar")
 contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
+contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
+contains('refresh_area(MODE_DU,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
+contains('else\n        refresh(MODE_DU);', "first Maps entry retains full Loading refresh")
+contains('epd_hl_update_area(', "partial Loading path uses EPDiy area update API")
+contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
+contains('refresh(MODE_DU,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
+contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
 contains("static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;", "map projection centre matches viewport")
 contains("result=map_tiles_render(fb,0,MAP_TOP,540,MAP_BOTTOM-MAP_TOP,", "map fills entire viewport")
 assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
@@ -154,5 +176,124 @@ assert 'initial_gps.getBool("gps_default_v1",false)' in companion, "GPS defaults
 assert "settings->gps_enabled=1;" in companion, "new setup GPS must default ON"
 assert "settings->gps_interval=0;" in companion, "new setup GPS must default continuous"
 assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default marker missing"
+# Portrait keyboard ergonomics: message entry uses a wide space bar with no
+# adjacent HIDE key; Radio Settings name entry has a wide SAVE action and
+# dismisses by tapping above the keyboard instead.
+contains('key("SPACE",120,898,298);', "space-capable portrait keyboards use a wide space bar")
+contains('key(keyboard_password_mode?"LOGIN":"SEND",426,898,102);', "message/password action remains isolated at far right")
+contains('if(y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}', "message keyboard dismisses quickly by tapping above it")
+assert source.count("if(x<422){append(' ');queue_text_refresh();return true;}")>=2, "message and password former HIDE regions belong to SPACE"
+contains('key("SAVE",120,898,408);', "name entry uses a wide SAVE action instead of a dead space bar")
+contains('if(screen==Screen::RadioSettings&&y<618){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MODE_DU);return true;}', "Radio Settings keyboard dismisses quickly by tapping above it")
+assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
+
+# 1.8.4 interaction-latency fixes and sentence-style message keyboard.
+contains("static bool message_keyboard_case_dirty = false;", "message keyboard tracks one-time case redraw")
+contains("if(n==0&&!keyboard_symbols&&keyboard_upper&&", "first message letter triggers lowercase")
+contains("keyboard_upper=false;", "auto lowercase transition")
+contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fresh messages reopen uppercase")
+contains("if(text_refresh_pending)return;", "typing refresh is throttled/coalesced instead of indefinitely debounced")
+contains("static void draw_message_entry_fast()", "message typing avoids full chat redraw")
+contains("static void draw_radio_name_fast()", "Radio Settings name typing avoids full settings redraw")
+contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Radio Settings preserves the existing node name when editing")
+
+contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
+contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
+contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
+contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
+contains("draw_screen();refresh(MODE_DU);return true;", "same-page keyboard transitions use DU")
+
+# 1.8.3 correlated timing instrumentation must remain wired without adding
+# synchronous Serial writes to the touch producer.
+contains("uint32_t queued_at_ms=0;", "queued touch events carry enqueue timestamps")
+contains("T5InputTimingScope timing_input", "UI measures touch event queue age and handler time")
+contains("t5_timing_note_ui_draw", "framebuffer draw timing hook")
+contains("t5_timing_note_chat_draw", "chat history/keyboard render split")
+contains("t5_timing_note_text_wait", "text debounce timing hook")
+contains("T5UiAction::StatusPoll", "status-poll timing attribution")
+contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
+assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
+
+# 1.8.10: full-screen framebuffer composition may use a short 240 MHz burst,
+# but must restore the previous clock immediately afterwards.
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
+contains('set_cpu_target(previous_mhz,"ui-draw-complete",false);', "UI draw boost restores previous CPU clock")
+contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
+contains("const bool stale_navigation_tap=", "UI filters touch releases queued during blocking navigation")
+contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale-touch filter excludes keyboard and Quick Settings")
+contains("screen!=Screen::Maps;", "stale-touch filter excludes Maps gestures")
+assert "native=%u parent=%u src=%u-%u loose=%u pmtiles=%u" in map_source, "map logs native/parent and source zoom/type"
+assert "parent-edge=%u parent-full=%u parent-px=%lu" in map_source, "map logs whether fallback tiles are clipped edges or fully visible"
+assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timing"
+assert "preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu" in map_source, "map separates PMTiles sequential preload timing"
+assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map retains callback range timing for preload fallback"
+assert "png.openRAM(pmt_png_buffer" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
+assert "epd_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT" in map_source, "direct map framebuffer path is guarded by portrait rotation"
+assert "const int physical_y=physical_height-px-1;" in map_source, "direct map framebuffer path matches EPDiy inverted portrait transform"
+assert "out_row[(unsigned)py>>1]=(uint8_t)(low|high);" in map_source, "direct map composition packs two 4-bit panel pixels per byte"
+assert "draw_cached_epdiy(tile,draw);" in map_source, "direct map composition retains generic EPDiy fallback"
+assert "alignas(4) uint8_t pmt_io_stage[4096]" in map_source, "PMTiles SD payload reads use aligned 4 KB internal staging"
+assert "pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u" in map_source, "map separates decode and composition timing"
+assert "struct PmtilesPerfStats" in pmtiles_header, "PMTiles reader exposes metadata performance counters"
+assert "metadata_seek_us" in pmtiles_source and "metadata_read_us" in pmtiles_source, "PMTiles reader measures metadata I/O"
+assert "Keep the active archive handle open across map renders" in pmtiles_source, "PMTiles keeps FAT fast-seek archive handle persistent"
+assert "pmtiles_end_frame() {" in pmtiles_source and "frame_active = false;" in pmtiles_source, "PMTiles frame end stops lending without closing archive"
+assert "inflate_us" in pmtiles_source and "index_parse_us" in pmtiles_source, "PMTiles reader measures inflate and index parsing"
+assert "[T5-PMT] ready path=%s zoom=%u-%u" in pmtiles_source, "PMTiles logs archive zoom coverage"
+contains('if(result.native_pmtiles&&result.native_loose)return "MIX";', "MIX badge is reserved for genuinely mixed native sources")
+contains('if(result.native_pmtiles)return "PMT";', "native PMTiles wins over harmless parent fallback")
+contains('if(result.native_loose)return "PNG";', "native loose PNG wins over harmless parent fallback")
+contains('if(result.parent_pmtiles)return "E-M";', "parent-only PMTiles viewport gets enlarged-source badge")
+contains('if(result.parent_loose)return "E-P";', "parent-only loose viewport gets enlarged-source badge")
+contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;', "keyboard touch sampler uses faster cadence for rapid repeated letters")
+contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
+assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTiles v3 header"
+assert 'archive-scan entry=%s dir=%u base=%s' in map_source, "archive scan logs cache64 directory enumeration"
+assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan reports suffix and PMTiles header detection"
+board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
+timing_source = (root / "src" / "t5_timing.cpp").read_text(encoding="utf-8")
+assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
+assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
+assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
+assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics use 5 second warm-up"
+
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
+
+compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
+assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
+assert "alignas(16) static uint16_t pixels[TILE_SIZE];" in map_source, "SIMD RGB565 destination row is 16-byte aligned"
+assert "alignas(16) PNG png;" in map_source, "PNG decoder object is 16-byte aligned for zero-copy SIMD source rows"
+assert "alignas(16) static uint8_t simd_source[TILE_SIZE*4];" in map_source, "misaligned PNG RGBA rows have an aligned SIMD staging buffer"
+assert "source_mod!=0U" in map_source and "[T5-PNG-SIMD] src-mod16=%u dst-mod16=%u staged=%u" in map_source, "cache64 logs and stages misaligned SIMD input rows"
+assert "if(zoom<=12)draw_cached_epdiy(*tile,draw);" not in map_source, "failed low-zoom compositor A/B removed"
+assert "decode_bits&&row->iPixelType==PNG_PIXEL_TRUECOLOR_ALPHA" in map_source, "cached RGBA tiles bypass intermediate RGB565 conversion"
+assert "[T5-PNG-GRAY] direct-rgba=1 src-mod16=%u" in map_source, "direct grayscale path reports activation"
+
+# Boot splash map storage warmup: shallow inventory only, never recursively crawl XYZ tiles.
+assert "map_tiles_warm_storage(); // hide SD/map inventory work behind splash" in unified_source, "map storage warms before interactive UI"
+assert "for(unsigned zoom=0;zoom<25U;++zoom)zoom_folder_known[zoom]=true;" in map_source, "boot /maps scan records loose zoom folders"
+assert "pmtiles_warm_archive(archive_paths[0])" in map_source, "first PMTiles archive root/FAT metadata warms during splash"
+assert "bool pmtiles_warm_archive(const char* path)" in pmtiles_source, "PMTiles reader exposes retryable warmup"
+
+# Standby charger changes must not wait for the 60-second full status poll.
+contains("if(standby_active&&millis()-last_standby_charge_poll>=1000)", "standby charging icon refreshes promptly")
+contains("draw_status_bar(true);", "standby charging refresh redraws only status content")
+contains("refresh_area(MODE_DU,{0,0,540,48},false);", "standby charging refresh is limited to status bar")
+contains("update_charge_state();", "standby entry samples current charger state")
+
+# Critical-battery protection must stop repeated brownout boots before the
+# BQ25896's much lower hardware-depletion threshold is reached.
+contains("static constexpr uint16_t CRITICAL_BATTERY_MV=3300;", "critical battery cutoff is 3.30 V")
+contains("CRITICAL_BATTERY_SAMPLES=3;", "runtime low-battery cutoff is debounced")
+contains("if(boot_battery_is_critical(boot_battery_mv))", "critical battery is checked before splash startup work")
+contains('centred("LOW BATTERY",230,6,0,true);', "critical low battery persistent screen")
+contains("BATFET_DIS=1u<<5", "critical low battery enters ship mode")
+contains("service_critical_battery();", "runtime critical battery monitor remains active")
+contains("if(external_power_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
+
+# Map zoom/source label backing should hug the rendered text rather than
+# leaving a wide opaque block over the terrain.
+contains("const int zoom_label_width=(int)strlen(zoom)*12+8;", "zoom label backing tracks rendered text width")
+contains("epd_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
+assert "epd_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"

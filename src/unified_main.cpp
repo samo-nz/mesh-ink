@@ -2,8 +2,15 @@
 #include <Preferences.h>
 #include "ui_onboarding.h"
 #include "companion_runtime.h"
+#include "t5_timing.h"
+#include "map_tiles.h"
+
+#ifndef T5_CACHE64_EXPERIMENT
+#define T5_CACHE64_EXPERIMENT 0
+#endif
 
 static bool companion_mode = false;
+static bool cache64_psram_blocked = false;
 static constexpr uint8_t BOOT_BUTTON = 0;
 
 void request_companion_mode() {
@@ -44,20 +51,46 @@ void setup() {
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
                   companion_mode ? "BT companion" : "local UI");
+#if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
+    Serial.printf("[T5-BOOT] data-cache-line=%dB cache64-experiment=%d\n",
+                  CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, T5_CACHE64_EXPERIMENT);
+#endif
+#if T5_CACHE64_EXPERIMENT
+    const bool psram_ok=psramFound();
+    Serial.printf("[T5-BOOT] psram-found=%d size=%lu free=%lu\n",
+                  psram_ok?1:0,(unsigned long)ESP.getPsramSize(),
+                  (unsigned long)ESP.getFreePsram());
+    if(!psram_ok){
+        cache64_psram_blocked=true;
+        Serial.println("[T5-BOOT] FATAL cache64 PSRAM unavailable; UI start blocked to prevent EPDiy reboot loop");
+        return;
+    }
+#endif
     if (companion_mode) companion_setup();
     else {
-        ui_setup();           // show boot logo with INITIALISING STORAGE...
+        ui_setup();           // show boot logo while storage/radio initialize
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        map_tiles_warm_storage(); // hide SD/map inventory work behind splash
         ui_finish_startup();  // only now show a tappable setup/home screen
     }
 }
 
 void loop() {
+    if(cache64_psram_blocked){delay(1000);return;}
     if (companion_mode) {
         companion_loop();
         companion_exit_button();
     } else {
-        if(local_mesh_is_running())local_mesh_loop();
+        const uint32_t cycle_started=t5_timing_cycle_begin();
+        if(local_mesh_is_running()){
+            const uint32_t mesh_started=t5_timing_section_begin(T5TimingSection::Mesh);
+            local_mesh_loop();
+            t5_timing_section_end(T5TimingSection::Mesh,mesh_started);
+        }
+        const uint32_t ui_started=t5_timing_section_begin(T5TimingSection::Ui);
         ui_loop();
+        t5_timing_section_end(T5TimingSection::Ui,ui_started);
+        t5_timing_cycle_end(cycle_started);
+        t5_timing_service();
     }
 }

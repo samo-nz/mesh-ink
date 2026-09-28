@@ -31,13 +31,45 @@ jobs:
       - run: python -m pip install platformio Pillow
       - name: Validate all radio presets
         run: python tools/check_radio_presets.py
+      - name: Host map archive reader tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
+            src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
+            -lz -o /tmp/map-archive-test
+          /tmp/map-archive-test
+      - name: Maps-only gesture geometry regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_map_gestures.cpp -o /tmp/map-gestures-test
+          /tmp/map-gestures-test
+      - name: Map grayscale equivalence regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_map_gray.cpp -o /tmp/map-gray-test
+          /tmp/map-gray-test
       - name: Check UI interaction regressions
         run: python tools/check_ui_regressions.py
       - name: Verify portrait and landscape keyboard hitboxes
         run: |
           g++ -std=c++11 -Wall -Wextra -Werror -Isrc tools/test_keyboard_geometry.cpp -o /tmp/meshink-keyboard-test
           /tmp/meshink-keyboard-test
-      - run: python -m platformio run -e t5-unified
+      - name: Build field-tested cache64 firmware
+        run: python -m platformio run -e t5-unified-cache64
+
+      - name: Verify cache64 release SDK config
+        run: |
+          test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE 64' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_ESP32S3_DATA_CACHE_LINE_64B 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BT_BLUEDROID_ENABLED 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_SPIRAM_MODE_OCT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_USE_FASTSEEK 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
 
       - name: Read firmware version
         id: version
@@ -72,7 +104,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          BUILD=".pio/build/t5-unified"
+          BUILD=".pio/build/t5-unified-cache64"
           FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
           test -s "$BUILD/firmware.bin"
           test -s "$BUILD/bootloader.bin"
@@ -121,18 +153,28 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION adds role-aware remote node information and a major
-          telemetry/status upgrade. Repeater and Room Server nodes can be
-          authenticated on-device, with the returned ACL role shown as Guest,
-          Read Only, Read/Write, or Admin. Status pages decode radio, battery,
-          uptime, queue, packet, duplicate, airtime, error, and Room Server
-          post/push counters. Saved per-node passwords are optional and persist
-          across reboot when using normal update images.
+          MeshInk $VERSION substantially improves offline Maps performance
+          and interaction. Map storage metadata and the PMTiles root index are
+          warmed during the startup splash, RGBA PNG tiles decode directly to
+          the packed 4-bit grayscale cache, and the ESP32-S3 cache64 build is
+          now the field-tested release target. Loose XYZ PNG tiles retain
+          priority over PMTiles and the existing parent-tile fallback.
 
-          Conversation history now uses vertical swipe paging, Contacts and
-          Discovery show node-role indicators, remote Status/Telemetry/Path
-          results use larger text, and the password keyboard has been cleaned
-          up for the T5 display.
+          Pinch gestures now change exactly one zoom level per gesture, Maps
+          can zoom down to level 2 consistently from touch and physical
+          controls, and the e-paper loading sequence keeps the previous map
+          visible while new tiles are prepared. The vertical map seam seen in
+          earlier cache64 tests is fixed by aligned PNG decoder input.
+
+          Standby now checks charger state separately from its low-frequency
+          full status poll, so the charging bolt appears or disappears promptly
+          with only a status-bar e-paper refresh.
+
+          Critical battery protection now shuts the device down cleanly before
+          brownout boot loops. On battery power, a confirmed voltage below
+          3.30 V shows a persistent LOW BATTERY screen and places the BQ25896
+          in BATFET ship mode. USB/MagSafe power bypasses the cutoff so a flat
+          device can boot and charge normally.
 
           The update image does not intentionally erase existing MeshCore
           settings, contacts, message history, or saved MeshInk credentials.
