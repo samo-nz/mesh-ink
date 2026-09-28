@@ -71,6 +71,23 @@ jobs:
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
 
+      # A second PlatformIO cache64 environment can reconfigure shared build
+      # metadata. Preserve the field-tested V2 release inputs before building
+      # the fake-H752 UI profile.
+      - name: Stage verified V2 release inputs
+        run: |
+          STAGE=".release-build"
+          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
+          mkdir -p "$STAGE"
+          cp ".pio/build/t5-unified-cache64/firmware.bin" "$STAGE/firmware.bin"
+          cp ".pio/build/t5-unified-cache64/bootloader.bin" "$STAGE/bootloader.bin"
+          cp ".pio/build/t5-unified-cache64/partitions.bin" "$STAGE/partitions.bin"
+          cp "$FRAMEWORK/tools/partitions/boot_app0.bin" "$STAGE/boot_app0.bin"
+          test -s "$STAGE/firmware.bin"
+          test -s "$STAGE/bootloader.bin"
+          test -s "$STAGE/partitions.bin"
+          test -s "$STAGE/boot_app0.bin"
+
       - name: Build H752 fake-V1 UI test firmware
         run: python -m platformio run -e t5-unified-cache64-fake-h752
 
@@ -107,12 +124,11 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          BUILD=".pio/build/t5-unified-cache64"
-          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
+          BUILD=".release-build"
           test -s "$BUILD/firmware.bin"
           test -s "$BUILD/bootloader.bin"
           test -s "$BUILD/partitions.bin"
-          test -s "$FRAMEWORK/tools/partitions/boot_app0.bin"
+          test -s "$BUILD/boot_app0.bin"
           cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
           test -s ".pio/build/t5-unified-cache64-fake-h752/firmware.bin"
           cp ".pio/build/t5-unified-cache64-fake-h752/firmware.bin" "meshink-$VERSION-fake-h752-ui-update.bin"
@@ -122,7 +138,7 @@ jobs:
             -o "meshink-$VERSION-full-wipe.bin" \
             0x0 "$BUILD/bootloader.bin" \
             0x8000 "$BUILD/partitions.bin" \
-            0xe000 "$FRAMEWORK/tools/partitions/boot_app0.bin" \
+            0xe000 "$BUILD/boot_app0.bin" \
             0x10000 "$BUILD/firmware.bin"
           test -s "meshink-$VERSION-full-wipe.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
