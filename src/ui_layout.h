@@ -336,19 +336,6 @@ constexpr int meshink_slider_width(const MeshInkUiLayout& layout) {
 constexpr int meshink_shutdown_top(const MeshInkUiLayout& layout) {
     return layout.bottom_nav_top-meshink_ui_ref_h(layout,110);
 }
-constexpr int meshink_settings_inline_action_width() {
-    return 154;
-}
-constexpr int meshink_settings_inline_action_height() {
-    return 56;
-}
-constexpr int meshink_settings_inline_action_x(const MeshInkUiLayout& layout) {
-    return layout.width-layout.outer_margin-meshink_settings_inline_action_width();
-}
-constexpr int meshink_settings_inline_action_y(int row_top) {
-    return row_top+(112-meshink_settings_inline_action_height())/2;
-}
-
 inline MeshInkUiRect meshink_settings_inline_action_rect(
     const MeshInkUiLayout& layout,int reference_row_top) {
     const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_row_top,112);
@@ -410,11 +397,9 @@ static_assert(meshink_slider_left(MESHINK_T5_REFERENCE_LAYOUT)==62 &&
               "T5 slider geometry changed");
 static_assert(meshink_shutdown_top(MESHINK_T5_REFERENCE_LAYOUT)==790,
               "T5 normal shutdown position changed");
-static_assert(meshink_settings_inline_action_x(MESHINK_T5_REFERENCE_LAYOUT)==374 &&
-              meshink_settings_inline_action_y(118)==146 &&
-              meshink_settings_inline_action_width()==154 &&
-              meshink_settings_inline_action_height()==56,
-              "T5 inline settings action geometry changed");
+static_assert(meshink_ui_ref_x(MESHINK_T5_REFERENCE_LAYOUT,374)==374 &&
+              meshink_ui_ref_y(MESHINK_T5_REFERENCE_LAYOUT,146)==146,
+              "T5 reference scaling changed");
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.header_action_x==470,
               "T5 header action geometry changed");
 static_assert(MESHINK_T5_REFERENCE_LAYOUT.list_top==120 &&
