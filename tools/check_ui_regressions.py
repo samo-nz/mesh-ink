@@ -341,3 +341,9 @@ contains("static inline const MeshInkUiLayout& portrait_layout()", "logical layo
 assert "const MeshInkUiLayout layout=portrait_layout();" not in source, "UI must not copy the full layout struct onto loopTask stack"
 assert "const MeshInkUiLayout& layout=portrait_layout();" in source, "UI local layout aliases use const references"
 contains("[T5-STACK] maps high-water=%u", "first Maps draw reports loopTask stack watermark")
+
+# Maps marker rendering must keep complete UiMapNode records off loopTask stack.
+assert "Visible visible[50]" not in source, "Maps must not retain 50 complete node records on loopTask stack"
+assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};" in source, "Maps reuses compact projected marker storage"
+assert "struct Bounds {int16_t x,y,w,h;};" in source, "Maps collision bounds use compact 16-bit coordinates"
+assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
