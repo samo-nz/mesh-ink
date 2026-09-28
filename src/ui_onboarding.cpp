@@ -2375,7 +2375,7 @@ static void touch_sampler_task(void*){
                 const int16_t dy=(int16_t)(last_y-start_y);
                 int16_t event_x=last_x,event_y=last_y;
                 // Keyboard keys are small enough that normal thumb roll while
-                // lifting can move the final GT911 centroid into a neighbour.
+                // lifting can move the final touch centroid into a neighbour.
                 // Keep small keyboard releases anchored to the initial
                 // touch-down point; a deliberate larger correction still uses
                 // the final position. Other UI and map gestures are unchanged.
