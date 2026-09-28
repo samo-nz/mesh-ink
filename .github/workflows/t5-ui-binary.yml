@@ -102,7 +102,7 @@ jobs:
           if not config.read("platformio.ini"):
               raise SystemExit("platformio.ini not found")
           flags = config["env:t5-unified"]["build_flags"]
-          match = re.search(r"""-DT5_FIRMWARE_VERSION='"(\d+\.\d+\.\d+)"'""", flags)
+          match = re.search(r"""-DT5_FIRMWARE_VERSION='"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)"'""", flags)
           if not match:
               raise SystemExit("Unified firmware version is missing or invalid")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
