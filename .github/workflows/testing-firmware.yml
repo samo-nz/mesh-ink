@@ -92,6 +92,10 @@ jobs:
             -Itests/touch_backend_stubs -Isrc \
             tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
           /tmp/meshink-t5-touch-backend-test
+      - name: Build standalone UI touch regression
+        run: python -m platformio run -e t5-ui-onboarding
+      - name: Build Bluetooth companion touch regression
+        run: python -m platformio run -e t5-companion
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
       - name: Verify cache64 SDK config
