@@ -2,6 +2,7 @@
 #include <SPI.h>
 #include <Preferences.h>
 #include "../hardware/display.h"
+#include "../hardware/touch.h"
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
@@ -984,8 +985,7 @@ void T5Board::begin() {
     getBattMilliVolts();
     t5_power_diagnostics_report("early-boot");
     T5_TRACE("board: disabling touch and frontlight\n");
-    pinMode(T5_PIN_TOUCH_RST, OUTPUT);
-    digitalWrite(T5_PIN_TOUCH_RST, LOW);  // GT911 disabled in companion mode
+    meshink_touch_set_power(false);
     digitalWrite(T5_PIN_FRONTLIGHT, LOW); // frontlight remains disabled in companion mode
 #if ENV_INCLUDE_GPS == 1
     // MeshCore's historical macro names are counterintuitive here:
