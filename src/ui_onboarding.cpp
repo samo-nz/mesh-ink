@@ -1492,11 +1492,21 @@ static void draw_help() {
 }
 
 static void draw_standby(){
-    meshink_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",126,5,0,true);
-    {const MeshInkUiLayout& layout=portrait_layout();
-     box(layout.section_margin,240,layout.section_width,150);draw_envelope_icon(layout.section_margin+24,282);text("PRIVATE MESSAGES",layout.section_margin+76,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,layout.section_margin+76,318,4,0,true);
-    box(layout.section_margin,420,layout.section_width,150);text("#",layout.section_margin+24,464,4,0,true);text("CHANNEL MESSAGES",layout.section_margin+76,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,layout.section_margin+76,498,4,0,true);}
-    centred("HOLD BOOT 2 SECONDS TO WAKE",820,2,0,true);
+    meshink_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",ui_y(126),5,0,true);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect direct_rect=ui_rect(24,240,492,150);
+    const MeshInkUiRect channel_rect=ui_rect(24,420,492,150);
+    box(direct_rect);
+    draw_envelope_icon(direct_rect.x+ui_w(24),direct_rect.y+ui_h(42));
+    text("PRIVATE MESSAGES",direct_rect.x+ui_w(76),direct_rect.y+ui_h(26),3,0,true);
+    char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);
+    text(direct,direct_rect.x+ui_w(76),direct_rect.y+ui_h(78),4,0,true);
+    box(channel_rect);
+    text("#",channel_rect.x+ui_w(24),channel_rect.y+ui_h(44),4,0,true);
+    text("CHANNEL MESSAGES",channel_rect.x+ui_w(76),channel_rect.y+ui_h(26),3,0,true);
+    char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);
+    text(channel,channel_rect.x+ui_w(76),channel_rect.y+ui_h(78),4,0,true);
+    centred("HOLD BOOT 2 SECONDS TO WAKE",ui_y(820),2,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
@@ -1522,22 +1532,23 @@ static void draw_night_schedule(){
 }
 
 static void draw_meshink_logo(int top,bool compact=false) {
-    // Use the original, build-time downscaled PNG rather than reconstructing
-    // its mountain, forest, wordmark and quill with approximate geometry.
-    // Both splash and About share the same 520x347 grayscale source image.
     (void)compact;
     constexpr uint8_t shades[4]={0x00,0x55,0xAA,0xFF};
-    const int left=(meshink_display_logical_width()-MESHINK_LOGO_WIDTH)/2;
-    for(int y=0;y<MESHINK_LOGO_HEIGHT;++y){
-        const int row=y*MESHINK_LOGO_WIDTH;
+    const int target_width=ui_w(MESHINK_LOGO_WIDTH);
+    const int target_height=ui_h(MESHINK_LOGO_HEIGHT);
+    const int left=(meshink_display_logical_width()-target_width)/2;
+    for(int y=0;y<target_height;++y){
+        const int source_y=(y*MESHINK_LOGO_HEIGHT)/target_height;
         int x=0;
-        while(x<MESHINK_LOGO_WIDTH){
-            const int pixel=row+x;
+        while(x<target_width){
+            const int source_x=(x*MESHINK_LOGO_WIDTH)/target_width;
+            const int pixel=source_y*MESHINK_LOGO_WIDTH+source_x;
             const uint8_t shade=(MESHINK_LOGO_PIXELS[pixel>>2]>>(6-2*(pixel&3)))&3;
-            if(shade==3){++x;continue;} // already white
+            if(shade==3){++x;continue;}
             const int run=x++;
-            while(x<MESHINK_LOGO_WIDTH){
-                const int next=row+x;
+            while(x<target_width){
+                const int next_source_x=(x*MESHINK_LOGO_WIDTH)/target_width;
+                const int next=source_y*MESHINK_LOGO_WIDTH+next_source_x;
                 if(((MESHINK_LOGO_PIXELS[next>>2]>>(6-2*(next&3)))&3)!=shade)break;
                 ++x;
             }
@@ -1545,16 +1556,18 @@ static void draw_meshink_logo(int top,bool compact=false) {
         }
     }
 }
+
 static void draw_about() {
     draw_app_header("ABOUT",true);
-    draw_meshink_logo(118,true);
-    centred("Made by Samo",506,3,0,true);
-    centred("github.com/samo-nz/mesh-ink",540,2,0,true);
-    if(node_name[0])centred(node_name,600,3,0,true);
-    centred(UI_VERSION,642,3,0,true);
-    text("HARDWARE",24,720,2,0,true);
-    text("LILYGO T5 PRO",170,720,2);
-    text("CORE",24,770,2,0,true);text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",170,770,2);
+    draw_meshink_logo(ui_y(118),true);
+    centred("Made by Samo",ui_y(506),3,0,true);
+    centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,true);
+    if(node_name[0])centred(node_name,ui_y(600),3,0,true);
+    centred(UI_VERSION,ui_y(642),3,0,true);
+    text("HARDWARE",portrait_layout().section_margin,ui_y(720),2,0,true);
+    text("LILYGO T5 PRO",ui_x(170),ui_y(720),2);
+    text("CORE",portrait_layout().section_margin,ui_y(770),2,0,true);
+    text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",ui_x(170),ui_y(770),2);
 }
 
 static void draw_screen();
@@ -2916,7 +2929,7 @@ void ui_setup() {
     if(boot_battery_is_critical(boot_battery_mv))
         critical_battery_shutdown(boot_battery_mv,"boot");
     meshink_display_set_all_white(&display);
-    draw_meshink_logo(160,false);
+    draw_meshink_logo(ui_y(160),false);
     // Keep the original logo visible throughout MeshCore startup. Storage
     // is normally already mounted, so use the generic boot status by default.
     // local_mesh_setup() changes it only if SPIFFS fails to mount and must
