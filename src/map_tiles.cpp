@@ -93,6 +93,11 @@ void reset_map_perf() {
 }
 bool ensure_pmt_png_buffer(size_t n) {
     if(n<=pmt_png_capacity&&pmt_png_buffer)return true;
+    if(!n||n>(size_t)-1-4095U) {
+        Serial.printf("[T5-MAP] rejected impossible PMTiles preload size=%llu\n",
+                      (unsigned long long)n);
+        return false;
+    }
     const size_t wanted=(n+4095U)&~(size_t)4095U;
     uint8_t* next=(uint8_t*)heap_caps_malloc(
         wanted,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
