@@ -56,9 +56,6 @@ jobs:
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
 
-      - name: Build H752 fake-V1 UI test firmware
-        run: python -m platformio run -e t5-unified-cache64-fake-h752
-
       - name: Verify cache64 release SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -73,6 +70,9 @@ jobs:
           grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+
+      - name: Build H752 fake-V1 UI test firmware
+        run: python -m platformio run -e t5-unified-cache64-fake-h752
 
       - name: Read firmware version
         id: version

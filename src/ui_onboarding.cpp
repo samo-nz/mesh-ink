@@ -3041,6 +3041,12 @@ void ui_status_set_channel_unread(uint16_t count) {
 }
 
 void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp) {
+#if !T5_UI_HAS_GPS
+    // The fake-H752 profile still runs on V2 electrical hardware, so the
+    // physical receiver may be active. Ignore it completely at the UI layer.
+    (void)enabled;(void)has_fix;(void)satellites;(void)latitude;(void)longitude;(void)timestamp;
+    return;
+#endif
     const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
     const bool satellites_changed=enabled&&has_fix&&!standby_active&&status_gps_satellites!=satellites;
