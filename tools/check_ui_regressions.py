@@ -359,3 +359,14 @@ assert "box(30,500,220,72)" not in source, "confirmation buttons must not hard-c
 assert "box(24,460,220,76)" not in source, "night schedule pair must not hard-code T5 width"
 assert "hit(x,y,24,800,180,62)" not in source, "preset pager touch must not hard-code T5 width"
 assert "hit(x,y,40,420,460,100)" not in source, "brightness slider touch must derive from logical width"
+
+# Display & Power Night Timer actions must fit below Map Scale and share draw/touch geometry.
+assert "meshink_night_schedule_top" in ui_layout_source, "Night Schedule layout helper missing"
+assert "meshink_night_shutdown_top" in ui_layout_source, "Night shutdown layout helper missing"
+assert "meshink_night_action_height()==52" in ui_layout_source, "Night action height regression guard missing"
+contains("const int schedule_y=meshink_night_schedule_top(layout);", "Night Schedule drawing uses shared vertical geometry")
+contains("const int shutdown_y=meshink_night_shutdown_top(layout);", "Night shutdown drawing uses shared vertical geometry")
+contains("hit_section_row(x,y,meshink_night_schedule_top(layout),action_height)", "Night Schedule touch matches drawn geometry")
+contains("hit_section_row(x,y,meshink_night_shutdown_top(layout),action_height)", "Night shutdown touch matches drawn geometry")
+assert "box(layout.section_margin,674,layout.section_width,70,true)" not in source, "Night Schedule must not overlap Map Scale"
+assert "hit_section_row(x,y,790,70)" not in source, "stale Night Schedule touch target must not return"

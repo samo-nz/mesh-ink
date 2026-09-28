@@ -1400,14 +1400,20 @@ static void draw_display_settings() {
     meshink_display_fill_rect({slider_left,464,slider_width,5},0,fb);const int knob=slider_left+(frontlight_brightness*slider_width)/100;meshink_display_fill_rect({knob-12,449,24,35},0,fb);text("-",layout.content_text_x,452,3,0,true);text("+",layout.width-48,452,3,0,true);}
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
-    const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
     {const MeshInkUiLayout& layout=portrait_layout();
      if(frontlight_mode==FrontlightMode::NightTimer){
-         box(layout.section_margin,674,layout.section_width,70,true);
-         centred("NIGHT SCHEDULE",697,3,0xFF,true);
+         const int action_height=meshink_night_action_height();
+         const int schedule_y=meshink_night_schedule_top(layout);
+         const int shutdown_y=meshink_night_shutdown_top(layout);
+         box(layout.section_margin,schedule_y,layout.section_width,action_height,true);
+         centred("NIGHT SCHEDULE",schedule_y+16,3,0xFF,true);
+         box(layout.section_margin,shutdown_y,layout.section_width,action_height);
+         centred("SHUT DOWN",shutdown_y+16,3,0,true);
+     }else{
+         const int shutdown_y=meshink_shutdown_top(layout);
+         box(layout.section_margin,shutdown_y,layout.section_width,70);
+         centred("SHUT DOWN",shutdown_y+23,3,0,true);
      }
-     box(layout.section_margin,shutdown_y,layout.section_width,70);
-     centred("SHUT DOWN",shutdown_y+23,3,0,true);
     }
 }
 
@@ -2599,8 +2605,19 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(frontlight_mode==FrontlightMode::NightTimer&&hit_section_row(x,y,790,70)){open_screen(Screen::NightSchedule);return true;}
-            if(hit_section_row(x,y,frontlight_mode==FrontlightMode::NightTimer?806:790,70)){open_screen(Screen::ShutdownConfirm);return true;}break;
+            if(frontlight_mode==FrontlightMode::NightTimer){
+                const MeshInkUiLayout& layout=portrait_layout();
+                const int action_height=meshink_night_action_height();
+                if(hit_section_row(x,y,meshink_night_schedule_top(layout),action_height)){
+                    open_screen(Screen::NightSchedule);return true;
+                }
+                if(hit_section_row(x,y,meshink_night_shutdown_top(layout),action_height)){
+                    open_screen(Screen::ShutdownConfirm);return true;
+                }
+            }else if(hit_section_row(x,y,meshink_shutdown_top(portrait_layout()),70)){
+                open_screen(Screen::ShutdownConfirm);return true;
+            }
+            break;
         case Screen::NightSchedule:
             if(hit(x,y,0,portrait_layout().status_height,110,70)){open_screen(Screen::DisplaySettings);return true;}
             if(hit_section_row(x,y,150,112)){night_edit_field=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
