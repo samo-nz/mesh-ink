@@ -52,7 +52,7 @@ inline void report_i2c_error(const char* operation,uint16_t reg,size_t len) {
     State& s=state();
     ++s.i2c_errors;
     const uint32_t now=millis();
-    if(!s.last_error_report_ms||now-s.last_error_report_ms>=2000) {
+    if(s.i2c_errors==1||now-s.last_error_report_ms>=2000) {
         s.last_error_report_ms=now;
         Serial.printf("[T5-TOUCH] ERROR GT911 %s reg=0x%04X len=%u count=%lu\n",
                       operation,(unsigned)reg,(unsigned)len,
