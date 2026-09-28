@@ -1,20 +1,28 @@
 #pragma once
 #include <stdint.h>
 #include <math.h>
+#include "ui_layout.h"
 
 // Pure map-only geometry shared by UI and host regression tests.
-// All coordinates are portrait screen pixels in the existing 540x960 view.
 namespace meshink_map_gestures {
-constexpr int MAP_TOP=48, MAP_BOTTOM=900, MAP_CENTRE_Y=474;
 constexpr int MIN_ZOOM=2, MAX_ZOOM=18;
 constexpr uint32_t TAP_WINDOW_MS=350;
 constexpr int TAP_RADIUS_PX=60;
 constexpr int TAP_SLOP_PX=16;
 constexpr uint32_t TAP_MAX_HOLD_MS=260;
 
+inline int controls_left(const MeshInkUiLayout& layout) {
+    // Preserve the T5's 84 px right-side control reservation while expressing
+    // it relative to the logical viewport width.
+    return layout.width-84;
+}
+inline bool terrain_point(int x,int y,const MeshInkUiLayout& layout) {
+    return x>=0 && x<layout.width &&
+        y>=layout.map_top && y<layout.map_bottom &&
+        !(x>=controls_left(layout) && y<281);
+}
 inline bool terrain_point(int x,int y) {
-    return x>=0 && x<540 && y>=MAP_TOP && y<MAP_BOTTOM &&
-        !(x>=456 && y<281); // reserve +, -, and GPS target controls
+    return terrain_point(x,y,MESHINK_T5_REFERENCE_LAYOUT);
 }
 inline bool tap_candidate(int dx,int dy,uint32_t held_ms) {
     return dx>=-TAP_SLOP_PX && dx<=TAP_SLOP_PX &&
@@ -43,7 +51,8 @@ struct Centre {double latitude,longitude;};
 // Keep the original screen coordinate anchored at the same geographic
 // location as zoom changes, including across the +/-180 degree meridian.
 inline Centre zoom_about(double latitude,double longitude,int old_zoom,
-                         int new_zoom,int anchor_x,int anchor_y) {
+                         int new_zoom,int anchor_x,int anchor_y,
+                         const MeshInkUiLayout& layout) {
     constexpr double PI_=3.14159265358979323846;
     const double old_world=256.0*(1u<<old_zoom);
     const double new_world=256.0*(1u<<new_zoom);
@@ -52,7 +61,8 @@ inline Centre zoom_about(double latitude,double longitude,int old_zoom,
     const double rad=lat*PI_/180.0;
     const double old_x=(longitude+180.0)/360.0*old_world;
     const double old_y=(1.0-log(tan(rad)+1.0/cos(rad))/PI_)*old_world/2.0;
-    const double dx=anchor_x-270.0,dy=anchor_y-MAP_CENTRE_Y;
+    const double dx=anchor_x-layout.map_centre_x;
+    const double dy=anchor_y-layout.map_centre_y;
     double new_x=(old_x+dx)*(new_world/old_world)-dx;
     new_x=fmod(fmod(new_x,new_world)+new_world,new_world);
     double new_y=(old_y+dy)*(new_world/old_world)-dy;
@@ -60,5 +70,10 @@ inline Centre zoom_about(double latitude,double longitude,int old_zoom,
     if(new_y>new_world)new_y=new_world;
     return {atan(sinh(PI_*(1.0-2.0*new_y/new_world)))*180.0/PI_,
             new_x/new_world*360.0-180.0};
+}
+inline Centre zoom_about(double latitude,double longitude,int old_zoom,
+                         int new_zoom,int anchor_x,int anchor_y) {
+    return zoom_about(latitude,longitude,old_zoom,new_zoom,anchor_x,anchor_y,
+                      MESHINK_T5_REFERENCE_LAYOUT);
 }
 } // namespace meshink_map_gestures

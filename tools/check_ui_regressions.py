@@ -14,6 +14,7 @@ map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
+ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
 
@@ -157,9 +158,9 @@ contains('location_store.putBool("map_fix_saved",true)', "persist verified last 
 contains("if(enabled&&has_fix&&latitude>=-85051100L", "never replace last fix with disabled/no-fix coordinates")
 contains("centre_map_on_device();", "current or stale position recenter")
 contains('show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
-contains("!(tap.x>=456&&tap.y<281)", "larger map controls excluded from swipe")
-contains("static constexpr int MAP_TOP=48;", "map starts below compact status bar")
-contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
+contains("meshink_map_gestures::terrain_point(tap.x,tap.y,portrait_layout())", "map pan respects logical terrain viewport")
+assert "bottom_nav_top==900" in ui_layout_source, "T5 bottom navigation remains at y=900"
+assert "map_centre_y==474" in ui_layout_source, "T5 map centre remains y=474"
 contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
 contains('refresh_area(MeshInkRefreshMode::Direct,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
 contains('else\n        refresh(MeshInkRefreshMode::Direct);', "first Maps entry retains full Loading refresh")
@@ -167,11 +168,12 @@ contains('meshink_display_update_area(', "partial Loading path uses display back
 contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
 contains('refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
 contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
-contains("static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;", "map projection centre matches viewport")
-contains("result=map_tiles_render(fb,0,MAP_TOP,meshink_display_logical_width(),MAP_BOTTOM-MAP_TOP,", "map fills entire logical viewport")
+contains("static inline int map_centre_y(){return portrait_layout().map_centre_y;}", "map projection centre derives from logical layout")
+contains("result=map_tiles_render(fb,0,map_top(),portrait_layout().width,map_bottom()-map_top(),", "map fills logical viewport")
 assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
 tiles = (Path(__file__).resolve().parents[1] / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
-assert "max(48," in tiles and "max(118," not in tiles, "map tile clipping still leaves a header strip"
+assert "render_clip={x,y,width,height};" in tiles, "map clipping derives from requested viewport"
+assert "900" not in tiles and "540" not in tiles, "map renderer must not hard-code T5 display edges"
 companion = (Path(__file__).resolve().parents[1] / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 assert 'initial_gps.getBool("complete",false)' in companion, "existing GPS settings must be preserved"
 assert 'initial_gps.getBool("gps_default_v1",false)' in companion, "GPS defaults must only apply once"
@@ -285,7 +287,7 @@ assert "bool pmtiles_warm_archive(const char* path)" in pmtiles_source, "PMTiles
 # Standby charger changes must not wait for the 60-second full status poll.
 contains("if(standby_active&&millis()-last_standby_charge_poll>=1000)", "standby charging icon refreshes promptly")
 contains("draw_status_bar(true);", "standby charging refresh redraws only status content")
-contains("refresh_area(MeshInkRefreshMode::Direct,{0,0,meshink_display_logical_width(),48},false);", "standby charging refresh is limited to status bar")
+contains("{0,0,portrait_layout().width,portrait_layout().status_height}", "standby charging refresh follows logical status bar")
 contains("update_charge_state();", "standby entry samples current charger state")
 
 # Critical-battery protection must stop repeated brownout boots before the
@@ -311,3 +313,10 @@ assert "EPD_ROT_" not in source, "UI must use board-independent rotation vocabul
 assert "meshink_display_invalidate_previous(&display);" in source, "backend owns previous-frame invalidation"
 assert "meshink_display_fill_framebuffer(&display,0x00);" in source, "backend owns physical framebuffer fill"
 assert "MESHINK_DISPLAY_BACKEND_HEADER" in (root / "src" / "hardware" / "display.h").read_text(encoding="utf-8"), "display backend is compile-time selectable"
+
+# Logical UI geometry boundary preserves the field-tested T5 layout while
+# proving screen-edge calculations can be generated for other dimensions.
+assert "meshink_make_ui_layout" in ui_layout_source, "logical layout factory missing"
+assert "meshink_make_ui_layout(540,960)" in ui_layout_source, "T5 layout regression reference missing"
+assert "meshink_make_ui_layout(480,800)" in (root / "tests" / "test_map_gestures.cpp").read_text(encoding="utf-8"), "compact logical layout host test missing"
+assert "box(i*135,900,135,60" not in source, "bottom navigation must not hard-code T5 screen edge"

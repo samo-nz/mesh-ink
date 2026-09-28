@@ -17,6 +17,7 @@
 #include "local_mesh_runtime.h"
 #include "map_tiles.h"
 #include "map_gestures.h"
+#include "ui_layout.h"
 #include "t5_logging.h"
 #include "t5_timing.h"
 #include "meshcore_version.h"
@@ -222,11 +223,16 @@ static NodeInfoPage node_info_page(uint8_t type,uint8_t page){
     if(node_has_status(type)){if(page==1)return NodeInfoPage::Status;return page==2?NodeInfoPage::Telemetry:NodeInfoPage::Path;}
     return page==1?NodeInfoPage::Telemetry:NodeInfoPage::Path;
 }
-// Maps spans the screen between the compact 48-pixel status bar and
-// the 60-pixel bottom navigation; there is no extra title/header strip.
-static constexpr int MAP_TOP=48;
-static constexpr int MAP_BOTTOM=900;
-static constexpr int MAP_CENTRE_Y=(MAP_TOP+MAP_BOTTOM)/2;
+// Screen-edge geometry is derived from the logical portrait surface. On the
+// T5 this remains exactly 540x960 with a 48 px status bar and 60 px bottom nav.
+static inline MeshInkUiLayout portrait_layout(){
+    return meshink_make_ui_layout(meshink_display_portrait_width(),
+                                  meshink_display_portrait_height());
+}
+static inline int map_top(){return portrait_layout().map_top;}
+static inline int map_bottom(){return portrait_layout().map_bottom;}
+static inline int map_centre_x(){return portrait_layout().map_centre_x;}
+static inline int map_centre_y(){return portrait_layout().map_centre_y;}
 static double map_latitude=-41.2865,map_longitude=174.7762;
 static uint8_t map_zoom=12;
 static bool map_imperial=false;
@@ -636,8 +642,9 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar(bool standby_quantized=false) {
-    meshink_display_fill_rect({0,0,meshink_display_logical_width(),48},0xFF,fb);
-    meshink_display_draw_rect({0,0,meshink_display_logical_width(),48},0,fb);
+    const int status_height=portrait_layout().status_height;
+    meshink_display_fill_rect({0,0,meshink_display_logical_width(),status_height},0xFF,fb);
+    meshink_display_draw_rect({0,0,meshink_display_logical_width(),status_height},0,fb);
     int left=6;
 #if T5_UI_HAS_GPS
     if(!status_gps_enabled)draw_target_icon(6,9,true);
@@ -768,11 +775,17 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
 
 static void draw_bottom_nav(int selected) {
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
+    const MeshInkUiLayout layout=portrait_layout();
     for(int i=0;i<4;++i){
-        box(i*135,900,135,60,i==selected);const uint8_t color=i==selected?0xFF:0;
-        text(labels[i],i*135+(135-(int)strlen(labels[i])*12)/2,920,2,color,true);
+        const int left=i*layout.tab_width;
+        box(left,layout.bottom_nav_top,layout.tab_width,layout.bottom_nav_height,
+            i==selected);
+        const uint8_t color=i==selected?0xFF:0;
+        text(labels[i],left+(layout.tab_width-(int)strlen(labels[i])*12)/2,
+             layout.bottom_nav_top+20,2,color,true);
         const bool unread=(i==0&&status_unread)||(i==1&&status_channel_unread);
-        if(unread)meshink_display_fill_rect({i*135+118,908,11,11},color,fb);
+        if(unread)meshink_display_fill_rect(
+            {left+layout.tab_width-17,layout.bottom_nav_top+8,11,11},color,fb);
     }
 }
 
@@ -908,8 +921,8 @@ static void draw_map_nodes() {
         if(delta_x<-world/2)delta_x+=world;
         const double lat=node.latitude/1000000.0,r=lat*PI/180.0;
         const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
-        const int sx=(int)lround(270+delta_x),sy=(int)lround(MAP_CENTRE_Y+y-centre_y);
-        if(sx<7||sx>533||sy<MAP_TOP+7||sy>MAP_BOTTOM-7)continue;
+        const int sx=(int)lround(map_centre_x()+delta_x),sy=(int)lround(map_centre_y()+y-centre_y);
+        if(sx<7||sx>portrait_layout().width-7||sy<map_top()+7||sy>map_bottom()-7)continue;
         visible[count++]={(int16_t)sx,(int16_t)sy,i,node};
     }
     struct Bounds {int x,y,w,h;};Bounds occupied[50]{};size_t occupied_count=0;
@@ -934,7 +947,7 @@ static void draw_map_nodes() {
         int lx=0,ly=0;bool placed=false;
         for(const auto& offset:offsets) {
             const int x=n.x+offset[0],y=n.y+offset[1];
-            if(x<3||x+w>537||y<MAP_TOP+3||y+34>MAP_BOTTOM-3)continue;
+            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>map_bottom()-3)continue;
             bool overlap=false;
             for(size_t j=0;j<occupied_count;++j)if(x<occupied[j].x+occupied[j].w+4&&
                 x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
@@ -974,8 +987,8 @@ static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy) 
     if(delta_x<-world/2)delta_x+=world;
     const double r=latitude/1000000.0*PI/180.0;
     const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
-    sx=(int)lround(270+delta_x);
-    sy=(int)lround(MAP_CENTRE_Y+y-centre_y);
+    sx=(int)lround(map_centre_x()+delta_x);
+    sy=(int)lround(map_centre_y()+y-centre_y);
     return true;
 }
 
@@ -987,7 +1000,7 @@ static void draw_device_location_marker() {
     if(!map_device_position(latitude,longitude,current_fix))return;
     int sx=0,sy=0;
     if(!project_device_on_map(latitude,longitude,sx,sy)||
-       sx<20||sx>520||sy<MAP_TOP+20||sy>MAP_BOTTOM-21)return;
+       sx<20||sx>portrait_layout().width-20||sy<map_top()+20||sy>map_bottom()-21)return;
     // Same bold 30x30 crosshair as the GPS-fix status icon, at real
     // coordinates (not an always-centred marker). White backing stays
     // legible on dark map tiles; the icon works for last-known fixes too.
@@ -1025,13 +1038,13 @@ static void draw_maps() {
         // Only the compact status bar remains above the terrain. The map
         // starts directly below it and fills the view down to bottom nav.
         draw_status_bar();
-        result=map_tiles_render(fb,0,MAP_TOP,meshink_display_logical_width(),MAP_BOTTOM-MAP_TOP,
+        result=map_tiles_render(fb,0,map_top(),portrait_layout().width,map_bottom()-map_top(),
                                 map_latitude,map_longitude,map_zoom);
         if(!result.sd_ready||map_base_media_epoch!=map_tiles_media_epoch()) {
             map_base_valid=false;
             map_base_media_epoch=map_tiles_media_epoch();
             if(!result.sd_ready)
-                meshink_display_fill_rect({0,MAP_TOP,meshink_display_logical_width(),MAP_BOTTOM-MAP_TOP},0xFF,fb);
+                meshink_display_fill_rect({0,map_top(),portrait_layout().width,map_bottom()-map_top()},0xFF,fb);
         }
         // Cache the backend-owned framebuffer byte-for-byte. UI code does not
         // need to know physical dimensions, packing, or panel row ordering.
@@ -1060,7 +1073,7 @@ static void draw_maps() {
     meshink_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);text(zoom,22,816,2,0,true);
     // The three map controls share their 66x66 size, black background and
     // white glyphs. Keep their touch rectangles in sync below.
-    constexpr int control_x=462;
+    const int control_x=portrait_layout().width-78;
     box(control_x,58,66,66,true);
     meshink_display_fill_rect({control_x+20,88,26,5},0xFF,fb);
     meshink_display_fill_rect({control_x+30,78,5,26},0xFF,fb);
@@ -1671,7 +1684,7 @@ static void load_map_with_feedback(bool already_on_map) {
     // Prepare the completed terrain black, then reveal the finished map.
     // This preserves the stable black->map DU transition that prevents
     // progressive darkening of unchanged terrain on repeated map updates.
-    meshink_display_fill_rect({0,MAP_TOP,meshink_display_logical_width(),MAP_BOTTOM-MAP_TOP},0x00,fb);
+    meshink_display_fill_rect({0,map_top(),portrait_layout().width,map_bottom()-map_top()},0x00,fb);
     refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep
     draw_screen(); // same decoded map_base_cache; no second tile decode
     fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
@@ -1996,8 +2009,8 @@ static void touch_sampler_task(void*){
                 if(!map_multi) {
                     map_multi=true;
                     map_pinch_allowed=count==2 &&
-                        meshink_map_gestures::terrain_point(x0,y0) &&
-                        meshink_map_gestures::terrain_point(x1,y1);
+                        meshink_map_gestures::terrain_point(x0,y0,portrait_layout()) &&
+                        meshink_map_gestures::terrain_point(x1,y1,portrait_layout());
                     pinch_x=(int16_t)((x0+x1)/2);
                     pinch_y=(int16_t)((y0+y1)/2);
                     initial_distance=count==2 ?
@@ -2160,7 +2173,8 @@ static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
                                 (int)map_zoom+steps));
     if(next_zoom==(int)map_zoom)return;
     const auto centre=meshink_map_gestures::zoom_about(
-        map_latitude,map_longitude,map_zoom,next_zoom,anchor_x,anchor_y);
+        map_latitude,map_longitude,map_zoom,next_zoom,anchor_x,anchor_y,
+        portrait_layout());
     map_latitude=centre.latitude;
     map_longitude=centre.longitude;
     map_zoom=(uint8_t)next_zoom;
@@ -2260,7 +2274,7 @@ static bool handle_password_keyboard(int16_t x,int16_t y) {
     }
     char character=0;
     if(keyboard_character_at(x,y,false,character)){append(character);queue_text_refresh();return true;}
-    if(y>=894&&y<meshink_display_logical_height()){
+    if(y>=portrait_layout().bottom_nav_top-6&&y<portrait_layout().height){
         if(x<116){set_keyboard_orientation(true);return true;}
         if(x<422){append(' ');queue_text_refresh();return true;}
         const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
@@ -2288,7 +2302,7 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
     if(keyboard_character_at(x,y,false,character)){
         append(character);queue_text_refresh();return true;
     }
-    if(y>=894&&y<meshink_display_logical_height()){
+    if(y>=portrait_layout().bottom_nav_top-6&&y<portrait_layout().height){
         // Extend each action into half of its neighbouring gap. The old HIDE
         // region is now part of SPACE, giving the portrait keyboard a normal
         // wide space bar and reducing accidental mode changes.
@@ -2324,7 +2338,7 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     if(keyboard_character_at(x,y,false,character)){
         append(character);queue_text_refresh();return true;
     }
-    if(y>=894&&y<meshink_display_logical_height()){
+    if(y>=portrait_layout().bottom_nav_top-6&&y<portrait_layout().height){
         if(x<116){set_keyboard_orientation(true);return true;}
         const bool was_setup=screen==Screen::Welcome;
         save_node_name();
@@ -2347,7 +2361,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
-    if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&y>=900){const int tab=min(3,max(0,(int)x/135));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
+    if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&
+       y>=portrait_layout().bottom_nav_top){
+        const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
         case Screen::Contacts:
             if(ui_data){
@@ -2849,8 +2865,8 @@ void ui_loop() {
         if(screen==Screen::Maps&&tap.map_sampled) {
             const int first_x=tap.x-tap.dx,first_y=tap.y-tap.dy;
             const bool candidate=
-                meshink_map_gestures::terrain_point(first_x,first_y)&&
-                meshink_map_gestures::terrain_point(tap.x,tap.y)&&
+                meshink_map_gestures::terrain_point(first_x,first_y,portrait_layout())&&
+                meshink_map_gestures::terrain_point(tap.x,tap.y,portrait_layout())&&
                 meshink_map_gestures::tap_candidate(
                     tap.dx,tap.dy,tap.hold_ms);
             if(candidate) {
@@ -2880,8 +2896,7 @@ void ui_loop() {
             map_taps={};
         }
         if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
-           tap.y>=MAP_TOP&&tap.y<MAP_BOTTOM&&tap.x>=0&&tap.x<meshink_display_logical_width()&&
-           !(tap.x>=456&&tap.y<281)) {
+           meshink_map_gestures::terrain_point(tap.x,tap.y,portrait_layout())) {
             pan_map_by_pixels(tap.dx,tap.dy);
             open_screen(Screen::Maps);
             continue;
@@ -2938,7 +2953,9 @@ void ui_loop() {
                 (status_charge_state==1||status_charge_state==2)?"ON":"OFF",
                 (unsigned)status_charge_state);
             draw_status_bar(true);
-            refresh_area(MeshInkRefreshMode::Direct,{0,0,meshink_display_logical_width(),48},false);
+            refresh_area(MeshInkRefreshMode::Direct,
+                {0,0,portrait_layout().width,portrait_layout().status_height},
+                false);
         }
     }
 
@@ -3094,7 +3111,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
        now-last_marker_refresh>=15000) {
         int sx=0,sy=0;
         if(project_device_on_map(latitude,longitude,sx,sy)) {
-            const bool now_visible=sx>=20&&sx<=520&&sy>=MAP_TOP+20&&sy<=MAP_BOTTOM-21;
+            const bool now_visible=sx>=20&&sx<=520&&sy>=map_top()+20&&sy<=map_bottom()-21;
             marker_moved=map_device_marker_visible?
                 (abs(sx-map_device_marker_x)>=3||abs(sy-map_device_marker_y)>=3):
                 now_visible;

@@ -42,6 +42,7 @@ extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
 File file;                 // owns loose PNG file handles
 File* png_file=nullptr;    // borrows the already open PMTiles archive file
 uint8_t* target=nullptr;
+MeshInkRect render_clip{0,0,0,0};
 uint8_t* decode_bits=nullptr;
 struct DrawContext {int dx,dy,crop_x,crop_y,crop_size,tile_x,tile_y;};
 DrawContext ctx{};
@@ -441,8 +442,10 @@ uint8_t tile_level(const Tile& tile,int sx,int sy) {
     return (offset&1U)?(uint8_t)(packed&0x0FU):(uint8_t)(packed>>4);
 }
 void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
-    const int left=max(0,x0),top=max(48,y0);
-    const int right=min(meshink_display_logical_width(),x1),bottom=min(900,y1);
+    const int left=max(render_clip.x,x0),top=max(render_clip.y,y0);
+    const int clip_right=render_clip.x+render_clip.width;
+    const int clip_bottom=render_clip.y+render_clip.height;
+    const int right=min(clip_right,x1),bottom=min(clip_bottom,y1);
     if(left<right&&top<bottom)
         meshink_display_fill_rect({left,top,right-left,bottom-top},colour,target);
 }
@@ -523,16 +526,16 @@ int png_draw(PNGDRAW* row) {
     // Rare low-PSRAM fallback: draw the same per-DISPLAY-pixel world-anchored
     // pattern as the cached path, rather than duplicating one dither sample
     // across an enlarged source pixel.
-    const int y0=max(48,ctx.dy+
+    const int y0=max(render_clip.y,ctx.dy+
         (row->y-ctx.crop_y)*TILE_SIZE/ctx.crop_size);
-    const int y1=min(900,ctx.dy+
+    const int y1=min(render_clip.y+render_clip.height,ctx.dy+
         (row->y-ctx.crop_y+1)*TILE_SIZE/ctx.crop_size);
     for(int py=y0;py<y1;++py) {
         for(int sx=ctx.crop_x;sx<ctx.crop_x+ctx.crop_size;++sx) {
             const uint8_t level=gray_level(pixels[sx]);
-            const int x0=max(0,ctx.dx+
+            const int x0=max(render_clip.x,ctx.dx+
                 (sx-ctx.crop_x)*TILE_SIZE/ctx.crop_size);
-            const int x1=min(meshink_display_logical_width(),ctx.dx+
+            const int x1=min(render_clip.x+render_clip.width,ctx.dx+
                 (sx-ctx.crop_x+1)*TILE_SIZE/ctx.crop_size);
             for(int px=x0;px<x1;++px)
                 meshink_display_fill_rect({px,py,1,1},
@@ -707,7 +710,7 @@ void draw_cached(const Tile& tile,const DrawContext& draw) {
         TILE_SIZE,
         {draw.crop_x,draw.crop_y,draw.crop_size,draw.crop_size},
         {draw.dx,draw.dy,TILE_SIZE,TILE_SIZE},
-        {0,48,meshink_display_logical_width(),900-48},
+        render_clip,
         draw.tile_x*TILE_SIZE,
         draw.tile_y*TILE_SIZE,
         map_black_masks()
@@ -743,10 +746,10 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             ++result.reused;
             if(from_pmtiles)++result.parent_pmtiles;
             else ++result.parent_loose;
-            const int visible_x0=max(0,dx);
-            const int visible_y0=max(48,dy);
-            const int visible_x1=min(meshink_display_logical_width(),dx+TILE_SIZE);
-            const int visible_y1=min(900,dy+TILE_SIZE);
+            const int visible_x0=max(render_clip.x,dx);
+            const int visible_y0=max(render_clip.y,dy);
+            const int visible_x1=min(render_clip.x+render_clip.width,dx+TILE_SIZE);
+            const int visible_y1=min(render_clip.y+render_clip.height,dy+TILE_SIZE);
             const int visible_w=max(0,visible_x1-visible_x0);
             const int visible_h=max(0,visible_y1-visible_y0);
             result.parent_visible_pixels+=(uint32_t)visible_w*(uint32_t)visible_h;
@@ -807,6 +810,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     map_io_failed=false;
     pmtiles_begin_frame();
     target=framebuffer;
+    render_clip={x,y,width,height};
     lat=max(-85.0511,min(85.0511,lat));
     const double world=256.0*(1<<zoom);
     const double centre_x=(lon+180.0)/360.0*world;
