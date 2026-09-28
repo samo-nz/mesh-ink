@@ -66,6 +66,7 @@ jobs:
       - name: T5 GT911 backend state regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \
+            -DMESHINK_TOUCH_DIAGNOSTICS=1 \
             -Itests/touch_backend_stubs -Isrc \
             tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
           /tmp/meshink-t5-touch-backend-test
