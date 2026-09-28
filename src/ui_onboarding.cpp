@@ -225,9 +225,11 @@ static NodeInfoPage node_info_page(uint8_t type,uint8_t page){
 }
 // Screen-edge geometry is derived from the logical portrait surface. On the
 // T5 this remains exactly 540x960 with a 48 px status bar and 60 px bottom nav.
-static inline MeshInkUiLayout portrait_layout(){
-    return meshink_make_ui_layout(meshink_display_portrait_width(),
-                                  meshink_display_portrait_height());
+static inline const MeshInkUiLayout& portrait_layout(){
+    static const MeshInkUiLayout layout=
+        meshink_make_ui_layout(meshink_display_portrait_width(),
+                               meshink_display_portrait_height());
+    return layout;
 }
 static inline int map_top(){return portrait_layout().map_top;}
 static inline int map_bottom(){return portrait_layout().map_bottom;}
@@ -707,7 +709,7 @@ static void draw_welcome() {
     box(30,180,480,64);
     text(node_name, 48,199,3);
     text("RADIO PRESET", 30, 268, 2, 0, true);
-    {const MeshInkUiLayout layout=portrait_layout();
+    {const MeshInkUiLayout& layout=portrait_layout();
      box(layout.section_margin,292,layout.section_width,88);}
     text(PRESETS[selected_preset].title,38,303,3,0,true);
     text(PRESETS[selected_preset].detail,38,344,2);
@@ -726,7 +728,7 @@ static void draw_presets() {
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
-        const int y=132+row*128; const MeshInkUiLayout layout=portrait_layout();
+        const int y=132+row*128; const MeshInkUiLayout& layout=portrait_layout();
         box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height,index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
         text(PRESETS[index].title,28,y+12,3,color,true);
@@ -777,7 +779,7 @@ static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int sc
 
 static void draw_bottom_nav(int selected) {
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     for(int i=0;i<4;++i){
         const int left=i*layout.tab_width;
         box(left,layout.bottom_nav_top,layout.tab_width,layout.bottom_nav_height,
@@ -793,7 +795,7 @@ static void draw_bottom_nav(int selected) {
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
     meshink_display_set_all_white(&display);draw_status_bar();
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     if(back){
         box(layout.header_back_x,layout.header_top,layout.header_button_width,
             layout.header_button_height,true);
@@ -835,7 +837,7 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
     else {thick_rect(x+2,y+3,25,27);text("?",x+8,y+8,2,0,true);}
 }
 static void draw_list_entry(const UiListEntry& item,int y) {
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);
     const bool typed=item.node_type!=0;
     if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+12);
@@ -1118,6 +1120,12 @@ static void draw_maps() {
     meshink_display_fill_rect({20,850,pixels+12,34},0xFF,fb);line(26,872,26+pixels,872);line(26,866,26,878);line(26+pixels,866,26+pixels,878);text(scale,28,850,2,0,true);
     if(!result.sd_ready){meshink_display_fill_rect({80,300,380,80},0xFF,fb);centred("SD CARD / MAPS UNAVAILABLE",328,2,0,true);}
     draw_bottom_nav(2);
+    static bool map_stack_reported=false;
+    if(!map_stack_reported){
+        map_stack_reported=true;
+        Serial.printf("[T5-STACK] maps remaining=%u words\n",
+                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+    }
 }
 
 static int wrapped_line_count(const char* value,int chars_per_line) {
@@ -1200,7 +1208,7 @@ static void draw_contact_details() {
     const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
     const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
     const bool login_required=repeater||room_server;
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     const int action_gap=12;
     const int action_half=(layout.section_width-action_gap)/2;
 
@@ -1288,7 +1296,7 @@ static void draw_advert_menu() {
 }
 
 static void settings_row(const char* title,const char* subtitle,int y) {
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height);
     text(title,layout.content_text_x,y+14,3,0,true);
     text(subtitle,layout.content_text_x,y+58,2);
@@ -1345,7 +1353,7 @@ static void draw_gps_tuning(){
     draw_app_header("GPS POWER SAVING",true);
     settings_row("CONSTELLATIONS",gps_constellation_label(),120);
     // Informational only: output is configured automatically, not selectable.
-    {const MeshInkUiLayout layout=portrait_layout();
+    {const MeshInkUiLayout& layout=portrait_layout();
      box(layout.outer_margin,238,layout.outer_width,layout.settings_row_height);
      text("NMEA OUTPUT",layout.content_text_x,252,3,0,true);}
     text("RMC + GGA (AUTOMATIC)",28,296,2,0,true);
@@ -1356,7 +1364,7 @@ static void draw_gps_tuning(){
 
 static void draw_timezone(){
     draw_app_header("TIMEZONE",true);
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
         const int y=118+i*102;
         box(layout.outer_margin,y,layout.outer_width,92,i==timezone_index);
@@ -1376,14 +1384,14 @@ static void draw_privacy_settings() {
 static void draw_display_settings() {
     draw_app_header("DISPLAY & POWER",true);
     settings_row("MODE",frontlight_mode_name(),118);settings_row("LIGHT TIMEOUT",frontlight_timeout_name(),238);
-    {const MeshInkUiLayout layout=portrait_layout();
+    {const MeshInkUiLayout& layout=portrait_layout();
      box(layout.outer_margin,358,layout.outer_width,160);
      text("BRIGHTNESS",layout.content_text_x,374,3,0,true);char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);text(level,528-(int)strlen(level)*18-20,374,3,0,true);
     meshink_display_fill_rect({62,464,416,5},0,fb);const int knob=62+(frontlight_brightness*416)/100;meshink_display_fill_rect({knob-12,449,24,35},0,fb);text("-",layout.content_text_x,452,3,0,true);text("+",layout.width-48,452,3,0,true);}
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const int shutdown_y=frontlight_mode==FrontlightMode::NightTimer?806:790;
-    {const MeshInkUiLayout layout=portrait_layout();
+    {const MeshInkUiLayout& layout=portrait_layout();
      if(frontlight_mode==FrontlightMode::NightTimer){
          box(layout.section_margin,674,layout.section_width,70,true);
          centred("NIGHT SCHEDULE",697,3,0xFF,true);
@@ -1411,7 +1419,7 @@ static void draw_help() {
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",126,5,0,true);
-    {const MeshInkUiLayout layout=portrait_layout();
+    {const MeshInkUiLayout& layout=portrait_layout();
      box(layout.section_margin,240,layout.section_width,150);draw_envelope_icon(48,282);text("PRIVATE MESSAGES",100,266,3,0,true);char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);text(direct,100,318,4,0,true);
     box(layout.section_margin,420,layout.section_width,150);text("#",48,464,4,0,true);text("CHANNEL MESSAGES",100,446,3,0,true);char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);text(channel,100,498,4,0,true);}
     centred("HOLD BOOT 2 SECONDS TO WAKE",820,2,0,true);
@@ -1420,7 +1428,7 @@ static void draw_standby(){
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
 static void draw_night_schedule(){
     draw_app_header("NIGHT SCHEDULE",true);char start[8],end[8];format_minutes(night_start_minutes,start);format_minutes(night_end_minutes,end);
-    {const MeshInkUiLayout layout=portrait_layout();
+    {const MeshInkUiLayout& layout=portrait_layout();
      box(layout.section_margin,150,layout.section_width,112,night_edit_field==0);text("START",42,166,3,night_edit_field==0?0xFF:0,true);text(start,360,166,3,night_edit_field==0?0xFF:0,true);
     box(layout.section_margin,286,layout.section_width,112,night_edit_field==1);text("END",42,302,3,night_edit_field==1?0xFF:0,true);text(end,360,302,3,night_edit_field==1?0xFF:0,true);
     box(24,460,220,76);text("-30 MIN",62,486,3,0,true);box(296,460,220,76);text("+30 MIN",334,486,3,0,true);
@@ -2189,12 +2197,12 @@ static void append(char c) {
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
 static bool hit_outer_row(int16_t x,int16_t y,int top,int height=-1) {
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     if(height<0)height=layout.settings_row_height;
     return hit(x,y,layout.outer_margin,top,layout.outer_width,height);
 }
 static bool hit_section_row(int16_t x,int16_t y,int top,int height) {
-    const MeshInkUiLayout layout=portrait_layout();
+    const MeshInkUiLayout& layout=portrait_layout();
     return hit(x,y,layout.section_margin,top,layout.section_width,height);
 }
 
