@@ -932,8 +932,11 @@ static void draw_map_nodes() {
     const double centre_x=(map_longitude+180.0)/360.0*world;
     const double rad=map_latitude*PI/180.0;
     const double centre_y=(1.0-log(tan(rad)+1.0/cos(rad))/PI)*world/2.0;
-    struct Visible {int16_t x,y;size_t index;UiMapNode node;};
-    Visible visible[50]{};size_t count=0;
+    // Keep only projected marker coordinates in the existing global hit array.
+    // The previous implementation copied up to 50 complete UiMapNode records
+    // onto loopTask's stack (~several KB) while Maps was already the deepest
+    // UI rendering path. Fetch node details again only when drawing labels.
+    size_t count=0;
     for(size_t i=0;i<ui_data->map_node_count()&&count<50;++i) {
         UiMapNode node{};if(!ui_data->map_node(i,node))continue;
         const double x=(node.longitude/1000000.0+180.0)/360.0*world;
@@ -944,23 +947,25 @@ static void draw_map_nodes() {
         const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
         const int sx=(int)lround(map_centre_x()+delta_x),sy=(int)lround(map_centre_y()+y-centre_y);
         if(sx<7||sx>portrait_layout().width-7||sy<map_top()+7||sy>map_bottom()-7)continue;
-        visible[count++]={(int16_t)sx,(int16_t)sy,i,node};
+        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};
     }
-    struct Bounds {int x,y,w,h;};Bounds occupied[50]{};size_t occupied_count=0;
+    struct Bounds {int16_t x,y,w,h;};
+    Bounds occupied[50]{};size_t occupied_count=0;
     const uint32_t now=(uint32_t)time(nullptr);
     for(size_t i=0;i<count;++i) {
-        const auto& n=visible[i];
-        char short_name[19]{};strncpy(short_name,n.node.name,sizeof(short_name)-1);
+        const auto& n=map_marker_hits[i];
+        UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
+        char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
         const int w=min(230,max(48,(int)strlen(short_name)*12+8));
         char age[16];
-        if(n.node.gps_from_reply){
+        if(node.gps_from_reply){
             // This is when our T5 RECEIVED GPS telemetry, not the remote fix time.
-            const uint32_t seconds=(uint32_t)(millis()-n.node.gps_received_millis)/1000U;
+            const uint32_t seconds=(uint32_t)(millis()-node.gps_received_millis)/1000U;
             if(seconds<3600)snprintf(age,sizeof(age),"GPS %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"GPS %luh",(unsigned long)(seconds/3600));
             else snprintf(age,sizeof(age),"GPS %lud",(unsigned long)(seconds/86400));
-        }else if(!n.node.advertised_at||now<n.node.advertised_at)strcpy(age,"ADV ?");
-        else {const uint32_t seconds=now-n.node.advertised_at;
+        }else if(!node.advertised_at||now<node.advertised_at)strcpy(age,"ADV ?");
+        else {const uint32_t seconds=now-node.advertised_at;
             if(seconds<3600)snprintf(age,sizeof(age),"ADV %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"ADV %luh",(unsigned long)(seconds/3600));
             else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));}
@@ -976,7 +981,7 @@ static void draw_map_nodes() {
             if(!overlap){lx=x;ly=y;placed=true;break;}
         }
         if(!placed)continue; // Keep the true-position dot even if labels collide.
-        occupied[occupied_count++]={lx,ly,w,34};
+        occupied[occupied_count++]={(int16_t)lx,(int16_t)ly,(int16_t)w,34};
         meshink_display_fill_rect({lx,ly,w,34},0xFF,fb);
         text(short_name,lx+4,ly+2,2,0,true);
         text(age,lx+4,ly+18,2,0,true);
@@ -984,14 +989,14 @@ static void draw_map_nodes() {
     // Always draw position dots last so a neighbouring label cannot move or
     // obscure a marker. Each circle has a white halo for contrast.
     for(size_t i=0;i<count;++i) {
-        const auto& n=visible[i];
+        const auto& n=map_marker_hits[i];
         meshink_display_fill_rect({n.x-6,n.y-6,13,13},0xFF,fb);
         for(int dy=-4;dy<=4;++dy) {
             const int half=abs(dy)==4?1:abs(dy)==3?3:4;
             meshink_display_fill_rect({n.x-half,n.y+dy,half*2+1,1},0,fb);
         }
-        map_marker_hits[map_marker_hit_count++]={n.x,n.y,n.index};
     }
+    map_marker_hit_count=count;
 }
 
 // Convert a GPS position to the same screen projection as map node markers.
