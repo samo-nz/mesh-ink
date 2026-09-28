@@ -673,9 +673,9 @@ static void audit_ui_geometry() {
         ok=false;
         Serial.println("[T5-GEOM] ERROR display framebuffer is null");
     }
-    Serial.printf("[T5-GEOM] board=%s logical=%dx%d physical=%dx%d fb=%p bytes=%u ref=%u "
+    Serial.printf("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d fb=%p bytes=%u ref=%u "
                   "map=%d..%d kbP=%d..%d kbL=%d..%d result=%s\n",
-                  T5_BOARD_LABEL,layout.width,layout.height,
+                  UI_VERSION,T5_BOARD_LABEL,layout.width,layout.height,
                   meshink_display_physical_width(),meshink_display_physical_height(),
                   (void*)fb,(unsigned)meshink_display_framebuffer_bytes(),reference?1U:0U,
                   layout.map_top,layout.map_bottom,
