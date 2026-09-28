@@ -114,7 +114,7 @@ contains('page==NodeInfoPage::Telemetry&&hit(x,y,24,808,492,70)', "telemetry act
 contains('page==NodeInfoPage::Path&&hit(x,y,24,808,492,70)', "path action touch follows lowered button")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
-contains('epd_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
+contains('t5_display_fill_rect({0,486,540,474},0xFF,fb);', "password keyboard clears the lower Node Info background")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
 contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
@@ -135,15 +135,15 @@ assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited 
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
 contains("for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);", "bold GPS-off slash")
-contains("epd_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
+contains("t5_display_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
 contains("for(int d=-1;d<=1;++d) {\n        line(x+3,y+8+d", "bold envelope flap")
 for y in (58,133,208):
     contains(f"box(control_x,{y},66,66", f"draw 1.5x map button at y={y}")
     contains(f"if(hit(x,y,462,{y},66,66))", f"matching map touch target at y={y}")
 assert 'text("ME",control_x+' not in source, "locate icon must not display text"
 contains("box(control_x,208,66,66,true);", "black locate button matches zoom buttons")
-contains("epd_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
-contains("epd_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
+contains("t5_display_fill_rect({target_x,target_y+21,45,5},0xFF,fb);", "large white locate crosshair horizontal")
+contains("t5_display_fill_rect({target_x+21,target_y,5,45},0xFF,fb);", "large white locate crosshair vertical")
 contains("draw_target_icon(sx-15,sy-15,false);", "device marker same icon as GPS fix")
 contains("if(map_zoom<meshink_map_gestures::MAX_ZOOM)", "Maps plus button uses shared maximum zoom")
 contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reaches shared minimum zoom")
@@ -161,7 +161,7 @@ contains("static constexpr int MAP_BOTTOM=900;", "map ends at bottom nav")
 contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
 contains('refresh_area(MODE_DU,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
 contains('else\n        refresh(MODE_DU);', "first Maps entry retains full Loading refresh")
-contains('epd_hl_update_area(', "partial Loading path uses EPDiy area update API")
+contains('t5_display_update_area(', "partial Loading path uses display backend area update API")
 contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
 contains('refresh(MODE_DU,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
 contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
@@ -228,7 +228,7 @@ assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timi
 assert "preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu" in map_source, "map separates PMTiles sequential preload timing"
 assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map retains callback range timing for preload fallback"
 assert "png.openRAM(pmt_png_buffer" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
-assert "epd_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT" in map_source, "direct map framebuffer path is guarded by portrait rotation"
+assert "t5_display_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT" in map_source, "direct map framebuffer path is guarded by portrait rotation"
 assert "const int physical_y=physical_height-px-1;" in map_source, "direct map framebuffer path matches EPDiy inverted portrait transform"
 assert "out_row[(unsigned)py>>1]=(uint8_t)(low|high);" in map_source, "direct map composition packs two 4-bit panel pixels per byte"
 assert "draw_cached_epdiy(tile,draw);" in map_source, "direct map composition retains generic EPDiy fallback"
@@ -296,5 +296,5 @@ contains("if(external_power_present()){low_samples=0;return;}", "external power 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
 contains("const int zoom_label_width=(int)strlen(zoom)*12+8;", "zoom label backing tracks rendered text width")
-contains("epd_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
-assert "epd_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
+contains("t5_display_fill_rect({18,812,zoom_label_width,30},0xFF,fb);", "zoom label uses dynamic white backing")
+assert "t5_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
