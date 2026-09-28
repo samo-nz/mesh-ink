@@ -150,9 +150,9 @@ void mark_sd_unavailable() {
 bool media_ready(bool probe=true) {
     if(!sd_mounted) {
         if((int32_t)(millis()-sd_retry_after)<0)return false;
-        pinMode(12,OUTPUT);digitalWrite(12,HIGH);
+        pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
         SD.end();
-        if(!SD.begin(12,t5_shared_spi(),MAP_SD_SPI_HZ)) {
+        if(!SD.begin(T5_PIN_SD_CS,t5_shared_spi(),MAP_SD_SPI_HZ)) {
             sd_retry_after=millis()+SD_RETRY_MS;
             return false;
         }
