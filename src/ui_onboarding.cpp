@@ -28,6 +28,10 @@
 #define T5_FIRMWARE_VERSION "1.3.0"
 #endif
 
+#ifndef MESHINK_GEOMETRY_DIAGNOSTICS
+#define MESHINK_GEOMETRY_DIAGNOSTICS 0
+#endif
+
 void request_companion_mode() __attribute__((weak));
 void request_companion_mode() { Serial.println("[T5-UI] companion mode requires unified build"); }
 
@@ -504,6 +508,160 @@ static meshink_keyboard::Metrics keyboard_metrics(bool landscape) {
         landscape?meshink_display_portrait_width():meshink_display_portrait_height(),
         landscape,tuning);
 }
+
+#if MESHINK_GEOMETRY_DIAGNOSTICS
+static bool ui_rect_inside(int width,int height,const MeshInkUiRect& rect) {
+    return rect.x>=0&&rect.y>=0&&rect.width>0&&rect.height>0&&
+           rect.x+rect.width<=width&&rect.y+rect.height<=height;
+}
+static bool ui_rect_contains(const MeshInkUiRect& outer,const MeshInkUiRect& inner) {
+    return inner.x>=outer.x&&inner.y>=outer.y&&
+           inner.x+inner.width<=outer.x+outer.width&&
+           inner.y+inner.height<=outer.y+outer.height;
+}
+static bool keyboard_rect_inside(int width,int height,const meshink_keyboard::Rect& rect) {
+    return rect.x>=0&&rect.y>=0&&rect.width>0&&rect.height>0&&
+           rect.x+rect.width<=width&&rect.y+rect.height<=height;
+}
+static void audit_ui_geometry() {
+    const MeshInkUiLayout& layout=portrait_layout();
+    bool ok=layout.width>0&&layout.height>0&&
+            layout.status_height>0&&layout.bottom_nav_height>0&&
+            layout.bottom_nav_top+layout.bottom_nav_height==layout.height&&
+            layout.map_top==layout.status_height&&
+            layout.map_bottom==layout.bottom_nav_top;
+
+    struct NamedUiRect { const char* name; MeshInkUiRect rect; };
+    const NamedUiRect rects[]={
+        {"header-back",meshink_header_back_rect(layout)},
+        {"header-back-touch",meshink_header_back_touch_rect(layout)},
+        {"header-action",meshink_header_action_rect(layout)},
+        {"header-action-touch",meshink_header_action_touch_rect(layout)},
+        {"welcome-name",meshink_welcome_name_rect(layout)},
+        {"welcome-preset",meshink_welcome_preset_rect(layout)},
+        {"welcome-companion",meshink_welcome_companion_rect(layout)},
+        {"welcome-keyboard",meshink_welcome_show_keyboard_rect(layout)},
+        {"preset-back",meshink_preset_back_rect(layout)},
+        {"preset-prev",meshink_preset_prev_rect(layout)},
+        {"preset-next",meshink_preset_next_rect(layout)},
+        {"confirm-left",meshink_confirm_left_rect(layout,500)},
+        {"confirm-right",meshink_confirm_right_rect(layout,500)},
+        {"node-map",meshink_node_map_rect(layout)},
+        {"node-action",meshink_node_action_rect(layout)},
+        {"node-left",meshink_node_left_action_rect(layout)},
+        {"node-right",meshink_node_right_action_rect(layout)},
+        {"password-save",meshink_password_save_rect(layout)},
+        {"map-plus",meshink_map_control_rect(layout,0)},
+        {"map-minus",meshink_map_control_rect(layout,1)},
+        {"map-locate",meshink_map_control_rect(layout,2)},
+        {"quick-slider",meshink_quick_slider_track_rect(layout)},
+        {"quick-slider-touch",meshink_quick_slider_touch_rect(layout)},
+        {"quick-minus",meshink_quick_minus_rect(layout)},
+        {"quick-plus",meshink_quick_plus_rect(layout)},
+        {"quick-advert",meshink_quick_advert_rect(layout)},
+        {"quick-power",meshink_quick_power_rect(layout)},
+        {"display-brightness",meshink_display_brightness_rect(layout)},
+        {"display-slider",meshink_display_slider_track_rect(layout)},
+        {"display-slider-touch",meshink_display_slider_touch_rect(layout)},
+        {"shutdown",meshink_shutdown_rect(layout)},
+        {"night-start",meshink_night_start_rect(layout)},
+        {"night-end",meshink_night_end_rect(layout)},
+        {"night-minus",meshink_night_minus_rect(layout)},
+        {"night-plus",meshink_night_plus_rect(layout)},
+        {"night-save",meshink_night_save_rect(layout)}
+    };
+    for(const auto& item:rects) {
+        if(!ui_rect_inside(layout.width,layout.height,item.rect)) {
+            ok=false;
+            Serial.printf("[T5-GEOM] ERROR ui %s rect=%d,%d %dx%d outside %dx%d\n",
+                          item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
+                          layout.width,layout.height);
+        }
+    }
+    if(!ui_rect_contains(meshink_header_back_touch_rect(layout),
+                         meshink_header_back_rect(layout))) {
+        ok=false;Serial.println("[T5-GEOM] ERROR header-back touch does not contain visual");
+    }
+    if(!ui_rect_contains(meshink_header_action_touch_rect(layout),
+                         meshink_header_action_rect(layout))) {
+        ok=false;Serial.println("[T5-GEOM] ERROR header-action touch does not contain visual");
+    }
+    if(!ui_rect_contains(meshink_quick_slider_touch_rect(layout),
+                         meshink_quick_slider_track_rect(layout))) {
+        ok=false;Serial.println("[T5-GEOM] ERROR quick slider touch does not contain visual");
+    }
+    if(!ui_rect_contains(meshink_display_slider_touch_rect(layout),
+                         meshink_display_slider_track_rect(layout))) {
+        ok=false;Serial.println("[T5-GEOM] ERROR display slider touch does not contain visual");
+    }
+
+    const auto portrait=keyboard_metrics(false);
+    const auto landscape=keyboard_metrics(true);
+    struct NamedKeyboardRect { const char* name; meshink_keyboard::Rect rect; };
+    const NamedKeyboardRect portrait_rects[]={
+        {"entry",portrait.entry},{"mode",portrait.mode_key},{"delete",portrait.delete_key},
+        {"orientation",portrait.orientation_key},{"space",portrait.space_key},
+        {"action",portrait.action_key},{"wide-action",portrait.wide_action_key}
+    };
+    const NamedKeyboardRect landscape_rects[]={
+        {"entry",landscape.entry},{"mode",landscape.mode_key},{"delete",landscape.delete_key},
+        {"orientation",landscape.orientation_key},{"space",landscape.space_key},
+        {"action",landscape.action_key}
+    };
+    for(const auto& item:portrait_rects) {
+        if(!keyboard_rect_inside(portrait.width,portrait.height,item.rect)) {
+            ok=false;
+            Serial.printf("[T5-GEOM] ERROR keyboard portrait %s=%d,%d %dx%d outside %dx%d\n",
+                          item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
+                          portrait.width,portrait.height);
+        }
+    }
+    for(const auto& item:landscape_rects) {
+        if(!keyboard_rect_inside(landscape.width,landscape.height,item.rect)) {
+            ok=false;
+            Serial.printf("[T5-GEOM] ERROR keyboard landscape %s=%d,%d %dx%d outside %dx%d\n",
+                          item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
+                          landscape.width,landscape.height);
+        }
+    }
+    if(portrait.number_top<0||
+       portrait.bottom_top+portrait.key_height>portrait.height||
+       landscape.number_top<0||
+       landscape.bottom_top+landscape.key_height>landscape.height) {
+        ok=false;
+        Serial.printf("[T5-GEOM] ERROR keyboard rows portrait=%d..%d/%d landscape=%d..%d/%d\n",
+                      portrait.number_top,portrait.bottom_top+portrait.key_height,portrait.height,
+                      landscape.number_top,landscape.bottom_top+landscape.key_height,landscape.height);
+    }
+
+    const bool reference=layout.width==540&&layout.height==960;
+    if(reference) {
+        const MeshInkUiRect quick=meshink_quick_slider_touch_rect(layout);
+        const MeshInkUiRect display_touch=meshink_display_slider_touch_rect(layout);
+        if(layout.status_height!=48||layout.bottom_nav_top!=900||
+           quick.x!=28||quick.y!=146||quick.width!=484||quick.height!=80||
+           display_touch.x!=40||display_touch.y!=420||
+           display_touch.width!=460||display_touch.height!=100) {
+            ok=false;
+            Serial.println("[T5-GEOM] ERROR T5 reference geometry no longer pixel-exact");
+        }
+    }
+
+    if(!fb) {
+        ok=false;
+        Serial.println("[T5-GEOM] ERROR display framebuffer is null");
+    }
+    Serial.printf("[T5-GEOM] board=%s logical=%dx%d physical=%dx%d fb=%p bytes=%u ref=%u "
+                  "map=%d..%d kbP=%d..%d kbL=%d..%d result=%s\n",
+                  T5_BOARD_LABEL,layout.width,layout.height,
+                  meshink_display_physical_width(),meshink_display_physical_height(),
+                  fb,(unsigned)meshink_display_framebuffer_bytes(),reference?1U:0U,
+                  layout.map_top,layout.map_bottom,
+                  portrait.number_top,portrait.bottom_top+portrait.key_height,
+                  landscape.number_top,landscape.bottom_top+landscape.key_height,
+                  ok?"OK":"FAIL");
+}
+#endif
 
 static void key(const char* label,const meshink_keyboard::Rect& rect) {
     box(rect.x,rect.y,rect.width,rect.height);
@@ -2736,7 +2894,10 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
-    T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] tap x=%d y=%d\n",x,y);
+    T5_DEBUGF(T5_LOG_TOUCH,
+        "[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u keyboard=%u landscape=%u\n",
+        timing_screen_name(),x,y,quick_panel_active?1U:0U,
+        keyboard_visible?1U:0U,keyboard_landscape?1U:0U);
     if(handle_quick_panel_tap(x,y))return;
     if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
@@ -2902,6 +3063,9 @@ void ui_setup() {
     recover_pmic_power_path();
     delay(10);digitalWrite(TOUCH_RST,HIGH);delay(60);pinMode(TOUCH_INT,INPUT);
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
+#if MESHINK_GEOMETRY_DIAGNOSTICS
+    audit_ui_geometry();
+#endif
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
