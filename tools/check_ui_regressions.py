@@ -76,6 +76,8 @@ contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering addre
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
 contains("(screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60", "Contacts/Channels vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
+contains("box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);", "list cards use shared logical interior width")
+contains("row*portrait_layout().list_row_stride", "list drawing/touch use shared row stride")
 contains("draw_list_page_footer(channels_page,count);", "Channels displays page count when multiple pages exist")
 contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page footer")
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
@@ -91,6 +93,8 @@ contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes 
 contains('UiNodeInfoRequest::Path,"REQUEST PATH"', "Node Info exposes an individual path request")
 assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once"
 contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node role icons")
+contains("box(layout.outer_margin,y,layout.outer_width,layout.settings_row_height);", "settings rows use shared interior geometry")
+contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
 contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
 contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
@@ -320,3 +324,14 @@ assert "meshink_make_ui_layout" in ui_layout_source, "logical layout factory mis
 assert "meshink_make_ui_layout(540,960)" in ui_layout_source, "T5 layout regression reference missing"
 assert "meshink_make_ui_layout(480,800)" in (root / "tests" / "test_map_gestures.cpp").read_text(encoding="utf-8"), "compact logical layout host test missing"
 assert "box(i*135,900,135,60" not in source, "bottom navigation must not hard-code T5 screen edge"
+
+# Shared interior layout keeps T5 drawing and touch targets aligned while
+# allowing future logical widths to generate different card/header dimensions.
+assert "outer_width==516" in ui_layout_source, "T5 outer card width regression guard missing"
+assert "section_width==492" in ui_layout_source, "T5 section width regression guard missing"
+assert "header_action_x==470" in ui_layout_source, "T5 header action position regression guard missing"
+assert "list_row_height==142" in ui_layout_source and "list_row_stride==150" in ui_layout_source, "T5 list geometry regression guards missing"
+assert "box(12,y,516,142)" not in source, "list drawing must not hard-code T5 card width"
+assert "box(12,y,516,112)" not in source, "settings drawing must not hard-code T5 card width"
+assert "hit(x,y,12,130,516,112)" not in source, "settings touch must not hard-code T5 card width"
+assert "box(470,58,58,48" not in source, "header action must derive from logical width"
