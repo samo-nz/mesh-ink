@@ -15,6 +15,7 @@ map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
+board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
@@ -99,6 +100,8 @@ for backend_detail in (
 assert "meshink_touch_prepare_boot();" in source and "meshink_touch_finish_boot();" in source, "UI delegates boot touch sequencing"
 assert "meshink_touch_set_power(enabled);" in source, "UI delegates touch power sequencing"
 assert "meshink_touch_reset_tracking();" in source, "UI resets backend tracking on sampling-mode changes"
+assert "meshink_touch_set_power(false);" in board_target_source, "companion mode delegates touch disable to backend"
+assert "GT911" not in board_target_source, "board runtime must not name the touch controller outside its backend"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
