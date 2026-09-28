@@ -355,6 +355,13 @@ assert "QUICK_SLIDER_LEFT" not in source and "QUICK_SLIDER_RIGHT" not in source,
 assert "QUICK_PANEL_BOTTOM" not in source, "Quick Settings panel edge must derive from layout"
 assert not re.search(r"\bhit\(x,y,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+", source), "non-keyboard touch target still hard-codes a screen rectangle"
 
+# Screen placement calls must use layout/reference geometry. Local icon and
+# map-marker primitives remain free to use offsets relative to their anchor.
+assert not re.search(r"\bbox\(\s*\d+\s*,\s*\d+", source), "screen box still hard-codes an absolute position"
+assert not re.search(r"\bcentred\([^,]+,\s*\d+", source), "centred text still hard-codes an absolute Y position"
+assert not re.search(r"\btext\([^,]+,\s*\d+\s*,\s*\d+", source), "text still hard-codes an absolute screen position"
+assert not re.search(r"\bdraw_wrapped\([^,]+,\s*\d+\s*,\s*\d+", source), "wrapped text still hard-codes an absolute screen position"
+
 # Shared interior layout keeps T5 drawing and touch targets aligned while
 # allowing future logical widths to generate different card/header dimensions.
 assert "outer_width==516" in ui_layout_source, "T5 outer card width regression guard missing"
