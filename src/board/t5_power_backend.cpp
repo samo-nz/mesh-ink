@@ -13,6 +13,14 @@ static constexpr uint8_t BQ25896_PRIMARY_ADDR = 0x6B;
 static constexpr uint8_t BQ25896_ALT_ADDR = 0x6A;
 static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL = 6;
 
+// H752-01 uses a single-cell Li-ion pack and the field-tested protection
+// policy from pre-abstraction builds. These values are deliberately private
+// to this board backend; other boards may use different chemistry, cell count,
+// fuel-gauge flags or PMIC policy without changing MeshInk application code.
+static constexpr uint16_t T5_CRITICAL_BATTERY_MV = 3300;
+static constexpr uint32_t T5_CRITICAL_POLL_MS = 5000;
+static constexpr uint8_t T5_CRITICAL_SAMPLES = 3;
+
 bool read_bytes(uint8_t device,uint8_t reg,uint8_t* data,size_t len,uint32_t timeout_ms=20) {
     return i2c_master_write_read_device(
         I2C_NUM_0,device,&reg,1,data,len,pdMS_TO_TICKS(timeout_ms))==ESP_OK;
@@ -87,10 +95,19 @@ bool meshink_power_read_battery_percent(uint8_t& percent) {
     return true;
 }
 
-bool meshink_power_read_charge_state(uint8_t& state) {
+bool meshink_power_read_charge_state(MeshInkChargeState& state) {
     uint8_t reg0b=0;
-    if(!primary_charger_byte(0x0B,reg0b))return false;
-    state=(reg0b>>3)&0x03;
+    if(!primary_charger_byte(0x0B,reg0b)) {
+        state=MeshInkChargeState::Unknown;
+        return false;
+    }
+    switch((reg0b>>3)&0x03) {
+        case 0:state=MeshInkChargeState::Idle;break;
+        case 1:
+        case 2:state=MeshInkChargeState::Charging;break;
+        case 3:state=MeshInkChargeState::Full;break;
+        default:state=MeshInkChargeState::Unknown;break;
+    }
     return true;
 }
 
@@ -103,9 +120,60 @@ bool meshink_power_read_status(MeshInkPowerStatus& status) {
     status=MeshInkPowerStatus{};
     status.battery_voltage_valid=meshink_power_read_battery_mv(status.battery_mv);
     status.battery_percent_valid=meshink_power_read_battery_percent(status.battery_percent);
-    status.charger_valid=meshink_power_read_charge_state(status.charge_state);
+    const bool charge_valid=meshink_power_read_charge_state(status.charge_state);
     status.external_power=meshink_power_external_present();
-    return status.battery_voltage_valid||status.battery_percent_valid||status.charger_valid;
+    return status.battery_voltage_valid||status.battery_percent_valid||charge_valid;
+}
+
+bool meshink_power_boot_critical(MeshInkPowerCriticalState& state) {
+    state=MeshInkPowerCriticalState{};
+    if(meshink_power_external_present())return false;
+
+    uint16_t first=0,second=0;
+    if(!meshink_power_read_battery_mv(first)||first>=T5_CRITICAL_BATTERY_MV)return false;
+    delay(80);
+    if(meshink_power_external_present())return false;
+    if(!meshink_power_read_battery_mv(second)||second>=T5_CRITICAL_BATTERY_MV)return false;
+
+    state.battery_mv_valid=true;
+    state.battery_mv=(uint16_t)(((uint32_t)first+second)/2U);
+    state.critical=state.battery_mv<T5_CRITICAL_BATTERY_MV;
+    return state.critical;
+}
+
+bool meshink_power_poll_critical(MeshInkPowerCriticalState& state) {
+    state=MeshInkPowerCriticalState{};
+    static uint32_t sampled_at=0;
+    static uint8_t low_samples=0;
+    const uint32_t now=millis();
+    if(sampled_at&&now-sampled_at<T5_CRITICAL_POLL_MS)return false;
+    sampled_at=now?now:1;
+
+    if(meshink_power_external_present()) {
+        low_samples=0;
+        return false;
+    }
+
+    uint16_t millivolts=0;
+    if(!meshink_power_read_battery_mv(millivolts)) {
+        low_samples=0;
+        return false;
+    }
+    state.battery_mv_valid=true;
+    state.battery_mv=millivolts;
+
+    if(millivolts>=T5_CRITICAL_BATTERY_MV) {
+        low_samples=0;
+        return false;
+    }
+    if(low_samples<T5_CRITICAL_SAMPLES)++low_samples;
+    T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] low battery sample %u/%u: %umV\n",
+              (unsigned)low_samples,(unsigned)T5_CRITICAL_SAMPLES,
+              (unsigned)millivolts);
+    if(low_samples<T5_CRITICAL_SAMPLES)return false;
+
+    state.critical=true;
+    return true;
 }
 
 void meshink_power_recover_boot_path() {
