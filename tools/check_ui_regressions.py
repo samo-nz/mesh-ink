@@ -20,6 +20,9 @@ companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
+wireless_selector_source = (root / "src" / "hardware" / "wireless.h").read_text(encoding="utf-8")
+wireless_types_source = (root / "src" / "hardware" / "wireless_types.h").read_text(encoding="utf-8")
+wireless_backend_source = (root / "src" / "board" / "t5_wireless_backend.h").read_text(encoding="utf-8")
 touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encoding="utf-8")
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
@@ -123,7 +126,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.15"' in platformio_source, "test15 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.16"' in platformio_source, "test16 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -135,6 +138,26 @@ contains("refresh_area(MeshInkRefreshMode::Direct,", "status bar uses area refre
 contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);", "status area is limited to the bar")
 contains("const bool satellites_refresh=satellites_changed;", "foreground satellite count follows every visible change")
 assert "standby_quantized" not in source, "standby must keep exact clock and battery values"
+
+# Test16 local wireless power policy. UI/runtime code must use the generic
+# boundary, while the T5 backend owns ESP-IDF Wi-Fi/Bluetooth state control.
+assert '#include "hardware/wireless.h"' in unified_source, "unified boot includes generic wireless boundary"
+assert "esp_wifi" not in unified_source and "esp_bt_" not in unified_source and "esp_bluedroid_" not in unified_source, "unified boot must not own ESP wireless SDK details"
+assert 'MESHINK_WIRELESS_BACKEND_HEADER' in wireless_selector_source, "wireless selector supports a replaceable board backend"
+assert "struct MeshInkWirelessState" in wireless_types_source, "generic wireless state contract exists"
+for backend_detail in (
+    "esp_wifi_stop()", "esp_wifi_deinit()", "esp_wifi_get_mode",
+    "esp_bluedroid_get_status()", "esp_bluedroid_disable()", "esp_bluedroid_deinit()",
+    "esp_bt_controller_get_status()", "esp_bt_controller_disable()", "esp_bt_controller_deinit()"
+):
+    assert backend_detail in wireless_backend_source, f"T5 wireless backend missing {backend_detail}"
+assert 'meshink_wireless_force_local_radios_off()' in unified_source, "local boot forces Wi-Fi and Bluetooth off"
+assert unified_source.count('meshink_wireless_force_local_radios_off()') == 2, "local wireless policy is enforced before and after MeshCore startup"
+assert 'report_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
+assert 'report_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
+assert 'meshink_wireless_force_wifi_off()' in unified_source, "companion boot explicitly keeps unused Wi-Fi off"
+assert 'report_companion_wireless_state("companion-ready"' in unified_source, "companion boot verifies Wi-Fi off and Bluetooth active"
+assert 'returning from companion mode always' not in unified_source.lower() or 'reboots through this same path' in unified_source, "companion return documents local re-verification"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
 # Test10 hardware proved that reinitializing EPDiy in the same companion boot

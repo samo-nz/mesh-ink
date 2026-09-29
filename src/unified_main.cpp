@@ -4,6 +4,7 @@
 #include "companion_runtime.h"
 #include "t5_timing.h"
 #include "map_tiles.h"
+#include "hardware/wireless.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -12,6 +13,26 @@
 static bool companion_mode = false;
 static bool cache64_psram_blocked = false;
 static constexpr uint8_t BOOT_BUTTON = 0;
+
+static void report_local_wireless_state(const char* phase,const MeshInkWirelessState& state) {
+    const bool ok=meshink_wireless_local_radios_off(state);
+    Serial.printf("[T5-POWER] wireless %s wifi=%s bt-controller=%s bt-host=%s result=%s\n",
+                  phase,
+                  state.wifi_off?"off":"ON",
+                  state.bluetooth_controller_off?"off":"ON",
+                  state.bluetooth_host_off?"off":"ON",
+                  ok?"OK":"ERROR");
+}
+
+static void report_companion_wireless_state(const char* phase,const MeshInkWirelessState& state) {
+    const bool ok=meshink_wireless_companion_radios_ready(state);
+    Serial.printf("[T5-POWER] wireless %s wifi=%s bt-controller=%s bt-host=%s result=%s\n",
+                  phase,
+                  state.wifi_off?"off":"ON",
+                  state.bluetooth_controller_off?"off":"ON",
+                  state.bluetooth_host_off?"off":"ON",
+                  ok?"OK":"ERROR");
+}
 
 void request_companion_mode() {
     Preferences mode;
@@ -67,10 +88,26 @@ void setup() {
         return;
     }
 #endif
-    if (companion_mode) companion_setup();
-    else {
+    if (companion_mode) {
+        // Wi-Fi is never used, even in Bluetooth Companion Mode. Keep its
+        // driver deinitialized while allowing the BLE controller/host to start.
+        const MeshInkWirelessState before=meshink_wireless_force_wifi_off();
+        Serial.printf("[T5-POWER] wireless companion-pre wifi=%s result=%s\n",
+                      before.wifi_off?"off":"ON",before.wifi_off?"OK":"ERROR");
+        companion_setup();
+        report_companion_wireless_state("companion-ready",meshink_wireless_read_state());
+    } else {
+        // Standalone UI never uses the ESP32-S3 2.4 GHz radios. Explicitly
+        // stop/deinitialize both stacks before local startup, then enforce and
+        // verify the policy again after MeshCore setup in case a dependency
+        // changes in a future build. Returning from companion mode always
+        // reboots through this same path.
+        report_local_wireless_state("local-pre",
+            meshink_wireless_force_local_radios_off());
         ui_setup();           // show boot logo while storage/radio initialize
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        report_local_wireless_state("local-post-mesh",
+            meshink_wireless_force_local_radios_off());
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
         ui_finish_startup();  // only now show a tappable setup/home screen
     }
