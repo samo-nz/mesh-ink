@@ -2007,6 +2007,19 @@ static void fast_full_redraw(const char* reason,bool wake_light=false) {
     force_redraw(MeshInkRefreshMode::FastGray16,reason,wake_light);
 }
 
+static void reveal_map_after_black_prep(const char* reason,bool wake_light=false) {
+    // Match the proven Maps tab-entry transition: update the whole panel with
+    // the map content region black, then redraw the completed map with a
+    // forced full DU refresh. This is also required when Maps returns from a
+    // full-screen owner such as standby, otherwise the previous screen can
+    // remain visible through fine map detail.
+    meshink_display_fill_rect(
+        {0,map_top(),portrait_layout().width,map_bottom()-map_top()},0x00,fb);
+    refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep
+    draw_screen();
+    fast_full_redraw(reason,wake_light);
+}
+
 // Display the saved previous map underneath the same toast used for saved
 // settings. Never decode the requested tiles before the progress notification
 // has appeared on the physical e-paper screen.
@@ -2042,10 +2055,7 @@ static void load_map_with_feedback(bool already_on_map) {
     // Prepare the completed terrain black, then reveal the finished map.
     // This preserves the stable black->map DU transition that prevents
     // progressive darkening of unchanged terrain on repeated map updates.
-    meshink_display_fill_rect({0,map_top(),portrait_layout().width,map_bottom()-map_top()},0x00,fb);
-    refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep
-    draw_screen(); // same decoded map_base_cache; no second tile decode
-    fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);
+    reveal_map_after_black_prep("MAP_BLACK_PREP_COMPLETE",false);
 }
 
 static void full_display_clean(const char* reason) {
@@ -2883,7 +2893,15 @@ static void leave_standby(){
     } else {
         meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
     }
-    set_cpu_target(160,"wake");T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");draw_screen();fast_full_redraw("LEAVE_STANDBY",true);
+    set_cpu_target(160,"wake");
+    T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");
+    draw_screen();
+    if(screen==Screen::Maps&&!keyboard_landscape) {
+        T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] Maps wake uses black-prep reveal");
+        reveal_map_after_black_prep("LEAVE_STANDBY_BLACK_PREP_COMPLETE",true);
+    } else {
+        fast_full_redraw("LEAVE_STANDBY",true);
+    }
 }
 
 static void start_message_alert(){
@@ -3389,7 +3407,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     // Keep the own-position marker reasonably current while travelling,
     // but avoid expensive e-paper updates for every 1 Hz GPS sample.
     static uint32_t last_marker_refresh=0;
-    if(screen==Screen::Maps&&enabled&&has_fix&&
+    if(screen==Screen::Maps&&!standby_active&&enabled&&has_fix&&
        (previous_latitude!=latitude||previous_longitude!=longitude)&&
        now-last_marker_refresh>=15000) {
         int sx=0,sy=0;
