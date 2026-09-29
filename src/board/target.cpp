@@ -122,6 +122,12 @@ bool T5Board::enableRadioGpsRail(){
 static SPIClass radio_spi(FSPI);
 SPIClass& t5_shared_spi() { return radio_spi; }
 
+// Local UI keeps EPDiy's already-installed GPIO ISR service alive. Companion
+// mode tears EPDiy down before radio startup, so Arduino must install/own the
+// ISR service on its first radio attachInterrupt(). Select the path explicitly
+// to avoid probing the wrong state and emitting a false ESP-IDF error.
+static bool companion_radio_uses_arduino_irq=false;
+
 // EPDiy's LilyGo-S3 board init installs the ESP-IDF GPIO ISR service for its
 // TPS65185 interrupt before MeshCore starts. Arduino's first attachInterrupt()
 // then tries to install the same global service again and ESP-IDF prints
@@ -148,6 +154,14 @@ public:
 
         if(callbacks_[interruptNum]||arduino_owned_[interruptNum])
             detachInterrupt(interruptNum);
+
+        if(companion_radio_uses_arduino_irq){
+            callbacks_[interruptNum]=nullptr;
+            arduino_owned_[interruptNum]=true;
+            ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
+            return;
+        }
+
         callbacks_[interruptNum]=interruptCb;
         arduino_owned_[interruptNum]=false;
         gpio_set_intr_type(pin,type);
@@ -975,6 +989,7 @@ void T5Board::begin() {
     digitalWrite(T5_PIN_FRONTLIGHT, HIGH);
     T5_TRACE("board: begin; frontlight on; display notice before MeshCore I2C\n");
     show_companion_notice();
+    companion_radio_uses_arduino_irq=true;
     digitalWrite(T5_PIN_FRONTLIGHT, LOW);
     T5_TRACE("board: display rendered; frontlight off; handing control to MeshCore\n");
     T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
@@ -997,6 +1012,7 @@ void T5Board::begin() {
 }
 
 void T5Board::beginLocal() {
+    companion_radio_uses_arduino_irq=false;
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
