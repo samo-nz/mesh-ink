@@ -16,6 +16,7 @@ pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
+companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
@@ -102,6 +103,27 @@ assert "meshink_touch_set_power(enabled);" in source, "UI delegates touch power 
 assert "meshink_touch_reset_tracking();" in source, "UI resets backend tracking on sampling-mode changes"
 assert "meshink_touch_set_power(false);" in board_target_source, "companion mode delegates touch disable to backend"
 assert "GT911" not in board_target_source, "board runtime must not name the touch controller outside its backend"
+
+# Test10 companion-mode power/logging policy: local UI keeps its validated
+# frequencies, while BT companion drops to 80 MHz only after radio/BLE/GPS
+# initialization. The companion ISR path must choose Arduino ownership before
+# probing the deinitialized EPDiy ISR service, and BLE scan response data must
+# stay within the legacy 31-byte budget without duplicating the UART UUID.
+assert "COMPANION_CPU_MHZ=80" in companion_source, "BT companion steady-state CPU target is 80 MHz"
+assert 'companion_set_low_power_cpu();' in companion_source, "BT companion applies low-power CPU policy"
+companion_setup_body = companion_source.split("void companion_setup() {",1)[1].split("void companion_loop()",1)[0]
+assert companion_setup_body.index("board.onBootComplete();") < companion_setup_body.index("companion_set_low_power_cpu();"), "companion lowers CPU only after hardware/BLE setup"
+local_setup_body = companion_source.split("void local_mesh_setup() {",1)[1]
+assert "companion_set_low_power_cpu();" not in local_setup_body, "local UI must not inherit companion CPU policy"
+assert "companion_radio_uses_arduino_irq=true;" in board_target_source, "companion selects Arduino-owned radio IRQ service"
+assert "companion_radio_uses_arduino_irq=false;" in board_target_source, "local UI selects EPDiy-owned radio IRQ service"
+attach_body = board_target_source.split("void attachInterrupt(uint32_t interruptNum",1)[1].split("void detachInterrupt",1)[0]
+assert attach_body.index("if(companion_radio_uses_arduino_irq)") < attach_body.index("gpio_isr_handler_add"), "companion must bypass missing-service probe before gpio_isr_handler_add"
+assert "BLEAdvertisementData scan_response;" in companion_source, "companion supplies bounded custom BLE scan response"
+assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
+assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
+assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
+assert '"1.9.1-test.10"' in platformio_source, "test10 version is explicit in PlatformIO configuration"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
