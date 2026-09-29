@@ -148,6 +148,38 @@ static void t5_radio_shared_bus_idle(bool stop_spi){
         digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET),stop_spi?1U:0U);
 }
 
+static uint32_t radio_gps_rail_started_at=0;
+static bool radio_gps_rail_start_ok=false;
+
+void meshink_board_start_local_radio_settle(){
+    // Called immediately after EPDiy has established the board I2C driver.
+    // Start the H752-01 rail now, then let framebuffer/preferences/splash work
+    // consume the manufacturer-style 1500 ms settling window in parallel.
+    t5_radio_shared_bus_idle(true);
+    radio_gps_rail_start_ok=t5_set_radio_gps_rail(true,0);
+    radio_gps_rail_started_at=radio_gps_rail_start_ok?millis():0;
+    Serial.printf("[T5-RADIO] early rail start=%s at=%lums\n",
+        radio_gps_rail_start_ok?"OK":"FAILED",(unsigned long)radio_gps_rail_started_at);
+}
+
+static bool t5_wait_local_radio_settle(){
+#if !T5_BOARD_H752_01
+    return true;
+#else
+    constexpr uint32_t REQUIRED_SETTLE_MS=1500;
+    if(!radio_gps_rail_start_ok){
+        meshink_board_start_local_radio_settle();
+        if(!radio_gps_rail_start_ok)return false;
+    }
+    const uint32_t elapsed=millis()-radio_gps_rail_started_at;
+    const uint32_t remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0;
+    Serial.printf("[T5-RADIO] rail settle elapsed=%lums remaining=%lums\n",
+        (unsigned long)elapsed,(unsigned long)remaining);
+    if(remaining)delay(remaining);
+    return true;
+#endif
+}
+
 // Local UI keeps EPDiy's already-installed GPIO ISR service alive. Companion
 // mode tears EPDiy down before radio startup, so Arduino must install/own the
 // ISR service on its first radio attachInterrupt(). Select the path explicitly
@@ -688,8 +720,9 @@ void T5Board::beginLocal() {
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
-    t5_radio_shared_bus_idle(true);
-    enableRadioGpsRail();
+    // ui_setup() normally started this rail while preparing the splash. Only
+    // wait for the remainder here; recover by starting it now if early start failed.
+    t5_wait_local_radio_settle();
     // Unified/local mode calls beginLocal(), not begin(). Without this call
     // the 1500mAh factory-profile migration ran only in BLE companion mode.
     meshink_power_prepare_board();
@@ -726,6 +759,8 @@ bool radio_init() {
             t5_radio_shared_bus_idle(true);
             const bool off=t5_set_radio_gps_rail(false,250);
             const bool on=off&&t5_set_radio_gps_rail(true,1500);
+            radio_gps_rail_start_ok=on;
+            radio_gps_rail_started_at=on?millis():0;
             Serial.printf("[T5-RADIO] recovery=rail-cycle off=%u on=%u\n",off?1U:0U,on?1U:0U);
             if(!on)continue;
         }else{

@@ -2969,7 +2969,12 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
-    meshink_display_init();set_ui_orientation(MeshInkOrientation::Portrait);
+    meshink_display_init();
+    // EPDiy has now established the shared board/I2C environment. Start the
+    // LoRa/GPS rail before framebuffer, preferences and splash rendering so
+    // those operations overlap its required settling time.
+    meshink_board_start_local_radio_settle();
+    set_ui_orientation(MeshInkOrientation::Portrait);
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);

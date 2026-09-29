@@ -11,6 +11,7 @@ inline bool meshink_board_has_gps() {
 }
 
 void meshink_board_begin_companion();
+void meshink_board_start_local_radio_settle();
 void meshink_board_begin_local();
 void meshink_board_boot_complete();
 void meshink_board_companion_exit_feedback_begin();

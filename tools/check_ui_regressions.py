@@ -615,6 +615,18 @@ assert "for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt)" not in compan
 assert '-DSX126X_DIO3_TCXO_VOLTAGE=1.8' in platformio_source, "test31 isolates startup sequencing and leaves TCXO unchanged"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not regress field-tested SD speed"
 
+# Test32 overlaps H752-01 rail settling with splash preparation instead of
+# paying a fresh 1500 ms delay after the splash is already visible.
+assert "meshink_board_start_local_radio_settle" in board_backend_source, "board backend exposes generic early-settle hook"
+contains("meshink_display_init();\n    // EPDiy has now established the shared board/I2C environment.", "early radio power begins immediately after display board init")
+contains("meshink_board_start_local_radio_settle();\n    set_ui_orientation", "UI starts rail before framebuffer/preferences/splash work")
+assert "radio_gps_rail_started_at" in board_target_source, "T5 backend timestamps early rail assertion"
+assert "REQUIRED_SETTLE_MS=1500" in board_target_source, "manufacturer-style total settle remains 1500 ms"
+assert "remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0" in board_target_source, "local handoff waits only the unconsumed settle remainder"
+assert "t5_wait_local_radio_settle();" in board_target_source, "local board handoff consumes early settle state"
+assert "t5_radio_shared_bus_idle(true);\n    enableRadioGpsRail();" not in board_target_source.split("void T5Board::beginLocal()",1)[1].split("bool radio_init()",1)[0], "local handoff must not restart a full post-splash rail delay"
+assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test32 overlap must not change SD access speed"
+
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
 assert "enum class MeshInkRadioFailureClass" in radio_types_source, "radio failure vocabulary is board independent"
