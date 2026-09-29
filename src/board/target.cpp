@@ -4,6 +4,7 @@
 #include "../hardware/display.h"
 #include "../hardware/touch.h"
 #include "../hardware/gps.h"
+#include "../hardware/rtc.h"
 #include "../hardware/power.h"
 #include "../hardware/buttons.h"
 #include <esp_heap_caps.h>
@@ -207,7 +208,16 @@ static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
 CustomSX1262Wrapper radio_driver(radio, board);
 
-T5RTCClock rtc_clock;
+static T5RTCClock& t5_rtc_clock(){
+    static T5RTCClock clock;
+    return clock;
+}
+
+mesh::RTCClock& meshink_rtc_meshcore(){return t5_rtc_clock();}
+void meshink_rtc_begin(){t5_rtc_clock().begin();}
+void meshink_rtc_tick(){t5_rtc_clock().tick();}
+uint32_t meshink_rtc_current_time(){return t5_rtc_clock().getCurrentTime();}
+bool meshink_rtc_valid(){return t5_rtc_clock().isValid();}
 static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
 enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
@@ -410,7 +420,7 @@ class T5GPS : public MicroNMEALocationProvider {
     bool active = false;
     uint32_t next_baud_retry = 0;
 public:
-    T5GPS() : MicroNMEALocationProvider(gps_stream, &rtc_clock) {}
+    T5GPS() : MicroNMEALocationProvider(gps_stream, &t5_rtc_clock()) {}
     bool isActive() const { return active; }
     void begin() override {
         Serial1.updateBaudRate(detected_gps_baud);
@@ -454,11 +464,11 @@ public:
         }
         if (isValid()) {
             const uint32_t now_ms = millis();
-            const bool rtc_needs_time = !rtc_clock.isValid();
+            const bool rtc_needs_time = !t5_rtc_clock().isValid();
             const bool hourly_correction_due = last_gps_clock_sync_ms == 0 ||
                 now_ms - last_gps_clock_sync_ms >= 3600000UL;
             if (rtc_needs_time || hourly_correction_due) {
-                rtc_clock.expectGpsTime((uint32_t)getTimestamp());
+                t5_rtc_clock().expectGpsTime((uint32_t)getTimestamp());
                 last_gps_clock_sync_ms = now_ms ? now_ms : 1;
             }
         }
@@ -792,7 +802,7 @@ void T5Board::beginLocal() {
 
 bool radio_init() {
     T5_TRACE("radio: begin clock and RTC\n");
-    rtc_clock.begin();
+    meshink_rtc_begin();
     T5_TRACE("radio: SX1262 init SPI=%d/%d/%d ctrl=%d/%d/%d/%d\n",
         P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
     const bool ready = radio.std_init(&radio_spi);

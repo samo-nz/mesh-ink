@@ -6,8 +6,8 @@
 #include "local_mesh_runtime.h"
 #include "companion_runtime.h"
 #include "ui_onboarding.h"
-#include "board/target.h"
 #include "hardware/gps.h"
+#include "hardware/rtc.h"
 #include "hardware/radio.h"
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
@@ -674,7 +674,7 @@ void local_mesh_loop(){
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_background_tick(); // executes even when MeshCore has stopped the GPS provider
 #endif
-    rtc_clock.tick();
+    meshink_rtc_tick();
     if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
     if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
@@ -734,8 +734,8 @@ bool local_mesh_my_location(long& latitude,long& longitude){
     return true;
 }
 void local_mesh_toggle_gps_advert_location(){auto* p=t5_mesh().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;t5_mesh().savePrefs();}
-uint32_t local_mesh_current_time(){return rtc_clock.getCurrentTime();}
-bool local_mesh_time_valid(){return rtc_clock.isValid();}
+uint32_t local_mesh_current_time(){return meshink_rtc_current_time();}
+bool local_mesh_time_valid(){return meshink_rtc_valid();}
 const char* local_mesh_node_name(){return t5_mesh().getNodeName();}
 const char* local_mesh_radio_summary(){auto* p=t5_mesh().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f SF%u BW%.1f CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
 const char* local_mesh_privacy_value(uint8_t item){auto* p=t5_mesh().getNodePrefs();switch(item){case 0:return p->autoadd_config?"ENABLED":"DISABLED";case 1:if(!p->autoadd_max_hops)return "NO LIMIT";if(p->autoadd_max_hops==1)return "DIRECT ONLY";snprintf(setting_value,sizeof(setting_value),"UP TO %u HOPS",p->autoadd_max_hops-1);return setting_value;case 2:return p->advert_loc_policy?"SHARE":"HIDDEN";case 3:return p->telemetry_mode_base==0?"DENY":p->telemetry_mode_base==1?"CONTACT FLAGS":"ALLOW ALL";case 4:return p->telemetry_mode_loc==0?"DENY":p->telemetry_mode_loc==1?"CONTACT FLAGS":"ALLOW ALL";default:return p->isRepeatEn()?"ENABLED":"DISABLED";}}

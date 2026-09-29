@@ -13,13 +13,14 @@
 #include "ui_onboarding.h"
 #include "t5_logging.h"
 #include "hardware/gps.h"
+#include "hardware/rtc.h"
 #include "hardware/radio.h"
 
 // Device-owned composition root for the unmodified upstream MeshCore companion
 // classes. This is deliberately small so upstream updates remain easy to diff.
 static MultiSerialInterface interface_manager;
 static SerialBLEInterface bluetooth_interface;
-static DataStore store(SPIFFS, rtc_clock);
+static DataStore store(SPIFFS, meshink_rtc_meshcore());
 static StdRNG fast_rng;
 static SimpleMeshTables tables;
 void local_mesh_on_frame(const uint8_t*, size_t);
@@ -76,7 +77,7 @@ static void companion_configure_ble_scan_response(const char* prefix,const char*
                   (unsigned)scan_response.getPayload().size());
 }
 
-MyMesh the_mesh(meshink_radio_meshcore(), fast_rng, rtc_clock, tables, store);
+MyMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
@@ -113,7 +114,7 @@ void companion_loop() {
     the_mesh.loop();
     interface_manager.loop();
     meshink_gps_service_loop();
-    rtc_clock.tick();
+    meshink_rtc_tick();
 
     // The cache64 release uses Arduino + ESP-IDF with the task watchdog
     // enabled. Unlike the local UI path, companion mode previously returned
@@ -148,7 +149,7 @@ void companion_prepare_exit() {
         const uint32_t settle_started=millis();
         while(millis()-settle_started<100){
             meshink_gps_service_loop();
-            rtc_clock.tick();
+            meshink_rtc_tick();
             delay(1);
         }
     }else{

@@ -14,6 +14,10 @@ on:
       - 'src/map_gestures.h'
       - 'src/ui_layout.h'
       - 'src/hardware/touch.h'
+      - 'src/hardware/rtc.h'
+      - 'src/board/t5_rtc_backend.h'
+      - 'tests/test_rtc_contract.cpp'
+      - 'tests/rtc_mock_backend.h'
       - 'src/hardware/touch_types.h'
       - 'src/hardware/wireless.h'
       - 'src/hardware/wireless_types.h'
@@ -110,6 +114,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_gps_contract.cpp -o /tmp/meshink-gps-contract-test
           /tmp/meshink-gps-contract-test
+      - name: Board-independent RTC backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_rtc_contract.cpp -o /tmp/meshink-rtc-contract-test
+          /tmp/meshink-rtc-contract-test
       - name: T5 GT911 backend state regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \

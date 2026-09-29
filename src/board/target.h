@@ -30,7 +30,6 @@ public:
 
 extern T5Board board;
 extern CustomSX1262Wrapper radio_driver;
-extern T5RTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;
 SPIClass& t5_shared_spi();
 void t5_companion_exit_feedback_begin();
