@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "board/target.cpp"
         "board/t5_power_backend.cpp"
+        "board/t5_buttons_backend.cpp"
         "companion_runtime.cpp"
         "local_mesh_runtime.cpp"
         "map_tiles.cpp"
