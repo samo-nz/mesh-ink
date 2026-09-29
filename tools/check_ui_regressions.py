@@ -15,6 +15,7 @@ map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
+standalone_source = (root / "src" / "ui_standalone_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(encoding="utf-8")
@@ -626,6 +627,7 @@ assert "remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0" in bo
 assert "t5_wait_local_radio_settle();" in board_target_source, "local board handoff consumes early settle state"
 assert "t5_radio_shared_bus_idle(true);\n    enableRadioGpsRail();" not in board_target_source.split("void T5Board::beginLocal()",1)[1].split("bool radio_init()",1)[0], "local handoff must not restart a full post-splash rail delay"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test32 overlap must not change SD access speed"
+assert "void meshink_board_start_local_radio_settle() {}" in standalone_source, "UI-only target keeps a no-op early-radio hook"
 
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
