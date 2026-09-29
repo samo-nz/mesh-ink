@@ -190,10 +190,10 @@ assert shutdown_body.index("if(ble_connected)") < shutdown_body.index("interface
 assert shutdown_body.index("interface_manager.removeInterface(&bluetooth_interface);") < shutdown_body.index("BLEDevice::deinit(false);"), "disconnected BLE path detaches transport before stack deinit"
 assert shutdown_body.index("BLEDevice::deinit(false);") < shutdown_body.index("radio_driver.powerOff();"), "Bluetooth stack stops before radio power-off"
 assert shutdown_body.index("store.saveChannels(&the_mesh);") < shutdown_body.index("SPIFFS.end();"), "persist MeshCore state before filesystem shutdown"
-assert "companion_prepare_exit();" in unified_source, "BOOT exit calls orderly companion shutdown"
+assert "companion_prepare_exit();" in unified_source, "primary-button exit calls orderly companion shutdown"
 exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
 assert exit_body.index("companion_prepare_exit();") < exit_body.index("ESP.restart();"), "companion shutdown precedes reboot"
-assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted BOOT hold gets immediate full-brightness acknowledgement"
+assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted primary-button hold gets immediate full-brightness acknowledgement"
 assert "t5_companion_show_returning_notice" not in companion_source and "t5_companion_show_returning_notice" not in board_target_source, "companion exit must not reinitialize EPDiy before reboot"
 assert 'RETURNING TO LOCAL UI' not in board_target_source, "unsafe retained reboot screen remains removed"
 release_body = board_target_source.split("void t5_companion_release_radio_resources()",1)[1].split("void T5Board::begin()",1)[0]
@@ -203,7 +203,7 @@ assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exi
 assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
 assert 'notice_meshink_logo(160, fb);' in board_target_source, "companion screen uses MeshInk splash artwork"
 assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in board_target_source, "companion screen labels Bluetooth mode below logo"
-assert 'notice_centred("HOLD BOOT BUTTON", 665, 2, fb, true);' in board_target_source, "companion screen shows BOOT hold instruction"
+assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in board_target_source, "companion screen uses board-provided primary-button label"
 assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in board_target_source, "companion screen shows exit duration"
 assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in board_target_source, "legacy MESHCORE companion splash removed"
 
@@ -419,7 +419,7 @@ assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains compani
 assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics use 5 second warm-up"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
-print("PASS: 10 UI issue checks (icon strokes, controls, Home/BOOT, last GPS, brightness)")
+print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, last GPS, brightness)")
 
 compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
 assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
