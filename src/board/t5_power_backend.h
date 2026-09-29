@@ -7,9 +7,14 @@ void meshink_power_frontlight_set(uint8_t percent);
 
 bool meshink_power_read_battery_mv(uint16_t& millivolts);
 bool meshink_power_read_battery_percent(uint8_t& percent);
-bool meshink_power_read_charge_state(uint8_t& state);
+bool meshink_power_read_charge_state(MeshInkChargeState& state);
 bool meshink_power_external_present();
 bool meshink_power_read_status(MeshInkPowerStatus& status);
+
+// Battery topology, chemistry and cutoff/debounce policy belong to the board
+// backend. Application code receives only the resulting critical state.
+bool meshink_power_boot_critical(MeshInkPowerCriticalState& state);
+bool meshink_power_poll_critical(MeshInkPowerCriticalState& state);
 
 // Restore the battery path if a previous ship-mode request left BATFET disabled.
 void meshink_power_recover_boot_path();
