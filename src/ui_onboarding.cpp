@@ -2962,7 +2962,7 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
-    meshink_display_init();meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);meshink_display_set_pixel_clock_mhz(17);
+    meshink_display_init();meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);

@@ -63,6 +63,9 @@ inline EpdRect meshink_display_native_rect(MeshInkRect rect) {
 
 inline void meshink_display_init() {
     epd_init(&epd_board_v7,&ED047TC1,EPD_LUT_64K);
+    // Field-tested H752-01 EPDiy timing. Application code must not select
+    // panel clocks; each display backend owns its controller tuning.
+    epd_set_lcd_pixel_clock_MHz(17);
 }
 inline void meshink_display_deinit(){epd_deinit();}
 inline void meshink_display_set_rotation(MeshInkRotation rotation) {
@@ -85,7 +88,6 @@ inline int meshink_display_logical_height() {
 }
 inline int meshink_display_portrait_width(){return meshink_display_geometry().portrait_width;}
 inline int meshink_display_portrait_height(){return meshink_display_geometry().portrait_height;}
-inline void meshink_display_set_pixel_clock_mhz(int mhz){epd_set_lcd_pixel_clock_MHz(mhz);}
 inline float meshink_display_ambient_temperature(){return epd_ambient_temperature();}
 
 inline MeshInkDisplayState meshink_display_state_init() {
