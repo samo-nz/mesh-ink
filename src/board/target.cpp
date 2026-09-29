@@ -734,7 +734,7 @@ static void show_companion_notice() {
     T5_TRACE("notice: display deinitialized, heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
 }
 
-void t5_companion_exit_feedback_begin() {
+void meshink_board_companion_exit_feedback_begin() {
     // Companion startup performs additional board/radio initialization after
     // the splash, so do not assume the early LEDC attachment is still intact.
     // Reassert the board frontlight backend before driving the visible exit
@@ -744,7 +744,7 @@ void t5_companion_exit_feedback_begin() {
     Serial.println("[T5-LIGHT] companion exit acknowledgement brightness=100%");
 }
 
-void t5_companion_release_radio_resources() {
+void meshink_board_companion_release_resources() {
     // Release the radio's own IRQ handler and shared SPI bus cleanly. The
     // global Arduino GPIO ISR service can remain until the imminent reset;
     // unlike test10, no same-boot EPDiy reinitialization needs that service.
@@ -753,6 +753,10 @@ void t5_companion_release_radio_resources() {
     companion_radio_uses_arduino_irq=false;
     T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
 }
+
+void meshink_board_begin_companion(){board.begin();}
+void meshink_board_begin_local(){board.beginLocal();}
+void meshink_board_boot_complete(){board.onBootComplete();}
 
 void T5Board::begin() {
     // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board

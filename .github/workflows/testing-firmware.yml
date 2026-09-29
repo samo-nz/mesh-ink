@@ -34,6 +34,8 @@ on:
       - 'src/board/t5_radio_backend.h'
       - 'src/board/t5_radio_backend.cpp'
       - 'src/hardware/board.h'
+      - 'tests/test_board_contract.cpp'
+      - 'tests/board_mock_backend.h'
       - 'src/board/t5_board_backend.h'
       - 'src/board/t5_touch_backend.h'
       - 'tests/test_map_gestures.cpp'
@@ -114,6 +116,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_gps_contract.cpp -o /tmp/meshink-gps-contract-test
           /tmp/meshink-gps-contract-test
+      - name: Board-independent board lifecycle contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_board_contract.cpp -o /tmp/meshink-board-contract-test
+          /tmp/meshink-board-contract-test
       - name: Board-independent RTC backend contract
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \

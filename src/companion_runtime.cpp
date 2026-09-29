@@ -12,6 +12,7 @@
 #include "local_mesh_runtime.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
+#include "hardware/board.h"
 #include "hardware/gps.h"
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
@@ -83,7 +84,7 @@ bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_in
 
 void companion_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
-    board.begin();
+    meshink_board_begin_companion();
     if (!meshink_radio_initialize()) {
         Serial.printf("[T5-BOOT] fatal: %s initialization failed\n",meshink_radio_name());
         while (true) delay(1000);
@@ -101,7 +102,7 @@ void companion_setup() {
 #if ENV_INCLUDE_GPS == 1
     the_mesh.applyGpsPrefs();
 #endif
-    board.onBootComplete();
+    meshink_board_boot_complete();
 
     // Companion mode has no local UI/render workload. Once BLE, MeshCore,
     // radio and optional GPS setup have completed, 80 MHz is enough for the
@@ -130,7 +131,7 @@ static bool companion_persist_contact(const ContactInfo& contact) {
 
 void companion_prepare_exit() {
     const uint32_t shutdown_started=millis();
-    t5_companion_exit_feedback_begin();
+    meshink_board_companion_exit_feedback_begin();
 
     const bool ble_connected=bluetooth_interface.isConnected();
     Serial.printf("[T5-BOOT] companion shutdown: BLE connected=%u; stopping MeshCore interface\n",
@@ -169,7 +170,7 @@ void companion_prepare_exit() {
 
     Serial.println("[T5-BOOT] companion shutdown: powering radio down");
     meshink_radio_power_off();
-    t5_companion_release_radio_resources();
+    meshink_board_companion_release_resources();
     SPIFFS.end();
 
     Serial.printf("[T5-BOOT] companion shutdown complete elapsed=%lums\n",
@@ -179,7 +180,7 @@ void companion_prepare_exit() {
 
 void local_mesh_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
-    board.beginLocal();
+    meshink_board_begin_local();
     bool radio_ready=false;
     for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt){
         radio_ready=meshink_radio_initialize();

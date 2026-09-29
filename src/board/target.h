@@ -32,8 +32,6 @@ extern T5Board board;
 extern CustomSX1262Wrapper radio_driver;
 extern EnvironmentSensorManager sensors;
 SPIClass& t5_shared_spi();
-void t5_companion_exit_feedback_begin();
-void t5_companion_release_radio_resources();
 
 
 bool radio_init();
