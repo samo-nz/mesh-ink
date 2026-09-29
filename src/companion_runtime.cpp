@@ -126,6 +126,9 @@ static bool companion_persist_contact(const ContactInfo& contact) {
 }
 
 void companion_prepare_exit() {
+    const uint32_t shutdown_started=millis();
+    t5_companion_exit_feedback_begin();
+
     Serial.println("[T5-BOOT] companion shutdown: disabling MeshCore interfaces");
     interface_manager.disable();
 
@@ -151,7 +154,15 @@ void companion_prepare_exit() {
 
     Serial.println("[T5-BOOT] companion shutdown: powering radio down");
     radio_driver.powerOff();
+    t5_shared_spi().end();
     SPIFFS.end();
+
+    // With the shared radio/display pins released, leave a retained e-paper
+    // message visible during the ESP restart and local-UI initialization.
+    t5_companion_show_returning_notice();
+
+    Serial.printf("[T5-BOOT] companion shutdown complete elapsed=%lums\n",
+                  (unsigned long)(millis()-shutdown_started));
     Serial.flush();
 }
 
