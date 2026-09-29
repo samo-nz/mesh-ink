@@ -154,7 +154,6 @@ void companion_prepare_exit() {
 
     Serial.println("[T5-BOOT] companion shutdown: powering radio down");
     radio_driver.powerOff();
-    t5_shared_spi().end();
     SPIFFS.end();
 
     // With the shared radio/display pins released, leave a retained e-paper
