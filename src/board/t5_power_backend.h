@@ -16,6 +16,13 @@ bool meshink_power_read_status(MeshInkPowerStatus& status);
 bool meshink_power_boot_critical(MeshInkPowerCriticalState& state);
 bool meshink_power_poll_critical(MeshInkPowerCriticalState& state);
 
+// Board-owned user guidance for restoring power after shutdown/deep sleep.
+const MeshInkPowerWakeInfo& meshink_power_wake_info();
+
+// Board-specific gauge/profile startup and optional diagnostics.
+void meshink_power_prepare_board();
+void meshink_power_diagnostics_tick();
+
 // Restore the battery path if a previous ship-mode request left BATFET disabled.
 void meshink_power_recover_boot_path();
 
