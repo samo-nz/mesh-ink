@@ -142,7 +142,11 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.22"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
+ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
+firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
+assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
+assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
+assert re.fullmatch(r"1\\.9\\.1-test\\.\\d+", firmware_version.group(1)), "testing firmware version keeps the 1.9.1-test.N format"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
