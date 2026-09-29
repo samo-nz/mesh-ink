@@ -23,6 +23,10 @@ display_types_source = (root / "src" / "hardware" / "display_types.h").read_text
 wireless_selector_source = (root / "src" / "hardware" / "wireless.h").read_text(encoding="utf-8")
 wireless_types_source = (root / "src" / "hardware" / "wireless_types.h").read_text(encoding="utf-8")
 wireless_backend_source = (root / "src" / "board" / "t5_wireless_backend.h").read_text(encoding="utf-8")
+power_selector_source = (root / "src" / "hardware" / "power.h").read_text(encoding="utf-8")
+power_types_source = (root / "src" / "hardware" / "power_types.h").read_text(encoding="utf-8")
+power_backend_header = (root / "src" / "board" / "t5_power_backend.h").read_text(encoding="utf-8")
+power_backend_source = (root / "src" / "board" / "t5_power_backend.cpp").read_text(encoding="utf-8")
 touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encoding="utf-8")
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
@@ -126,7 +130,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.16"' in platformio_source, "test16 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.17"' in platformio_source, "test17 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -442,15 +446,35 @@ standby_entry = source.split("static void enter_standby(const char* reason){", 1
 assert "update_status_hardware();" in standby_entry, "standby entry samples exact clock, battery and charger state"
 assert "status_bar_refreshed_at=millis();" in standby_entry, "standby entry starts the five-minute status cadence"
 
-# Critical-battery protection must stop repeated brownout boots before the
-# BQ25896's much lower hardware-depletion threshold is reached.
-contains("static constexpr uint16_t CRITICAL_BATTERY_MV=3300;", "critical battery cutoff is 3.30 V")
-contains("CRITICAL_BATTERY_SAMPLES=3;", "runtime low-battery cutoff is debounced")
+# Test17 power abstraction: application/UI keeps policy, while the selected
+# board backend owns gauge/charger registers, frontlight PWM and ship mode.
+assert '#include "hardware/power.h"' in source, "UI includes generic power boundary"
+assert 'MESHINK_POWER_BACKEND_HEADER' in power_selector_source, "power selector supports a replaceable board backend"
+assert "struct MeshInkPowerStatus" in power_types_source, "generic power status vocabulary exists"
+for leaked_power_detail in (
+    "BQ27220", "BQ25896", "BATFET_DIS", "i2c_master_",
+    "ledcWrite(", "ledcSetup(", "T5_PIN_FRONTLIGHT", "esp_deep_sleep_start"
+):
+    assert leaked_power_detail not in source, f"UI leaked power hardware detail: {leaked_power_detail}"
+for backend_detail in (
+    "BQ27220_ADDR", "BQ25896_PRIMARY_ADDR", "BATFET_DIS",
+    "meshink_power_read_battery_mv", "meshink_power_read_battery_percent",
+    "meshink_power_read_charge_state", "meshink_power_external_present",
+    "meshink_power_frontlight_begin", "meshink_power_frontlight_set",
+    "meshink_power_enter_ship_mode"
+):
+    assert backend_detail in power_backend_source, f"T5 power backend missing {backend_detail}"
+assert "meshink_power_read_battery_mv(voltage)" in board_source, "MeshCore battery voltage uses shared power backend"
+assert "meshink_power_read_battery_percent(soc)" in board_source, "MeshCore battery diagnostics use shared fuel-gauge SOC backend"
+assert "meshink_power_recover_boot_path();" in source, "UI delegates boot battery-path recovery"
+contains("static constexpr uint16_t CRITICAL_BATTERY_MV=3300;", "critical battery cutoff policy stays at 3.30 V")
+contains("CRITICAL_BATTERY_SAMPLES=3;", "runtime low-battery cutoff policy stays debounced")
 contains("if(boot_battery_is_critical(boot_battery_mv))", "critical battery is checked before splash startup work")
 contains('centred("LOW BATTERY",ui_y(230),6,0,true);', "critical low battery persistent screen follows scaled geometry")
-contains("BATFET_DIS=1u<<5", "critical low battery enters ship mode")
+contains("meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);", "critical battery delegates ship mode to backend")
+contains("meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);", "user power-off delegates ship mode to backend")
 contains("service_critical_battery();", "runtime critical battery monitor remains active")
-contains("if(external_power_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
+contains("if(meshink_power_external_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
