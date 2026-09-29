@@ -39,7 +39,8 @@ static void companion_exit_button() {
     if (pressed && pressed_at == 0) pressed_at = millis();
     if (pressed && pressed_at != 0 && millis() - pressed_at >= 2000) {
         Serial.println("[T5-BOOT] companion exit requested; returning to local UI now");
-        delay(100);
+        companion_prepare_exit();
+        delay(50);
         ESP.restart();
     }
     if (!pressed) pressed_at = 0;
