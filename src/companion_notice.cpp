@@ -99,7 +99,7 @@ void meshink_show_companion_notice() {
     T5_TRACE("notice: epd_init, internal heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
     meshink_display_init();
     T5_TRACE("notice: panel initialized\n");
-    meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+    meshink_display_set_orientation(MeshInkOrientation::Portrait);
     MeshInkDisplayState display = meshink_display_state_init();
     uint8_t* fb = meshink_display_framebuffer(&display);
     T5_TRACE("notice: framebuffer=%p, heap=%u, psram=%u\n", fb, ESP.getFreeHeap(), ESP.getFreePsram());

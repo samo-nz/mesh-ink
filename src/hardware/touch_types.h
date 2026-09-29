@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "orientation.h"
 
 // Board-independent touch vocabulary. The application consumes logical touch
 // coordinates and contact state; controller registers, reset sequencing and

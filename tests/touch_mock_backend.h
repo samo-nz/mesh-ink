@@ -2,12 +2,17 @@
 
 inline bool meshink_touch_mock_powered = true;
 inline unsigned meshink_touch_mock_resets = 0;
+inline MeshInkOrientation meshink_touch_mock_orientation = MeshInkOrientation::Portrait;
 
 inline const char* meshink_touch_backend_name() { return "mock"; }
 inline void meshink_touch_prepare_boot() {}
 inline void meshink_touch_finish_boot() {}
 inline bool meshink_touch_clear() { return true; }
 inline void meshink_touch_reset_tracking() { ++meshink_touch_mock_resets; }
+inline void meshink_touch_set_orientation(MeshInkOrientation orientation) {
+    meshink_touch_mock_orientation=orientation;
+    ++meshink_touch_mock_resets;
+}
 inline void meshink_touch_set_power(bool enabled) { meshink_touch_mock_powered=enabled; }
 inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
     MeshInkTouchPrimarySample sample{};

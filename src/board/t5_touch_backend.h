@@ -41,6 +41,7 @@ struct State {
     int16_t last_y1 = 0;
     uint32_t i2c_errors = 0;
     uint32_t last_error_report_ms = 0;
+    MeshInkOrientation orientation = MeshInkOrientation::Portrait;
 };
 
 inline State& state() {
@@ -99,6 +100,20 @@ inline void release_reset_sequence() {
     pinMode((gpio_num_t)T5_PIN_TOUCH_INT,INPUT);
 }
 
+static constexpr int16_t TOUCH_PORTRAIT_WIDTH = 540;
+
+inline MeshInkTouchPoint logical_point(int16_t raw_x,int16_t raw_y) {
+    MeshInkTouchPoint point{};
+    if(state().orientation==MeshInkOrientation::Landscape) {
+        point.x=raw_y;
+        point.y=(int16_t)(TOUCH_PORTRAIT_WIDTH-1-raw_x);
+    } else {
+        point.x=raw_x;
+        point.y=raw_y;
+    }
+    return point;
+}
+
 } // namespace meshink_t5_touch_detail
 
 inline const char* meshink_touch_backend_name() { return "GT911"; }
@@ -147,6 +162,14 @@ inline void meshink_touch_reset_tracking() {
     meshink_t5_touch_detail::reset_tracking();
 }
 
+inline void meshink_touch_set_orientation(MeshInkOrientation orientation) {
+    using namespace meshink_t5_touch_detail;
+    State& s=state();
+    if(s.orientation==orientation)return;
+    s.orientation=orientation;
+    reset_tracking();
+}
+
 inline void meshink_touch_set_power(bool enabled) {
     using namespace meshink_t5_touch_detail;
     reset_tracking();
@@ -167,8 +190,9 @@ inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
 
     uint8_t status=0;
     if(!read(GT911_STATUS,&status,1) || !(status&0x80)) {
-        sample.x=s.cached_x;
-        sample.y=s.cached_y;
+        const MeshInkTouchPoint point=logical_point(s.cached_x,s.cached_y);
+        sample.x=point.x;
+        sample.y=point.y;
         sample.pressed=s.was_pressed;
         return sample;
     }
@@ -182,8 +206,9 @@ inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
 
     const uint8_t count=status&0x0F;
     if(!count||count>5) {
-        sample.x=s.cached_x;
-        sample.y=s.cached_y;
+        const MeshInkTouchPoint point=logical_point(s.cached_x,s.cached_y);
+        sample.x=point.x;
+        sample.y=point.y;
         write_status_clear();
         s.was_pressed=false;
         return sample;
@@ -197,8 +222,9 @@ inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
 
     s.cached_x=(int16_t)(point[1]|((uint16_t)point[2]<<8));
     s.cached_y=(int16_t)(point[3]|((uint16_t)point[4]<<8));
-    sample.x=s.cached_x;
-    sample.y=s.cached_y;
+    const MeshInkTouchPoint logical=logical_point(s.cached_x,s.cached_y);
+    sample.x=logical.x;
+    sample.y=logical.y;
     sample.pressed=true;
     write_status_clear();
     s.was_pressed=true;
@@ -214,8 +240,8 @@ inline bool meshink_touch_read_contacts(MeshInkTouchContacts& contacts) {
     if(!read(GT911_STATUS,&status,1))return false;
     if(!(status&0x80)) {
         contacts.count=s.last_count;
-        contacts.points[0].x=s.last_x0;contacts.points[0].y=s.last_y0;
-        contacts.points[1].x=s.last_x1;contacts.points[1].y=s.last_y1;
+        contacts.points[0]=logical_point(s.last_x0,s.last_y0);
+        contacts.points[1]=logical_point(s.last_x1,s.last_y1);
         return true;
     }
     if(status&0x10) {
@@ -249,8 +275,8 @@ inline bool meshink_touch_read_contacts(MeshInkTouchContacts& contacts) {
     }
     s.last_count=reported;
     contacts.count=reported;
-    contacts.points[0].x=s.last_x0;contacts.points[0].y=s.last_y0;
-    contacts.points[1].x=s.last_x1;contacts.points[1].y=s.last_y1;
+    contacts.points[0]=logical_point(s.last_x0,s.last_y0);
+    contacts.points[1]=logical_point(s.last_x1,s.last_y1);
     write_status_clear();
     return true;
 }

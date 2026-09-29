@@ -71,6 +71,12 @@ inline void meshink_display_deinit(){epd_deinit();}
 inline void meshink_display_set_rotation(MeshInkRotation rotation) {
     epd_set_rotation(meshink_display_native_rotation(rotation));
 }
+inline void meshink_display_set_orientation(MeshInkOrientation orientation) {
+    // H752-01 panel is mounted so the application's portrait is EPDiy's
+    // inverted portrait, while application landscape matches EPDiy landscape.
+    epd_set_rotation(orientation==MeshInkOrientation::Landscape
+        ? EPD_ROT_LANDSCAPE : EPD_ROT_INVERTED_PORTRAIT);
+}
 inline MeshInkRotation meshink_display_get_rotation() {
     return meshink_display_rotation_from_native(epd_get_rotation());
 }

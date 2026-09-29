@@ -154,6 +154,24 @@ int main() {
     touch_stub::queue_read_failure(GT911_STATUS);
     assert(!meshink_touch_read_contacts(contacts));
 
+    // Landscape logical coordinates are backend-owned. Raw GT911 portrait
+    // (x,y) maps to logical landscape (y, 539-x), for primary and Maps frames.
+    reset_all();
+    meshink_touch_set_orientation(MeshInkOrientation::Landscape);
+    touch_stub::queue_read(GT911_STATUS,{0x81});
+    touch_stub::queue_read_bytes(GT911_FIRST_POINT,point_frame(50,60));
+    primary=meshink_touch_read_primary();
+    assert(primary.pressed&&primary.x==60&&primary.y==489);
+
+    touch_stub::queue_read(GT911_STATUS,{0x82});
+    touch_stub::queue_read_bytes(GT911_FIRST_POINT,point_frame(100,200,300,400,true));
+    assert(meshink_touch_read_contacts(contacts));
+    assert(contacts.count==2);
+    assert(contacts.points[0].x==200&&contacts.points[0].y==439);
+    assert(contacts.points[1].x==400&&contacts.points[1].y==239);
+    meshink_touch_set_orientation(MeshInkOrientation::Portrait);
+    assert(state().last_count==0&&!state().was_pressed);
+
     // Standby/companion power control owns reset sequencing and clears tracking.
     reset_all();
     state().was_pressed=true;

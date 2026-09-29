@@ -21,6 +21,7 @@ on:
       - 'tests/test_rtc_contract.cpp'
       - 'tests/rtc_mock_backend.h'
       - 'src/hardware/touch_types.h'
+      - 'src/hardware/orientation.h'
       - 'src/hardware/wireless.h'
       - 'src/hardware/wireless_types.h'
       - 'src/board/t5_wireless_backend.h'

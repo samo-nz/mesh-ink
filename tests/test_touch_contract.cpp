@@ -19,6 +19,10 @@ int main() {
     const unsigned before=meshink_touch_mock_resets;
     meshink_touch_reset_tracking();
     assert(meshink_touch_mock_resets==before+1);
+    meshink_touch_set_orientation(MeshInkOrientation::Landscape);
+    assert(meshink_touch_mock_orientation==MeshInkOrientation::Landscape);
+    assert(meshink_touch_mock_resets==before+2);
+    meshink_touch_set_orientation(MeshInkOrientation::Portrait);
 
     const MeshInkTouchPrimarySample primary=meshink_touch_read_primary();
     assert(primary.pressed&&!primary.home);

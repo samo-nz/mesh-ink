@@ -229,6 +229,10 @@ static inline const MeshInkUiLayout& portrait_layout(){
                                meshink_display_portrait_height());
     return layout;
 }
+static inline void set_ui_orientation(MeshInkOrientation orientation){
+    meshink_display_set_orientation(orientation);
+    meshink_touch_set_orientation(orientation);
+}
 static inline int map_top(){return portrait_layout().map_top;}
 static inline int map_bottom(){return portrait_layout().map_bottom;}
 static inline int map_centre_x(){return portrait_layout().map_centre_x;}
@@ -1849,7 +1853,7 @@ static void close_quick_panel() {
     if(quick_panel_restore_landscape) {
         quick_panel_restore_landscape=false;
         keyboard_landscape=true;
-        meshink_display_set_rotation(MeshInkRotation::Landscape);
+        set_ui_orientation(MeshInkOrientation::Landscape);
     }
     draw_screen();refresh(MeshInkRefreshMode::FastGray16,true);
 }
@@ -1860,7 +1864,7 @@ static void open_quick_panel() {
     quick_panel_restore_landscape=keyboard_landscape;
     if(keyboard_landscape) {
         keyboard_landscape=false;
-        meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+        set_ui_orientation(MeshInkOrientation::Portrait);
     }
     quick_panel_active=true;
     draw_quick_panel();
@@ -1906,7 +1910,7 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
     if(hit(x,y,meshink_quick_power_rect(layout))) {
         quick_panel_active=false;quick_panel_restore_landscape=false;
         keyboard_landscape=false;keyboard_visible=false;keyboard_message_mode=false;
-        meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+        set_ui_orientation(MeshInkOrientation::Portrait);
         screen=Screen::ShutdownConfirm;draw_screen();refresh(MeshInkRefreshMode::FastGray16,true);return true;
     }
     return true;
@@ -2418,7 +2422,7 @@ static void queue_text_refresh(){
 }
 static void set_keyboard_orientation(bool landscape){
     keyboard_landscape=landscape;
-    meshink_display_set_rotation(landscape?MeshInkRotation::Landscape:MeshInkRotation::InvertedPortrait);
+    set_ui_orientation(landscape?MeshInkOrientation::Landscape:MeshInkOrientation::Portrait);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] keyboard orientation=%s\n",landscape?"landscape":"portrait");
     draw_screen();refresh(MeshInkRefreshMode::FastGray16);
 }
@@ -2434,7 +2438,7 @@ static void save_node_name(){
 static void show_contacts_after_setup(){
     if(keyboard_landscape){
         keyboard_landscape=false;
-        meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+        set_ui_orientation(MeshInkOrientation::Portrait);
     }
     keyboard_visible=false;keyboard_message_mode=false;
     replace_name_on_type=false;
@@ -2446,11 +2450,10 @@ static void show_contacts_after_setup(){
     draw_screen();
     fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);
 }
-static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
+static bool handle_landscape_keyboard(int16_t x,int16_t y){
     if(!keyboard_landscape)return false;
     const auto metrics=keyboard_metrics(true);
-    const int16_t x=raw_y,y=(int16_t)(metrics.height-1-raw_x);
-    T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] landscape tap raw=%d,%d mapped=%d,%d\n",raw_x,raw_y,x,y);
+    T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] landscape tap logical=%d,%d\n",x,y);
     // Give the mode and Delete buttons the full third-row edge areas.
     if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
@@ -2472,7 +2475,7 @@ static bool handle_landscape_keyboard(int16_t raw_x,int16_t raw_y){
         if(keyboard_password_mode){
             const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
             memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
-            keyboard_landscape=false;meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+            keyboard_landscape=false;set_ui_orientation(MeshInkOrientation::Portrait);
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
         }
         if(keyboard_message_mode){
@@ -2873,7 +2876,7 @@ static void enter_standby(const char* reason){
     standby_restore_landscape=restore_landscape;
     if(restore_landscape){
         keyboard_landscape=false;
-        meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+        set_ui_orientation(MeshInkOrientation::Portrait);
     }
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
     // Enter standby with an exact clock/battery sample. Standby keeps those
@@ -2887,9 +2890,9 @@ static void leave_standby(){
     if(standby_restore_landscape){
         standby_restore_landscape=false;
         keyboard_landscape=true;
-        meshink_display_set_rotation(MeshInkRotation::Landscape);
+        set_ui_orientation(MeshInkOrientation::Landscape);
     } else {
-        meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+        set_ui_orientation(MeshInkOrientation::Portrait);
     }
     set_cpu_target(160,"wake");
     T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");
@@ -2962,7 +2965,7 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
-    meshink_display_init();meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+    meshink_display_init();set_ui_orientation(MeshInkOrientation::Portrait);
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
@@ -3108,7 +3111,7 @@ void ui_loop() {
             keyboard_visible=false;keyboard_message_mode=false;
             if(keyboard_landscape){
                 keyboard_landscape=false;
-                meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+                set_ui_orientation(MeshInkOrientation::Portrait);
             }
             details_page=0;details_from_discovery=false;chat_page=0;
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);

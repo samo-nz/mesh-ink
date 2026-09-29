@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "orientation.h"
 
 // Board-independent display vocabulary used by MeshInk application code.
 // Backends translate these concepts to their controller/driver-specific API.
