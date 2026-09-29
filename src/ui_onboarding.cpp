@@ -3,15 +3,14 @@
 #include <Preferences.h>
 #include "hardware/display.h"
 #include "hardware/touch.h"
+#include "hardware/power.h"
 #include "board/board_profile.h"
-#include <driver/i2c.h>
 #include <esp_heap_caps.h>
 #include <time.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <esp32-hal-cpu.h>
-#include <esp_sleep.h>
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
@@ -40,9 +39,7 @@ void request_companion_mode() { Serial.println("[T5-UI] companion mode requires 
 // started in this target. Saved values are device-owned and will be handed to
 // the MeshCore application adapter in the next milestone.
 static constexpr char UI_VERSION[] = T5_FIRMWARE_VERSION;
-static constexpr gpio_num_t FRONTLIGHT = (gpio_num_t)T5_PIN_FRONTLIGHT;
 static constexpr gpio_num_t BOOT_BUTTON = (gpio_num_t)T5_PIN_BOOT_BUTTON;
-static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL=6;
 
 struct Glyph { char c; uint8_t r[7]; };
 static constexpr Glyph FONT[] = {
@@ -331,13 +328,12 @@ static const char* frontlight_timeout_name(){static const char* names[]={"5 SECO
 static const char* standby_timeout_name(){static const char* names[]={"5 MINUTES","10 MINUTES","15 MINUTES","NEVER"};return names[min((uint8_t)3,standby_timeout_index)];}
 static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(status_hour*60+status_minute);return night_start_minutes<=night_end_minutes?(now>=night_start_minutes&&now<night_end_minutes):(now>=night_start_minutes||now<night_end_minutes);}
 static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
-static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();const uint8_t duty=frontlight_lit?(uint8_t)max(1,(frontlight_brightness*255)/100):0;ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);}
+static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();meshink_power_frontlight_set(frontlight_lit?frontlight_brightness:0);}
 static void frontlight_preview(uint8_t level){
     // Live PWM feedback for the quick slider only. Do not alter the persisted
     // brightness or redraw the e-paper until the release event is handled.
     frontlight_lit=level>0;
-    const uint8_t duty=level?(uint8_t)max(1,((int)level*255)/100):0;
-    ledcWrite(FRONTLIGHT_PWM_CHANNEL,duty);
+    meshink_power_frontlight_set(level);
     const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];
     frontlight_deadline=timeout?millis()+timeout:0;
 }
@@ -2050,53 +2046,11 @@ static void full_display_clean(const char* reason) {
     T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
 
-static bool i2c_read8(uint8_t device,uint8_t reg,uint8_t* data,size_t len) {
-    return i2c_master_write_read_device(I2C_NUM_0,device,&reg,1,data,len,pdMS_TO_TICKS(20))==ESP_OK;
-}
-static bool i2c_write8(uint8_t device,uint8_t reg,uint8_t value) {
-    const uint8_t data[2]={reg,value};
-    return i2c_master_write_to_device(I2C_NUM_0,device,data,sizeof(data),pdMS_TO_TICKS(50))==ESP_OK;
-}
-
-static void recover_pmic_power_path() {
-    constexpr uint8_t REG09=0x09,BATFET_DIS=1u<<5,BATFET_RST_EN=1u<<2;
-    uint8_t value=0,address=0;
-    for(const uint8_t candidate:{(uint8_t)0x6B,(uint8_t)0x6A})if(i2c_read8(candidate,REG09,&value,1)){address=candidate;break;}
-    if(!address){Serial.println("[T5-POWER] boot PMIC recovery skipped: charger not detected");return;}
-    if(!(value&BATFET_DIS)){T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] boot PMIC address=0x%02X REG09=0x%02X battery path ready\n",address,value);return;}
-    const uint8_t restored=(uint8_t)((value&~BATFET_DIS)|BATFET_RST_EN);
-    const bool ok=i2c_write8(address,REG09,restored);
-    Serial.printf("[T5-POWER] boot PMIC recovery address=0x%02X REG09 0x%02X->0x%02X result=%s\n",address,value,restored,ok?"OK":"FAILED");
-    delay(150);
-}
-
 static void set_touch_power(bool enabled);
 
 static constexpr uint16_t CRITICAL_BATTERY_MV=3300;
 static constexpr uint32_t CRITICAL_BATTERY_POLL_MS=5000;
 static constexpr uint8_t CRITICAL_BATTERY_SAMPLES=3;
-
-static bool read_battery_voltage_mv(uint16_t& millivolts) {
-    uint8_t gauge[2]{};
-    if(!i2c_read8(0x55,0x08,gauge,sizeof(gauge)))return false;
-    const uint16_t value=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
-    if(value<2500||value>5000)return false;
-    millivolts=value;
-    return true;
-}
-
-static bool external_power_present() {
-    uint8_t reg0b=0;
-    return i2c_read8(0x6B,0x0B,&reg0b,1)&&(reg0b&(1U<<2));
-}
-
-static void deep_sleep_shutdown(const char* reason) {
-    Serial.printf("[T5-SHUTDOWN] entering deep-sleep fallback reason=%s wake=BOOT/GPIO0\n",reason);
-    Serial.flush();
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0,0);
-    delay(50);
-    esp_deep_sleep_start();
-}
 
 static void request_hardware_shutdown() {
     Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
@@ -2114,24 +2068,7 @@ static void request_hardware_shutdown() {
     local_mesh_prepare_shutdown();
     SPIFFS.end();
     Serial.println("[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
-
-    constexpr uint8_t REG09=0x09;
-    constexpr uint8_t BATFET_DIS=1u<<5;
-    constexpr uint8_t BATFET_DLY=1u<<3;
-    constexpr uint8_t BATFET_RST_EN=1u<<2;
-    uint8_t address=0,reg09=0;
-    for(const uint8_t candidate:{(uint8_t)0x6B,(uint8_t)0x6A}) {
-        if(i2c_read8(candidate,REG09,&reg09,1)){address=candidate;break;}
-    }
-    if(!address){Serial.println("[T5-SHUTDOWN] ERROR: BQ25896 not detected at 0x6B or 0x6A");deep_sleep_shutdown("PMIC_NOT_FOUND");return;}
-    T5_DEBUGF(T5_LOG_POWER,"[T5-SHUTDOWN] PMIC detected address=0x%02X REG09 before=0x%02X\n",address,reg09);
-    const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
-    T5_DEBUGF(T5_LOG_POWER,"[T5-SHUTDOWN] preserving wake reset; REG09 request=0x%02X BATFET_DIS=1\n",requested);
-    Serial.flush();
-    if(!i2c_write8(address,REG09,requested)){Serial.println("[T5-SHUTDOWN] ERROR: REG09 write failed");deep_sleep_shutdown("PMIC_WRITE_FAILED");return;}
-    delay(750);
-    Serial.println("[T5-SHUTDOWN] PMIC command returned; USB/VBUS is probably present, using deep sleep until power is removed");
-    deep_sleep_shutdown("VBUS_STILL_POWERED");
+    meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
 }
 
 static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
@@ -2141,8 +2078,6 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
     text_refresh_pending=false;message_alert_active=false;
     frontlight_deadline=0;frontlight_drive(false);
 
-    // One final persistent e-paper message replaces the boot splash/UI before
-    // battery power is cut. E-paper retains this image with zero standby power.
     meshink_display_set_all_white(&display);
     centred("LOW BATTERY",ui_y(230),6,0,true);
     centred("POWERED DOWN",ui_y(340),5,0,true);
@@ -2160,41 +2095,16 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
         SPIFFS.end();
         Serial.println("[T5-POWER] low-battery shutdown: mesh/storage stopped");
     }
-
-    constexpr uint8_t REG09=0x09;
-    constexpr uint8_t BATFET_DIS=1u<<5;
-    constexpr uint8_t BATFET_DLY=1u<<3;
-    constexpr uint8_t BATFET_RST_EN=1u<<2;
-    uint8_t address=0,reg09=0;
-    for(const uint8_t candidate:{(uint8_t)0x6B,(uint8_t)0x6A}) {
-        if(i2c_read8(candidate,REG09,&reg09,1)){address=candidate;break;}
-    }
-    if(!address) {
-        Serial.println("[T5-POWER] low-battery PMIC unavailable; deep-sleep fallback");
-        deep_sleep_shutdown("LOW_BATTERY_PMIC_NOT_FOUND");
-        return;
-    }
-    const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
-    Serial.printf("[T5-POWER] low-battery ship mode PMIC=0x%02X REG09=0x%02X->0x%02X\n",
-                  address,reg09,requested);
-    Serial.flush();
-    if(!i2c_write8(address,REG09,requested)) {
-        deep_sleep_shutdown("LOW_BATTERY_PMIC_WRITE_FAILED");
-        return;
-    }
-    // On battery alone BATFET_DIS removes SYS power. If execution continues,
-    // external power appeared during shutdown; sleep rather than resuming UI.
-    delay(750);
-    deep_sleep_shutdown("LOW_BATTERY_VBUS_PRESENT");
+    meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
 
 static bool boot_battery_is_critical(uint16_t& millivolts) {
-    if(external_power_present())return false;
+    if(meshink_power_external_present())return false;
     uint16_t first=0,second=0;
-    if(!read_battery_voltage_mv(first)||first>=CRITICAL_BATTERY_MV)return false;
+    if(!meshink_power_read_battery_mv(first)||first>=CRITICAL_BATTERY_MV)return false;
     delay(80);
-    if(external_power_present())return false;
-    if(!read_battery_voltage_mv(second)||second>=CRITICAL_BATTERY_MV)return false;
+    if(meshink_power_external_present())return false;
+    if(!meshink_power_read_battery_mv(second)||second>=CRITICAL_BATTERY_MV)return false;
     millivolts=(uint16_t)(((uint32_t)first+second)/2U);
     return true;
 }
@@ -2205,9 +2115,9 @@ static void service_critical_battery() {
     const uint32_t now=millis();
     if(sampled_at&&now-sampled_at<CRITICAL_BATTERY_POLL_MS)return;
     sampled_at=now?now:1;
-    if(external_power_present()){low_samples=0;return;}
+    if(meshink_power_external_present()){low_samples=0;return;}
     uint16_t millivolts=0;
-    if(!read_battery_voltage_mv(millivolts)){low_samples=0;return;}
+    if(!meshink_power_read_battery_mv(millivolts)){low_samples=0;return;}
     if(millivolts>=CRITICAL_BATTERY_MV){low_samples=0;return;}
     if(low_samples<CRITICAL_BATTERY_SAMPLES)++low_samples;
     T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] low battery sample %u/%u: %umV\n",
@@ -2217,6 +2127,37 @@ static void service_critical_battery() {
         critical_battery_shutdown(millivolts,"runtime");
 }
 
+static bool update_charge_state(bool* icon_changed=nullptr) {
+    uint8_t next=0;
+    if(!meshink_power_read_charge_state(next)) {
+        if(icon_changed)*icon_changed=false;
+        return false;
+    }
+    const uint8_t previous=status_charge_state;
+    status_charge_state=next;
+    const bool was_charging=meshink_power_is_charging(previous);
+    const bool now_charging=meshink_power_is_charging(next);
+    if(icon_changed)*icon_changed=was_charging!=now_charging;
+    return previous!=next;
+}
+
+static bool update_status_hardware() {
+    const int8_t old_hour=status_hour,old_minute=status_minute;
+    const int16_t old_battery=status_battery;const uint8_t old_charge=status_charge_state;
+    if(mesh_is_ready&&local_mesh_time_valid()){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
+    else{status_hour=-1;status_minute=-1;}
+    uint8_t battery_percent=0;
+    if(meshink_power_read_battery_percent(battery_percent))
+        status_battery=(int16_t)battery_percent;
+    update_charge_state();
+    const bool clock_changed=old_hour!=status_hour||old_minute!=status_minute;
+    const bool battery_changed=old_battery!=status_battery;
+    const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
+    if(changed)T5_DEBUGF(T5_LOG_UI,"[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
+        status_hour,status_minute,status_battery,status_unread,status_channel_unread,
+        status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
+    return changed;
+}
 static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
 static bool update_charge_state(bool* icon_changed=nullptr) {
     uint8_t charger=0;
@@ -2977,7 +2918,7 @@ static void enter_standby(const char* reason){
 }
 
 static void leave_standby(){
-    if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
+    if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;meshink_power_frontlight_set(0);frontlight_lit=false;
     if(standby_restore_landscape){
         standby_restore_landscape=false;
         keyboard_landscape=true;
@@ -3001,20 +2942,20 @@ static void service_message_alert(){
     switch(message_alert_phase++){
         case 0:
         case 2:
-            ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;
+            meshink_power_frontlight_set(0);frontlight_lit=false;
             meshink_display_fill_framebuffer(&display,0x00);
             force_redraw(MeshInkRefreshMode::Direct,"MESSAGE_ALERT_BLACK",false);
             message_alert_deadline=millis()+100;
             break;
         case 1:
         case 3:
-            ledcWrite(FRONTLIGHT_PWM_CHANNEL,255);frontlight_lit=true;
+            meshink_power_frontlight_set(100);frontlight_lit=true;
             meshink_display_set_all_white(&display);
             force_redraw(MeshInkRefreshMode::Direct,"MESSAGE_ALERT_WHITE",false);
             message_alert_deadline=millis()+100;
             break;
         default:
-            ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;frontlight_deadline=0;
+            meshink_power_frontlight_set(0);frontlight_lit=false;frontlight_deadline=0;
             update_status_hardware();
             draw_screen();force_redraw(MeshInkRefreshMode::Gray16,"MESSAGE_ALERT_RESTORE",false);
             status_dirty=false;status_bar_dirty=false;status_bar_refreshed_at=millis();message_alert_active=false;message_alert_cooldown_until=millis()+3000;
@@ -3038,13 +2979,13 @@ static void service_boot_button(){
 void ui_setup() {
     Serial.begin(115200); delay(200);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
-    pinMode(BOOT_BUTTON,INPUT_PULLUP);pinMode(FRONTLIGHT,OUTPUT);digitalWrite(FRONTLIGHT,LOW);
+    pinMode(BOOT_BUTTON,INPUT_PULLUP);
     // Stay off until preferences have been loaded. The splash refresh then
     // uses the saved brightness or the new 30% first-install default.
-    ledcSetup(FRONTLIGHT_PWM_CHANNEL,5000,8);ledcAttachPin(FRONTLIGHT,FRONTLIGHT_PWM_CHANNEL);ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);
+    meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
     meshink_display_init();meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);meshink_display_set_pixel_clock_mhz(17);
-    recover_pmic_power_path();
+    meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
 #if MESHINK_GEOMETRY_DIAGNOSTICS
