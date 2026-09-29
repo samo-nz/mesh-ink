@@ -5,13 +5,7 @@
 #include <helpers/sensors/EnvironmentSensorManager.h>
 #include <SPI.h>
 #include "board_profile.h"
-
-
-enum class T5RadioFailureClass : uint8_t {
-    Unknown = 0,
-    ProbableLite,
-    RadioFault
-};
+#include "../hardware/radio_types.h"
 
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
@@ -44,5 +38,5 @@ void t5_companion_release_radio_resources();
 
 
 bool radio_init();
-T5RadioFailureClass t5_classify_radio_failure();
+MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();
