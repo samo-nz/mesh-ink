@@ -146,7 +146,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert re.fullmatch(r"1\\.9\\.1-test\\.\\d+", firmware_version.group(1)), "testing firmware version keeps the 1.9.1-test.N format"
+assert re.fullmatch(r"1\.9\.1-test\.\d+", firmware_version.group(1)), "testing firmware version keeps the 1.9.1-test.N format"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
