@@ -491,7 +491,7 @@ assert "refresh_area(" not in charger_poll, "standby charger polling must use th
 contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);", "shared status refresh follows logical status bar")
 standby_entry = source.split("static void enter_standby(const char* reason){", 1)[1].split("static void leave_standby(){", 1)[0]
 assert "update_status_hardware();" in standby_entry, "standby entry samples exact clock, battery and charger state"
-assert "status_bar_refreshed_at=millis();" in standby_entry, "standby entry starts the five-minute status cadence"
+assert "wall-clock :00/:05/:10... boundaries" in standby_entry, "standby entry documents aligned five-minute status cadence"
 contains('"HOLD %s FOR TWO SECONDS TO WAKE"', "standby wake wording includes FOR and explicit two-second hold")
 
 # Test17 power abstraction: application/UI owns presentation only. Battery
