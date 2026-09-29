@@ -807,7 +807,7 @@ bool radio_init() {
     return ready;
 }
 
-T5RadioFailureClass t5_classify_radio_failure() {
+MeshInkRadioFailureClass t5_classify_radio_failure() {
 #if T5_BOARD_H752_01
     // The H752-01 Pro Lite shares the Pro PCB but leaves both SX1262 and GNSS
     // unpopulated. There is no dedicated Lite ID pin, so this is deliberately
@@ -815,7 +815,7 @@ T5RadioFailureClass t5_classify_radio_failure() {
     uint8_t pca_config=0;
     if(!pca_read(0x06,pca_config)) {
         Serial.println("[T5-HW] radio failure: PCA9535 absent; not classifying as H752-01 Lite");
-        return T5RadioFailureClass::Unknown;
+        return MeshInkRadioFailureClass::Unknown;
     }
 
     // If valid NMEA is present, this is a GPS-equipped Pro whose SX1262 failed.
@@ -839,9 +839,9 @@ T5RadioFailureClass t5_classify_radio_failure() {
     }
     Serial.printf("[T5-HW] radio failure classification: H752-01=yes GPS-NMEA=%s\n",
                   gps_present?"yes":"no");
-    return gps_present?T5RadioFailureClass::RadioFault:T5RadioFailureClass::ProbableLite;
+    return gps_present?MeshInkRadioFailureClass::RadioFault:MeshInkRadioFailureClass::MissingHardwareVariant;
 #else
-    return T5RadioFailureClass::Unknown;
+    return MeshInkRadioFailureClass::Unknown;
 #endif
 }
 
