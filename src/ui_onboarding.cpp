@@ -124,7 +124,11 @@ static int16_t status_battery = -1;
 static uint8_t status_charge_state=0;
 static int8_t status_hour = -1;
 static int8_t status_minute = -1;
+// Content changes still use the existing screen redraw path. Status-only
+// changes are kept separate so the 48 px bar can use a small DU update.
 static bool status_dirty = false;
+static bool status_bar_dirty = false;
+static uint32_t status_bar_refreshed_at = 0;
 static bool toast_visible = false;
 static uint32_t toast_until = 0;
 static char toast_message[32] = {};
@@ -863,7 +867,7 @@ static void draw_battery_icon(int x,int y,int level=-1) {
     }
 }
 
-static void draw_status_bar(bool standby_quantized=false) {
+static void draw_status_bar() {
     const MeshInkUiLayout& layout=portrait_layout();
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
@@ -874,7 +878,7 @@ static void draw_status_bar(bool standby_quantized=false) {
     else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
     else draw_search_icon(ui_x(6),ui_y(9));
     left=ui_x(46);
-    if(!standby_active&&!standby_quantized&&status_gps_enabled&&status_gps_fix) {
+    if(!standby_active&&status_gps_enabled&&status_gps_fix) {
         char satellites[4];
         snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites)));
         text(satellites,ui_x(43),ui_y(13),3,0,true);
@@ -884,16 +888,14 @@ static void draw_status_bar(bool standby_quantized=false) {
     if(status_unread){draw_envelope_icon(left,ui_y(9));left+=ui_w(36);char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,ui_y(13),3,0,true);left+=(int)strlen(count)*18+ui_w(12);}
     if(status_channel_unread){text("#",left,ui_y(13),3,0,true);left+=ui_w(22);char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,ui_y(13),3,0,true);}
     char clock_text[8];
-    const int shown_minute=standby_quantized&&status_minute>=0?(status_minute/10)*10:status_minute;
-    if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,shown_minute);
+    if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
     else snprintf(clock_text,sizeof(clock_text),"--:--");
     centred(clock_text,ui_y(13),3,0,true);
     char battery[8];
-    const int shown_battery=standby_quantized&&status_battery>=0?(status_battery/5)*5:status_battery;
-    if(shown_battery>=0)snprintf(battery,sizeof(battery),"%d%%",shown_battery);
+    if(status_battery>=0)snprintf(battery,sizeof(battery),"%d%%",status_battery);
     else snprintf(battery,sizeof(battery),"--%%");
     const int battery_x=layout.width-ui_w(10)-(int)strlen(battery)*18;
-    draw_battery_icon(battery_x-ui_w(43),ui_y(8),shown_battery);
+    draw_battery_icon(battery_x-ui_w(43),ui_y(8),status_battery);
     text(battery,battery_x,ui_y(13),3,0,true);
 }
 
@@ -1687,7 +1689,7 @@ static void draw_help() {
 }
 
 static void draw_standby(){
-    meshink_display_set_all_white(&display);draw_status_bar(true);centred("STANDBY",ui_y(126),5,0,true);
+    meshink_display_set_all_white(&display);draw_status_bar();centred("STANDBY",ui_y(126),5,0,true);
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect direct_rect=ui_rect(24,240,492,150);
     const MeshInkUiRect channel_rect=ui_rect(24,420,492,150);
@@ -2242,8 +2244,8 @@ static bool update_status_hardware() {
         if(soc<=100)status_battery=(int16_t)soc;
     }
     update_charge_state();
-    const bool clock_changed=standby_active?(old_hour!=status_hour||old_minute/10!=status_minute/10):(old_hour!=status_hour||old_minute!=status_minute);
-    const bool battery_changed=standby_active?(old_battery/5!=status_battery/5):(old_battery!=status_battery);
+    const bool clock_changed=old_hour!=status_hour||old_minute!=status_minute;
+    const bool battery_changed=old_battery!=status_battery;
     const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
     if(changed)T5_DEBUGF(T5_LOG_UI,"[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
@@ -2529,7 +2531,7 @@ static void show_contacts_after_setup(){
     keyboard_visible=false;keyboard_message_mode=false;
     replace_name_on_type=false;
     text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
-    status_dirty=false;status_wake_light=false;
+    status_dirty=false;status_bar_dirty=false;status_wake_light=false;
     if(touch_queue)xQueueReset(touch_queue);
     meshink_touch_clear();
     screen=Screen::Contacts;
@@ -2968,10 +2970,10 @@ static void enter_standby(const char* reason){
         meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
     }
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
-    // Enter standby with the latest charger state even if the normal 15 s
-    // foreground status poll has not run since USB was connected.
-    update_charge_state();
-    T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    // Enter standby with an exact clock/battery sample. Standby keeps those
+    // values for up to five minutes unless another status event refreshes the bar.
+    update_status_hardware();
+    T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);status_bar_refreshed_at=millis();set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
@@ -3013,8 +3015,9 @@ static void service_message_alert(){
             break;
         default:
             ledcWrite(FRONTLIGHT_PWM_CHANNEL,0);frontlight_lit=false;frontlight_deadline=0;
+            update_status_hardware();
             draw_screen();force_redraw(MeshInkRefreshMode::Gray16,"MESSAGE_ALERT_RESTORE",false);
-            status_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
+            status_dirty=false;status_bar_dirty=false;status_bar_refreshed_at=millis();message_alert_active=false;message_alert_cooldown_until=millis()+3000;
             T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] combined message alert complete; standby screen restored with GC16");
             break;
     }
@@ -3126,7 +3129,7 @@ void ui_finish_startup() {
         refresh(MeshInkRefreshMode::FastGray16);
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
-    status_dirty=false;
+    status_dirty=false;status_bar_dirty=false;
     t5_timing_begin();
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
@@ -3306,10 +3309,7 @@ void ui_loop() {
             T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] charging icon=%s state=%u\n",
                 (status_charge_state==1||status_charge_state==2)?"ON":"OFF",
                 (unsigned)status_charge_state);
-            draw_status_bar(true);
-            refresh_area(MeshInkRefreshMode::Direct,
-                {0,0,portrait_layout().width,portrait_layout().status_height},
-                false);
+            status_bar_dirty=true;
         }
     }
 
@@ -3319,29 +3319,43 @@ void ui_loop() {
         last_status_poll=millis();
         t5_timing_set_ui_action(T5UiAction::StatusPoll);
         const uint32_t timing_status_started=micros();
-        if(update_status_hardware())status_dirty=true;
+        const bool changed=update_status_hardware();
+        // Foreground UI follows every displayed clock/battery/charge change.
+        // Standby samples quietly and paints the bar only on its five-minute cadence.
+        if(changed&&!standby_active)status_bar_dirty=true;
         t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
         t5_timing_set_ui_action(T5UiAction::None);
     }
+    if(standby_active&&millis()-status_bar_refreshed_at>=300000UL)
+        status_bar_dirty=true;
     const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
     if(status_dirty&&!message_alert_active){
-        // A full status redraw also contains the newest text, so satisfy a
-        // simultaneous debounced text refresh with this one panel update.
+        // Content changes retain the ordinary screen redraw. Refresh the
+        // hardware snapshot first so clock and battery come along for free.
         t5_timing_set_ui_action(T5UiAction::StatusRefresh);
+        update_status_hardware();
         if(text_refresh_due){
             const uint32_t timing_text_now=millis();
             t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
             text_refresh_pending=false;
         }
-        const bool wake=status_wake_light&&!standby_active;status_dirty=false;status_wake_light=false;
+        const bool wake=status_wake_light&&!standby_active;
+        status_dirty=false;status_bar_dirty=false;status_wake_light=false;
         draw_screen();refresh(MeshInkRefreshMode::Direct,wake);
+        if(standby_active)status_bar_refreshed_at=millis();
         t5_timing_set_ui_action(T5UiAction::None);
     }else if(text_refresh_due){
         t5_timing_set_ui_action(T5UiAction::TextRefresh);
         const uint32_t timing_text_now=millis();
         t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
         text_refresh_pending=false;
-        if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+        if(status_bar_dirty&&!quick_panel_active&&!keyboard_landscape){
+            // Coalesce a pending bar change into an update that is already
+            // required for text rather than performing two panel operations.
+            update_status_hardware();
+            status_bar_dirty=false;status_wake_light=false;
+            draw_screen();
+        }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
            keyboard_visible&&keyboard_message_mode&&!keyboard_landscape)
             draw_message_entry_fast();
         else if(screen==Screen::RadioSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)
@@ -3349,6 +3363,18 @@ void ui_loop() {
         else
             draw_screen();
         refresh(MeshInkRefreshMode::Direct);
+        t5_timing_set_ui_action(T5UiAction::None);
+    }else if(status_bar_dirty&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
+        t5_timing_set_ui_action(T5UiAction::StatusRefresh);
+        // Any event-driven bar update also refreshes the exact clock and
+        // battery value, resetting the standby five-minute cadence.
+        update_status_hardware();
+        const bool wake=status_wake_light&&!standby_active;
+        status_bar_dirty=false;status_wake_light=false;
+        draw_status_bar();
+        refresh_area(MeshInkRefreshMode::Direct,
+            {0,0,portrait_layout().width,portrait_layout().status_height},wake);
+        status_bar_refreshed_at=millis();
         t5_timing_set_ui_action(T5UiAction::None);
     }
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
@@ -3399,11 +3425,11 @@ void ui_show_radio_failure(bool probable_lite){
 }
 
 void ui_status_set_unread(uint16_t count) {
-    if(status_unread!=count){status_unread=count;status_dirty=true;}
+    if(status_unread!=count){status_unread=count;status_bar_dirty=true;}
 }
 
 void ui_status_set_channel_unread(uint16_t count) {
-    if(status_channel_unread!=count){status_channel_unread=count;status_dirty=true;}
+    if(status_channel_unread!=count){status_channel_unread=count;status_bar_dirty=true;}
 }
 
 void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp) {
@@ -3451,11 +3477,11 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         }
     }
     static uint32_t last_detail_refresh=0;
-    static uint32_t last_satellite_refresh=0;
     const uint32_t now=millis();
-    const bool satellites_refresh=satellites_changed&&
-        now-last_satellite_refresh>=(standby_active?60000UL:15000UL);
-    if(satellites_refresh)last_satellite_refresh=now;
+    // Satellite count is a status-bar value in the foreground, so let each
+    // visible count change use the small bar update instead of throttling it
+    // into a whole-screen GPS refresh.
+    const bool satellites_refresh=satellites_changed;
     bool marker_moved=false;
     // Keep the own-position marker reasonably current while travelling,
     // but avoid expensive e-paper updates for every 1 Hz GPS sample.
@@ -3472,11 +3498,19 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         }
         if(marker_moved)last_marker_refresh=now;
     }
-    if(state_changed||satellites_refresh||(detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000)||marker_moved){
-        last_detail_refresh=now;
+    const bool detail_refresh=detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000;
+    if(state_changed||satellites_refresh){
+        status_bar_dirty=true;
+        T5_DEBUGLN(T5_LOG_UI,"[T5-UI] status-bar refresh queued reason=gps-state");
+    }
+    // GPS Settings exposes receiver details in the page body, and Maps owns
+    // the moving position marker. Those are genuine content changes and keep
+    // the existing screen redraw path.
+    if((screen==Screen::GpsSettings&&(state_changed||detail_refresh))||marker_moved){
+        if(screen==Screen::GpsSettings)last_detail_refresh=now;
         status_dirty=true;
         T5_DEBUGLN(T5_LOG_UI,marker_moved?"[T5-UI] refresh queued reason=map-own-position":
-                               "[T5-UI] refresh queued reason=gps-state");
+                               "[T5-UI] refresh queued reason=gps-detail");
     }
 }
 
@@ -3522,7 +3556,7 @@ void ui_apply_initial_radio_preset(){
 
 void ui_mesh_ready(){
     mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){local_mesh_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to MeshCore '%s'\n",node_name);}else{strncpy(node_name,local_mesh_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from MeshCore '%s'\n",node_name);}state.putString("name",node_name);state.end();}
-    update_status_hardware();status_dirty=true;
+    update_status_hardware();status_bar_dirty=true;
 }
 
 void ui_use_data_provider(UiDataProvider* provider) {
