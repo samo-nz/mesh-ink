@@ -5,6 +5,7 @@
 #include "../hardware/touch.h"
 #include "../hardware/gps.h"
 #include "../hardware/power.h"
+#include "../hardware/buttons.h"
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
@@ -663,7 +664,9 @@ static void show_companion_notice() {
         meshink_display_set_all_white(&display);
         notice_meshink_logo(160, fb);
         notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);
-        notice_centred("HOLD BOOT BUTTON", 665, 2, fb, true);
+        char hold_button[32];
+        snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());
+        notice_centred(hold_button, 665, 2, fb, true);
         notice_centred("2 SECONDS TO EXIT", 705, 2, fb);
         notice_centred(T5_FIRMWARE_VERSION, 885, 2, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
@@ -691,8 +694,7 @@ static void show_companion_notice() {
 }
 
 void t5_companion_exit_feedback_begin() {
-    pinMode(T5_PIN_FRONTLIGHT,OUTPUT);
-    digitalWrite(T5_PIN_FRONTLIGHT,HIGH);
+    meshink_power_frontlight_set(100);
     T5_TRACE("companion exit: immediate frontlight acknowledgement\n");
 }
 
@@ -710,12 +712,12 @@ void T5Board::begin() {
     // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board
     // calls Wire.begin() on this same bus, so initialize MeshCore only after
     // meshink_display_deinit() releases EPDiy's driver and interrupts.
-    pinMode(T5_PIN_FRONTLIGHT, OUTPUT);
-    digitalWrite(T5_PIN_FRONTLIGHT, HIGH);
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(100);
     T5_TRACE("board: begin; frontlight on; display notice before MeshCore I2C\n");
     show_companion_notice();
     companion_radio_uses_arduino_irq=true;
-    digitalWrite(T5_PIN_FRONTLIGHT, LOW);
+    meshink_power_frontlight_set(0);
     T5_TRACE("board: display rendered; frontlight off; handing control to MeshCore\n");
     T5_TRACE("board: notice complete; MeshCore board/I2C begin\n");
     ESP32Board::begin();
@@ -725,7 +727,7 @@ void T5Board::begin() {
     getBattMilliVolts();
     T5_TRACE("board: disabling touch and frontlight\n");
     meshink_touch_set_power(false);
-    digitalWrite(T5_PIN_FRONTLIGHT, LOW); // frontlight remains disabled in companion mode
+    meshink_power_frontlight_set(0); // frontlight remains disabled in companion mode
 #if ENV_INCLUDE_GPS == 1
     // MeshCore's historical macro names are counterintuitive here:
     // HardwareSerial::setPins() takes (RX, TX).
