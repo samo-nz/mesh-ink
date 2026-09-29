@@ -4,6 +4,7 @@
 #include "../hardware/display.h"
 #include "../hardware/touch.h"
 #include "../hardware/gps.h"
+#include "../hardware/power.h"
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
@@ -893,8 +894,9 @@ static void t5_power_diagnostics_tick() {
 }
 
 uint16_t T5Board::getBattMilliVolts() {
-    // MeshCore may ask repeatedly while composing device responses. Avoid
-    // repetitive I2C traffic and keep the last valid voltage on read errors.
+    // MeshCore and the local UI share the same board-selected power backend.
+    // Keep MeshCore's 30 s cache so repeated app requests do not create
+    // unnecessary fuel-gauge traffic.
     static uint16_t cached_mv = 0;
     static uint32_t sampled_at = 0;
     const uint32_t now = millis();
@@ -902,15 +904,15 @@ uint16_t T5Board::getBattMilliVolts() {
     sampled_at = now == 0 ? 1 : now;
 
     uint16_t voltage = 0;
-    if (gauge_word(0x08, voltage) && voltage >= 2500 && voltage <= 5000) {
+    if (meshink_power_read_battery_mv(voltage)) {
         cached_mv = voltage;
-        uint16_t soc = 0;
-        if (gauge_word(0x2C, soc) && soc <= 100)
-            T5_POWER_TRACE("battery: BQ27220 voltage=%u mV SOC=%u%%\n", cached_mv, soc);
+        uint8_t soc = 0;
+        if (meshink_power_read_battery_percent(soc))
+            T5_POWER_TRACE("battery: backend voltage=%u mV SOC=%u%%\n", cached_mv, soc);
         else
-            T5_POWER_TRACE("battery: BQ27220 voltage=%u mV; SOC unavailable\n", cached_mv);
+            T5_POWER_TRACE("battery: backend voltage=%u mV; SOC unavailable\n", cached_mv);
     } else {
-        T5_POWER_TRACE("battery: BQ27220 read failed or voltage invalid, cached=%u mV\n", cached_mv);
+        T5_POWER_TRACE("battery: backend read failed or voltage invalid, cached=%u mV\n", cached_mv);
     }
     return cached_mv;
 }
