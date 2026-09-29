@@ -311,7 +311,7 @@ contains('else\n        refresh(MeshInkRefreshMode::Direct);', "first Maps entry
 contains('meshink_display_update_area(', "partial Loading path uses display backend area update API")
 contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
 contains('refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
-contains('fast_full_redraw("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
+contains('reveal_map_after_black_prep("MAP_BLACK_PREP_COMPLETE",false);', "Maps reveal final frame after black preparation")
 contains("static inline int map_centre_y(){return portrait_layout().map_centre_y;}", "map projection centre derives from logical layout")
 contains("result=map_tiles_render(fb,0,map_top(),layout.width,map_bottom()-map_top(),", "map fills logical viewport")
 assert 'draw_app_header("MAPS")' not in source, "extra maps header must be removed"
