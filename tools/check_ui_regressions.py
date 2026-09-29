@@ -123,7 +123,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.12"' in platformio_source, "test12 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.13"' in platformio_source, "test12 version is explicit in PlatformIO configuration"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
 # Test10 hardware proved that reinitializing EPDiy in the same companion boot
@@ -160,6 +160,11 @@ for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end()
     assert handoff_step in release_body, f"companion radio cleanup missing {handoff_step}"
 assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exit must not tear down the global GPIO ISR service"
 assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
+assert 'notice_meshink_logo(160, fb);' in board_target_source, "companion screen uses MeshInk splash artwork"
+assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in board_target_source, "companion screen labels Bluetooth mode below logo"
+assert 'notice_centred("HOLD BOOT BUTTON", 665, 2, fb, true);' in board_target_source, "companion screen shows BOOT hold instruction"
+assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in board_target_source, "companion screen shows exit duration"
+assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in board_target_source, "legacy MESHCORE companion splash removed"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")

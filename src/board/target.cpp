@@ -10,6 +10,7 @@
 #include <RTClib.h>
 #include "target.h"
 #include "t5_logging.h"
+#include "../meshink_logo_bitmap.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
 #ifndef T5_FIRMWARE_VERSION
@@ -942,6 +943,33 @@ static void notice_centred(const char* message, int y, int scale, uint8_t* fb, b
     notice_text(message, (meshink_display_logical_width() - (int)strlen(message) * 6 * scale) / 2, y, scale, fb, bold);
 }
 
+static void notice_meshink_logo(int top, uint8_t* fb) {
+    constexpr uint8_t shades[4]={0x00,0x55,0xAA,0xFF};
+    const int width=meshink_display_logical_width();
+    const int height=meshink_display_logical_height();
+    const int target_width=(MESHINK_LOGO_WIDTH*width+270)/540;
+    const int target_height=(MESHINK_LOGO_HEIGHT*height+480)/960;
+    const int left=(width-target_width)/2;
+    for(int y=0;y<target_height;++y){
+        const int source_y=(y*MESHINK_LOGO_HEIGHT)/target_height;
+        int x=0;
+        while(x<target_width){
+            const int source_x=(x*MESHINK_LOGO_WIDTH)/target_width;
+            const int pixel=source_y*MESHINK_LOGO_WIDTH+source_x;
+            const uint8_t shade=(MESHINK_LOGO_PIXELS[pixel>>2]>>(6-2*(pixel&3)))&3;
+            if(shade==3){++x;continue;}
+            const int run=x++;
+            while(x<target_width){
+                const int next_source_x=(x*MESHINK_LOGO_WIDTH)/target_width;
+                const int next=source_y*MESHINK_LOGO_WIDTH+next_source_x;
+                if(((MESHINK_LOGO_PIXELS[next>>2]>>(6-2*(next&3)))&3)!=shade)break;
+                ++x;
+            }
+            meshink_display_fill_rect({left+run,top+y,x-run,1},shades[shade],fb);
+        }
+    }
+}
+
 static void show_companion_notice() {
     T5_TRACE("notice: epd_init, internal heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
     meshink_display_init();
@@ -953,11 +981,11 @@ static void show_companion_notice() {
     T5_TRACE("notice: framebuffer=%p, heap=%u, psram=%u\n", fb, ESP.getFreeHeap(), ESP.getFreePsram());
     if (fb) {
         meshink_display_set_all_white(&display);
-        notice_centred("MESHCORE", 290, 7, fb, true);
-        notice_centred("BT COMPANION MODE", 410, 4, fb);
-        notice_centred("PRESS AND HOLD BOOT BUTTON", 770, 2, fb);
-        notice_centred("2 SECONDS TO EXIT", 805, 2, fb);
-        notice_centred(T5_FIRMWARE_VERSION, 900, 2, fb);
+        notice_meshink_logo(160, fb);
+        notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);
+        notice_centred("HOLD BOOT BUTTON", 665, 2, fb, true);
+        notice_centred("2 SECONDS TO EXIT", 705, 2, fb);
+        notice_centred(T5_FIRMWARE_VERSION, 885, 2, fb);
         T5_TRACE("notice: text rendered, powering panel on\n");
         meshink_display_poweron();
         T5_TRACE("notice: full panel clear start\n");
