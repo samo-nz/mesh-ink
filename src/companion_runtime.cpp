@@ -121,6 +121,40 @@ void companion_loop() {
     delay(1);
 }
 
+static bool companion_persist_contact(const ContactInfo& contact) {
+    return contact.type!=ADV_TYPE_NONE;
+}
+
+void companion_prepare_exit() {
+    Serial.println("[T5-BOOT] companion shutdown: disabling MeshCore interfaces");
+    interface_manager.disable();
+
+    // Give any callback/disconnect work already queued by Bluedroid/MeshCore
+    // a short bounded window to settle before the radio and filesystem go away.
+    const uint32_t settle_started=millis();
+    while(millis()-settle_started<100){
+        the_mesh.loop();
+        sensors.loop();
+        rtc_clock.tick();
+        delay(1);
+    }
+
+    Serial.println("[T5-BOOT] companion shutdown: saving MeshCore state");
+    the_mesh.savePrefs();
+    store.saveContacts(&the_mesh,companion_persist_contact);
+    store.saveChannels(&the_mesh);
+
+#if ENV_INCLUDE_GPS == 1
+    if(sensors.getLocationProvider()!=nullptr)
+        sensors.getLocationProvider()->stop();
+#endif
+
+    Serial.println("[T5-BOOT] companion shutdown: powering radio down");
+    radio_driver.powerOff();
+    SPIFFS.end();
+    Serial.flush();
+}
+
 void local_mesh_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     board.beginLocal();
