@@ -30,6 +30,12 @@ power_backend_source = (root / "src" / "board" / "t5_power_backend.cpp").read_te
 buttons_selector_source = (root / "src" / "hardware" / "buttons.h").read_text(encoding="utf-8")
 buttons_backend_header = (root / "src" / "board" / "t5_buttons_backend.h").read_text(encoding="utf-8")
 buttons_backend_source = (root / "src" / "board" / "t5_buttons_backend.cpp").read_text(encoding="utf-8")
+radio_selector_source = (root / "src" / "hardware" / "radio.h").read_text(encoding="utf-8")
+radio_types_source = (root / "src" / "hardware" / "radio_types.h").read_text(encoding="utf-8")
+radio_backend_header = (root / "src" / "board" / "t5_radio_backend.h").read_text(encoding="utf-8")
+radio_backend_source = (root / "src" / "board" / "t5_radio_backend.cpp").read_text(encoding="utf-8")
+board_selector_source = (root / "src" / "hardware" / "board.h").read_text(encoding="utf-8")
+board_backend_source = (root / "src" / "board" / "t5_board_backend.h").read_text(encoding="utf-8")
 touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encoding="utf-8")
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
@@ -133,7 +139,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.20"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.21"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -183,7 +189,7 @@ for shutdown_step in (
     "store.saveContacts(&the_mesh,companion_persist_contact);",
     "store.saveChannels(&the_mesh);",
     "meshink_gps_shutdown();",
-    "radio_driver.powerOff();",
+    "meshink_radio_power_off();",
     "t5_companion_release_radio_resources();",
     "SPIFFS.end();",
     "Serial.flush();",
@@ -192,7 +198,7 @@ for shutdown_step in (
 assert "const bool ble_connected=bluetooth_interface.isConnected();" in shutdown_body, "shutdown checks BLE connection before disabling transport"
 assert shutdown_body.index("if(ble_connected)") < shutdown_body.index("interface_manager.disable();"), "connected BLE path disables interface normally"
 assert shutdown_body.index("interface_manager.removeInterface(&bluetooth_interface);") < shutdown_body.index("BLEDevice::deinit(false);"), "disconnected BLE path detaches transport before stack deinit"
-assert shutdown_body.index("BLEDevice::deinit(false);") < shutdown_body.index("radio_driver.powerOff();"), "Bluetooth stack stops before radio power-off"
+assert shutdown_body.index("BLEDevice::deinit(false);") < shutdown_body.index("meshink_radio_power_off();"), "Bluetooth stack stops before radio power-off"
 assert shutdown_body.index("store.saveChannels(&the_mesh);") < shutdown_body.index("SPIFFS.end();"), "persist MeshCore state before filesystem shutdown"
 assert "companion_prepare_exit();" in unified_source, "primary-button exit calls orderly companion shutdown"
 exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
@@ -547,6 +553,34 @@ for moved_power_impl in ("BQ27220_ADDR", "BQ25896", "T5_FACTORY_GAUGE_PROFILE", 
     assert moved_power_impl in power_backend_source, f"T5 power backend missing consolidated implementation: {moved_power_impl}"
 assert "meshink_power_prepare_board();" in board_target_source, "board startup delegates gauge/profile preparation"
 assert "meshink_power_diagnostics_tick();" in board_target_source, "GPS loop delegates power diagnostics"
+
+# Test21 radio and board-capability boundaries. SD/map storage stays separate.
+assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
+assert "enum class MeshInkRadioFailureClass" in radio_types_source, "radio failure vocabulary is board independent"
+for api in (
+    "meshink_radio_meshcore", "meshink_radio_initialize", "meshink_radio_rng_seed",
+    "meshink_radio_apply_params", "meshink_radio_power_off", "meshink_radio_stats",
+    "meshink_radio_classify_failure", "meshink_radio_name"
+):
+    assert api in radio_backend_header, f"radio backend header missing {api}"
+assert "radio_driver" in radio_backend_source, "T5 concrete radio remains backend-owned"
+assert "meshink_radio_meshcore()" in companion_source, "MeshCore composition consumes generic mesh::Radio"
+assert "meshink_radio_initialize()" in companion_source, "companion/local startup uses radio backend"
+assert "meshink_radio_rng_seed()" in companion_source, "runtime RNG seeding uses radio backend"
+assert "meshink_radio_apply_params(" in runtime_source, "radio preset application uses backend"
+assert "meshink_radio_stats()" in runtime_source, "radio health logging uses generic stats"
+assert "meshink_radio_power_off()" in runtime_source and "meshink_radio_power_off()" in companion_source, "radio shutdown uses backend"
+for leaked_radio in ("radio_driver", "CustomSX1262Wrapper", "t5_classify_radio_failure", "T5RadioFailureClass"):
+    assert leaked_radio not in runtime_source, f"local runtime leaked T5 radio detail: {leaked_radio}"
+    assert leaked_radio not in companion_source, f"companion runtime leaked T5 radio detail: {leaked_radio}"
+assert "MESHINK_BOARD_BACKEND_HEADER" in board_selector_source, "board capability backend is compile-time selectable"
+assert "meshink_board_name()" in source and "meshink_board_has_gps()" in source, "UI consumes generic board capabilities"
+assert "T5_BOARD_LABEL" in board_backend_source and "T5_HAS_GPS" in board_backend_source, "T5 capability constants remain board-backend-owned"
+for leaked_board in ('#include "board/board_profile.h"', "T5_UI_HAS_GPS", "T5_BOARD_LABEL"):
+    assert leaked_board not in source, f"UI leaked T5 board capability detail: {leaked_board}"
+assert "ED047TC1" not in source, "generic UI logging must not name the T5 panel"
+assert "SX1262 NOT DETECTED" not in source and "T5 PRO LITE" not in source, "radio failure UI must not hard-code T5 radio/variant names"
+assert 'centred("LORA RADIO NOT DETECTED"' in source, "radio failure UI uses generic LoRa wording"
 
 # Hardware-portability display boundary.
 assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
