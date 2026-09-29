@@ -129,18 +129,32 @@ void companion_prepare_exit() {
     const uint32_t shutdown_started=millis();
     t5_companion_exit_feedback_begin();
 
-    Serial.println("[T5-BOOT] companion shutdown: disabling MeshCore interfaces");
-    interface_manager.disable();
+    const bool ble_connected=bluetooth_interface.isConnected();
+    Serial.printf("[T5-BOOT] companion shutdown: BLE connected=%u; stopping MeshCore interface\n",
+                  ble_connected?1U:0U);
 
-    // Give any callback/disconnect work already queued by Bluedroid/MeshCore
-    // a short bounded window to settle before the radio and filesystem go away.
+    // Upstream SerialBLEInterface::disable() always calls disconnect(last_conn_id).
+    // If the phone has already disconnected, that stale ID makes Bluedroid emit
+    // "Unknown connection ID". Stop advertising directly in that case, remove
+    // the BLE transport from MeshCore's interface manager, then mark the manager
+    // disabled without issuing a redundant disconnect.
+    if(ble_connected){
+        interface_manager.disable();
+    }else{
+        BLEDevice::stopAdvertising();
+        interface_manager.removeInterface(&bluetooth_interface);
+        interface_manager.disable();
+    }
+
+    // Give any disconnect/GAP work already queued by Bluedroid/MeshCore a
+    // short bounded window to settle before shutting the Bluetooth stack down.
     const uint32_t settle_started=millis();
     while(millis()-settle_started<100){
-        the_mesh.loop();
         sensors.loop();
         rtc_clock.tick();
         delay(1);
     }
+    BLEDevice::deinit(false);
 
     Serial.println("[T5-BOOT] companion shutdown: saving MeshCore state");
     the_mesh.savePrefs();
@@ -154,11 +168,8 @@ void companion_prepare_exit() {
 
     Serial.println("[T5-BOOT] companion shutdown: powering radio down");
     radio_driver.powerOff();
+    t5_companion_release_radio_resources();
     SPIFFS.end();
-
-    // With the shared radio/display pins released, leave a retained e-paper
-    // message visible during the ESP restart and local-UI initialization.
-    t5_companion_show_returning_notice();
 
     Serial.printf("[T5-BOOT] companion shutdown complete elapsed=%lums\n",
                   (unsigned long)(millis()-shutdown_started));
