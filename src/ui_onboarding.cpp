@@ -126,7 +126,8 @@ static int8_t status_minute = -1;
 // changes are kept separate so the 48 px bar can use a small DU update.
 static bool status_dirty = false;
 static bool status_bar_dirty = false;
-static uint32_t status_bar_refreshed_at = 0;
+static int8_t status_bar_painted_hour = -1;
+static int8_t status_bar_painted_minute = -1;
 static bool toast_visible = false;
 static uint32_t toast_until = 0;
 static char toast_message[32] = {};
@@ -897,6 +898,11 @@ static void draw_status_bar() {
     const int battery_x=layout.width-ui_w(10)-(int)strlen(battery)*18;
     draw_battery_icon(battery_x-ui_w(43),ui_y(8),status_battery);
     text(battery,battery_x,ui_y(13),3,0,true);
+    status_bar_painted_hour=status_hour;
+    status_bar_painted_minute=status_minute;
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] status-bar clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
+        status_hour,status_minute,status_battery,status_unread,status_channel_unread,
+        status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
 }
 
 // Share the same small black notification style between ordinary settings
@@ -2158,11 +2164,7 @@ static bool update_status_hardware() {
     update_charge_state();
     const bool clock_changed=old_hour!=status_hour||old_minute!=status_minute;
     const bool battery_changed=old_battery!=status_battery;
-    const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
-    if(changed)T5_DEBUGF(T5_LOG_UI,"[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
-        status_hour,status_minute,status_battery,status_unread,status_channel_unread,
-        status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
-    return changed;
+    return clock_changed||battery_changed||old_charge!=status_charge_state;
 }
 static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
@@ -2879,10 +2881,10 @@ static void enter_standby(const char* reason){
         set_ui_orientation(MeshInkOrientation::Portrait);
     }
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
-    // Enter standby with an exact clock/battery sample. Standby keeps those
-    // values for up to five minutes unless another status event refreshes the bar.
+    // Enter standby with an exact clock/battery sample. Periodic status updates
+    // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
-    T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);status_bar_refreshed_at=millis();set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
@@ -2934,7 +2936,7 @@ static void service_message_alert(){
             meshink_power_frontlight_set(0);frontlight_lit=false;frontlight_deadline=0;
             update_status_hardware();
             draw_screen();force_redraw(MeshInkRefreshMode::Gray16,"MESSAGE_ALERT_RESTORE",false);
-            status_dirty=false;status_bar_dirty=false;status_bar_refreshed_at=millis();message_alert_active=false;message_alert_cooldown_until=millis()+3000;
+            status_dirty=false;status_bar_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
             T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] combined message alert complete; standby screen restored with GC16");
             break;
     }
@@ -3241,15 +3243,16 @@ void ui_loop() {
         last_status_poll=millis();
         t5_timing_set_ui_action(T5UiAction::StatusPoll);
         const uint32_t timing_status_started=micros();
-        const bool changed=update_status_hardware();
-        // Foreground UI follows every displayed clock/battery/charge change.
-        // Standby samples quietly and paints the bar only on its five-minute cadence.
-        if(changed&&!standby_active)status_bar_dirty=true;
+        update_status_hardware();
+        // Periodic clock/battery painting is tied to the displayed wall clock,
+        // not to elapsed time since the previous event-driven status redraw.
+        const bool aligned_status_due=
+            status_hour>=0&&status_minute>=0&&(status_minute%5)==0&&
+            (status_bar_painted_hour!=status_hour||status_bar_painted_minute!=status_minute);
+        if(aligned_status_due)status_bar_dirty=true;
         t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
         t5_timing_set_ui_action(T5UiAction::None);
     }
-    if(standby_active&&millis()-status_bar_refreshed_at>=300000UL)
-        status_bar_dirty=true;
     const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
     if(status_dirty&&!message_alert_active){
         // Content changes retain the ordinary screen redraw. Refresh the
@@ -3264,7 +3267,6 @@ void ui_loop() {
         const bool wake=status_wake_light&&!standby_active;
         status_dirty=false;status_bar_dirty=false;status_wake_light=false;
         draw_screen();refresh(MeshInkRefreshMode::Direct,wake);
-        if(standby_active)status_bar_refreshed_at=millis();
         t5_timing_set_ui_action(T5UiAction::None);
     }else if(text_refresh_due){
         t5_timing_set_ui_action(T5UiAction::TextRefresh);
@@ -3288,15 +3290,14 @@ void ui_loop() {
         t5_timing_set_ui_action(T5UiAction::None);
     }else if(status_bar_dirty&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
         t5_timing_set_ui_action(T5UiAction::StatusRefresh);
-        // Any event-driven bar update also refreshes the exact clock and
-        // battery value, resetting the standby five-minute cadence.
+        // Event-driven updates still sample and display the exact clock and
+        // battery, but they never move the next :00/:05/:10... periodic boundary.
         update_status_hardware();
         const bool wake=status_wake_light&&!standby_active;
         status_bar_dirty=false;status_wake_light=false;
         draw_status_bar();
         refresh_area(MeshInkRefreshMode::Direct,
             {0,0,portrait_layout().width,portrait_layout().status_height},wake);
-        status_bar_refreshed_at=millis();
         t5_timing_set_ui_action(T5UiAction::None);
     }
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0){

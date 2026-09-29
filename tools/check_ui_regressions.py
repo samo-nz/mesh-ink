@@ -148,12 +148,16 @@ assert ui_version and firmware_version, "testing UI and firmware versions are ex
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
 assert re.fullmatch(r"1\.9\.1-test\.\d+", firmware_version.group(1)), "testing firmware version keeps the 1.9.1-test.N format"
 
-# Test15 status-bar refresh policy: active UI paints status changes immediately
-# as a small DU area update, while standby clock/battery painting is capped at
-# five minutes unless another status event causes an earlier bar refresh.
-contains("static bool status_bar_dirty = false;", "status-only invalidation is separate from content redraws")
-contains("if(changed&&!standby_active)status_bar_dirty=true;", "foreground status changes queue an immediate bar update")
-contains("if(standby_active&&millis()-status_bar_refreshed_at>=300000UL)", "standby status-bar cadence is five minutes")
+# Test29 status-bar refresh policy: clock/battery periodic updates are aligned
+# to wall-clock five-minute boundaries. Event-driven GPS/message redraws may
+# show newer values early but must not postpone the next :00/:05/:10... slot.
+contains("static int8_t status_bar_painted_hour = -1;", "status bar tracks the last painted wall-clock time")
+contains("status_hour>=0&&status_minute>=0&&(status_minute%5)==0&&", "periodic status cadence is aligned to five-minute wall-clock boundaries")
+contains("(status_bar_painted_hour!=status_hour||status_bar_painted_minute!=status_minute);", "an aligned minute is painted only once unless another event redraws it")
+contains("if(aligned_status_due)status_bar_dirty=true;", "aligned five-minute boundary queues the status bar")
+assert "status_bar_refreshed_at" not in source, "elapsed-time status cadence must not return"
+assert "if(changed&&!standby_active)status_bar_dirty=true;" not in source, "minute-by-minute hardware sampling must not repaint the status bar"
+contains("[T5-UI] status-bar clock=%02d:%02d", "status clock logging occurs when the bar is actually drawn")
 contains("refresh_area(MeshInkRefreshMode::Direct,", "status bar uses area refresh")
 contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);", "status area is limited to the bar")
 contains("static int16_t status_gps_satellites_bar = 0;", "status bar owns a separately throttled satellite count")
