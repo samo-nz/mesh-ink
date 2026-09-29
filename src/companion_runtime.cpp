@@ -2,6 +2,7 @@
 #include <Mesh.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
+#include <esp32-hal-cpu.h>
 #include <helpers/MultiSerialInterface.h>
 #include <helpers/esp32/SerialBLEInterface.h>
 #include "../lib/MeshCore/examples/companion_radio/DataStore.cpp"
@@ -42,6 +43,16 @@ public:
 
 static LocalSerial local_interface;
 static bool local_runtime_ready=false;
+
+static void companion_set_low_power_cpu() {
+    static constexpr uint32_t COMPANION_CPU_MHZ=80;
+    const bool accepted=setCpuFrequencyMhz(COMPANION_CPU_MHZ);
+    const uint32_t actual=getCpuFrequencyMhz();
+    Serial.printf("[T5-POWER] companion cpu target=%lu actual=%luMHz result=%s\n",
+                  (unsigned long)COMPANION_CPU_MHZ,(unsigned long)actual,
+                  accepted&&actual==COMPANION_CPU_MHZ?"OK":"ERROR");
+}
+
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
@@ -66,6 +77,12 @@ void companion_setup() {
     the_mesh.applyGpsPrefs();
 #endif
     board.onBootComplete();
+
+    // Companion mode has no local UI/render workload. Once BLE, MeshCore,
+    // radio and optional GPS setup have completed, 80 MHz is enough for the
+    // steady-state service loop while keeping the ESP32-S3 peripheral/APB
+    // domain at its normal rate. Test10 validates this on hardware.
+    companion_set_low_power_cpu();
 }
 
 void companion_loop() {
