@@ -4,6 +4,7 @@
 #include "hardware/display.h"
 #include "hardware/touch.h"
 #include "hardware/power.h"
+#include "hardware/buttons.h"
 #include "board/board_profile.h"
 #include <esp_heap_caps.h>
 #include <time.h>
@@ -39,7 +40,6 @@ void request_companion_mode() { Serial.println("[T5-UI] companion mode requires 
 // started in this target. Saved values are device-owned and will be handed to
 // the MeshCore application adapter in the next milestone.
 static constexpr char UI_VERSION[] = T5_FIRMWARE_VERSION;
-static constexpr gpio_num_t BOOT_BUTTON = (gpio_num_t)T5_PIN_BOOT_BUTTON;
 
 struct Glyph { char c; uint8_t r[7]; };
 static constexpr Glyph FONT[] = {
@@ -991,8 +991,9 @@ static void draw_shutdown_confirm() {
     centred("FULL BATTERY POWER CUT",ui_y(245),3,0,true);
     centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
     centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
-    centred("PRESS PWR TO START AGAIN",ui_y(445),3,0,true);
-    centred("ON USB: HOLD BOOT TO WAKE",ui_y(500),3,0,true);
+    const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
+    centred(wake.confirm_battery,ui_y(445),3,0,true);
+    centred(wake.confirm_external,ui_y(500),3,0,true);
     box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
     box(shutdown,true);text("SHUT DOWN",shutdown.x+ui_w(21),shutdown.y+ui_h(24),3,0xFF,true);
 }
@@ -1674,8 +1675,14 @@ static void draw_help() {
     const MeshInkUiLayout& layout=portrait_layout();
     text("QUICK SETTINGS",layout.section_margin,ui_y(142),3,0,true);
     draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",layout.section_margin,ui_y(176),39,2,0,false,3);
-    text("BOOT BUTTON",layout.section_margin,ui_y(266),3,0,true);
-    draw_wrapped("Short press refreshes the current screen. Hold for 2 seconds to lock screen and enter standby - hold boot button for 2 seconds to unlock",layout.section_margin,ui_y(300),39,2,0,false,5);
+    char button_title[32];
+    snprintf(button_title,sizeof(button_title),"%s BUTTON",meshink_primary_button_name());
+    text(button_title,layout.section_margin,ui_y(266),3,0,true);
+    char button_help[180];
+    snprintf(button_help,sizeof(button_help),
+        "Short press refreshes the current screen. Hold %s for 2 seconds to lock screen and enter standby - hold %s for 2 seconds to unlock",
+        meshink_primary_button_name(),meshink_primary_button_name());
+    draw_wrapped(button_help,layout.section_margin,ui_y(300),39,2,0,false,5);
     text("KEYBOARD",layout.section_margin,ui_y(444),3,0,true);
     draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",layout.section_margin,ui_y(478),39,2,0,false,4);
     text("MAPS",layout.section_margin,ui_y(586),3,0,true);
@@ -1699,7 +1706,9 @@ static void draw_standby(){
     text("CHANNEL MESSAGES",channel_rect.x+ui_w(76),channel_rect.y+ui_h(26),3,0,true);
     char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);
     text(channel,channel_rect.x+ui_w(76),channel_rect.y+ui_h(78),4,0,true);
-    centred("HOLD BOOT 2 SECONDS TO WAKE",ui_y(820),2,0,true);
+    char wake_button[40];
+    snprintf(wake_button,sizeof(wake_button),"HOLD %s 2 SECONDS TO WAKE",meshink_primary_button_name());
+    centred(wake_button,ui_y(820),2,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
@@ -2053,10 +2062,11 @@ static void request_hardware_shutdown() {
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
     centred("POWERED OFF",ui_y(250),6,0,true);
-    centred("PRESS PWR BUTTON",ui_y(370),4,0,true);
-    centred("TO POWER ON",ui_y(425),4,0,true);
-    centred("IF STILL POWERED BY USB",ui_y(560),3,0,true);
-    centred("HOLD BOOT TO WAKE",ui_y(610),3,0,true);
+    const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
+    centred(wake.off_battery_line1,ui_y(370),4,0,true);
+    centred(wake.off_battery_line2,ui_y(425),4,0,true);
+    centred(wake.off_external_line1,ui_y(560),3,0,true);
+    centred(wake.off_external_line2,ui_y(610),3,0,true);
     centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);
@@ -2911,22 +2921,27 @@ static void service_message_alert(){
     }
 }
 
-static void service_boot_button(){
-    static uint32_t pressed_at=0;static bool handled=false;const bool pressed=digitalRead(BOOT_BUTTON)==LOW;
+static void service_primary_button(){
+    static uint32_t pressed_at=0;static bool handled=false;
+    const bool pressed=meshink_primary_button_pressed();
     if(pressed&&!pressed_at)pressed_at=millis();
-    if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){handled=true;if(standby_active)leave_standby();else enter_standby("BOOT");}
+    if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){
+        handled=true;
+        if(standby_active)leave_standby();
+        else enter_standby(meshink_primary_button_name());
+    }
     if(!pressed&&pressed_at){const uint32_t duration=millis()-pressed_at;if(!handled&&duration>=40){
-        // Short BOOT refresh is deliberately disabled in standby. Waking from
-        // standby requires the existing two-second hold, avoiding needless EPD
+        // Short primary-button refresh is deliberately disabled in standby.
+        // Waking requires the existing two-second hold, avoiding needless EPD
         // refreshes from accidental short presses.
-        if(!standby_active){draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);}
+        if(!standby_active){draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",false);}
     }pressed_at=0;handled=false;}
 }
 
 void ui_setup() {
     Serial.begin(115200); delay(200);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
-    pinMode(BOOT_BUTTON,INPUT_PULLUP);
+    meshink_buttons_begin();
     // Stay off until preferences have been loaded. The splash refresh then
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
@@ -3033,7 +3048,7 @@ void ui_loop() {
         delay(100);return;
     }
     service_critical_battery();
-    service_boot_button();
+    service_primary_button();
     if(map_taps.count&&
        (screen!=Screen::Maps||standby_active||
         millis()-map_taps.last_at>=meshink_map_gestures::TAP_WINDOW_MS))
