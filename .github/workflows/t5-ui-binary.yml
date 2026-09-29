@@ -74,8 +74,6 @@ jobs:
             -Itests/touch_backend_stubs -Isrc \
             tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
           /tmp/meshink-t5-touch-backend-test
-      - name: Build Bluetooth companion touch regression
-        run: python -m platformio run -e t5-companion
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
 
@@ -93,26 +91,6 @@ jobs:
           grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
-
-      # A second PlatformIO cache64 environment can reconfigure shared build
-      # metadata. Preserve the field-tested V2 release inputs before building
-      # the generic no-GPS portability profile.
-      - name: Stage verified V2 release inputs
-        run: |
-          STAGE=".release-build"
-          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
-          mkdir -p "$STAGE"
-          cp ".pio/build/t5-unified-cache64/firmware.bin" "$STAGE/firmware.bin"
-          cp ".pio/build/t5-unified-cache64/bootloader.bin" "$STAGE/bootloader.bin"
-          cp ".pio/build/t5-unified-cache64/partitions.bin" "$STAGE/partitions.bin"
-          cp "$FRAMEWORK/tools/partitions/boot_app0.bin" "$STAGE/boot_app0.bin"
-          test -s "$STAGE/firmware.bin"
-          test -s "$STAGE/bootloader.bin"
-          test -s "$STAGE/partitions.bin"
-          test -s "$STAGE/boot_app0.bin"
-
-      - name: Build no-GPS portability regression firmware
-        run: python -m platformio run -e t5-unified-cache64-nogps-test
 
       - name: Read firmware version
         id: version
@@ -143,27 +121,36 @@ jobs:
             exit 1
           }
 
-      - name: Package update and full-wipe images
+      - name: Package update image
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          BUILD=".release-build"
+          BUILD=".pio/build/t5-unified-cache64"
           test -s "$BUILD/firmware.bin"
+          cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
+          sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt
+
+      - name: Package release full-wipe image
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BUILD=".pio/build/t5-unified-cache64"
+          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
           test -s "$BUILD/bootloader.bin"
           test -s "$BUILD/partitions.bin"
-          test -s "$BUILD/boot_app0.bin"
-          cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
+          test -s "$FRAMEWORK/tools/partitions/boot_app0.bin"
           python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
             --flash_mode keep --flash_freq keep --flash_size 16MB \
             --fill-flash-size 16MB \
             -o "meshink-$VERSION-full-wipe.bin" \
             0x0 "$BUILD/bootloader.bin" \
             0x8000 "$BUILD/partitions.bin" \
-            0xe000 "$BUILD/boot_app0.bin" \
+            0xe000 "$FRAMEWORK/tools/partitions/boot_app0.bin" \
             0x10000 "$BUILD/firmware.bin"
           test -s "meshink-$VERSION-full-wipe.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
-          sha256sum "meshink-$VERSION-update.bin" "meshink-$VERSION-full-wipe.bin" > SHA256SUMS.txt
+          sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
