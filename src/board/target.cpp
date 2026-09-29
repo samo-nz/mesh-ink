@@ -696,8 +696,13 @@ static void show_companion_notice() {
 }
 
 void t5_companion_exit_feedback_begin() {
+    // Companion startup performs additional board/radio initialization after
+    // the splash, so do not assume the early LEDC attachment is still intact.
+    // Reassert the board frontlight backend before driving the visible exit
+    // acknowledgement.
+    meshink_power_frontlight_begin();
     meshink_power_frontlight_set(100);
-    T5_TRACE("companion exit: immediate frontlight acknowledgement\n");
+    Serial.println("[T5-LIGHT] companion exit acknowledgement brightness=100%");
 }
 
 void t5_companion_release_radio_resources() {
