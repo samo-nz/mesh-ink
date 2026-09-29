@@ -8,6 +8,7 @@
 #include "ui_onboarding.h"
 #include "board/target.h"
 #include "hardware/gps.h"
+#include "hardware/radio.h"
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
@@ -690,7 +691,7 @@ void local_mesh_loop(){
 #endif
 #if T5_LOG_POWER
     static uint32_t radio_report_at=0;
-    if(millis()-radio_report_at>=60000){radio_report_at=millis();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] radio continuous-rx=%d received=%lu errors=%lu sent=%lu boosted=%d (duty cycle intentionally disabled)\n",radio_driver.isInRecvMode(),(unsigned long)radio_driver.getPacketsRecv(),(unsigned long)radio_driver.getPacketsRecvErrors(),(unsigned long)radio_driver.getPacketsSent(),radio_driver.getRxBoostedGainMode());}
+    if(millis()-radio_report_at>=60000){radio_report_at=millis();const MeshInkRadioStats stats=meshink_radio_stats();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] radio continuous-rx=%d received=%lu errors=%lu sent=%lu boosted=%d (duty cycle intentionally disabled)\n",stats.continuous_rx,(unsigned long)stats.packets_received,(unsigned long)stats.receive_errors,(unsigned long)stats.packets_sent,stats.boosted_gain);}
 #endif
 }
 bool local_mesh_send_active(const char* text){
@@ -701,7 +702,7 @@ bool local_mesh_send_active(const char* text){
 bool local_mesh_send_direct(size_t index,const char* text){if(!provider.open_contact(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_channel(size_t index,const char* text){if(!provider.open_channel(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_advert(bool flood){if(pending_advert>=0)return false;const uint8_t command[2]={7,(uint8_t)(flood?1:0)};if(!local_mesh_enqueue_command(command,sizeof(command)))return false;pending_advert=flood?1:0;return true;}
-bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=t5_mesh().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);t5_mesh().savePrefs();radio_driver.setParams(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
+bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=t5_mesh().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);t5_mesh().savePrefs();meshink_radio_apply_params(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=t5_mesh().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;t5_mesh().savePrefs();}
 #if ENV_INCLUDE_GPS == 1
 void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_enabled=enabled?1:0;t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=!enabled;reset_gps_duty_cycle();}
@@ -743,11 +744,11 @@ void local_mesh_cycle_path_hash(){auto* p=t5_mesh().getNodePrefs();p->path_hash_
 uint8_t local_mesh_path_hash_mode(){return min((uint8_t)2,t5_mesh().getNodePrefs()->path_hash_mode);}
 void local_mesh_prepare_shutdown(){
     T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] stopping MeshCore peripherals");
-    radio_driver.powerOff();
+    meshink_radio_power_off();
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_shutdown();
 #endif
-    Serial.println("[T5-SHUTDOWN] SX1262 sleep requested");
+    Serial.println("[T5-SHUTDOWN] LoRa radio sleep requested");
 }
 uint16_t local_mesh_direct_unread_total(){return provider.direct_unread_total();}
 uint16_t local_mesh_channel_unread_total(){return provider.channel_unread_total();}
