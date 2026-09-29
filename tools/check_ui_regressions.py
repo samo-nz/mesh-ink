@@ -133,7 +133,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.18"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.19"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -205,6 +205,8 @@ assert 'notice_meshink_logo(160, fb);' in board_target_source, "companion screen
 assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in board_target_source, "companion screen labels Bluetooth mode below logo"
 assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in board_target_source, "companion screen uses board-provided primary-button label"
 assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in board_target_source, "companion screen shows exit duration"
+assert "{'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}}" in board_target_source, "companion tiny font includes firmware-version hyphen"
+assert "if(key>='a'&&key<='z')key=(char)(key-'a'+'A');" in board_target_source, "companion tiny font renders lowercase firmware-version letters"
 assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in board_target_source, "legacy MESHCORE companion splash removed"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
@@ -430,6 +432,13 @@ assert "source_mod!=0U" in map_source and "[T5-PNG-SIMD] src-mod16=%u dst-mod16=
 assert "if(zoom<=12)draw_cached_epdiy(*tile,draw);" not in map_source, "failed low-zoom compositor A/B removed"
 assert "decode_bits&&row->iPixelType==PNG_PIXEL_TRUECOLOR_ALPHA" in map_source, "cached RGBA tiles bypass intermediate RGB565 conversion"
 assert "[T5-PNG-GRAY] direct-rgba=1 src-mod16=%u" in map_source, "direct grayscale path reports activation"
+
+# Test19 Maps wake must use the same black-prep/full-DU reveal as normal Maps entry.
+contains('static void reveal_map_after_black_prep(const char* reason,bool wake_light=false)', "shared map black-prep reveal helper")
+contains('reveal_map_after_black_prep("MAP_BLACK_PREP_COMPLETE",false);', "normal Maps load uses shared black-prep reveal")
+contains('reveal_map_after_black_prep("LEAVE_STANDBY_BLACK_PREP_COMPLETE",true);', "Maps wake uses black-prep reveal")
+contains('if(screen==Screen::Maps&&!standby_active&&enabled&&has_fix&&', "Maps GPS marker redraw is suppressed while standby owns display")
+contains('T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] Maps wake uses black-prep reveal");', "Maps wake black-prep is observable in field logs")
 
 # Boot splash map storage warmup: shallow inventory only, never recursively crawl XYZ tiles.
 assert "map_tiles_warm_storage(); // hide SD/map inventory work behind splash" in unified_source, "map storage warms before interactive UI"
