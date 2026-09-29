@@ -144,6 +144,12 @@ assert shutdown_body.index("store.saveChannels(&the_mesh);") < shutdown_body.ind
 assert "companion_prepare_exit();" in unified_source, "BOOT exit calls orderly companion shutdown"
 exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
 assert exit_body.index("companion_prepare_exit();") < exit_body.index("ESP.restart();"), "companion shutdown precedes reboot"
+assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted BOOT hold gets immediate visual acknowledgement"
+assert "t5_shared_spi().end();" in shutdown_body, "radio SPI releases shared display pins before exit notice"
+assert "t5_companion_show_returning_notice();" in shutdown_body, "companion leaves retained reboot feedback on e-paper"
+assert shutdown_body.index("radio_driver.powerOff();") < shutdown_body.index("t5_shared_spi().end();") < shutdown_body.index("t5_companion_show_returning_notice();"), "radio stops and shared SPI releases before display reinitializes"
+assert 'notice_centred("RETURNING TO LOCAL UI"' in board_target_source, "companion exit screen identifies local UI return"
+assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
