@@ -224,10 +224,10 @@ assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primar
 assert "meshink_show_companion_notice();" in companion_source, "companion runtime owns splash presentation"
 assert companion_source.index("meshink_show_companion_notice();") < companion_source.index("meshink_board_begin_companion();"), "companion splash renders before board/MeshCore I2C setup"
 assert "BLUETOOTH COMPANION MODE" not in board_target_source and "MESHINK_LOGO_" not in board_target_source, "board package must not contain MeshInk companion presentation"
-assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in board_target_source, "companion screen shows exit duration"
-assert "{'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}}" in board_target_source, "companion tiny font includes firmware-version hyphen"
-assert "if(key>='a'&&key<='z')key=(char)(key-'a'+'A');" in board_target_source, "companion tiny font renders lowercase firmware-version letters"
-assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in board_target_source, "legacy MESHCORE companion splash removed"
+assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in companion_notice_source, "companion screen shows exit duration"
+assert "{'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}}" in companion_notice_source, "companion tiny font includes firmware-version hyphen"
+assert "if(key>='a'&&key<='z')key=(char)(key-'a'+'A');" in companion_notice_source, "companion tiny font renders lowercase firmware-version letters"
+assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in companion_notice_source, "legacy MESHCORE companion splash removed"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
