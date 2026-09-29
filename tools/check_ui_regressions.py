@@ -64,8 +64,8 @@ contains("const bool on_map=screen==Screen::Maps&&!standby_active&&\n           
 contains("MeshInkTouchContacts contacts{};", "Maps consumes board-independent contact frames")
 contains("if(!meshink_touch_read_contacts(contacts))", "Maps reads multi-contact touch backend")
 contains("const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();", "non-Maps consumes primary touch backend")
-contains("r==1&&!keyboard_symbols", "alphabetic A/L edge expansion is isolated from symbols")
-contains("key_index_edge_extended(", "A/L use edge-expanded home-row hit targets")
+contains("const bool owns_screen_edges=r<2;", "number/top/home keyboard rows use full screen-edge ownership")
+contains("key_index_edge_extended(", "outer keyboard rows use edge-expanded hit targets")
 non_map_sampler = source.split("// Non-Maps keeps the legacy single-contact semantics supplied by the touch", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
