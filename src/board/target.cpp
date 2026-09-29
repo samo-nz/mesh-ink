@@ -988,9 +988,14 @@ void t5_companion_exit_feedback_begin() {
 }
 
 void t5_companion_show_returning_notice() {
-    // Radio SPI has been stopped before this function is called, so the
-    // display can safely reclaim its overlapping LCD/SPI pins.
-    T5_TRACE("companion exit: rendering return notice\n");
+    // Companion radio IRQs use Arduino's GPIO ISR service after EPDiy was
+    // deinitialized. Release that handler/service and the shared SPI bus before
+    // EPDiy reclaims the overlapping display pins for the retained exit page.
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.end();
+    gpio_uninstall_isr_service();
+    companion_radio_uses_arduino_irq=false;
+    T5_TRACE("companion exit: radio IRQ/SPI released; rendering return notice\n");
     meshink_display_init();
     meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
     meshink_display_set_pixel_clock_mhz(17);
