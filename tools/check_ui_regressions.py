@@ -613,7 +613,8 @@ assert "t5_set_radio_gps_rail(false,250)" in board_target_source and "t5_set_rad
 assert "recovery=spi-reset+sx1262-reset" in board_target_source, "second radio attempt performs clean SPI and SX1262 reset"
 assert "for(uint8_t attempt=1;attempt<=3&&!ready;++attempt)" in board_target_source, "T5 radio backend owns escalating three-attempt recovery"
 assert "for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt)" not in companion_source, "generic runtime must not duplicate board-specific radio retries"
-assert '-DSX126X_DIO3_TCXO_VOLTAGE=1.8' in platformio_source, "test31 isolates startup sequencing and leaves TCXO unchanged"
+assert '-DSX126X_DIO3_TCXO_VOLTAGE=' not in platformio_source, "T5 build must not override RadioLib begin-stage TCXO voltage"
+assert '-DSX126X_DIO2_AS_RF_SWITCH=' not in platformio_source, "T5 build must defer DIO2 RF-switch setup to LilyGO post-init order"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not regress field-tested SD speed"
 
 # Test32 overlaps H752-01 rail settling with splash preparation instead of
@@ -628,6 +629,21 @@ assert "t5_wait_local_radio_settle();" in board_target_source, "local board hand
 assert "t5_radio_shared_bus_idle(true);\n    enableRadioGpsRail();" not in board_target_source.split("void T5Board::beginLocal()",1)[1].split("bool radio_init()",1)[0], "local handoff must not restart a full post-splash rail delay"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test32 overlap must not change SD access speed"
 assert "void meshink_board_start_local_radio_settle() {}" in standalone_source, "UI-only target keeps a no-op early-radio hook"
+
+# Test33 follows LILYGO H752-01 radio electrical initialization while retaining
+# MeshCore's protocol-level LoRa settings.
+assert "constexpr float LILYGO_TCXO_VOLTAGE=2.4f;" in board_target_source, "T5 backend uses LilyGO's 2.4 V post-init TCXO setting"
+assert "radio.setTCXO(LILYGO_TCXO_VOLTAGE)" in board_target_source, "T5 backend explicitly applies LilyGO TCXO voltage"
+assert "radio.setDio2AsRfSwitch(true)" in board_target_source, "T5 backend explicitly enables LilyGO DIO2 RF switch"
+tcxo_at=board_target_source.index("radio.setTCXO(LILYGO_TCXO_VOLTAGE)")
+rf_switch_at=board_target_source.index("radio.setDio2AsRfSwitch(true)")
+std_init_at=board_target_source.index("ready=radio.std_init(&radio_spi)")
+assert std_init_at < tcxo_at < rf_switch_at, "radio hardware order must be begin -> TCXO 2.4 V -> DIO2 RF switch"
+assert "post-init TCXO=%.1fV result=%d" in board_target_source, "TCXO post-init result remains observable in field logs"
+assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch post-init result remains observable in field logs"
+assert '-DSX126X_DIO3_TCXO_VOLTAGE=' not in platformio_source, "RadioLib begin stage must use its default TCXO drive"
+assert '-DSX126X_DIO2_AS_RF_SWITCH=' not in platformio_source, "DIO2 setup must not happen inside std_init before TCXO 2.4 V"
+assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test33 LilyGO radio alignment must not change SD access speed"
 
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"

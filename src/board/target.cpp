@@ -772,7 +772,25 @@ bool radio_init() {
             attempt,digitalRead(T5_PIN_LORA_CS),digitalRead(T5_PIN_SD_CS),
             digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET));
         // CustomSX1262::std_init prints RadioLib's numeric failure code on error.
+        // With no MeshInk TCXO override it mirrors LilyGO's radio.begin() stage
+        // by using RadioLib's 1.6 V default during initialization.
         ready=radio.std_init(&radio_spi);
+        if(ready){
+            // LilyGO H752-01 examples then switch the fitted TCXO to 2.4 V
+            // before assigning DIO2 to the RF switch. These are board-electrical
+            // settings; MeshCore's protocol parameters remain unchanged.
+            constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
+            const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
+            Serial.printf("[T5-RADIO] post-init TCXO=%.1fV result=%d\n",
+                (double)LILYGO_TCXO_VOLTAGE,(int)tcxo_state);
+            if(tcxo_state!=RADIOLIB_ERR_NONE)ready=false;
+            if(ready){
+                const int16_t rf_switch_state=radio.setDio2AsRfSwitch(true);
+                Serial.printf("[T5-RADIO] post-init DIO2 RF-switch result=%d\n",
+                    (int)rf_switch_state);
+                if(rf_switch_state!=RADIOLIB_ERR_NONE)ready=false;
+            }
+        }
         Serial.printf("[T5-RADIO] init attempt=%u result=%s elapsed=%lums busy=%d\n",
             attempt,ready?"OK":"FAILED",(unsigned long)(millis()-attempt_started),
             digitalRead(P_LORA_BUSY));
