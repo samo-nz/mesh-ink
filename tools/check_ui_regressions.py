@@ -133,7 +133,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.19"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.20"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -143,7 +143,11 @@ contains("if(changed&&!standby_active)status_bar_dirty=true;", "foreground statu
 contains("if(standby_active&&millis()-status_bar_refreshed_at>=300000UL)", "standby status-bar cadence is five minutes")
 contains("refresh_area(MeshInkRefreshMode::Direct,", "status bar uses area refresh")
 contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);", "status area is limited to the bar")
-contains("const bool satellites_refresh=satellites_changed;", "foreground satellite count follows every visible change")
+contains("static int16_t status_gps_satellites_bar = 0;", "status bar owns a separately throttled satellite count")
+contains("now-last_satellite_bar_refresh>=3000UL", "visible satellite count is throttled to three seconds")
+contains("status_gps_satellites_bar=satellites;", "throttled satellite display eventually adopts latest live count")
+contains('reason=gps-satellites-3s', "throttled satellite refreshes are observable in logs")
+contains("!standby_active&&enabled&&has_fix&&", "satellite count does not trigger status refresh while hidden in standby")
 assert "standby_quantized" not in source, "standby must keep exact clock and battery values"
 
 # Test16 local wireless power policy. UI/runtime code must use the generic
@@ -457,6 +461,7 @@ contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);",
 standby_entry = source.split("static void enter_standby(const char* reason){", 1)[1].split("static void leave_standby(){", 1)[0]
 assert "update_status_hardware();" in standby_entry, "standby entry samples exact clock, battery and charger state"
 assert "status_bar_refreshed_at=millis();" in standby_entry, "standby entry starts the five-minute status cadence"
+contains('"HOLD %s FOR TWO SECONDS TO WAKE"', "standby wake wording includes FOR and explicit two-second hold")
 
 # Test17 power abstraction: application/UI owns presentation only. Battery
 # topology, chemistry, charger encoding and critical-battery policy are backend-owned.
