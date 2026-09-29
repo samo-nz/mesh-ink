@@ -28,6 +28,17 @@ struct MeshInkPowerCriticalState {
     uint16_t battery_mv = 0;
 };
 
+// User-facing wake guidance is board-owned because the physical control that
+// restores power may not be readable or controllable by the running firmware.
+struct MeshInkPowerWakeInfo {
+    const char* confirm_battery = "";
+    const char* confirm_external = "";
+    const char* off_battery_line1 = "";
+    const char* off_battery_line2 = "";
+    const char* off_external_line1 = "";
+    const char* off_external_line2 = "";
+};
+
 inline bool meshink_power_is_charging(MeshInkChargeState state) {
     return state == MeshInkChargeState::Charging;
 }
