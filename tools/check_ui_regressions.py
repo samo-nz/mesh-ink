@@ -35,6 +35,9 @@ radio_selector_source = (root / "src" / "hardware" / "radio.h").read_text(encodi
 radio_types_source = (root / "src" / "hardware" / "radio_types.h").read_text(encoding="utf-8")
 radio_backend_header = (root / "src" / "board" / "t5_radio_backend.h").read_text(encoding="utf-8")
 radio_backend_source = (root / "src" / "board" / "t5_radio_backend.cpp").read_text(encoding="utf-8")
+storage_selector_source = (root / "src" / "hardware" / "storage.h").read_text(encoding="utf-8")
+storage_backend_header = (root / "src" / "board" / "t5_storage_backend.h").read_text(encoding="utf-8")
+storage_backend_source = (root / "src" / "board" / "t5_storage_backend.cpp").read_text(encoding="utf-8")
 board_selector_source = (root / "src" / "hardware" / "board.h").read_text(encoding="utf-8")
 board_backend_source = (root / "src" / "board" / "t5_board_backend.h").read_text(encoding="utf-8")
 touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encoding="utf-8")
@@ -70,7 +73,10 @@ contains('if(frontlight_brightness>100)frontlight_brightness=30', "brightness fa
 assert 'frontlight_brightness<1||frontlight_brightness>100' not in source, "saved OFF brightness must survive reboot"
 contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);', "standby preserves keyboard under quick settings")
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
-contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",false);', "primary-button refresh without home navigation")
+contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button refresh also wakes frontlight")
+contains('last_user_activity=millis();\n            draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button short press counts as user activity")
+contains('fast_full_redraw("CONTACTS_AFTER_BOOT",false);\n        // Startup can take longer than the saved light timeout.', "Contacts boot refresh completes before frontlight timer reset")
+contains('timeout only after Contacts is actually visible.\n        frontlight_event();', "Contacts starts a fresh frontlight timeout after splash")
 assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
 # Keep the application gesture/event layer independent from the physical touch
 # controller. Maps consumes multi-contact frames; other screens consume the
@@ -579,7 +585,24 @@ for moved_power_impl in ("BQ27220_ADDR", "BQ25896", "T5_FACTORY_GAUGE_PROFILE", 
 assert "meshink_power_prepare_board();" in board_target_source, "board startup delegates gauge/profile preparation"
 assert "meshink_power_diagnostics_tick();" in board_target_source, "GPS loop delegates power diagnostics"
 
-# Test21 radio and board-capability boundaries. SD/map storage stays separate.
+# Test30 removable-storage boundary. Maps/PMTiles own archive semantics only;
+# the selected board backend owns SD wiring, shared SPI and the tuned bus clock.
+assert "MESHINK_STORAGE_BACKEND_HEADER" in storage_selector_source, "storage backend is compile-time selectable"
+for storage_api in ("meshink_storage_begin", "meshink_storage_end", "meshink_storage_open", "meshink_storage_exists", "meshink_storage_bus_hz"):
+    assert storage_api in storage_backend_header, f"storage backend header missing {storage_api}"
+assert "T5_PIN_SD_CS" in storage_backend_source, "T5 SD chip select remains storage-backend-owned"
+assert "t5_shared_spi()" in storage_backend_source, "T5 shared SPI selection remains storage-backend-owned"
+assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "field-tested 25 MHz SD access speed is preserved"
+assert "SD.begin(T5_PIN_SD_CS,t5_shared_spi(),T5_STORAGE_SPI_HZ)" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
+assert '#include "hardware/storage.h"' in map_source, "Maps consumes generic storage boundary"
+assert '#include "hardware/storage.h"' in pmtiles_header, "PMTiles consumes generic storage boundary"
+for leaked_storage_detail in ('#include <SD.h>', '#include "board/target.h"', "T5_PIN_SD_CS", "t5_shared_spi()", "MAP_SD_SPI_HZ", "SD.begin(", "SD.open(", "SD.exists(", "SD.end("):
+    assert leaked_storage_detail not in map_source, f"Maps leaked SD hardware detail: {leaked_storage_detail}"
+    assert leaked_storage_detail not in pmtiles_source, f"PMTiles leaked SD hardware detail: {leaked_storage_detail}"
+assert "meshink_storage_begin()" in map_source and "meshink_storage_bus_hz()" in map_source, "Maps mounts and reports storage through generic service"
+assert "meshink_storage_open(" in map_source and "meshink_storage_open(" in pmtiles_source, "map readers open files through generic storage service"
+
+# Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
 assert "enum class MeshInkRadioFailureClass" in radio_types_source, "radio failure vocabulary is board independent"
 for api in (

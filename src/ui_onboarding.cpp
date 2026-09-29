@@ -2954,7 +2954,10 @@ static void service_primary_button(){
         // Short primary-button refresh is deliberately disabled in standby.
         // Waking requires the existing two-second hold, avoiding needless EPD
         // refreshes from accidental short presses.
-        if(!standby_active){draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",false);}
+        if(!standby_active){
+            last_user_activity=millis();
+            draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
+        }
     }pressed_at=0;handled=false;}
 }
 
@@ -3043,12 +3046,15 @@ void ui_finish_startup() {
     draw_screen();
     if(screen==Screen::Welcome)
         fast_full_redraw("FIRST_SETUP_SCREEN",false);
-    else if(screen==Screen::Contacts)
+    else if(screen==Screen::Contacts) {
         // Existing-user boot transitions directly from the dark startup logo
         // to Contacts. Force the same complete refresh as a short BOOT press
         // so the splash cannot remain faintly visible in the panel history.
         fast_full_redraw("CONTACTS_AFTER_BOOT",false);
-    else
+        // Startup can take longer than the saved light timeout. Start a fresh
+        // timeout only after Contacts is actually visible.
+        frontlight_event();
+    } else
         refresh(MeshInkRefreshMode::FastGray16);
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.

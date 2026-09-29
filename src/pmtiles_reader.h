@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include <SD.h> // platform's File is an fs::File alias; do not forward-declare class File
+#include "hardware/storage.h"
 
 
 struct PmtilesPerfStats {
@@ -36,7 +36,7 @@ void pmtiles_end_frame();
 bool pmtiles_warm_archive(const char* path);
 // Borrow the archive file already opened for this render. Valid only until
 // pmtiles_end_frame()/pmtiles_reset(); the caller must NOT close this handle.
-File* pmtiles_frame_file(const char* path);
+MeshInkStorageFile* pmtiles_frame_file(const char* path);
 // SD seek/read/open failures must not be treated as permanently missing tiles.
 bool pmtiles_had_io_error();
 // Per-frame cold-path instrumentation. Categories may be nested; callers use

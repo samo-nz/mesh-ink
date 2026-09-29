@@ -1,5 +1,4 @@
 #include "pmtiles_reader.h"
-#include <SD.h>
 #include <zlib.h>
 #include <assert.h>
 #include <iostream>
@@ -8,7 +7,6 @@
 #include <map>
 
 std::map<std::string, std::vector<uint8_t>> mock_sd;
-MockSD SD;
 using Bytes = std::vector<uint8_t>;
 void varint(Bytes& b, uint64_t value) {
     while (value >= 128) { b.push_back((uint8_t)value | 128); value >>= 7; }
@@ -99,7 +97,7 @@ int main() {
     pmtiles_begin_frame();
     PmtilesPngRange shared{};
     assert(pmtiles_find_png("/maps/gzip.pmtiles",1,1,0,shared));
-    File* archive_file=pmtiles_frame_file("/maps/gzip.pmtiles");
+    MeshInkStorageFile* archive_file=pmtiles_frame_file("/maps/gzip.pmtiles");
     assert(archive_file);
     assert(!pmtiles_frame_file("/maps/plain.pmtiles"));
     assert(archive_file->seek(shared.offset));

@@ -36,6 +36,10 @@ on:
       - 'src/hardware/radio_types.h'
       - 'src/board/t5_radio_backend.h'
       - 'src/board/t5_radio_backend.cpp'
+      - 'src/hardware/storage.h'
+      - 'src/board/t5_storage_backend.h'
+      - 'src/board/t5_storage_backend.cpp'
+      - 'tests/pmtiles_stubs/storage_backend.h'
       - 'src/hardware/board.h'
       - 'tests/test_board_contract.cpp'
       - 'tests/board_mock_backend.h'
@@ -84,6 +88,7 @@ jobs:
       - name: Host map archive reader tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
+            '-DMESHINK_STORAGE_BACKEND_HEADER="storage_backend.h"' \
             src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
             -lz -o /tmp/map-archive-test
           /tmp/map-archive-test
@@ -165,6 +170,18 @@ jobs:
           test -s .pio/build/t5-unified-cache64/firmware.bin
           cp .pio/build/t5-unified-cache64/firmware.bin meshink-testing-update.bin
           sha256sum meshink-testing-update.bin > meshink-testing-SHA256.txt
+      - name: Verify testing version is embedded
+        run: |
+          VERSION=$(python - <<'PY'
+          import pathlib, re
+          source = pathlib.Path("platformio.ini").read_text(encoding="utf-8")
+          match = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", source)
+          assert match, "T5_FIRMWARE_VERSION missing"
+          print(match.group(1))
+          PY
+          )
+          echo "Expected embedded firmware version: $VERSION"
+          grep -aFq "$VERSION" meshink-testing-update.bin
       - name: Downloadable testing firmware
         uses: actions/upload-artifact@v4
         with:

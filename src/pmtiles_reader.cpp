@@ -2,7 +2,6 @@
 #include "t5_logging.h"
 
 #include <Arduino.h>
-#include <SD.h>
 #include <esp_heap_caps.h>
 #ifdef ESP32
 #include <esp_timer.h>
@@ -69,7 +68,7 @@ char cached_path[160]{};
 bool prepared = false;
 // A map render keeps one archive file open for its repeated tile lookups.
 bool frame_active = false, io_failed = false;
-File frame_file;
+MeshInkStorageFile frame_file;
 char frame_path[160]{};
 PmtilesPerfStats perf{};
 uint32_t perf_now_us() {
@@ -105,7 +104,7 @@ void clear_leaves() {
 }
 void close_frame_file() {
     if (frame_file) frame_file.close();
-    frame_file = File();
+    frame_file = MeshInkStorageFile();
     frame_path[0] = 0;
 }
 bool within(uint64_t start, uint64_t length, uint64_t total) {
@@ -113,7 +112,7 @@ bool within(uint64_t start, uint64_t length, uint64_t total) {
 }
 // Stage SD reads in bounded, aligned internal RAM rather than passing
 // potentially unaligned PSRAM allocations directly to the SD driver.
-bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
+bool read_at(MeshInkStorageFile& file, uint64_t start, uint8_t* dst, size_t n) {
     if (!dst || start > UINT32_MAX) return false;
     const uint32_t seek_started=perf_now_us();
     const bool seek_ok=file.seek((uint32_t)start);
@@ -237,7 +236,7 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     }
     return true;
 }
-bool parse_directory(File& file, uint64_t start, uint64_t size,
+bool parse_directory(MeshInkStorageFile& file, uint64_t start, uint64_t size,
                      Directory& output) {
     clear_directory(output);
     if (!size || size > MAX_DIRECTORY_BYTES ||
@@ -314,7 +313,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
     perf.index_parse_us+=(uint32_t)(perf_now_us()-parse_started);
     return true;
 }
-bool prepare(File& file, const char* path) {
+bool prepare(MeshInkStorageFile& file, const char* path) {
     if (strlen(path) >= sizeof(cached_path)) return false;
     if (strcmp(path, cached_path) == 0 && prepared) return archive.supported;
     clear_directory(root);
@@ -401,7 +400,7 @@ bool pmtiles_warm_archive(const char* path) {
     if(!frame_file||strcmp(frame_path,path)) {
         close_frame_file();
         const uint32_t open_started=perf_now_us();
-        frame_file=SD.open(path,FILE_READ);
+        frame_file=meshink_storage_open(path);
         perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
         if(!frame_file){io_failed=true;return false;}
         strncpy(frame_path,path,sizeof(frame_path)-1);
@@ -424,7 +423,7 @@ bool pmtiles_warm_archive(const char* path) {
     return ok;
 }
 
-File* pmtiles_frame_file(const char* path) {
+MeshInkStorageFile* pmtiles_frame_file(const char* path) {
     // Only lend the handle for the same archive that was just indexed.
     // Never reopen, reassign or close it while PNGdec is using it.
     return frame_active && frame_file && path &&
@@ -452,13 +451,13 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
     if (!path || zoom < 0 || zoom > 24 ||
         x < 0 || y < 0 || (uint32_t)x >= (1U << zoom) ||
         (uint32_t)y >= (1U << zoom)) return false;
-    File local_file;
-    File* file = nullptr;
+    MeshInkStorageFile local_file;
+    MeshInkStorageFile* file = nullptr;
     if (frame_active) {
         if (!frame_file || strcmp(frame_path, path)) {
             close_frame_file();
             const uint32_t open_started=perf_now_us();
-            frame_file = SD.open(path, FILE_READ);
+            frame_file = meshink_storage_open(path);
             perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
             if (!frame_file) { io_failed = true; return false; }
             strncpy(frame_path, path, sizeof(frame_path) - 1);
@@ -466,7 +465,7 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
         }
         file = &frame_file;
     } else {
-        local_file = SD.open(path, FILE_READ);
+        local_file = meshink_storage_open(path);
         if (!local_file) { io_failed = true; return false; }
         file = &local_file;
     }

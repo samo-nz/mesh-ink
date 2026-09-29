@@ -170,6 +170,10 @@ The board package owns:
 
 Map archive and PNG logic should remain independent of the board.
 
+MeshInk now applies this boundary through `hardware/storage.h`. The T5 backend
+owns SD chip-select, shared-SPI selection and the field-tested read clock; Maps
+and the PMTiles reader consume only the generic read-only storage/file service.
+
 ### Location
 
 Location is optional.

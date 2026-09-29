@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include "t5_logging.h"
-#include <SD.h>
 #include <PNGdec.h>
 #include "hardware/display.h"
+#include "hardware/storage.h"
 #include <esp_heap_caps.h>
 #include <math.h>
 #include <string.h>
@@ -10,7 +10,6 @@
 #include "map_tiles.h"
 #include "map_gray.h"
 #include "pmtiles_reader.h"
-#include "board/target.h"
 
 namespace {
 constexpr int TILE_SIZE=256;
@@ -39,8 +38,8 @@ alignas(16) PNG png;
 #if T5_CACHE64_EXPERIMENT
 extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
 #endif
-File file;                 // owns loose PNG file handles
-File* png_file=nullptr;    // borrows the already open PMTiles archive file
+MeshInkStorageFile file;                 // owns loose PNG file handles
+MeshInkStorageFile* png_file=nullptr;    // borrows the already open PMTiles archive file
 uint8_t* target=nullptr;
 MeshInkRect render_clip{0,0,0,0};
 uint8_t* decode_bits=nullptr;
@@ -59,8 +58,8 @@ bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
-// Field-tested read-only SD clock for loose PNG and PMTiles map access.
-constexpr uint32_t MAP_SD_SPI_HZ=25000000;
+// Physical card wiring, SPI ownership and the field-tested bus clock are
+// selected by the storage backend rather than by Maps.
 // Per-render PMTiles/PNG timing. PNG decode includes its nested range I/O;
 // range seek/read counters are logged separately so CPU decode can be inferred.
 uint32_t perf_pmt_lookup_us=0,perf_pmt_range_seek_us=0,perf_pmt_range_read_us=0;
@@ -107,7 +106,7 @@ bool ensure_pmt_png_buffer(size_t n) {
     pmt_png_capacity=wanted;
     return true;
 }
-bool preload_pmt_png(File* archive,uint32_t offset,uint32_t length) {
+bool preload_pmt_png(MeshInkStorageFile* archive,uint32_t offset,uint32_t length) {
     if(!archive||!length||!ensure_pmt_png_buffer(length))return false;
     const uint32_t seek_started=map_perf_now_us();
     const bool seek_ok=archive->position()==offset||archive->seek(offset);
@@ -146,7 +145,7 @@ void mark_sd_unavailable() {
     if(file)file.close();
     png_file=nullptr;
     reset_sd_caches(); // close all archive handles before unmounting
-    if(sd_mounted)SD.end();
+    if(sd_mounted)meshink_storage_end();
     sd_mounted=false;
     map_io_failed=false;
     sd_retry_after=millis()+SD_RETRY_MS;
@@ -156,9 +155,7 @@ void mark_sd_unavailable() {
 bool media_ready(bool probe=true) {
     if(!sd_mounted) {
         if((int32_t)(millis()-sd_retry_after)<0)return false;
-        pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
-        SD.end();
-        if(!SD.begin(T5_PIN_SD_CS,t5_shared_spi(),MAP_SD_SPI_HZ)) {
+        if(!meshink_storage_begin()) {
             sd_retry_after=millis()+SD_RETRY_MS;
             return false;
         }
@@ -166,7 +163,7 @@ bool media_ready(bool probe=true) {
         reset_sd_caches();
         ++sd_media_epoch;
         T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] SD mounted; SPI clock requested=%lu MHz\n",
-                      (unsigned long)(MAP_SD_SPI_HZ/1000000));
+                      (unsigned long)(meshink_storage_bus_hz()/1000000));
     }
     if(probe) {
         // Do not use SD.readRAW() as a card-presence oracle: an otherwise
@@ -176,19 +173,19 @@ bool media_ready(bool probe=true) {
         // before treating a probe error as physical removal.
         bool readable=false;
         if(archives_discovered&&archive_count) {
-            File witness=SD.open(archive_paths[0],FILE_READ);
+            MeshInkStorageFile witness=meshink_storage_open(archive_paths[0]);
             uint8_t magic[8]{};
             readable=witness&&witness.read(magic,sizeof(magic))==sizeof(magic)
                 &&memcmp(magic,"PMTiles",7)==0&&magic[7]==3;
             if(witness)witness.close();
         } else {
-            File maps=SD.open("/maps");
+            MeshInkStorageFile maps=meshink_storage_open("/maps");
             readable=maps&&maps.isDirectory();
             if(maps)maps.close();
             // No map folder is a valid inserted card state, but the absence
             // of a witness cannot establish removal. Never unmount here.
             if(!readable) {
-                File root=SD.open("/");
+                MeshInkStorageFile root=meshink_storage_open("/");
                 readable=root&&root.isDirectory();
                 if(root)root.close();
             }
@@ -216,7 +213,7 @@ bool media_ready(bool probe=true) {
 // Prefer the usual .pmtiles suffix, but also recognise a v3 PMTiles header so
 // oddly named/truncated files from FAT/SD tooling are still usable.
 bool has_pmtiles_magic(const char* path) {
-    File probe=SD.open(path,FILE_READ);
+    MeshInkStorageFile probe=meshink_storage_open(path);
     if(!probe||probe.isDirectory()){if(probe)probe.close();return false;}
     uint8_t magic[8]{};
     const bool ok=probe.read(magic,sizeof(magic))==sizeof(magic)&&
@@ -250,13 +247,13 @@ bool is_zoom_folder(const char* name) {
 }
 void discover_archives() {
     if(archives_discovered)return;
-    File directory=SD.open("/maps");
+    MeshInkStorageFile directory=meshink_storage_open("/maps");
     if(!directory||!directory.isDirectory()) {
         if(directory)directory.close();
         return;
     }
     archives_discovered=true;
-    File candidate=directory.openNextFile();
+    MeshInkStorageFile candidate=directory.openNextFile();
     while(candidate) {
         const char* entry_name=candidate.name();
         const char* basename=entry_name?strrchr(entry_name,'/'):nullptr;
@@ -276,9 +273,9 @@ void discover_archives() {
             if(written>0&&written<int(sizeof(folder))) {
                 // Keep folder scanning shallow: loose XYZ tile directories
                 // can contain tens of thousands of PNG files.
-                File subdir=SD.open(folder);
+                MeshInkStorageFile subdir=meshink_storage_open(folder);
                 if(subdir&&subdir.isDirectory()) {
-                    File nested=subdir.openNextFile();
+                    MeshInkStorageFile nested=subdir.openNextFile();
                     while(nested&&archive_count<MAX_ARCHIVES) {
                         T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] archive-scan nested=%s dir=%u\n",
                                       nested.name()?nested.name():"(null)",
@@ -316,7 +313,7 @@ void* png_open(const char* name,int32_t* size) {
     png_file=png_range_active ? pmtiles_frame_file(name)
                               : (file ? &file : nullptr);
     if(!png_file) {
-        file=SD.open(name,FILE_READ);
+        file=meshink_storage_open(name);
         if(!file){
             Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
                           name,(unsigned)png_range_active);
@@ -612,7 +609,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(z>=0&&z<25&&!zoom_folder_known[z]) {
         char folder[24];
         snprintf(folder,sizeof(folder),"/maps/%d",z);
-        zoom_folder_present[z]=SD.exists(folder);
+        zoom_folder_present[z]=meshink_storage_exists(folder);
         zoom_folder_known[z]=true;
         ++result.sd_checks;
     }
@@ -621,7 +618,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(z>=0&&z<25&&zoom_folder_present[z]){
         // Opening the file is itself a complete presence check. If present,
         // PNGdec reuses this handle instead of opening the same path again.
-        file=SD.open(path,FILE_READ);
+        file=meshink_storage_open(path);
         loose_present=(bool)file;
         if(loose_present&&file.isDirectory()){
             file.close();
@@ -654,7 +651,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     }
     bool pmt_preloaded=false;
     if(selected_pmtiles&&range.length) {
-        File* archive=pmtiles_frame_file(path);
+        MeshInkStorageFile* archive=pmtiles_frame_file(path);
         if(archive&&ensure_pmt_png_buffer(range.length)) {
             if(!preload_pmt_png(archive,range.offset,range.length))return false;
             pmt_preloaded=true;
