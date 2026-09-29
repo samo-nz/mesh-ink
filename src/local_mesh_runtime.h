@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "ui_data.h"
+#include "hardware/gps_types.h"
 
 #ifndef T5_UI_HAS_GPS
 #define T5_UI_HAS_GPS 1
@@ -25,8 +26,9 @@ uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();
 bool local_mesh_my_location(long& latitude, long& longitude);
 void local_mesh_cycle_gps_interval();
-uint8_t local_mesh_gps_constellation_mode();
-bool local_mesh_gps_set_constellation_mode(uint8_t mode);
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode();
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode);
+const char* local_mesh_gps_tuning_note();
 
 void local_mesh_toggle_gps_advert_location();
 uint32_t local_mesh_current_time();

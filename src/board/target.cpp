@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include "../hardware/display.h"
 #include "../hardware/touch.h"
+#include "../hardware/gps.h"
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
@@ -221,7 +222,7 @@ static uint32_t gps_last_byte_at = 0;
 #ifndef T5_GPS_FULL_NMEA_DIAGNOSTIC
 #define T5_GPS_FULL_NMEA_DIAGNOSTIC 0
 #endif
-static uint8_t gps_constellation_mode=0;
+static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::Unchanged;
 static bool gps_tuning_loaded=false;
 static bool gps_constellation_dirty=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
@@ -231,13 +232,15 @@ static void gps_load_tuning(){
     gps_tuning_loaded=true;
     Preferences pref;
     if(pref.begin("t5-gnss",true)){
-        const uint8_t mode=pref.getUChar("constellation",0);
-        gps_constellation_mode=(mode==1||mode==3||mode==5||mode==7)?mode:0;
+        const auto mode=static_cast<MeshInkGpsConstellationMode>(
+            pref.getUChar("constellation",0));
+        gps_constellation_mode=meshink_gps_constellation_mode_valid(mode)
+            ? mode : MeshInkGpsConstellationMode::Unchanged;
         pref.end();
     }
     // Ignore the pre-1.5.0 "compact" preference: full output is now a
     // developer-only diagnostic build option, not an on-device toggle.
-    gps_constellation_dirty=gps_constellation_mode!=0;
+    gps_constellation_dirty=gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged;
     gps_nmea_dirty=true;
 }
 static void gps_send_pcas(const char* payload) {
@@ -251,9 +254,10 @@ static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
     if(gps_constellation_dirty){
         gps_constellation_dirty=false;
-        if(gps_constellation_mode){
+        if(gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged){
             char payload[16];
-            snprintf(payload,sizeof(payload),"PCAS04,%u",(unsigned)gps_constellation_mode);
+            snprintf(payload,sizeof(payload),"PCAS04,%u",
+                     (unsigned)static_cast<uint8_t>(gps_constellation_mode));
             gps_send_pcas(payload);
         }
         // "UNCHANGED" does not restore factory configuration; it sends nothing.
@@ -267,19 +271,28 @@ static void gps_apply_tuning(){
 #endif
     }
 }
-uint8_t t5_gps_constellation_mode(){gps_load_tuning();return gps_constellation_mode;}
-bool t5_gps_set_constellation_mode(uint8_t mode){
-    if(mode!=0&&mode!=1&&mode!=3&&mode!=5&&mode!=7)return false;
+const char* meshink_gps_backend_name(){return "T5 GNSS";}
+const char* meshink_gps_tuning_note(){
+    return "COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.";
+}
+MeshInkGpsConstellationMode meshink_gps_constellation_mode(){
+    gps_load_tuning();
+    return gps_constellation_mode;
+}
+bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
+    if(!meshink_gps_constellation_mode_valid(mode))return false;
     gps_load_tuning();
     if(gps_constellation_mode==mode)return true;
+    const uint8_t stored=static_cast<uint8_t>(mode);
     Preferences pref;
     if(!pref.begin("t5-gnss",false))return false;
-    const bool saved=pref.putUChar("constellation",mode)==1;
+    const bool saved=pref.putUChar("constellation",stored)==1;
     pref.end();
     if(!saved)return false;
     gps_constellation_mode=mode;
-    gps_constellation_dirty=mode!=0;
-    if(mode==0)T5_GPS_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
+    gps_constellation_dirty=mode!=MeshInkGpsConstellationMode::Unchanged;
+    if(mode==MeshInkGpsConstellationMode::Unchanged)
+        T5_GPS_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
     else gps_apply_tuning();
     return true;
 }
@@ -500,10 +513,18 @@ public:
 static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
 
+void meshink_gps_shutdown(){
+#if ENV_INCLUDE_GPS == 1
+    if(auto* location=sensors.getLocationProvider())location->stop();
+    Serial1.end();
+#endif
+}
+
+
 // Run independently of T5GPS::loop(): MeshCore stops calling the provider
 // when GPS is OFF. Consume UART bytes ONLY while the provider is inactive,
 // so we can distinguish a quiet receiver from a stopped parser.
-void t5_gps_power_probe_tick(){
+void meshink_gps_background_tick(){
     if(gps.isActive()||!gps_sleep_requested_at)return;
     // Do not disable the OFF-state UART draining with diagnostics: otherwise
     // the powered receiver fills the RX buffer before GPS is re-enabled.

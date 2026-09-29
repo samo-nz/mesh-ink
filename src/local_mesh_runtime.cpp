@@ -7,6 +7,7 @@
 #include "companion_runtime.h"
 #include "ui_onboarding.h"
 #include "board/target.h"
+#include "hardware/gps.h"
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
@@ -58,9 +59,7 @@ static bool clear_saved_password(const uint8_t* key){
 
 // gps_interval in upstream MeshCore controls how often coordinates are copied,
 // not receiver power. Timed modes here pause the SOFTWARE GPS provider after
-// a fix; the L76K stays powered because LoRa shares its supply. No physical
-// GNSS standby is implemented or claimed. Opt-in PCAS03/04 receiver tuning
-// is independent of this historical software-only duty cycle.
+// a fix; board-specific receiver power and tuning remain behind hardware/gps.h.
 static bool gps_duty_sleeping=false;
 static uint32_t gps_duty_next_wake=0;
 static uint32_t gps_duty_awake_since=0;
@@ -672,7 +671,7 @@ void local_mesh_loop(){
 #endif
     sensors.loop();
 #if ENV_INCLUDE_GPS == 1
-    t5_gps_power_probe_tick(); // executes even when MeshCore has stopped the GPS provider
+    meshink_gps_background_tick(); // executes even when MeshCore has stopped the GPS provider
 #endif
     rtc_clock.tick();
     if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
@@ -709,16 +708,18 @@ void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_
 bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}
 bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
 uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval;}
-uint8_t local_mesh_gps_constellation_mode(){return t5_gps_constellation_mode();}
-bool local_mesh_gps_set_constellation_mode(uint8_t mode){return t5_gps_set_constellation_mode(mode);}
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_gps_constellation_mode();}
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){return meshink_gps_set_constellation_mode(mode);}
+const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=t5_mesh().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
 #else
 void local_mesh_apply_gps(bool){}
 bool local_mesh_gps_enabled(){return false;}
 bool local_mesh_gps_fix(){return false;}
 uint32_t local_mesh_gps_interval(){return 0;}
-uint8_t local_mesh_gps_constellation_mode(){return 0;}
-bool local_mesh_gps_set_constellation_mode(uint8_t){return false;}
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return MeshInkGpsConstellationMode::Unchanged;}
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode){return false;}
+const char* local_mesh_gps_tuning_note(){return "";}
 void local_mesh_cycle_gps_interval(){}
 #endif
 bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
@@ -744,8 +745,7 @@ void local_mesh_prepare_shutdown(){
     T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] stopping MeshCore peripherals");
     radio_driver.powerOff();
 #if ENV_INCLUDE_GPS == 1
-    if(auto* location=sensors.getLocationProvider())location->stop();
-    Serial1.end();
+    meshink_gps_shutdown();
 #endif
     Serial.println("[T5-SHUTDOWN] SX1262 sleep requested");
 }

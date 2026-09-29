@@ -1604,10 +1604,10 @@ static void draw_gps_settings() {
 
 static const char* gps_constellation_label(){
     switch(local_mesh_gps_constellation_mode()){
-        case 1:return "GPS ONLY (TEST LOWER POWER)";
-        case 3:return "GPS + BEIDOU";
-        case 5:return "GPS + GLONASS";
-        case 7:return "GPS + BEIDOU + GLONASS";
+        case MeshInkGpsConstellationMode::GpsOnly:return "GPS ONLY (TEST LOWER POWER)";
+        case MeshInkGpsConstellationMode::GpsBeiDou:return "GPS + BEIDOU";
+        case MeshInkGpsConstellationMode::GpsGlonass:return "GPS + GLONASS";
+        case MeshInkGpsConstellationMode::GpsBeiDouGlonass:return "GPS + BEIDOU + GLONASS";
         default:return "UNCHANGED (CURRENT MODE)";
     }
 }
@@ -1621,7 +1621,7 @@ static void draw_gps_tuning(){
     text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(296),2,0,true);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
     draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",layout.section_margin,ui_y(515),45,2,0,true,5);
-    draw_wrapped("COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.",layout.section_margin,ui_y(700),45,2,0,true,4);
+    draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),45,2,0,true,4);
 }
 
 static void draw_timezone(){
@@ -2812,8 +2812,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::GpsTuning:
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             if(hit_outer_row(x,y,120)){
-                const uint8_t mode=local_mesh_gps_constellation_mode();
-                const uint8_t next=mode==0?1:mode==1?5:mode==5?3:mode==3?7:1;
+                const auto mode=local_mesh_gps_constellation_mode();
+                const auto next=meshink_gps_next_constellation_mode(mode);
                 show_toast(local_mesh_gps_set_constellation_mode(next)?"MODE SAVED":"SAVE FAILED");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }

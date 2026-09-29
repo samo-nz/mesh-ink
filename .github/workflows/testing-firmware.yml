@@ -86,6 +86,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_touch_contract.cpp -o /tmp/meshink-touch-contract-test
           /tmp/meshink-touch-contract-test
+      - name: Board-independent GPS backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_gps_contract.cpp -o /tmp/meshink-gps-contract-test
+          /tmp/meshink-gps-contract-test
       - name: T5 GT911 backend state regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \

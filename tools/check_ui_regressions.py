@@ -123,7 +123,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.13"' in platformio_source, "test12 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.14"' in platformio_source, "test14 version is explicit in PlatformIO configuration"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
 # Test10 hardware proved that reinitializing EPDiy in the same companion boot
@@ -441,6 +441,24 @@ assert "EPD_ROT_" not in source, "UI must use board-independent rotation vocabul
 assert "meshink_display_invalidate_previous(&display);" in source, "backend owns previous-frame invalidation"
 assert "meshink_display_fill_framebuffer(&display,0x00);" in source, "backend owns physical framebuffer fill"
 assert "MESHINK_DISPLAY_BACKEND_HEADER" in (root / "src" / "hardware" / "display.h").read_text(encoding="utf-8"), "display backend is compile-time selectable"
+
+# Hardware-portability GPS boundary.
+gps_header_source = (root / "src" / "hardware" / "gps.h").read_text(encoding="utf-8")
+gps_types_source = (root / "src" / "hardware" / "gps_types.h").read_text(encoding="utf-8")
+t5_gps_backend_source = (root / "src" / "board" / "t5_gps_backend.h").read_text(encoding="utf-8")
+assert "MESHINK_GPS_BACKEND_HEADER" in gps_header_source, "GPS backend is compile-time selectable"
+assert "MeshInkGpsConstellationMode" in gps_types_source, "GPS tuning vocabulary is board independent"
+assert '#include "hardware/gps.h"' in runtime_source, "local runtime must use generic GPS surface"
+assert '#include "hardware/gps.h"' in companion_source, "companion runtime must use generic GPS surface"
+assert "meshink_gps_background_tick();" in runtime_source, "GPS background servicing routes through generic backend"
+assert "meshink_gps_shutdown();" in runtime_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through generic backend"
+assert "Serial1" not in runtime_source and "Serial1" not in companion_source and "Serial1" not in source, "application code must not own the GPS UART"
+assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
+assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
+assert "PCAS03" not in runtime_source and "PCAS04" not in runtime_source and "PCAS03" not in source and "PCAS04" not in source, "receiver command syntax must stay in the board GPS implementation"
+assert "meshink_gps_next_constellation_mode(mode)" in source, "UI uses board-independent GPS constellation cycle"
+assert "local_mesh_gps_tuning_note()" in source, "GPS board-specific explanatory text comes from backend"
+assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.

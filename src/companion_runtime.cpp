@@ -12,6 +12,7 @@
 #include "local_mesh_runtime.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
+#include "hardware/gps.h"
 
 // Device-owned composition root for the unmodified upstream MeshCore companion
 // classes. This is deliberately small so upstream updates remain easy to diff.
@@ -161,8 +162,7 @@ void companion_prepare_exit() {
     store.saveChannels(&the_mesh);
 
 #if ENV_INCLUDE_GPS == 1
-    if(sensors.getLocationProvider()!=nullptr)
-        sensors.getLocationProvider()->stop();
+    meshink_gps_shutdown();
 #endif
 
     Serial.println("[T5-BOOT] companion shutdown: powering radio down");
