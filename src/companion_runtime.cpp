@@ -5,6 +5,7 @@
 #include <esp32-hal-cpu.h>
 #include <helpers/MultiSerialInterface.h>
 #include <helpers/esp32/SerialBLEInterface.h>
+#include <BLEAdvertising.h>
 #include "../lib/MeshCore/examples/companion_radio/DataStore.cpp"
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.cpp"
 #include "companion_runtime.h"
@@ -53,6 +54,26 @@ static void companion_set_low_power_cpu() {
                   accepted&&actual==COMPANION_CPU_MHZ?"OK":"ERROR");
 }
 
+static void companion_configure_ble_scan_response(const char* prefix,const char* node_name) {
+    // Legacy BLE advertising/scan-response payloads are capped at 31 bytes.
+    // MeshCore's default ESP32 helper duplicates the 128-bit UART service UUID
+    // into the scan response along with name/TX power, which overflows that
+    // budget and makes Bluedroid print "Partial data write into ADV". Keep the
+    // service UUID in the primary advertisement; use the scan response only
+    // for the discoverable device name.
+    char scan_name[30]{};
+    const int full_len=snprintf(scan_name,sizeof(scan_name),"%s%s",
+                                prefix?prefix:"",node_name?node_name:"");
+    BLEAdvertisementData scan_response;
+    const bool truncated=full_len<0||full_len>=(int)sizeof(scan_name);
+    if(truncated)scan_response.setShortName(scan_name);
+    else scan_response.setName(scan_name);
+    BLEDevice::getAdvertising()->setScanResponseData(scan_response);
+    Serial.printf("[T5-BLE] scan response name='%s' kind=%s payload=%u/31 bytes\n",
+                  scan_name,truncated?"short":"complete",
+                  (unsigned)scan_response.getPayload().size());
+}
+
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
@@ -70,6 +91,7 @@ void companion_setup() {
     the_mesh.begin(false);
     bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                               the_mesh.getBLEPin());
+    companion_configure_ble_scan_response(BLE_NAME_PREFIX,the_mesh.getNodePrefs()->node_name);
     interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
     the_mesh.startInterface(interface_manager);
     sensors.begin();
