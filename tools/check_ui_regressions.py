@@ -125,6 +125,26 @@ assert "char scan_name[30]" in companion_source, "BLE advertised name is capped 
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
 assert '"1.9.1-test.10"' in platformio_source, "test10 version is explicit in PlatformIO configuration"
 
+# Companion exit must quiesce the active MeshCore runtime before ESP.restart().
+assert "void companion_prepare_exit()" in companion_source, "companion exposes orderly shutdown path"
+shutdown_body = companion_source.split("void companion_prepare_exit() {",1)[1].split("void local_mesh_setup()",1)[0]
+for shutdown_step in (
+    "interface_manager.disable();",
+    "the_mesh.savePrefs();",
+    "store.saveContacts(&the_mesh,companion_persist_contact);",
+    "store.saveChannels(&the_mesh);",
+    "sensors.getLocationProvider()->stop();",
+    "radio_driver.powerOff();",
+    "SPIFFS.end();",
+    "Serial.flush();",
+):
+    assert shutdown_step in shutdown_body, f"companion shutdown missing {shutdown_step}"
+assert shutdown_body.index("interface_manager.disable();") < shutdown_body.index("radio_driver.powerOff();"), "stop MeshCore/BLE interface before radio power-off"
+assert shutdown_body.index("store.saveChannels(&the_mesh);") < shutdown_body.index("SPIFFS.end();"), "persist MeshCore state before filesystem shutdown"
+assert "companion_prepare_exit();" in unified_source, "BOOT exit calls orderly companion shutdown"
+exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
+assert exit_body.index("companion_prepare_exit();") < exit_body.index("ESP.restart();"), "companion shutdown precedes reboot"
+
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
 contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
