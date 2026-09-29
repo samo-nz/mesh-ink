@@ -784,7 +784,11 @@ static void draw_landscape_keyboard(){
 static bool keyboard_character_at(int x,int y,bool landscape,char& character){
     const auto metrics=keyboard_metrics(landscape);
     if(meshink_keyboard::in_row(y,metrics.number_top,metrics)){
-        const int i=meshink_keyboard::key_index(meshink_keyboard::numbers(metrics),x);
+        // No controls flank the number row. Give 1/0 ownership of the blank
+        // outer margins too, matching the physical edge tolerance already
+        // used by the alphabetic home row.
+        const int i=meshink_keyboard::key_index_edge_extended(
+            meshink_keyboard::numbers(metrics),x,metrics.width);
         if(i<0)return false;
         character="1234567890"[i];
         return true;
@@ -795,9 +799,11 @@ static bool keyboard_character_at(int x,int y,bool landscape,char& character){
         if(!meshink_keyboard::in_row(y,top,metrics))continue;
         const auto layout=meshink_keyboard::letters(
             metrics,r,(int)strlen(rows[r]));
-        // A/L are the only alphabetic home-row keys bordering unused screen
-        // margin. Make that blank area useful without changing what is drawn.
-        const int i=(r==1&&!keyboard_symbols)
+        // The top and home rows have no side controls, so their first/last
+        // characters own the unused screen-edge margins. Keep the third row
+        // strict because MODE and DEL deliberately own its outer regions.
+        const bool owns_screen_edges=r<2;
+        const int i=owns_screen_edges
             ? meshink_keyboard::key_index_edge_extended(
                 layout,x,metrics.width)
             : meshink_keyboard::key_index(layout,x);
