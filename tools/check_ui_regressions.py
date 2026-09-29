@@ -123,7 +123,18 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.14"' in platformio_source, "test14 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.15"' in platformio_source, "test15 version is explicit in PlatformIO configuration"
+
+# Test15 status-bar refresh policy: active UI paints status changes immediately
+# as a small DU area update, while standby clock/battery painting is capped at
+# five minutes unless another status event causes an earlier bar refresh.
+contains("static bool status_bar_dirty = false;", "status-only invalidation is separate from content redraws")
+contains("if(changed&&!standby_active)status_bar_dirty=true;", "foreground status changes queue an immediate bar update")
+contains("if(standby_active&&millis()-status_bar_refreshed_at>=300000UL)", "standby status-bar cadence is five minutes")
+contains("refresh_area(MeshInkRefreshMode::Direct,", "status bar uses area refresh")
+contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);", "status area is limited to the bar")
+contains("const bool satellites_refresh=satellites_changed;", "foreground satellite count follows every visible change")
+assert "standby_quantized" not in source, "standby must keep exact clock and battery values"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
 # Test10 hardware proved that reinitializing EPDiy in the same companion boot
