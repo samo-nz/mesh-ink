@@ -139,7 +139,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.21"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.22"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -204,6 +204,10 @@ assert "companion_prepare_exit();" in unified_source, "primary-button exit calls
 exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
 assert exit_body.index("companion_prepare_exit();") < exit_body.index("ESP.restart();"), "companion shutdown precedes reboot"
 assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted primary-button hold gets immediate full-brightness acknowledgement"
+exit_feedback_body = board_target_source.split("void t5_companion_exit_feedback_begin() {",1)[1].split("void t5_companion_release_radio_resources()",1)[0]
+assert "meshink_power_frontlight_begin();" in exit_feedback_body, "companion exit reasserts frontlight hardware before acknowledgement"
+assert "meshink_power_frontlight_set(100);" in exit_feedback_body, "companion exit drives full-brightness acknowledgement"
+assert "[T5-LIGHT] companion exit acknowledgement brightness=100%" in exit_feedback_body, "companion exit frontlight acknowledgement is observable in field logs"
 assert "t5_companion_show_returning_notice" not in companion_source and "t5_companion_show_returning_notice" not in board_target_source, "companion exit must not reinitialize EPDiy before reboot"
 assert 'RETURNING TO LOCAL UI' not in board_target_source, "unsafe retained reboot screen remains removed"
 release_body = board_target_source.split("void t5_companion_release_radio_resources()",1)[1].split("void T5Board::begin()",1)[0]
