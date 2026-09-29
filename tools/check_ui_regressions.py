@@ -145,9 +145,12 @@ assert "companion_prepare_exit();" in unified_source, "BOOT exit calls orderly c
 exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
 assert exit_body.index("companion_prepare_exit();") < exit_body.index("ESP.restart();"), "companion shutdown precedes reboot"
 assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted BOOT hold gets immediate visual acknowledgement"
-assert "t5_shared_spi().end();" in shutdown_body, "radio SPI releases shared display pins before exit notice"
 assert "t5_companion_show_returning_notice();" in shutdown_body, "companion leaves retained reboot feedback on e-paper"
-assert shutdown_body.index("radio_driver.powerOff();") < shutdown_body.index("t5_shared_spi().end();") < shutdown_body.index("t5_companion_show_returning_notice();"), "radio stops and shared SPI releases before display reinitializes"
+return_notice_body = board_target_source.split("void t5_companion_show_returning_notice()",1)[1].split("void T5Board::begin()",1)[0]
+for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end();","gpio_uninstall_isr_service();"):
+    assert handoff_step in return_notice_body, f"companion exit display handoff missing {handoff_step}"
+assert return_notice_body.index("radio_hal.detachInterrupt(P_LORA_DIO_1);") < return_notice_body.index("meshink_display_init();"), "radio IRQ releases before exit display init"
+assert return_notice_body.index("radio_spi.end();") < return_notice_body.index("meshink_display_init();"), "radio SPI releases shared display pins before exit display init"
 assert 'notice_centred("RETURNING TO LOCAL UI"' in board_target_source, "companion exit screen identifies local UI return"
 assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
 
