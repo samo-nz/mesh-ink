@@ -135,24 +135,23 @@ void companion_prepare_exit() {
 
     // Upstream SerialBLEInterface::disable() always calls disconnect(last_conn_id).
     // If the phone has already disconnected, that stale ID makes Bluedroid emit
-    // "Unknown connection ID". Stop advertising directly in that case, remove
-    // the BLE transport from MeshCore's interface manager, then mark the manager
-    // disabled without issuing a redundant disconnect.
+    // "Unknown connection ID". Detach the transport from MeshCore instead of
+    // issuing a redundant disconnect. BLEDevice::deinit() below then shuts the
+    // controller/host stack down cleanly in both cases.
     if(ble_connected){
         interface_manager.disable();
+
+        // Give the requested disconnect/GAP callback a short bounded window
+        // to settle before shutting the Bluetooth stack down.
+        const uint32_t settle_started=millis();
+        while(millis()-settle_started<100){
+            sensors.loop();
+            rtc_clock.tick();
+            delay(1);
+        }
     }else{
-        BLEDevice::stopAdvertising();
         interface_manager.removeInterface(&bluetooth_interface);
         interface_manager.disable();
-    }
-
-    // Give any disconnect/GAP work already queued by Bluedroid/MeshCore a
-    // short bounded window to settle before shutting the Bluetooth stack down.
-    const uint32_t settle_started=millis();
-    while(millis()-settle_started<100){
-        sensors.loop();
-        rtc_clock.tick();
-        delay(1);
     }
     BLEDevice::deinit(false);
 
