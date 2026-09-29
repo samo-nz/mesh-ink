@@ -981,6 +981,43 @@ static void show_companion_notice() {
     T5_TRACE("notice: display deinitialized, heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
 }
 
+void t5_companion_exit_feedback_begin() {
+    pinMode(T5_PIN_FRONTLIGHT,OUTPUT);
+    digitalWrite(T5_PIN_FRONTLIGHT,HIGH);
+    T5_TRACE("companion exit: immediate frontlight acknowledgement\n");
+}
+
+void t5_companion_show_returning_notice() {
+    // Radio SPI has been stopped before this function is called, so the
+    // display can safely reclaim its overlapping LCD/SPI pins.
+    T5_TRACE("companion exit: rendering return notice\n");
+    meshink_display_init();
+    meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
+    meshink_display_set_pixel_clock_mhz(17);
+    MeshInkDisplayState display=meshink_display_state_init();
+    uint8_t* fb=meshink_display_framebuffer(&display);
+    if(fb){
+        meshink_display_set_all_white(&display);
+        notice_centred("MESHINK",320,7,fb,true);
+        notice_centred("RETURNING TO LOCAL UI",455,3,fb);
+        notice_centred("PLEASE WAIT",535,3,fb);
+        notice_centred(T5_FIRMWARE_VERSION,900,2,fb);
+        meshink_display_poweron();
+        const MeshInkDisplayResult result=meshink_display_update_screen(
+            &display,MeshInkRefreshMode::FastGray16,
+            static_cast<int>(meshink_display_ambient_temperature()));
+        meshink_display_poweroff();
+        T5_TRACE("companion exit: return notice refresh result=%d\n",result);
+    }else{
+        meshink_display_poweroff();
+        Serial.println("[T5-ERROR] companion exit return notice framebuffer unavailable");
+    }
+    meshink_display_release_state(&display);
+    meshink_display_deinit();
+    digitalWrite(T5_PIN_FRONTLIGHT,LOW);
+}
+
+
 void T5Board::begin() {
     // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board
     // calls Wire.begin() on this same bus, so initialize MeshCore only after
