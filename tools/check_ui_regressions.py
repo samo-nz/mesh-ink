@@ -156,8 +156,9 @@ assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted BOOT ho
 assert "t5_companion_show_returning_notice" not in companion_source and "t5_companion_show_returning_notice" not in board_target_source, "companion exit must not reinitialize EPDiy before reboot"
 assert 'RETURNING TO LOCAL UI' not in board_target_source, "unsafe retained reboot screen remains removed"
 release_body = board_target_source.split("void t5_companion_release_radio_resources()",1)[1].split("void T5Board::begin()",1)[0]
-for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end();","gpio_uninstall_isr_service();"):
+for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end();"):
     assert handoff_step in release_body, f"companion radio cleanup missing {handoff_step}"
+assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exit must not tear down the global GPIO ISR service"
 assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
