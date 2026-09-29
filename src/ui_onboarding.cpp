@@ -2158,41 +2158,6 @@ static bool update_status_hardware() {
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
     return changed;
 }
-static uint8_t from_bcd(uint8_t value) { return (value>>4)*10+(value&0x0F); }
-static bool update_charge_state(bool* icon_changed=nullptr) {
-    uint8_t charger=0;
-    if(!i2c_read8(0x6B,0x0B,&charger,1)) {
-        if(icon_changed)*icon_changed=false;
-        return false;
-    }
-    const uint8_t previous=status_charge_state;
-    const uint8_t next=(charger>>3)&0x03;
-    status_charge_state=next;
-    const bool was_charging=previous==1||previous==2;
-    const bool now_charging=next==1||next==2;
-    if(icon_changed)*icon_changed=was_charging!=now_charging;
-    return previous!=next;
-}
-
-static bool update_status_hardware() {
-    const int8_t old_hour=status_hour,old_minute=status_minute;
-    const int16_t old_battery=status_battery;const uint8_t old_charge=status_charge_state;
-    if(mesh_is_ready&&local_mesh_time_valid()){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
-    else{status_hour=-1;status_minute=-1;}
-    uint8_t gauge[2]={};
-    if(i2c_read8(0x55,0x2C,gauge,sizeof(gauge))){
-        const uint16_t soc=(uint16_t)(gauge[0]|((uint16_t)gauge[1]<<8));
-        if(soc<=100)status_battery=(int16_t)soc;
-    }
-    update_charge_state();
-    const bool clock_changed=old_hour!=status_hour||old_minute!=status_minute;
-    const bool battery_changed=old_battery!=status_battery;
-    const bool changed=clock_changed||battery_changed||old_charge!=status_charge_state;
-    if(changed)T5_DEBUGF(T5_LOG_UI,"[T5-UI] status clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
-        status_hour,status_minute,status_battery,status_unread,status_channel_unread,
-        status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
-    return changed;
-}
 static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
     bool map_multi=false,map_pinch_allowed=false;
