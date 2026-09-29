@@ -5,7 +5,7 @@
 #include "hardware/touch.h"
 #include "hardware/power.h"
 #include "hardware/buttons.h"
-#include "board/board_profile.h"
+#include "hardware/board.h"
 #include <esp_heap_caps.h>
 #include <time.h>
 #include <freertos/FreeRTOS.h>
@@ -280,24 +280,23 @@ static const char* map_source_badge(const MapRenderResult& result) {
     if(result.parent_loose)return "E-P";
     return "---";
 }
-// A GPS-capable build prefers the live/retained receiver fix. GPS-less H752
-// builds instead use MeshCore's configured static "My Location" coordinates.
+// GPS-capable boards prefer the live/retained receiver fix. Boards without
+// GPS use MeshCore's configured static "My Location" coordinates.
 static bool map_device_position(long& latitude,long& longitude,bool& current_fix){
-#if T5_UI_HAS_GPS
-    current_fix=status_gps_enabled&&status_gps_fix;
-    if(current_fix &&
-       status_gps_latitude>=-85051100L&&status_gps_latitude<=85051100L &&
-       status_gps_longitude>=-180000000L&&status_gps_longitude<=180000000L){
-        latitude=status_gps_latitude;longitude=status_gps_longitude;return true;
+    if(meshink_board_has_gps()){
+        current_fix=status_gps_enabled&&status_gps_fix;
+        if(current_fix &&
+           status_gps_latitude>=-85051100L&&status_gps_latitude<=85051100L &&
+           status_gps_longitude>=-180000000L&&status_gps_longitude<=180000000L){
+            latitude=status_gps_latitude;longitude=status_gps_longitude;return true;
+        }
+        current_fix=false;
+        if(!map_has_last_gps_position)return false;
+        latitude=map_last_gps_latitude;longitude=map_last_gps_longitude;
+        return true;
     }
     current_fix=false;
-    if(!map_has_last_gps_position)return false;
-    latitude=map_last_gps_latitude;longitude=map_last_gps_longitude;
-    return true;
-#else
-    current_fix=false;
     return local_mesh_my_location(latitude,longitude);
-#endif
 }
 static bool centre_map_on_device(){
     long latitude=0,longitude=0;bool current_fix=false;
@@ -672,7 +671,7 @@ static void audit_ui_geometry() {
     }
     Serial.printf("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d fb=%p bytes=%u ref=%u "
                   "map=%d..%d kbP=%d..%d kbL=%d..%d result=%s\n",
-                  UI_VERSION,T5_BOARD_LABEL,layout.width,layout.height,
+                  UI_VERSION,meshink_board_name(),layout.width,layout.height,
                   meshink_display_physical_width(),meshink_display_physical_height(),
                   (void*)fb,(unsigned)meshink_display_framebuffer_bytes(),reference?1U:0U,
                   layout.map_top,layout.map_bottom,
@@ -870,18 +869,18 @@ static void draw_status_bar() {
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
     meshink_display_draw_rect({0,0,layout.width,status_height},0,fb);
     int left=ui_x(6);
-#if T5_UI_HAS_GPS
-    if(!status_gps_enabled)draw_target_icon(ui_x(6),ui_y(9),true);
-    else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
-    else draw_search_icon(ui_x(6),ui_y(9));
-    left=ui_x(46);
-    if(!standby_active&&status_gps_enabled&&status_gps_fix) {
-        char satellites[4];
-        snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-        text(satellites,ui_x(43),ui_y(13),3,0,true);
-        left=ui_x(43)+(int)strlen(satellites)*18+ui_w(12);
+    if(meshink_board_has_gps()){
+        if(!status_gps_enabled)draw_target_icon(ui_x(6),ui_y(9),true);
+        else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
+        else draw_search_icon(ui_x(6),ui_y(9));
+        left=ui_x(46);
+        if(!standby_active&&status_gps_enabled&&status_gps_fix) {
+            char satellites[4];
+            snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
+            text(satellites,ui_x(43),ui_y(13),3,0,true);
+            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(12);
+        }
     }
-#endif
     if(status_unread){draw_envelope_icon(left,ui_y(9));left+=ui_w(36);char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,ui_y(13),3,0,true);left+=(int)strlen(count)*18+ui_w(12);}
     if(status_channel_unread){text("#",left,ui_y(13),3,0,true);left+=ui_w(22);char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,ui_y(13),3,0,true);}
     char clock_text[8];
@@ -1568,16 +1567,16 @@ static void settings_row(const char* title,const char* subtitle,int reference_y)
 static void draw_settings() {
     draw_app_header("SETTINGS",true);
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
-#if T5_UI_HAS_GPS
-    settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);
-    settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
-    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
-    settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
-#else
-    settings_row("PRIVACY","CONTACTS AND TELEMETRY",238);
-    settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",358);
-    settings_row("ABOUT","FIRMWARE AND DEVICE INFO",478);
-#endif
+    if(meshink_board_has_gps()){
+        settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);
+        settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
+        settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
+        settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
+    }else{
+        settings_row("PRIVACY","CONTACTS AND TELEMETRY",238);
+        settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",358);
+        settings_row("ABOUT","FIRMWARE AND DEVICE INFO",478);
+    }
 }
 
 static void draw_radio_settings() {
@@ -2004,7 +2003,7 @@ static void fast_full_redraw(const char* reason,bool wake_light=false) {
         force_redraw(MeshInkRefreshMode::Direct,reason,wake_light);
         return;
     }
-    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] GC16_FAST unavailable in ED047TC1 waveform; using GL16 reason=%s\n",reason);
+    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] fast-gray fallback uses GL16-compatible refresh reason=%s\n",reason);
     force_redraw(MeshInkRefreshMode::FastGray16,reason,wake_light);
 }
 
@@ -2656,11 +2655,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 long latitude=0,longitude=0;bool current_fix=false;
                 if(map_device_position(latitude,longitude,current_fix)){
                     centre_map_on_device();
-#if T5_UI_HAS_GPS
-                    show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX");
-#else
-                    show_toast("CENTRED ON MY LOCATION");
-#endif
+                    show_toast(meshink_board_has_gps()?
+                        (current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX"):
+                        "CENTRED ON MY LOCATION");
                     open_screen(Screen::Maps);
                     return true;
                 }
@@ -2692,16 +2689,16 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::Settings:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit_outer_row(x,y,118)){open_screen(Screen::RadioSettings);return true;}
-#if T5_UI_HAS_GPS
-            if(hit_outer_row(x,y,238)){open_screen(Screen::GpsSettings);return true;}
-            if(hit_outer_row(x,y,358)){open_screen(Screen::PrivacySettings);return true;}
-            if(hit_outer_row(x,y,478)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit_outer_row(x,y,598)){open_screen(Screen::About);return true;}
-#else
-            if(hit_outer_row(x,y,238)){open_screen(Screen::PrivacySettings);return true;}
-            if(hit_outer_row(x,y,358)){open_screen(Screen::DisplaySettings);return true;}
-            if(hit_outer_row(x,y,478)){open_screen(Screen::About);return true;}
-#endif
+            if(meshink_board_has_gps()){
+                if(hit_outer_row(x,y,238)){open_screen(Screen::GpsSettings);return true;}
+                if(hit_outer_row(x,y,358)){open_screen(Screen::PrivacySettings);return true;}
+                if(hit_outer_row(x,y,478)){open_screen(Screen::DisplaySettings);return true;}
+                if(hit_outer_row(x,y,598)){open_screen(Screen::About);return true;}
+            }else{
+                if(hit_outer_row(x,y,238)){open_screen(Screen::PrivacySettings);return true;}
+                if(hit_outer_row(x,y,358)){open_screen(Screen::DisplaySettings);return true;}
+                if(hit_outer_row(x,y,478)){open_screen(Screen::About);return true;}
+            }
             break;
         case Screen::RadioSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
@@ -3319,33 +3316,30 @@ void ui_loop() {
 
 bool ui_is_standby(){return standby_active;}
 
-void ui_show_radio_failure(bool probable_lite){
+void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
-    if(probable_lite){
+    if(failure==MeshInkRadioFailureClass::MissingHardwareVariant){
         centred("MESHINK CANNOT START",ui_y(120),4,0,true);
-        centred("NO MESHCORE RADIO",ui_y(190),4,0,true);
-        centred("LORA AND GPS NOT FOUND",ui_y(290),3,0,true);
-        centred("THIS MATCHES T5 PRO LITE",ui_y(340),3,0,true);
-        centred("PRO LITE IS NOT SUPPORTED",ui_y(430),3,0,true);
-        centred("IT HAS NO LORA RADIO",ui_y(480),3,0,true);
-        centred("IF THIS IS A PRO WITH LORA",ui_y(585),2,0,true);
-        centred("PLEASE REPORT THIS ERROR",ui_y(620),2,0,true);
+        centred("LORA AND GPS NOT FOUND",ui_y(190),4,0,true);
+        centred("BOARD VARIANT MAY OMIT RADIO",ui_y(290),3,0,true);
+        centred("LORA RADIO IS REQUIRED",ui_y(360),3,0,true);
+        centred("IF YOUR BOARD HAS A RADIO",ui_y(520),2,0,true);
+        centred("PLEASE REPORT THIS ERROR",ui_y(555),2,0,true);
         centred("PRESS RST TO RETRY",ui_y(720),3,0,true);
     }else{
         centred("RADIO STARTUP",ui_y(190),5,0,true);
         centred("FAILED",ui_y(255),6,0,true);
-        centred("SX1262 NOT DETECTED",ui_y(390),4,0,true);
-        centred("IF THIS IS A PRO MODEL",ui_y(475),2,0,true);
+        centred("LORA RADIO NOT DETECTED",ui_y(390),4,0,true);
+        centred("CHECK BOARD RADIO HARDWARE",ui_y(475),2,0,true);
         centred("PLEASE REPORT THIS ERROR",ui_y(510),2,0,true);
         centred("PRESS RST TO RETRY",ui_y(600),3,0,true);
     }
     centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
-    Serial.printf("[T5-ERROR] persistent radio failure screen displayed; probable-lite=%d; UI and touch stopped\n",probable_lite);
+    Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
 }
-
 void ui_status_set_unread(uint16_t count) {
     if(status_unread!=count){status_unread=count;status_bar_dirty=true;}
 }
@@ -3355,12 +3349,10 @@ void ui_status_set_channel_unread(uint16_t count) {
 }
 
 void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp) {
-#if !T5_UI_HAS_GPS
-    // The fake-H752 profile still runs on V2 electrical hardware, so the
-    // physical receiver may be active. Ignore it completely at the UI layer.
-    (void)enabled;(void)has_fix;(void)satellites;(void)latitude;(void)longitude;(void)timestamp;
-    return;
-#endif
+    if(!meshink_board_has_gps()){
+        (void)enabled;(void)has_fix;(void)satellites;(void)latitude;(void)longitude;(void)timestamp;
+        return;
+    }
     const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
     if(state_changed)T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
