@@ -184,6 +184,7 @@ public:
 
     void detachInterrupt(uint32_t interruptNum) override {
         if(interruptNum==RADIOLIB_NC||interruptNum>=GPIO_NUM_MAX)return;
+        if(!callbacks_[interruptNum]&&!arduino_owned_[interruptNum])return;
         if(arduino_owned_[interruptNum]){
             ArduinoHal::detachInterrupt(interruptNum);
             arduino_owned_[interruptNum]=false;
@@ -988,12 +989,11 @@ void t5_companion_exit_feedback_begin() {
 }
 
 void t5_companion_release_radio_resources() {
-    // Companion owns the Arduino GPIO ISR service after EPDiy teardown.
-    // The device is about to reset, but release our radio handler/SPI cleanly
-    // so shutdown does not rely on the reset to unwind live peripherals.
+    // Release the radio's own IRQ handler and shared SPI bus cleanly. The
+    // global Arduino GPIO ISR service can remain until the imminent reset;
+    // unlike test10, no same-boot EPDiy reinitialization needs that service.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     radio_spi.end();
-    gpio_uninstall_isr_service();
     companion_radio_uses_arduino_irq=false;
     T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
 }
