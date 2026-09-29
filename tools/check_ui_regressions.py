@@ -27,6 +27,9 @@ power_selector_source = (root / "src" / "hardware" / "power.h").read_text(encodi
 power_types_source = (root / "src" / "hardware" / "power_types.h").read_text(encoding="utf-8")
 power_backend_header = (root / "src" / "board" / "t5_power_backend.h").read_text(encoding="utf-8")
 power_backend_source = (root / "src" / "board" / "t5_power_backend.cpp").read_text(encoding="utf-8")
+buttons_selector_source = (root / "src" / "hardware" / "buttons.h").read_text(encoding="utf-8")
+buttons_backend_header = (root / "src" / "board" / "t5_buttons_backend.h").read_text(encoding="utf-8")
+buttons_backend_source = (root / "src" / "board" / "t5_buttons_backend.cpp").read_text(encoding="utf-8")
 touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encoding="utf-8")
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
@@ -60,8 +63,8 @@ contains('if(frontlight_brightness>100)frontlight_brightness=30', "brightness fa
 assert 'frontlight_brightness<1||frontlight_brightness>100' not in source, "saved OFF brightness must survive reboot"
 contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);', "standby preserves keyboard under quick settings")
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
-contains('draw_screen();fast_full_redraw("SHORT_BOOT_REFRESH",false);', "BOOT refresh without home navigation")
-assert "SHORT_BOOT_HOME" not in source, "short BOOT still changes navigation"
+contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",false);', "primary-button refresh without home navigation")
+assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
 # Keep the application gesture/event layer independent from the physical touch
 # controller. Maps consumes multi-contact frames; other screens consume the
 # legacy primary-contact semantics supplied by the selected touch backend.
@@ -130,7 +133,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.17"' in platformio_source, "test17 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.18"' in platformio_source, "test18 version is explicit in PlatformIO configuration"
 
 # Test15 status-bar refresh policy: active UI paints status changes immediately
 # as a small DU area update, while standby clock/battery painting is capped at
@@ -505,6 +508,31 @@ assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" in cache64_build_flags, "test9 field buil
 assert "-DT5_LOG_UI=1" in cache64_build_flags, "test9 cache64 build must include targeted UI logs"
 assert 'if(!keyboard_visible&&!keyboard_landscape)' in source and '[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u' in source, "test9 non-keyboard touch logging must remain consumer-side"
 assert "-DT5_LOG_MAP=1" not in cache64_build_flags, "test9 must not enable high-volume map diagnostics in cache64 build"
+
+# Test18 remaining non-storage hardware boundaries.
+assert '#include "hardware/buttons.h"' in source, "UI includes generic button boundary"
+assert '#include "hardware/buttons.h"' in unified_source, "unified companion path includes generic button boundary"
+assert 'MESHINK_BUTTONS_BACKEND_HEADER' in buttons_selector_source, "button selector supports replaceable board backend"
+for button_api in ("meshink_buttons_begin", "meshink_primary_button_pressed", "meshink_primary_button_name"):
+    assert button_api in buttons_backend_header, f"button backend header missing {button_api}"
+assert "T5_PIN_BOOT_BUTTON" in buttons_backend_source, "T5 button pin remains board-backend-owned"
+for leaked_button_detail in ("T5_PIN_BOOT_BUTTON", "BOOT_BUTTON", "digitalRead(", "pinMode(BOOT"):
+    assert leaked_button_detail not in source, f"UI leaked physical button detail: {leaked_button_detail}"
+    assert leaked_button_detail not in unified_source, f"unified runtime leaked physical button detail: {leaked_button_detail}"
+assert "meshink_primary_button_pressed()" in source, "local UI reads generic primary button"
+assert "meshink_primary_button_pressed()" in unified_source, "companion exit reads generic primary button"
+assert "meshink_buttons_begin();" in source and "meshink_buttons_begin();" in unified_source, "button backend initialized in local and unified paths"
+for hardcoded_wake_text in ("PRESS PWR", "HOLD BOOT", "ON USB: HOLD BOOT"):
+    assert hardcoded_wake_text not in source, f"UI hard-coded board wake guidance: {hardcoded_wake_text}"
+assert "meshink_power_wake_info()" in source, "shutdown screens use board-owned wake guidance"
+assert "T5_WAKE_INFO" in power_backend_source and "PRESS PWR BUTTON" in power_backend_source and "HOLD BOOT TO WAKE" in power_backend_source, "T5 backend owns physical wake instructions"
+assert "T5_PIN_FRONTLIGHT" not in board_target_source, "board runtime no longer drives frontlight pin directly"
+assert "meshink_power_frontlight_begin();" in board_target_source and "meshink_power_frontlight_set(100);" in board_target_source, "companion frontlight uses power backend"
+for moved_power_impl in ("BQ27220_ADDR", "BQ25896", "T5_FACTORY_GAUGE_PROFILE", "GaugeDiagnosticSnapshot", "gauge_apply_factory_profile_if_needed"):
+    assert moved_power_impl not in board_target_source, f"target.cpp still owns power implementation: {moved_power_impl}"
+    assert moved_power_impl in power_backend_source, f"T5 power backend missing consolidated implementation: {moved_power_impl}"
+assert "meshink_power_prepare_board();" in board_target_source, "board startup delegates gauge/profile preparation"
+assert "meshink_power_diagnostics_tick();" in board_target_source, "GPS loop delegates power diagnostics"
 
 # Hardware-portability display boundary.
 assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
