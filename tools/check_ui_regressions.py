@@ -123,35 +123,42 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.10"' in platformio_source, "test10 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.11"' in platformio_source, "test11 version is explicit in PlatformIO configuration"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
+# Test10 hardware proved that reinitializing EPDiy in the same companion boot
+# aborts in the board/I2C init path, so test11 deliberately uses only the
+# full-brightness frontlight as immediate exit feedback.
 assert "void companion_prepare_exit()" in companion_source, "companion exposes orderly shutdown path"
 shutdown_body = companion_source.split("void companion_prepare_exit() {",1)[1].split("void local_mesh_setup()",1)[0]
 for shutdown_step in (
     "interface_manager.disable();",
+    "BLEDevice::stopAdvertising();",
+    "BLEDevice::deinit(false);",
     "the_mesh.savePrefs();",
     "store.saveContacts(&the_mesh,companion_persist_contact);",
     "store.saveChannels(&the_mesh);",
     "sensors.getLocationProvider()->stop();",
     "radio_driver.powerOff();",
+    "t5_companion_release_radio_resources();",
     "SPIFFS.end();",
     "Serial.flush();",
 ):
     assert shutdown_step in shutdown_body, f"companion shutdown missing {shutdown_step}"
-assert shutdown_body.index("interface_manager.disable();") < shutdown_body.index("radio_driver.powerOff();"), "stop MeshCore/BLE interface before radio power-off"
+assert "const bool ble_connected=bluetooth_interface.isConnected();" in shutdown_body, "shutdown checks BLE connection before disabling transport"
+assert shutdown_body.index("if(ble_connected)") < shutdown_body.index("interface_manager.disable();"), "connected BLE path disables interface normally"
+assert shutdown_body.index("BLEDevice::stopAdvertising();") < shutdown_body.index("interface_manager.removeInterface(&bluetooth_interface);"), "disconnected BLE path stops advertising before detaching transport"
+assert shutdown_body.index("BLEDevice::deinit(false);") < shutdown_body.index("radio_driver.powerOff();"), "Bluetooth stack stops before radio power-off"
 assert shutdown_body.index("store.saveChannels(&the_mesh);") < shutdown_body.index("SPIFFS.end();"), "persist MeshCore state before filesystem shutdown"
 assert "companion_prepare_exit();" in unified_source, "BOOT exit calls orderly companion shutdown"
 exit_body = unified_source.split("static void companion_exit_button()",1)[1].split("void setup()",1)[0]
 assert exit_body.index("companion_prepare_exit();") < exit_body.index("ESP.restart();"), "companion shutdown precedes reboot"
-assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted BOOT hold gets immediate visual acknowledgement"
-assert "t5_companion_show_returning_notice();" in shutdown_body, "companion leaves retained reboot feedback on e-paper"
-return_notice_body = board_target_source.split("void t5_companion_show_returning_notice()",1)[1].split("void T5Board::begin()",1)[0]
+assert "t5_companion_exit_feedback_begin();" in shutdown_body, "accepted BOOT hold gets immediate full-brightness acknowledgement"
+assert "t5_companion_show_returning_notice" not in companion_source and "t5_companion_show_returning_notice" not in board_target_source, "companion exit must not reinitialize EPDiy before reboot"
+assert 'RETURNING TO LOCAL UI' not in board_target_source, "unsafe retained reboot screen remains removed"
+release_body = board_target_source.split("void t5_companion_release_radio_resources()",1)[1].split("void T5Board::begin()",1)[0]
 for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end();","gpio_uninstall_isr_service();"):
-    assert handoff_step in return_notice_body, f"companion exit display handoff missing {handoff_step}"
-assert return_notice_body.index("radio_hal.detachInterrupt(P_LORA_DIO_1);") < return_notice_body.index("meshink_display_init();"), "radio IRQ releases before exit display init"
-assert return_notice_body.index("radio_spi.end();") < return_notice_body.index("meshink_display_init();"), "radio SPI releases shared display pins before exit display init"
-assert 'notice_centred("RETURNING TO LOCAL UI"' in board_target_source, "companion exit screen identifies local UI return"
+    assert handoff_step in release_body, f"companion radio cleanup missing {handoff_step}"
 assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
