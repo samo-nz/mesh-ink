@@ -6,16 +6,37 @@ enum class MeshInkPowerOffReason : uint8_t {
     LowBattery = 1
 };
 
+enum class MeshInkChargeState : uint8_t {
+    Unknown = 0,
+    Idle,
+    Charging,
+    Full
+};
+
 struct MeshInkPowerStatus {
     bool battery_voltage_valid = false;
     uint16_t battery_mv = 0;
     bool battery_percent_valid = false;
     uint8_t battery_percent = 0;
-    bool charger_valid = false;
-    uint8_t charge_state = 0;  // BQ25896: 0 idle, 1 precharge, 2 fast, 3 done
+    MeshInkChargeState charge_state = MeshInkChargeState::Unknown;
     bool external_power = false;
 };
 
-inline bool meshink_power_is_charging(uint8_t charge_state) {
-    return charge_state == 1 || charge_state == 2;
+struct MeshInkPowerCriticalState {
+    bool critical = false;
+    bool battery_mv_valid = false;
+    uint16_t battery_mv = 0;
+};
+
+inline bool meshink_power_is_charging(MeshInkChargeState state) {
+    return state == MeshInkChargeState::Charging;
+}
+
+inline const char* meshink_power_charge_state_name(MeshInkChargeState state) {
+    switch(state) {
+        case MeshInkChargeState::Idle:return "idle";
+        case MeshInkChargeState::Charging:return "charging";
+        case MeshInkChargeState::Full:return "full";
+        default:return "unknown";
+    }
 }
