@@ -107,6 +107,7 @@ static uint16_t status_channel_unread = 0;
 static bool status_gps_enabled = false;
 static bool status_gps_fix = false;
 static int16_t status_gps_satellites = 0;
+static int16_t status_gps_satellites_bar = 0;
 static long status_gps_latitude = 0;
 static long status_gps_longitude = 0;
 static uint32_t status_gps_timestamp = 0;
@@ -876,7 +877,7 @@ static void draw_status_bar() {
     left=ui_x(46);
     if(!standby_active&&status_gps_enabled&&status_gps_fix) {
         char satellites[4];
-        snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites)));
+        snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
         text(satellites,ui_x(43),ui_y(13),3,0,true);
         left=ui_x(43)+(int)strlen(satellites)*18+ui_w(12);
     }
@@ -1707,7 +1708,7 @@ static void draw_standby(){
     char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);
     text(channel,channel_rect.x+ui_w(76),channel_rect.y+ui_h(78),4,0,true);
     char wake_button[40];
-    snprintf(wake_button,sizeof(wake_button),"HOLD %s 2 SECONDS TO WAKE",meshink_primary_button_name());
+    snprintf(wake_button,sizeof(wake_button),"HOLD %s FOR TWO SECONDS TO WAKE",meshink_primary_button_name());
     centred(wake_button,ui_y(820),2,0,true);
 }
 
@@ -3362,7 +3363,6 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
 #endif
     const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
-    const bool satellites_changed=enabled&&has_fix&&!standby_active&&status_gps_satellites!=satellites;
     if(state_changed)T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
     const long previous_latitude=status_gps_latitude;
     const long previous_longitude=status_gps_longitude;
@@ -3398,11 +3398,23 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         }
     }
     static uint32_t last_detail_refresh=0;
+    static uint32_t last_satellite_bar_refresh=0;
     const uint32_t now=millis();
-    // Satellite count is a status-bar value in the foreground, so let each
-    // visible count change use the small bar update instead of throttling it
-    // into a whole-screen GPS refresh.
-    const bool satellites_refresh=satellites_changed;
+    // Keep live GPS data current, but rate-limit the visible satellite count.
+    // State transitions (off/searching/fix) remain immediate. Satellite count
+    // is hidden in standby, so it never causes a standby-only panel update.
+    bool satellites_refresh=false;
+    if(state_changed){
+        status_gps_satellites_bar=satellites;
+        last_satellite_bar_refresh=now?now:1;
+    }else if(!standby_active&&enabled&&has_fix&&
+             status_gps_satellites_bar!=satellites&&
+             (!last_satellite_bar_refresh||
+              now-last_satellite_bar_refresh>=3000UL)){
+        status_gps_satellites_bar=satellites;
+        last_satellite_bar_refresh=now?now:1;
+        satellites_refresh=true;
+    }
     bool marker_moved=false;
     // Keep the own-position marker reasonably current while travelling,
     // but avoid expensive e-paper updates for every 1 Hz GPS sample.
@@ -3420,9 +3432,12 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         if(marker_moved)last_marker_refresh=now;
     }
     const bool detail_refresh=detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000;
-    if(state_changed||satellites_refresh){
+    if(state_changed){
         status_bar_dirty=true;
         T5_DEBUGLN(T5_LOG_UI,"[T5-UI] status-bar refresh queued reason=gps-state");
+    }else if(satellites_refresh){
+        status_bar_dirty=true;
+        T5_DEBUGLN(T5_LOG_UI,"[T5-UI] status-bar refresh queued reason=gps-satellites-3s");
     }
     // GPS Settings exposes receiver details in the page body, and Maps owns
     // the moving position marker. Those are genuine content changes and keep
