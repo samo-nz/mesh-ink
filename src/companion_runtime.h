@@ -4,6 +4,7 @@
 
 void companion_setup();
 void companion_loop();
+void companion_prepare_exit();
 void local_mesh_setup();
 void local_mesh_loop();
 bool local_mesh_is_running();
