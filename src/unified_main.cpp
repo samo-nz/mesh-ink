@@ -5,6 +5,7 @@
 #include "t5_timing.h"
 #include "map_tiles.h"
 #include "hardware/wireless.h"
+#include "hardware/buttons.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -12,7 +13,6 @@
 
 static bool companion_mode = false;
 static bool cache64_psram_blocked = false;
-static constexpr uint8_t BOOT_BUTTON = 0;
 
 static void report_local_wireless_state(const char* phase,const MeshInkWirelessState& state) {
     const bool ok=meshink_wireless_local_radios_off(state);
@@ -56,7 +56,7 @@ static bool consume_companion_request() {
 
 static void companion_exit_button() {
     static uint32_t pressed_at = 0;
-    const bool pressed = digitalRead(BOOT_BUTTON) == LOW;
+    const bool pressed = meshink_primary_button_pressed();
     if (pressed && pressed_at == 0) pressed_at = millis();
     if (pressed && pressed_at != 0 && millis() - pressed_at >= 2000) {
         Serial.println("[T5-BOOT] companion exit requested; returning to local UI now");
@@ -69,7 +69,7 @@ static void companion_exit_button() {
 
 void setup() {
     Serial.begin(115200);
-    pinMode(BOOT_BUTTON, INPUT_PULLUP);
+    meshink_buttons_begin();
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
                   companion_mode ? "BT companion" : "local UI");
