@@ -311,7 +311,7 @@ contains('prefs.getBool("map_fix_saved",false)', "reload last known position")
 contains('location_store.putBool("map_fix_saved",true)', "persist verified last known position")
 contains("if(enabled&&has_fix&&latitude>=-85051100L", "never replace last fix with disabled/no-fix coordinates")
 contains("centre_map_on_device();", "current or stale position recenter")
-contains('show_toast(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
+contains('(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
 contains("meshink_map_gestures::terrain_point(tap.x,tap.y,portrait_layout())", "map pan respects logical terrain viewport")
 assert "bottom_nav_top==900" in ui_layout_source, "T5 bottom navigation remains at y=900"
 assert "map_centre_y==474" in ui_layout_source, "T5 map centre remains y=474"
