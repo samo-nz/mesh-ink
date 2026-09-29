@@ -446,35 +446,43 @@ standby_entry = source.split("static void enter_standby(const char* reason){", 1
 assert "update_status_hardware();" in standby_entry, "standby entry samples exact clock, battery and charger state"
 assert "status_bar_refreshed_at=millis();" in standby_entry, "standby entry starts the five-minute status cadence"
 
-# Test17 power abstraction: application/UI keeps policy, while the selected
-# board backend owns gauge/charger registers, frontlight PWM and ship mode.
+# Test17 power abstraction: application/UI owns presentation only. Battery
+# topology, chemistry, charger encoding and critical-battery policy are backend-owned.
 assert '#include "hardware/power.h"' in source, "UI includes generic power boundary"
 assert 'MESHINK_POWER_BACKEND_HEADER' in power_selector_source, "power selector supports a replaceable board backend"
 assert "struct MeshInkPowerStatus" in power_types_source, "generic power status vocabulary exists"
+assert "struct MeshInkPowerCriticalState" in power_types_source, "generic critical-battery result exists"
+assert "enum class MeshInkChargeState" in power_types_source, "generic charging state replaces PMIC numeric encoding"
 for leaked_power_detail in (
     "BQ27220", "BQ25896", "BATFET_DIS", "i2c_master_",
-    "ledcWrite(", "ledcSetup(", "T5_PIN_FRONTLIGHT", "esp_deep_sleep_start"
+    "ledcWrite(", "ledcSetup(", "T5_PIN_FRONTLIGHT", "esp_deep_sleep_start",
+    "CRITICAL_BATTERY_MV", "CRITICAL_BATTERY_SAMPLES", "CRITICAL_BATTERY_POLL_MS",
+    "status_charge_state==1", "status_charge_state==2"
 ):
-    assert leaked_power_detail not in source, f"UI leaked power hardware detail: {leaked_power_detail}"
+    assert leaked_power_detail not in source, f"UI leaked power hardware/policy detail: {leaked_power_detail}"
 for backend_detail in (
     "BQ27220_ADDR", "BQ25896_PRIMARY_ADDR", "BATFET_DIS",
+    "T5_CRITICAL_BATTERY_MV", "T5_CRITICAL_POLL_MS", "T5_CRITICAL_SAMPLES",
     "meshink_power_read_battery_mv", "meshink_power_read_battery_percent",
     "meshink_power_read_charge_state", "meshink_power_external_present",
+    "meshink_power_boot_critical", "meshink_power_poll_critical",
     "meshink_power_frontlight_begin", "meshink_power_frontlight_set",
     "meshink_power_enter_ship_mode"
 ):
     assert backend_detail in power_backend_source, f"T5 power backend missing {backend_detail}"
 assert "meshink_power_read_battery_mv(voltage)" in board_source, "MeshCore battery voltage uses shared power backend"
-assert "meshink_power_read_battery_percent(soc)" in board_source, "MeshCore battery diagnostics use shared fuel-gauge SOC backend"
+assert "meshink_power_read_battery_percent(soc)" in board_source, "MeshCore diagnostics use backend-provided battery percentage"
 assert "meshink_power_recover_boot_path();" in source, "UI delegates boot battery-path recovery"
-contains("static constexpr uint16_t CRITICAL_BATTERY_MV=3300;", "critical battery cutoff policy stays at 3.30 V")
-contains("CRITICAL_BATTERY_SAMPLES=3;", "runtime low-battery cutoff policy stays debounced")
-contains("if(boot_battery_is_critical(boot_battery_mv))", "critical battery is checked before splash startup work")
+contains("MeshInkPowerCriticalState boot_power{};", "boot critical check uses generic power result")
+contains("meshink_power_boot_critical(boot_power)", "boot critical decision belongs to backend")
+contains("meshink_power_poll_critical(critical)", "runtime critical decision belongs to backend")
 contains('centred("LOW BATTERY",ui_y(230),6,0,true);', "critical low battery persistent screen follows scaled geometry")
 contains("meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);", "critical battery delegates ship mode to backend")
 contains("meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);", "user power-off delegates ship mode to backend")
 contains("service_critical_battery();", "runtime critical battery monitor remains active")
-contains("if(meshink_power_external_present()){low_samples=0;return;}", "external power cancels runtime cutoff")
+assert "meshink_power_external_present()" not in source, "UI must not derive cutoff from external-power/voltage state"
+assert "meshink_power_read_battery_mv(" not in source, "UI must not derive local battery policy from voltage"
+assert "0x2C" not in source and "0x08" not in source, "UI must not know fuel-gauge SOC/voltage registers"
 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
