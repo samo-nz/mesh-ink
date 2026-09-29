@@ -13,6 +13,7 @@
 #include "ui_onboarding.h"
 #include "t5_logging.h"
 #include "hardware/gps.h"
+#include "hardware/radio.h"
 
 // Device-owned composition root for the unmodified upstream MeshCore companion
 // classes. This is deliberately small so upstream updates remain easy to diff.
@@ -75,18 +76,18 @@ static void companion_configure_ble_scan_response(const char* prefix,const char*
                   (unsigned)scan_response.getPayload().size());
 }
 
-MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+MyMesh the_mesh(meshink_radio_meshcore(), fast_rng, rtc_clock, tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
 void companion_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
     board.begin();
-    if (!radio_init()) {
-        Serial.println("[T5-BOOT] fatal: SX1262 initialization failed");
+    if (!meshink_radio_initialize()) {
+        Serial.printf("[T5-BOOT] fatal: %s initialization failed\n",meshink_radio_name());
         while (true) delay(1000);
     }
-    fast_rng.begin(radio_driver.getRngSeed());
+    fast_rng.begin(meshink_radio_rng_seed());
     SPIFFS.begin(true);
     store.begin();
     the_mesh.begin(false);
@@ -166,7 +167,7 @@ void companion_prepare_exit() {
 #endif
 
     Serial.println("[T5-BOOT] companion shutdown: powering radio down");
-    radio_driver.powerOff();
+    meshink_radio_power_off();
     t5_companion_release_radio_resources();
     SPIFFS.end();
 
@@ -180,16 +181,16 @@ void local_mesh_setup() {
     board.beginLocal();
     bool radio_ready=false;
     for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt){
-        radio_ready=radio_init();
-        if(!radio_ready){Serial.printf("[T5-MESH] SX1262 initialization attempt %u/3 failed; retrying\n",attempt);delay(500);}
+        radio_ready=meshink_radio_initialize();
+        if(!radio_ready){Serial.printf("[T5-MESH] %s initialization attempt %u/3 failed; retrying\n",meshink_radio_name(),attempt);delay(500);}
     }
     if (!radio_ready) {
-        const T5RadioFailureClass failure=t5_classify_radio_failure();
-        Serial.printf("[T5-MESH] ERROR: SX1262 unavailable; failure-class=%u\n",(unsigned)failure);
-        ui_show_radio_failure(failure==T5RadioFailureClass::ProbableLite);
+        const MeshInkRadioFailureClass failure=meshink_radio_classify_failure();
+        Serial.printf("[T5-MESH] ERROR: %s unavailable; failure-class=%u\n",meshink_radio_name(),(unsigned)failure);
+        ui_show_radio_failure(failure);
         return;
     }
-    fast_rng.begin(radio_driver.getRngSeed());
+    fast_rng.begin(meshink_radio_rng_seed());
     // Probe without formatting, so an existing filesystem gets the fast
     // "STARTING UP..." splash. Only show "INITIALISING STORAGE..." if the
     // partition does not mount and the original format-on-failure path is
