@@ -128,7 +128,9 @@ assert "GT911" not in board_target_source, "board runtime must not name the touc
 assert "COMPANION_CPU_MHZ=80" in companion_source, "BT companion steady-state CPU target is 80 MHz"
 assert 'companion_set_low_power_cpu();' in companion_source, "BT companion applies low-power CPU policy"
 companion_setup_body = companion_source.split("void companion_setup() {",1)[1].split("void companion_loop()",1)[0]
-assert companion_setup_body.index("board.onBootComplete();") < companion_setup_body.index("companion_set_low_power_cpu();"), "companion lowers CPU only after hardware/BLE setup"
+assert companion_setup_body.index("meshink_board_boot_complete();") < companion_setup_body.index("companion_set_low_power_cpu();"), "companion lowers CPU only after hardware/BLE setup"
+assert "board.begin();" not in companion_source and "board.beginLocal();" not in companion_source and "board.onBootComplete();" not in companion_source, "generic runtime must use board lifecycle abstraction"
+assert "t5_companion_" not in companion_source, "generic runtime must not call T5-specific companion lifecycle hooks"
 local_setup_body = companion_source.split("void local_mesh_setup() {",1)[1]
 assert "companion_set_low_power_cpu();" not in local_setup_body, "local UI must not inherit companion CPU policy"
 assert "companion_radio_uses_arduino_irq=true;" in board_target_source, "companion selects Arduino-owned radio IRQ service"
