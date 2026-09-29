@@ -5,9 +5,6 @@
 #include "ui_data.h"
 #include "hardware/gps_types.h"
 
-#ifndef T5_UI_HAS_GPS
-#define T5_UI_HAS_GPS 1
-#endif
 
 void local_mesh_setup();
 void local_mesh_runtime_begin();
