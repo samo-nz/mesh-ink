@@ -43,7 +43,7 @@ void t5_gps_power_probe_tick();
 uint8_t t5_gps_constellation_mode(); // 0 = leave receiver configuration unchanged
 bool t5_gps_set_constellation_mode(uint8_t mode);
 void t5_companion_exit_feedback_begin();
-void t5_companion_show_returning_notice();
+void t5_companion_release_radio_resources();
 
 
 bool radio_init();
