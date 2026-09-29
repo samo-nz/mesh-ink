@@ -137,7 +137,7 @@ for shutdown_step in (
     "the_mesh.savePrefs();",
     "store.saveContacts(&the_mesh,companion_persist_contact);",
     "store.saveChannels(&the_mesh);",
-    "sensors.getLocationProvider()->stop();",
+    "meshink_gps_shutdown();",
     "radio_driver.powerOff();",
     "t5_companion_release_radio_resources();",
     "SPIFFS.end();",
