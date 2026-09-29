@@ -6,6 +6,9 @@
 #include "t5_power_backend.h"
 #include "../t5_logging.h"
 
+#define T5_TRACE(...) T5_DEBUGF(T5_LOG_BOARD, "[T5] " __VA_ARGS__)
+#define T5_POWER_TRACE(...) T5_DEBUGF(T5_LOG_POWER, "[T5] " __VA_ARGS__)
+
 namespace {
 
 static constexpr uint8_t BQ27220_ADDR = 0x55;
@@ -399,14 +402,18 @@ static void t5_power_diagnostics_tick_impl() {
 }
 
 
-static const MeshInkPowerWakeInfo T5_WAKE_INFO{
-    "PRESS PWR TO START AGAIN",
-    "ON USB: HOLD BOOT TO WAKE",
-    "PRESS PWR BUTTON",
-    "TO POWER ON",
-    "IF STILL POWERED BY USB",
-    "HOLD BOOT TO WAKE"
-};
+static MeshInkPowerWakeInfo make_t5_wake_info() {
+    MeshInkPowerWakeInfo info;
+    info.confirm_battery="PRESS PWR TO START AGAIN";
+    info.confirm_external="ON USB: HOLD BOOT TO WAKE";
+    info.off_battery_line1="PRESS PWR BUTTON";
+    info.off_battery_line2="TO POWER ON";
+    info.off_external_line1="IF STILL POWERED BY USB";
+    info.off_external_line2="HOLD BOOT TO WAKE";
+    return info;
+}
+
+static const MeshInkPowerWakeInfo T5_WAKE_INFO=make_t5_wake_info();
 
 } // namespace
 
