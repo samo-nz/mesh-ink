@@ -56,14 +56,25 @@ static void check_metrics(const Metrics& metrics) {
         }
     }
 
-    // Alphabetic home-row edge expansion remains isolated from strict rows.
+    // Rows without side controls deliberately own the full screen edges.
+    const auto numbers=meshink_keyboard::numbers(metrics);
+    const auto top=meshink_keyboard::letters(metrics,0,10);
     const auto home=meshink_keyboard::letters(metrics,1,9);
+    assert(key_index_edge_extended(numbers,0,metrics.width)==0);
+    assert(key_index_edge_extended(numbers,metrics.width-1,metrics.width)==9);
+    assert(key_index_edge_extended(top,0,metrics.width)==0);
+    assert(key_index_edge_extended(top,metrics.width-1,metrics.width)==9);
     assert(key_index(home,home.left-1)==-1);
     assert(key_index(home,home.right)==-1);
     assert(key_index_edge_extended(home,0,metrics.width)==0);
     assert(key_index_edge_extended(home,metrics.width-1,metrics.width)==8);
     assert(key_index_edge_extended(home,-1,metrics.width)==-1);
     assert(key_index_edge_extended(home,metrics.width,metrics.width)==-1);
+
+    // The third row stays strict because MODE/DEL own its outer edge regions.
+    const auto bottom=meshink_keyboard::letters(metrics,2,7);
+    assert(key_index(bottom,0)==-1);
+    assert(key_index(bottom,metrics.width-1)==-1);
 
     assert(in_row(metrics.number_top,metrics.number_top,metrics));
     for(int row=0;row<3;++row){
