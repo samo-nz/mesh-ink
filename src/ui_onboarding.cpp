@@ -118,7 +118,7 @@ static bool map_last_gps_saved=false;
 static long map_saved_gps_latitude=0,map_saved_gps_longitude=0;
 static uint32_t map_last_gps_save_ms=0;
 static int16_t status_battery = -1;
-static uint8_t status_charge_state=0;
+static MeshInkChargeState status_charge_state=MeshInkChargeState::Unknown;
 static int8_t status_hour = -1;
 static int8_t status_minute = -1;
 // Content changes still use the existing screen redraw path. Status-only
@@ -856,7 +856,7 @@ static void draw_envelope_icon(int x,int y) {
 static void draw_battery_icon(int x,int y,int level=-1) {
     meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);
     if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;meshink_display_fill_rect({x+2,y+8,fill,14},0,fb);}
-    if(status_charge_state==1||status_charge_state==2){
+    if(meshink_power_is_charging(status_charge_state)){
         meshink_display_fill_rect({x+10,y+6,14,17},0xFF,fb);
         // Wide, bold lightning bolt for the low-resolution status bar.
         for(int d=-2;d<=2;++d){line(x+22+d,y+5,x+12+d,y+16);line(x+12+d,y+16,x+20+d,y+16);line(x+20+d,y+16,x+10+d,y+27);}
@@ -2048,10 +2048,6 @@ static void full_display_clean(const char* reason) {
 
 static void set_touch_power(bool enabled);
 
-static constexpr uint16_t CRITICAL_BATTERY_MV=3300;
-static constexpr uint32_t CRITICAL_BATTERY_POLL_MS=5000;
-static constexpr uint8_t CRITICAL_BATTERY_SAMPLES=3;
-
 static void request_hardware_shutdown() {
     Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
@@ -2071,9 +2067,13 @@ static void request_hardware_shutdown() {
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
 }
 
-static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
-    Serial.printf("[T5-POWER] CRITICAL battery=%umV source=%s; entering ship mode\n",
-                  (unsigned)millivolts,source?source:"unknown");
+static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
+    if(critical.battery_mv_valid)
+        Serial.printf("[T5-POWER] CRITICAL battery=%umV source=%s; entering ship mode\n",
+                      (unsigned)critical.battery_mv,source?source:"unknown");
+    else
+        Serial.printf("[T5-POWER] CRITICAL battery source=%s; entering ship mode\n",
+                      source?source:"unknown");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
     text_refresh_pending=false;message_alert_active=false;
     frontlight_deadline=0;frontlight_drive(false);
@@ -2082,10 +2082,15 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
     centred("LOW BATTERY",ui_y(230),6,0,true);
     centred("POWERED DOWN",ui_y(340),5,0,true);
     centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
-    char voltage[20];
-    snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
-             (unsigned)(millivolts/1000U),(unsigned)((millivolts%1000U)/10U));
-    centred(voltage,ui_y(650),2,0,true);
+    if(critical.battery_mv_valid) {
+        char voltage[20];
+        snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
+                 (unsigned)(critical.battery_mv/1000U),
+                 (unsigned)((critical.battery_mv%1000U)/10U));
+        centred(voltage,ui_y(650),2,0,true);
+    } else {
+        centred("BATTERY CRITICAL",ui_y(650),2,0,true);
+    }
     centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
 
@@ -2098,42 +2103,19 @@ static void critical_battery_shutdown(uint16_t millivolts,const char* source) {
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
 
-static bool boot_battery_is_critical(uint16_t& millivolts) {
-    if(meshink_power_external_present())return false;
-    uint16_t first=0,second=0;
-    if(!meshink_power_read_battery_mv(first)||first>=CRITICAL_BATTERY_MV)return false;
-    delay(80);
-    if(meshink_power_external_present())return false;
-    if(!meshink_power_read_battery_mv(second)||second>=CRITICAL_BATTERY_MV)return false;
-    millivolts=(uint16_t)(((uint32_t)first+second)/2U);
-    return true;
-}
-
 static void service_critical_battery() {
-    static uint32_t sampled_at=0;
-    static uint8_t low_samples=0;
-    const uint32_t now=millis();
-    if(sampled_at&&now-sampled_at<CRITICAL_BATTERY_POLL_MS)return;
-    sampled_at=now?now:1;
-    if(meshink_power_external_present()){low_samples=0;return;}
-    uint16_t millivolts=0;
-    if(!meshink_power_read_battery_mv(millivolts)){low_samples=0;return;}
-    if(millivolts>=CRITICAL_BATTERY_MV){low_samples=0;return;}
-    if(low_samples<CRITICAL_BATTERY_SAMPLES)++low_samples;
-    T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] low battery sample %u/%u: %umV\n",
-                  (unsigned)low_samples,(unsigned)CRITICAL_BATTERY_SAMPLES,
-                  (unsigned)millivolts);
-    if(low_samples>=CRITICAL_BATTERY_SAMPLES)
-        critical_battery_shutdown(millivolts,"runtime");
+    MeshInkPowerCriticalState critical{};
+    if(meshink_power_poll_critical(critical))
+        critical_battery_shutdown(critical,"runtime");
 }
 
 static bool update_charge_state(bool* icon_changed=nullptr) {
-    uint8_t next=0;
+    MeshInkChargeState next=MeshInkChargeState::Unknown;
     if(!meshink_power_read_charge_state(next)) {
         if(icon_changed)*icon_changed=false;
         return false;
     }
-    const uint8_t previous=status_charge_state;
+    const MeshInkChargeState previous=status_charge_state;
     status_charge_state=next;
     const bool was_charging=meshink_power_is_charging(previous);
     const bool now_charging=meshink_power_is_charging(next);
@@ -2143,7 +2125,7 @@ static bool update_charge_state(bool* icon_changed=nullptr) {
 
 static bool update_status_hardware() {
     const int8_t old_hour=status_hour,old_minute=status_minute;
-    const int16_t old_battery=status_battery;const uint8_t old_charge=status_charge_state;
+    const int16_t old_battery=status_battery;const MeshInkChargeState old_charge=status_charge_state;
     if(mesh_is_ready&&local_mesh_time_valid()){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
     else{status_hour=-1;status_minute=-1;}
     uint8_t battery_percent=0;
@@ -2993,9 +2975,9 @@ void ui_setup() {
     }
     if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
     update_status_hardware();
-    uint16_t boot_battery_mv=0;
-    if(boot_battery_is_critical(boot_battery_mv))
-        critical_battery_shutdown(boot_battery_mv,"boot");
+    MeshInkPowerCriticalState boot_power{};
+    if(meshink_power_boot_critical(boot_power))
+        critical_battery_shutdown(boot_power,"boot");
     meshink_display_set_all_white(&display);
     draw_meshink_logo(ui_y(160),false);
     // Keep the original logo visible throughout MeshCore startup. Storage
@@ -3212,9 +3194,9 @@ void ui_loop() {
         bool icon_changed=false;
         update_charge_state(&icon_changed);
         if(icon_changed&&!message_alert_active){
-            T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] charging icon=%s state=%u\n",
-                (status_charge_state==1||status_charge_state==2)?"ON":"OFF",
-                (unsigned)status_charge_state);
+            T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] charging icon=%s state=%s\n",
+                meshink_power_is_charging(status_charge_state)?"ON":"OFF",
+                meshink_power_charge_state_name(status_charge_state));
             status_bar_dirty=true;
         }
     }
