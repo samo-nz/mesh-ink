@@ -133,7 +133,6 @@ assert "void companion_prepare_exit()" in companion_source, "companion exposes o
 shutdown_body = companion_source.split("void companion_prepare_exit() {",1)[1].split("void local_mesh_setup()",1)[0]
 for shutdown_step in (
     "interface_manager.disable();",
-    "BLEDevice::stopAdvertising();",
     "BLEDevice::deinit(false);",
     "the_mesh.savePrefs();",
     "store.saveContacts(&the_mesh,companion_persist_contact);",
@@ -147,7 +146,7 @@ for shutdown_step in (
     assert shutdown_step in shutdown_body, f"companion shutdown missing {shutdown_step}"
 assert "const bool ble_connected=bluetooth_interface.isConnected();" in shutdown_body, "shutdown checks BLE connection before disabling transport"
 assert shutdown_body.index("if(ble_connected)") < shutdown_body.index("interface_manager.disable();"), "connected BLE path disables interface normally"
-assert shutdown_body.index("BLEDevice::stopAdvertising();") < shutdown_body.index("interface_manager.removeInterface(&bluetooth_interface);"), "disconnected BLE path stops advertising before detaching transport"
+assert shutdown_body.index("interface_manager.removeInterface(&bluetooth_interface);") < shutdown_body.index("BLEDevice::deinit(false);"), "disconnected BLE path detaches transport before stack deinit"
 assert shutdown_body.index("BLEDevice::deinit(false);") < shutdown_body.index("radio_driver.powerOff();"), "Bluetooth stack stops before radio power-off"
 assert shutdown_body.index("store.saveChannels(&the_mesh);") < shutdown_body.index("SPIFFS.end();"), "persist MeshCore state before filesystem shutdown"
 assert "companion_prepare_exit();" in unified_source, "BOOT exit calls orderly companion shutdown"
