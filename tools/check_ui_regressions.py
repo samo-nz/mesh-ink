@@ -123,7 +123,7 @@ assert "BLEAdvertisementData scan_response;" in companion_source, "companion sup
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
 assert "setShortName(scan_name)" in companion_source and "setName(scan_name)" in companion_source, "BLE scan response marks truncated names as short"
-assert '"1.9.1-test.11"' in platformio_source, "test11 version is explicit in PlatformIO configuration"
+assert '"1.9.1-test.12"' in platformio_source, "test12 version is explicit in PlatformIO configuration"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
 # Test10 hardware proved that reinitializing EPDiy in the same companion boot
@@ -298,6 +298,8 @@ assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be remo
 
 # 1.8.4 interaction-latency fixes and sentence-style message keyboard.
 contains("static bool message_keyboard_case_dirty = false;", "message keyboard tracks one-time case redraw")
+contains("meshink_keyboard::key_index_edge_extended(\n            meshink_keyboard::numbers(metrics),x,metrics.width)", "number row owns left/right screen-edge margins")
+contains("const bool owns_screen_edges=r<2;", "top and home keyboard rows own left/right screen-edge margins")
 contains("if(n==0&&!keyboard_symbols&&keyboard_upper&&", "first message letter triggers lowercase")
 contains("keyboard_upper=false;", "auto lowercase transition")
 contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fresh messages reopen uppercase")
