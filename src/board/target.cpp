@@ -585,7 +585,7 @@ static constexpr Glyph notice_glyphs[] = {
     {'5',{31,16,16,30,1,1,30}}, {'6',{14,16,16,30,17,17,14}},
     {'7',{31,1,2,4,8,8,8}}, {'8',{14,17,17,14,17,17,14}},
     {'9',{14,17,17,15,1,1,14}},
-    {'.',{0,0,0,0,0,6,6}},
+    {'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}},
     {'A',{14,17,17,31,17,17,17}}, {'B',{30,17,17,30,17,17,30}},
     {'C',{14,17,16,16,16,17,14}}, {'D',{30,17,17,17,17,17,30}},
     {'E',{31,16,16,30,16,16,31}}, {'F',{31,16,16,30,16,16,16}},
@@ -600,8 +600,10 @@ static constexpr Glyph notice_glyphs[] = {
 
 static void notice_text(const char* message, int x, int y, int scale, uint8_t* fb, bool bold = false) {
     for (const char* c = message; *c; ++c, x += 6 * scale) {
+        char key=*c;
+        if(key>='a'&&key<='z')key=(char)(key-'a'+'A');
         for (const Glyph& glyph : notice_glyphs) {
-            if (glyph.letter != *c) continue;
+            if (glyph.letter != key) continue;
             for (int row = 0; row < 7; ++row) {
                 for (int col = 0; col < 5; ++col) {
                     if (!(glyph.rows[row] & (1 << (4 - col)))) continue;
