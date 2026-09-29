@@ -17,6 +17,7 @@ pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
+companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
@@ -217,9 +218,12 @@ for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end()
     assert handoff_step in release_body, f"companion radio cleanup missing {handoff_step}"
 assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exit must not tear down the global GPIO ISR service"
 assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
-assert 'notice_meshink_logo(160, fb);' in board_target_source, "companion screen uses MeshInk splash artwork"
-assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in board_target_source, "companion screen labels Bluetooth mode below logo"
-assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in board_target_source, "companion screen uses board-provided primary-button label"
+assert 'notice_meshink_logo(160, fb);' in companion_notice_source, "companion screen uses MeshInk splash artwork"
+assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in companion_notice_source, "companion screen labels Bluetooth mode below logo"
+assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in companion_notice_source, "companion screen uses board-provided primary-button label"
+assert "meshink_show_companion_notice();" in companion_source, "companion runtime owns splash presentation"
+assert companion_source.index("meshink_show_companion_notice();") < companion_source.index("meshink_board_begin_companion();"), "companion splash renders before board/MeshCore I2C setup"
+assert "BLUETOOTH COMPANION MODE" not in board_target_source and "MESHINK_LOGO_" not in board_target_source, "board package must not contain MeshInk companion presentation"
 assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in board_target_source, "companion screen shows exit duration"
 assert "{'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}}" in board_target_source, "companion tiny font includes firmware-version hyphen"
 assert "if(key>='a'&&key<='z')key=(char)(key-'a'+'A');" in board_target_source, "companion tiny font renders lowercase firmware-version letters"

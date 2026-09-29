@@ -9,6 +9,7 @@
 #include "../lib/MeshCore/examples/companion_radio/DataStore.cpp"
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.cpp"
 #include "companion_runtime.h"
+#include "companion_notice.h"
 #include "local_mesh_runtime.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
@@ -84,6 +85,7 @@ bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_in
 
 void companion_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
+    meshink_show_companion_notice();
     meshink_board_begin_companion();
     if (!meshink_radio_initialize()) {
         Serial.printf("[T5-BOOT] fatal: %s initialization failed\n",meshink_radio_name());
