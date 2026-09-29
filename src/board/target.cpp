@@ -987,41 +987,16 @@ void t5_companion_exit_feedback_begin() {
     T5_TRACE("companion exit: immediate frontlight acknowledgement\n");
 }
 
-void t5_companion_show_returning_notice() {
-    // Companion radio IRQs use Arduino's GPIO ISR service after EPDiy was
-    // deinitialized. Release that handler/service and the shared SPI bus before
-    // EPDiy reclaims the overlapping display pins for the retained exit page.
+void t5_companion_release_radio_resources() {
+    // Companion owns the Arduino GPIO ISR service after EPDiy teardown.
+    // The device is about to reset, but release our radio handler/SPI cleanly
+    // so shutdown does not rely on the reset to unwind live peripherals.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     radio_spi.end();
     gpio_uninstall_isr_service();
     companion_radio_uses_arduino_irq=false;
-    T5_TRACE("companion exit: radio IRQ/SPI released; rendering return notice\n");
-    meshink_display_init();
-    meshink_display_set_rotation(MeshInkRotation::InvertedPortrait);
-    meshink_display_set_pixel_clock_mhz(17);
-    MeshInkDisplayState display=meshink_display_state_init();
-    uint8_t* fb=meshink_display_framebuffer(&display);
-    if(fb){
-        meshink_display_set_all_white(&display);
-        notice_centred("MESHINK",320,7,fb,true);
-        notice_centred("RETURNING TO LOCAL UI",455,3,fb);
-        notice_centred("PLEASE WAIT",535,3,fb);
-        notice_centred(T5_FIRMWARE_VERSION,900,2,fb);
-        meshink_display_poweron();
-        const MeshInkDisplayResult result=meshink_display_update_screen(
-            &display,MeshInkRefreshMode::FastGray16,
-            static_cast<int>(meshink_display_ambient_temperature()));
-        meshink_display_poweroff();
-        T5_TRACE("companion exit: return notice refresh result=%d\n",result);
-    }else{
-        meshink_display_poweroff();
-        Serial.println("[T5-ERROR] companion exit return notice framebuffer unavailable");
-    }
-    meshink_display_release_state(&display);
-    meshink_display_deinit();
-    digitalWrite(T5_PIN_FRONTLIGHT,LOW);
+    T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
 }
-
 
 void T5Board::begin() {
     // EPDiy owns I2C bus 0 while it refreshes the panel. The upstream board
