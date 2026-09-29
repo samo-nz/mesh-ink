@@ -96,7 +96,7 @@ void companion_setup() {
     companion_configure_ble_scan_response(BLE_NAME_PREFIX,the_mesh.getNodePrefs()->node_name);
     interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
     the_mesh.startInterface(interface_manager);
-    sensors.begin();
+    meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
     the_mesh.applyGpsPrefs();
 #endif
@@ -112,7 +112,7 @@ void companion_setup() {
 void companion_loop() {
     the_mesh.loop();
     interface_manager.loop();
-    sensors.loop();
+    meshink_gps_service_loop();
     rtc_clock.tick();
 
     // The cache64 release uses Arduino + ESP-IDF with the task watchdog
@@ -147,7 +147,7 @@ void companion_prepare_exit() {
         // to settle before shutting the Bluetooth stack down.
         const uint32_t settle_started=millis();
         while(millis()-settle_started<100){
-            sensors.loop();
+            meshink_gps_service_loop();
             rtc_clock.tick();
             delay(1);
         }
@@ -203,7 +203,7 @@ void local_mesh_setup() {
     }
     Serial.printf("[T5-STORE] SPIFFS mount result=%s\n",storage_mounted?"OK":"FAILED");
     store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
-    sensors.begin();
+    meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
     // MeshCore defaults GPS off even though the receiver on this board shares
     // the always-on LoRa rail. For a NEW local-UI setup, default the SOFTWARE

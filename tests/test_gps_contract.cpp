@@ -28,6 +28,26 @@ int main(){
     assert(meshink_gps_constellation_mode()==
            MeshInkGpsConstellationMode::GpsOnly);
 
+    meshink_gps_service_begin();
+    assert(meshink_gps_mock_started);
+    meshink_gps_service_loop();
+    assert(meshink_gps_mock_service_loops==1);
+    meshink_gps_set_provider_enabled(true);
+    assert(meshink_gps_mock_provider_enabled);
+
+    meshink_gps_mock_status.available=true;
+    meshink_gps_mock_status.valid=true;
+    meshink_gps_mock_status.satellites=7;
+    meshink_gps_mock_status.latitude=-43123456;
+    meshink_gps_mock_status.longitude=172654321;
+    meshink_gps_mock_status.timestamp=123456;
+    const MeshInkGpsStatus status=meshink_gps_read_status();
+    assert(status.available&&status.valid);
+    assert(status.satellites==7);
+    assert(status.latitude==-43123456);
+    assert(status.longitude==172654321);
+    assert(status.timestamp==123456);
+
     meshink_gps_background_tick();
     assert(meshink_gps_mock_ticks==1);
 

@@ -1,12 +1,20 @@
 #pragma once
 
 inline unsigned meshink_gps_mock_ticks=0;
+inline unsigned meshink_gps_mock_service_loops=0;
+inline bool meshink_gps_mock_started=false;
+inline bool meshink_gps_mock_provider_enabled=false;
 inline bool meshink_gps_mock_shutdown=false;
+inline MeshInkGpsStatus meshink_gps_mock_status{};
 inline MeshInkGpsConstellationMode meshink_gps_mock_mode=
     MeshInkGpsConstellationMode::Unchanged;
 
 inline const char* meshink_gps_backend_name(){return "mock";}
 inline const char* meshink_gps_tuning_note(){return "mock GPS tuning note";}
+inline void meshink_gps_service_begin(){meshink_gps_mock_started=true;}
+inline void meshink_gps_service_loop(){++meshink_gps_mock_service_loops;}
+inline void meshink_gps_set_provider_enabled(bool enabled){meshink_gps_mock_provider_enabled=enabled;}
+inline MeshInkGpsStatus meshink_gps_read_status(){return meshink_gps_mock_status;}
 inline void meshink_gps_background_tick(){++meshink_gps_mock_ticks;}
 inline MeshInkGpsConstellationMode meshink_gps_constellation_mode(){
     return meshink_gps_mock_mode;

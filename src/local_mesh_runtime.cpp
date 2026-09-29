@@ -639,38 +639,38 @@ void local_mesh_loop(){
     const uint32_t gps_now=millis();
     const bool gps_enabled=t5_mesh().getNodePrefs()->gps_enabled!=0;
     const uint32_t gps_interval=t5_mesh().getNodePrefs()->gps_interval;
-    auto* gps_location=sensors.getLocationProvider();
+    const MeshInkGpsStatus gps_location=meshink_gps_read_status();
 
     if(gps_duty_reset){
         gps_duty_reset=false;
         gps_duty_next_wake=0;
         if(gps_enabled&&gps_duty_sleeping){
-            sensors.setSettingValue("gps","1");gps_duty_sleeping=false;
+            meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;
         }
     }
     if(!gps_enabled){
-        if(!gps_duty_sleeping){sensors.setSettingValue("gps","0");gps_duty_sleeping=true;}
+        if(!gps_duty_sleeping){meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;}
     }else if(gps_interval==0){
-        if(gps_duty_sleeping){sensors.setSettingValue("gps","1");gps_duty_sleeping=false;}
+        if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
     }else if(gps_duty_sleeping){
         if((int32_t)(gps_now-gps_duty_next_wake)>=0){
-            gps_duty_wake_stamp=gps_location?(uint32_t)gps_location->getTimestamp():0;
-            sensors.setSettingValue("gps","1");gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
+            gps_duty_wake_stamp=gps_location.available?gps_location.timestamp:0;
+            meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
             T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty wake interval=%lus previous_stamp=%lu\n",(unsigned long)gps_interval,(unsigned long)gps_duty_wake_stamp);
         }
-    }else if(gps_location&&gps_location->isValid()&&
+    }else if(gps_location.valid&&
              (!gps_duty_awake_since||
               (gps_now-gps_duty_awake_since>=1000&&
-               (uint32_t)gps_location->getTimestamp()!=gps_duty_wake_stamp))){
+               gps_location.timestamp!=gps_duty_wake_stamp))){
         // Require a newly observed GPS timestamp after a scheduled wake so a
         // cached fix cannot immediately put the receiver back to sleep.
         gps_duty_next_wake=gps_now+gps_interval*1000UL;
         gps_duty_awake_since=0;gps_duty_wake_stamp=0;
-        sensors.setSettingValue("gps","0");gps_duty_sleeping=true;
+        meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;
         T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
     }
 #endif
-    sensors.loop();
+    meshink_gps_service_loop();
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_background_tick(); // executes even when MeshCore has stopped the GPS provider
 #endif
@@ -682,11 +682,11 @@ void local_mesh_loop(){
         else{pending_direct.retry++;provider.update_message(pending_direct.sequence,(UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;}}
     }
 #if ENV_INCLUDE_GPS == 1
-    auto* location=sensors.getLocationProvider();
-    static uint32_t next_ui_gps=0,candidate_since=0;static bool stable_fix=false,candidate_fix=false;static int stable_sats=0;static long stable_lat=0,stable_lon=0;static uint32_t stable_stamp=0;const uint32_t now=millis();if((int32_t)(now-next_ui_gps)>=0){next_ui_gps=now+(ui_is_standby()?10000:1000);const bool enabled=local_mesh_gps_enabled();const bool raw_fix=location&&location->isValid();if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}if(raw_fix==stable_fix||now-candidate_since>=3000){stable_fix=raw_fix;if(raw_fix){stable_sats=(int)location->satellitesCount();stable_lat=location->getLatitude();stable_lon=location->getLongitude();stable_stamp=(uint32_t)location->getTimestamp();}}ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp);}
+    const MeshInkGpsStatus location=meshink_gps_read_status();
+    static uint32_t next_ui_gps=0,candidate_since=0;static bool stable_fix=false,candidate_fix=false;static int stable_sats=0;static long stable_lat=0,stable_lon=0;static uint32_t stable_stamp=0;const uint32_t now=millis();if((int32_t)(now-next_ui_gps)>=0){next_ui_gps=now+(ui_is_standby()?10000:1000);const bool enabled=local_mesh_gps_enabled();const bool raw_fix=location.valid;if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}if(raw_fix==stable_fix||now-candidate_since>=3000){stable_fix=raw_fix;if(raw_fix){stable_sats=(int)location.satellites;stable_lat=location.latitude;stable_lon=location.longitude;stable_stamp=location.timestamp;}}ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp);}
 #if T5_LOG_GPS
     static bool was_waiting=true;
-    if(location){const bool waiting=location->waitingTimeSync();if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location->getTimestamp());was_waiting=waiting;}
+    if(location.available){const bool waiting=location.waiting_time_sync;if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location.timestamp);was_waiting=waiting;}
 #endif
 #endif
 #if T5_LOG_POWER
@@ -707,7 +707,7 @@ void local_mesh_apply_name(const char* name){auto* p=t5_mesh().getNodePrefs();st
 #if ENV_INCLUDE_GPS == 1
 void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_enabled=enabled?1:0;t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=!enabled;reset_gps_duty_cycle();}
 bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}
-bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
+bool local_mesh_gps_fix(){return meshink_gps_read_status().valid;}
 uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval;}
 MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_gps_constellation_mode();}
 bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){return meshink_gps_set_constellation_mode(mode);}

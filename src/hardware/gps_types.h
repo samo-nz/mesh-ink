@@ -41,3 +41,14 @@ inline MeshInkGpsConstellationMode meshink_gps_next_constellation_mode(
             return MeshInkGpsConstellationMode::GpsOnly;
     }
 }
+
+
+struct MeshInkGpsStatus {
+    bool available = false;
+    bool valid = false;
+    bool waiting_time_sync = true;
+    int32_t satellites = 0;
+    long latitude = 0;
+    long longitude = 0;
+    uint32_t timestamp = 0;
+};

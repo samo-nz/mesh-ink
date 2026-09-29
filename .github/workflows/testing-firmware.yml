@@ -1,6 +1,9 @@
 name: MeshInk testing firmware
 
 on:
+  push:
+    branches:
+      - testing
   pull_request:
     paths:
       - 'src/pmtiles_reader.*'

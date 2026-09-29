@@ -513,6 +513,35 @@ public:
 static T5GPS gps;
 EnvironmentSensorManager sensors(gps);
 
+void meshink_gps_service_begin(){
+    sensors.begin();
+}
+
+void meshink_gps_service_loop(){
+    sensors.loop();
+}
+
+void meshink_gps_set_provider_enabled(bool enabled){
+    sensors.setSettingValue("gps",enabled?"1":"0");
+}
+
+MeshInkGpsStatus meshink_gps_read_status(){
+    MeshInkGpsStatus status{};
+#if ENV_INCLUDE_GPS == 1
+    auto* location=sensors.getLocationProvider();
+    status.available=location!=nullptr;
+    if(location){
+        status.valid=location->isValid();
+        status.waiting_time_sync=location->waitingTimeSync();
+        status.satellites=(int32_t)location->satellitesCount();
+        status.latitude=location->getLatitude();
+        status.longitude=location->getLongitude();
+        status.timestamp=(uint32_t)location->getTimestamp();
+    }
+#endif
+    return status;
+}
+
 void meshink_gps_shutdown(){
 #if ENV_INCLUDE_GPS == 1
     if(auto* location=sensors.getLocationProvider())location->stop();
