@@ -602,6 +602,19 @@ for leaked_storage_detail in ('#include <SD.h>', '#include "board/target.h"', "T
 assert "meshink_storage_begin()" in map_source and "meshink_storage_bus_hz()" in map_source, "Maps mounts and reports storage through generic service"
 assert "meshink_storage_open(" in map_source and "meshink_storage_open(" in pmtiles_source, "map readers open files through generic storage service"
 
+# Test31 deterministic H752-01 radio startup. The SD card is deliberately
+# deselected during radio power-up/recovery, but its normal 25 MHz access path
+# above must remain unchanged.
+assert "pinMode(T5_PIN_LORA_CS,OUTPUT);digitalWrite(T5_PIN_LORA_CS,HIGH);" in board_target_source, "radio startup deselects LoRa before shared-rail power"
+assert "pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);" in board_target_source, "radio startup deselects SD before shared-rail power"
+assert "return t5_set_radio_gps_rail(true,1500);" in board_target_source, "H752-01 shared rail gets LilyGO-style 1500 ms startup settling"
+assert "t5_set_radio_gps_rail(false,250)" in board_target_source and "t5_set_radio_gps_rail(true,1500)" in board_target_source, "final radio recovery power-cycles the shared rail before SD mount"
+assert "recovery=spi-reset+sx1262-reset" in board_target_source, "second radio attempt performs clean SPI and SX1262 reset"
+assert "for(uint8_t attempt=1;attempt<=3&&!ready;++attempt)" in board_target_source, "T5 radio backend owns escalating three-attempt recovery"
+assert "for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt)" not in companion_source, "generic runtime must not duplicate board-specific radio retries"
+assert '-DSX126X_DIO3_TCXO_VOLTAGE=1.8' in cache64_build_flags, "test31 isolates startup sequencing and leaves TCXO unchanged"
+assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not regress field-tested SD speed"
+
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
 assert "enum class MeshInkRadioFailureClass" in radio_types_source, "radio failure vocabulary is board independent"

@@ -183,11 +183,7 @@ void companion_prepare_exit() {
 void local_mesh_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     meshink_board_begin_local();
-    bool radio_ready=false;
-    for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt){
-        radio_ready=meshink_radio_initialize();
-        if(!radio_ready){Serial.printf("[T5-MESH] %s initialization attempt %u/3 failed; retrying\n",meshink_radio_name(),attempt);delay(500);}
-    }
+    const bool radio_ready=meshink_radio_initialize();
     if (!radio_ready) {
         const MeshInkRadioFailureClass failure=meshink_radio_classify_failure();
         Serial.printf("[T5-MESH] ERROR: %s unavailable; failure-class=%u\n",meshink_radio_name(),(unsigned)failure);

@@ -92,9 +92,10 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
 }
 void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
 
-bool T5Board::enableRadioGpsRail(){
+static bool t5_set_radio_gps_rail(bool enabled,uint32_t settle_ms){
 #if !T5_BOARD_H752_01
     // Original H752 powers its SX1262 without the H752-01 PCA9535 rail gate.
+    (void)enabled;(void)settle_ms;
     return true;
 #else
     // LilyGO maps LORA_EN (shared LoRa/GPS 3V3 rail) to PCA9535 port 0 bit 0.
@@ -104,27 +105,50 @@ bool T5Board::enableRadioGpsRail(){
     if(!pca_read(OUTPUT_PORT0,output)||!pca_read(CONFIG_PORT0,config)){
         Serial.println("[T5-ERROR] PCA9535 power-rail read failed");return false;
     }
-    const uint8_t requested_output=(uint8_t)(output|LORA_EN);
+    const uint8_t requested_output=enabled?(uint8_t)(output|LORA_EN):(uint8_t)(output&~LORA_EN);
     const uint8_t requested_config=(uint8_t)(config&~LORA_EN);
-    // Set the output latch first so the rail cannot glitch low when direction changes.
+    // Set the output latch first so the rail cannot glitch when direction changes.
     if(!pca_write(OUTPUT_PORT0,requested_output)||!pca_write(CONFIG_PORT0,requested_config)){
         Serial.println("[T5-ERROR] PCA9535 power-rail write failed");return false;
     }
     uint8_t verified_output=0,verified_config=0;
+    const bool level_ok=enabled?((verified_output&LORA_EN)!=0):((verified_output&LORA_EN)==0);
     const bool verified=pca_read(OUTPUT_PORT0,verified_output)&&pca_read(CONFIG_PORT0,verified_config)&&
-        (verified_output&LORA_EN)&&!(verified_config&LORA_EN);
-    T5_TRACE("power rail: PCA9535 output0 0x%02X->0x%02X config0 0x%02X->0x%02X verify=%s\n",
-        output,verified_output,config,verified_config,verified?"OK":"FAILED");
+        (enabled?((verified_output&LORA_EN)!=0):((verified_output&LORA_EN)==0))&&
+        !(verified_config&LORA_EN);
+    T5_TRACE("power rail: request=%s output0 0x%02X->0x%02X config0 0x%02X->0x%02X verify=%s\n",
+        enabled?"ON":"OFF",output,verified_output,config,verified_config,verified?"OK":"FAILED");
+    (void)level_ok;
     if(!verified)Serial.println("[T5-ERROR] PCA9535 shared radio/GPS rail verification failed");
-    if(verified)delay(150);
+    if(verified&&settle_ms)delay(settle_ms);
     return verified;
 #endif
+}
+
+bool T5Board::enableRadioGpsRail(){
+    // H752-01 reference LoRa examples allow the shared LoRa/GPS rail 1500 ms
+    // to settle before touching the SX1262. This also makes cold and warm
+    // boots follow the same deterministic timing.
+    return t5_set_radio_gps_rail(true,1500);
 }
 
 // Board mapping only. The upstream wrapper controls radio parameters and
 // transmit/receive/power state through MeshCore.
 static SPIClass radio_spi(FSPI);
 SPIClass& t5_shared_spi() { return radio_spi; }
+
+static void t5_radio_shared_bus_idle(bool stop_spi){
+    if(stop_spi)radio_spi.end();
+    // LilyGO's H752-01 LoRa examples explicitly deselect both devices before
+    // powering the shared rail because microSD and SX1262 share this SPI bus.
+    pinMode(T5_PIN_LORA_CS,OUTPUT);digitalWrite(T5_PIN_LORA_CS,HIGH);
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    gpio_deep_sleep_hold_dis();
+    T5_TRACE("radio bus idle: lora-cs=%d sd-cs=%d busy=%d reset=%d spi-stop=%u\n",
+        digitalRead(T5_PIN_LORA_CS),digitalRead(T5_PIN_SD_CS),
+        digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET),stop_spi?1U:0U);
+}
 
 // Local UI keeps EPDiy's already-installed GPIO ISR service alive. Companion
 // mode tears EPDiy down before radio startup, so Arduino must install/own the
@@ -645,6 +669,7 @@ void T5Board::begin() {
     T5_TRACE("board: companion display released; MeshCore board/I2C begin\n");
     ESP32Board::begin();
     T5_TRACE("board: MeshCore I2C ready\n");
+    t5_radio_shared_bus_idle(true);
     enableRadioGpsRail();
     meshink_power_prepare_board();
     getBattMilliVolts();
@@ -665,6 +690,7 @@ void T5Board::beginLocal() {
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
+    t5_radio_shared_bus_idle(true);
     enableRadioGpsRail();
     // Unified/local mode calls beginLocal(), not begin(). Without this call
     // the 1500mAh factory-profile migration ran only in BLE companion mode.
@@ -682,9 +708,46 @@ bool radio_init() {
     meshink_rtc_begin();
     T5_TRACE("radio: SX1262 init SPI=%d/%d/%d ctrl=%d/%d/%d/%d\n",
         P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
-    const bool ready = radio.std_init(&radio_spi);
+
+    bool ready=false;
+    for(uint8_t attempt=1;attempt<=3&&!ready;++attempt){
+        if(attempt==2){
+            // Escalation 1: discard any partial IRQ/SPI state and give the
+            // SX1262 a clean hardware reset without disturbing the GPS rail.
+            radio_hal.detachInterrupt(P_LORA_DIO_1);
+            t5_radio_shared_bus_idle(true);
+            pinMode(P_LORA_RESET,OUTPUT);
+            digitalWrite(P_LORA_RESET,LOW);delay(20);
+            digitalWrite(P_LORA_RESET,HIGH);delay(120);
+            Serial.println("[T5-RADIO] recovery=spi-reset+sx1262-reset");
+        }else if(attempt==3){
+            // Escalation 2: this still occurs before removable storage is
+            // mounted, so the H752-01 shared LoRa/GPS rail can be safely
+            // power-cycled without invalidating any SD file or bus state.
+            radio_hal.detachInterrupt(P_LORA_DIO_1);
+            t5_radio_shared_bus_idle(true);
+            const bool off=t5_set_radio_gps_rail(false,250);
+            const bool on=off&&t5_set_radio_gps_rail(true,1500);
+            Serial.printf("[T5-RADIO] recovery=rail-cycle off=%u on=%u\n",off?1U:0U,on?1U:0U);
+            if(!on)continue;
+        }else{
+            t5_radio_shared_bus_idle(true);
+        }
+
+        const uint32_t attempt_started=millis();
+        Serial.printf("[T5-RADIO] init attempt=%u/3 lora-cs=%d sd-cs=%d busy=%d reset=%d\n",
+            attempt,digitalRead(T5_PIN_LORA_CS),digitalRead(T5_PIN_SD_CS),
+            digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET));
+        // CustomSX1262::std_init prints RadioLib's numeric failure code on error.
+        ready=radio.std_init(&radio_spi);
+        Serial.printf("[T5-RADIO] init attempt=%u result=%s elapsed=%lums busy=%d\n",
+            attempt,ready?"OK":"FAILED",(unsigned long)(millis()-attempt_started),
+            digitalRead(P_LORA_BUSY));
+        if(!ready&&attempt<3)delay(500);
+    }
+
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
-    if(!ready)Serial.println("[T5-ERROR] SX1262 radio initialization failed");
+    if(!ready)Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
 #if ENV_INCLUDE_GPS == 1
     // LoRa and GPS share the PCA9535-controlled rail; radio initialization
     // ensures power is available before probing GPS. T5 boards carry either
