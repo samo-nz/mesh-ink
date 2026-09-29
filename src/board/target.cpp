@@ -112,13 +112,11 @@ static bool t5_set_radio_gps_rail(bool enabled,uint32_t settle_ms){
         Serial.println("[T5-ERROR] PCA9535 power-rail write failed");return false;
     }
     uint8_t verified_output=0,verified_config=0;
-    const bool level_ok=enabled?((verified_output&LORA_EN)!=0):((verified_output&LORA_EN)==0);
     const bool verified=pca_read(OUTPUT_PORT0,verified_output)&&pca_read(CONFIG_PORT0,verified_config)&&
         (enabled?((verified_output&LORA_EN)!=0):((verified_output&LORA_EN)==0))&&
         !(verified_config&LORA_EN);
     T5_TRACE("power rail: request=%s output0 0x%02X->0x%02X config0 0x%02X->0x%02X verify=%s\n",
         enabled?"ON":"OFF",output,verified_output,config,verified_config,verified?"OK":"FAILED");
-    (void)level_ok;
     if(!verified)Serial.println("[T5-ERROR] PCA9535 shared radio/GPS rail verification failed");
     if(verified&&settle_ms)delay(settle_ms);
     return verified;

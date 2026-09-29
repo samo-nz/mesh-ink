@@ -612,7 +612,7 @@ assert "t5_set_radio_gps_rail(false,250)" in board_target_source and "t5_set_rad
 assert "recovery=spi-reset+sx1262-reset" in board_target_source, "second radio attempt performs clean SPI and SX1262 reset"
 assert "for(uint8_t attempt=1;attempt<=3&&!ready;++attempt)" in board_target_source, "T5 radio backend owns escalating three-attempt recovery"
 assert "for(uint8_t attempt=1;attempt<=3&&!radio_ready;++attempt)" not in companion_source, "generic runtime must not duplicate board-specific radio retries"
-assert '-DSX126X_DIO3_TCXO_VOLTAGE=1.8' in cache64_build_flags, "test31 isolates startup sequencing and leaves TCXO unchanged"
+assert '-DSX126X_DIO3_TCXO_VOLTAGE=1.8' in platformio_source, "test31 isolates startup sequencing and leaves TCXO unchanged"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not regress field-tested SD speed"
 
 # Test21 radio and board-capability boundaries.
