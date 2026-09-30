@@ -808,7 +808,7 @@ assert "status_slot!=status_bar_painted_slot" in source, "standby keeps five-min
 
 # Test42: concise startup transcript, then quiet steady state.
 assert '[T5-INIT] psram=OK' in unified_source, "startup reports PSRAM readiness"
-assert '[T5-INIT] display=OK' in source and '[T5-INIT] touch=OK' in source, "startup reports display/touch initialization"
+assert '[T5-INIT] display=initialized' in source and '[T5-INIT] touch=initialized' in source, "startup reports display/touch initialization without overclaiming verification"
 assert '[T5-INIT] radio=SX1262 OK' in board_target_source, "startup reports radio readiness"
 assert '[T5-INIT] gps=%s baud=%lu OK' in board_target_source and '[T5-WARN] gps=NMEA not confirmed; background retry active' in board_target_source, "startup reports confirmed GPS or explicit fallback warning"
 assert '[T5-INIT] rtc=PCF8563 OK' in board_target_source and '[T5-WARN] rtc=' in board_target_source, "startup reports RTC success or fallback warning"
