@@ -178,7 +178,7 @@ static uint32_t message_alert_cooldown_until=0;
 enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
-    Channels, ChannelChat, Maps, Discovery, More, AdvertMenu,
+    Channels, ChannelChat, Maps, Discovery, More, AdvertMenu, Diagnostics,
     Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
@@ -197,6 +197,7 @@ static const char* timing_screen_name(){
         case Screen::Discovery:return "Discovery";
         case Screen::More:return "More";
         case Screen::AdvertMenu:return "Advert";
+        case Screen::Diagnostics:return "Diagnostics";
         case Screen::Settings:return "Settings";
         case Screen::RadioSettings:return "RadioSettings";
         case Screen::GpsSettings:return "GpsSettings";
@@ -1433,8 +1434,8 @@ static void draw_message_bubble(const UiMessage& message,int y,int h) {
     const int x=message.outgoing?ui_x(82):ui_x(12),w=ui_w(446);
     box(x,y,w,h,message.outgoing);
     draw_wrapped(message.text,x+ui_w(16),y+ui_h(12),23,3,message.outgoing?0xFF:0,true,8);
-    char footer[26];const char* state="";
-    if(message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;case UiMessageState::Retrying1:state="RETRYING 1/5";break;case UiMessageState::Retrying2:state="RETRYING 2/5";break;case UiMessageState::Retrying3:state="RETRYING 3/5";break;case UiMessageState::Retrying4:state="RETRYING 4/5";break;case UiMessageState::Retrying5:state="RETRYING 5/5";break;default:break;}}
+    char footer[72];const char* state=(message.network&&message.network[0])?message.network:"";
+    if(!state[0]&&message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;case UiMessageState::Retrying1:state="RETRYING 1/5";break;case UiMessageState::Retrying2:state="RETRYING 2/5";break;case UiMessageState::Retrying3:state="RETRYING 3/5";break;case UiMessageState::Retrying4:state="RETRYING 4/5";break;case UiMessageState::Retrying5:state="RETRYING 5/5";break;default:break;}}
     snprintf(footer,sizeof(footer),"%s%s%s",message.time,state[0]?"  ":"",state);
     text(footer,x+w-(int)strlen(footer)*12-ui_w(12),y+h-ui_h(28),2,message.outgoing?0xFF:0,true);
 }
@@ -1574,9 +1575,13 @@ static void draw_contact_details() {
         }
     } else {
         text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
-        draw_wrapped(node.path,layout.section_margin,ui_y(270),27,3,0,true,5);
-        text("SAVED ROUTE",layout.section_margin,ui_y(458),2,0,true);draw_wrapped(node.route,layout.section_margin,ui_y(492),27,3,0,true,2);
-        action_button(request_label(UiNodeInfoRequest::Path,"REQUEST PATH"),full_action,true);
+        draw_wrapped(node.path,layout.section_margin,ui_y(260),27,3,0,true,3);
+        text("TRACE ROUTE",layout.section_margin,ui_y(360),3,0,true);
+        draw_wrapped(node.trace,layout.section_margin,ui_y(400),39,2,0,true,7);
+        text("SAVED ROUTE",layout.section_margin,ui_y(620),2,0,true);
+        draw_wrapped(node.route,layout.section_margin,ui_y(654),27,3,0,true,2);
+        action_button(request_label(UiNodeInfoRequest::Path,"DISCOVER PATH"),left_action,true);
+        action_button(request_label(UiNodeInfoRequest::Trace,"TRACE ROUTE"),right_action,true);
     }
     draw_page_indicator(details_page,pages,ui_y(770));
     if(keyboard_visible&&keyboard_password_mode){
@@ -1607,8 +1612,23 @@ static void draw_more() {
     draw_app_header("MORE");
     settings_row("DISCOVERED ADVERTS","RECENT NODES HEARD",130);settings_row("ADVERTISE","ZERO HOP OR FLOOD",260);
     settings_row("SETTINGS","DEVICE AND RADIO",390);settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",520);
-    settings_row("HELP","USING MESHINK",650);
+    settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650);settings_row("HELP","USING MESHINK",780);
     draw_bottom_nav(3);
+}
+
+static void draw_diagnostics() {
+    draw_app_header("DIAGNOSTICS",true);
+    const MeshInkUiLayout& layout=portrait_layout();
+    text("CORE",layout.section_margin,ui_y(130),3,0,true);
+    draw_wrapped(local_mesh_diagnostics_core(),layout.section_margin,ui_y(170),39,2,0,true,5);
+    text("RADIO",layout.section_margin,ui_y(330),3,0,true);
+    draw_wrapped(local_mesh_diagnostics_radio(),layout.section_margin,ui_y(370),39,2,0,true,5);
+    text("PACKETS",layout.section_margin,ui_y(530),3,0,true);
+    draw_wrapped(local_mesh_diagnostics_packets(),layout.section_margin,ui_y(570),39,2,0,true,5);
+    const MeshInkUiRect action=meshink_node_action_rect(layout);box(action,true);
+    const char* label=local_mesh_diagnostics_busy()?"REFRESHING...":"REFRESH STATS";
+    text(label,action.x+(action.width-(int)strlen(label)*12)/2,
+         action.y+(action.height-ui_h(14))/2,2,0xFF,true);
 }
 
 static void draw_advert_menu() {
@@ -2006,13 +2026,13 @@ static void draw_screen() {
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
-        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;
+        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;case Screen::Timezone:draw_timezone();break;
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
-    else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||
+    else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||screen==Screen::Diagnostics||
             (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
@@ -2714,7 +2734,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     if(login_required&&!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
-                if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,meshink_node_action_rect(portrait_layout()))){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"REQUESTING PATH":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+                if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Path)?"DISCOVERING PATH":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+                if(node.saved_contact&&page==NodeInfoPage::Path&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))){show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Trace)?"TRACE REQUESTED":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
                 if(page==NodeInfoPage::Overview&&(node.latitude||node.longitude)&&hit(x,y,meshink_node_map_rect(portrait_layout()))){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,meshink_node_map_rect(portrait_layout()))){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))){open_screen(Screen::ContactChat);return true;}
@@ -2755,11 +2776,18 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,260)){open_screen(Screen::AdvertMenu);return true;}
             if(hit_outer_row(x,y,390)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,520)){open_screen(Screen::CompanionConfirm);return true;}
-            if(hit_outer_row(x,y,650)){open_screen(Screen::Help);return true;}break;
+            if(hit_outer_row(x,y,650)){local_mesh_request_diagnostics();open_screen(Screen::Diagnostics);return true;}
+            if(hit_outer_row(x,y,780)){open_screen(Screen::Help);return true;}break;
         case Screen::AdvertMenu:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit_outer_row(x,y,180)){show_toast(local_mesh_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,320)){show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
+        case Screen::Diagnostics:
+            if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
+            if(hit(x,y,meshink_node_action_rect(portrait_layout()))){
+                show_toast(local_mesh_request_diagnostics()?"REFRESHING STATS":"DIAGNOSTICS BUSY");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }break;
         case Screen::Settings:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit_outer_row(x,y,118)){open_screen(Screen::RadioSettings);return true;}

@@ -39,3 +39,9 @@ uint8_t local_mesh_path_hash_mode();
 void local_mesh_prepare_shutdown();
 uint16_t local_mesh_direct_unread_total();
 uint16_t local_mesh_channel_unread_total();
+
+bool local_mesh_request_diagnostics();
+bool local_mesh_diagnostics_busy();
+const char* local_mesh_diagnostics_core();
+const char* local_mesh_diagnostics_radio();
+const char* local_mesh_diagnostics_packets();

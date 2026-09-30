@@ -273,7 +273,8 @@ contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeat
 contains("screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60", "Node Info pages use vertical swipe paging")
 contains('UiNodeInfoRequest::Status,"REQUEST STATUS"', "Node Info exposes an individual status request")
 contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes an individual telemetry request")
-contains('UiNodeInfoRequest::Path,"REQUEST PATH"', "Node Info exposes an individual path request")
+contains('UiNodeInfoRequest::Path,"DISCOVER PATH"', "Node Info exposes an individual path-discovery request")
+contains('UiNodeInfoRequest::Trace,"TRACE ROUTE"', "Node Info exposes an individual trace request")
 assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once"
 contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node role icons")
 contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
@@ -298,10 +299,12 @@ contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use 
 contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
 contains("draw_wrapped(node.status,layout.section_margin,ui_y(294),27,3,0,true,14);", "received status text is larger and scaled")
 contains("draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);", "received telemetry text is larger and scaled")
-contains("draw_wrapped(node.path,layout.section_margin,ui_y(270),27,3,0,true,5);", "received path text is larger and scaled")
+contains("draw_wrapped(node.path,layout.section_margin,ui_y(260),27,3,0,true,3);", "received path text is larger and scaled")
+contains("draw_wrapped(node.trace,layout.section_margin,ui_y(400),39,2,0,true,7);", "trace results have a dedicated readable area")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
 contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
-contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "path action touch follows shared control geometry")
+contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry")
+contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))', "trace touch follows shared right-action geometry")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
 contains('meshink_display_fill_rect({0,metrics.clear_top,layout.width,', "password keyboard clear area follows shared geometry")
@@ -319,7 +322,7 @@ assert "POSTS %u" in runtime_source and "PUSHES %u" in runtime_source, "room ser
 assert "request_active_node_info(UiNodeInfoRequest request)" in data_source, "Node Info provider must accept one typed request"
 assert "advance_info" not in runtime_source, "Node Info transport must not auto-chain requests"
 assert "pending_info.stage" not in runtime_source, "Node Info transport must not retain staged request-all state"
-for request in ("Status", "Telemetry", "Path"):
+for request in ("Status", "Telemetry", "Path", "Trace"):
     assert f"pending_info.request==UiNodeInfoRequest::{request}" in runtime_source, f"{request} reply must match only its selected request"
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
@@ -836,3 +839,22 @@ assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in so
 assert "const int border=max(ui_w(5),ui_h(5));" in source, "standby card outlines are substantially thicker"
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
 assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "standby retains the lower wake instruction separator"
+
+# Test45: MeshCore network feedback is surfaced without changing stored-message format.
+assert "const char* network" in data_source, "message model exposes transient network metadata"
+assert "STORE_VERSION=1" in runtime_source, "network metadata must not migrate or invalidate the existing message store"
+assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
+assert "frame[0]==16&&len>=16" in runtime_source and "frame[0]==17&&len>=11" in runtime_source, "v3 direct/channel frames are parsed explicitly"
+assert "SNR %.1f DB  %u HOP%s" in runtime_source, "received messages expose SNR and hop count"
+assert 'meta->route_flood?"FLOOD":"DIRECT"' in runtime_source, "outgoing private messages expose direct versus flood routing"
+assert "frame[0]==0x88" in runtime_source and "handle_raw_repeat" in runtime_source, "raw RX frames drive channel repeat-hearing detection"
+assert "HEARD %u REPEAT%s" in runtime_source, "channel sends expose heard-repeat count"
+assert "mesh::Utils::MACThenDecrypt" in runtime_source, "repeat matching validates/decrypts the echoed channel packet"
+assert "UiNodeInfoRequest::Trace=3" in data_source, "trace is a first-class node-info request"
+assert "frame[0]=36" in runtime_source and "frame[0]==0x89" in runtime_source, "trace command and response are wired through upstream MeshCore"
+assert "TRACE %u HOP%s" in runtime_source and "DEST  %.1f DB" in runtime_source, "trace result reports repeater hashes/SNR and destination SNR"
+assert 'settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650)' in source, "More exposes diagnostics"
+assert "local_mesh_request_diagnostics()" in source and "draw_diagnostics()" in source, "diagnostics UI requests and renders live MeshCore stats"
+assert "frame[2]={56,type}" in runtime_source, "diagnostics uses upstream CMD_GET_STATS"
+assert "PACKETS RX/TX %lu / %lu" in runtime_source and "AIRTIME TX/RX %lu / %lu S" in runtime_source, "diagnostics decodes packet and radio counters"
+assert 'settings_row("HELP","USING MESHINK",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"

@@ -195,6 +195,11 @@ void local_mesh_setup() {
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
     store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
+    // Negotiate companion-protocol v3 for the internal standalone interface.
+    // V3 receive frames add SNR and path metadata without changing on-air packets.
+    const uint8_t local_protocol_query[2]={22,3}; // CMD_DEVICE_QUERY, app protocol v3
+    if(!local_interface.enqueue(local_protocol_query,sizeof(local_protocol_query)))
+        Serial.println("[T5-ERROR] local MeshCore protocol negotiation queue busy");
     meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
     // MeshCore defaults GPS off even though the receiver on this board shares
