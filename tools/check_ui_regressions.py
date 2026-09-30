@@ -664,7 +664,7 @@ assert "STANDBY_POWER_SAMPLE_CAPACITY=8192" in unified_source, "standby cache co
 assert "ps_malloc(sizeof(CachedPowerSample)*STANDBY_POWER_SAMPLE_CAPACITY)" in unified_source, "long standby trace uses PSRAM instead of scarce internal RAM"
 assert "USB CDC is intentionally silent during light-sleep standby" in unified_source, "standby telemetry must be cached rather than streamed over USB"
 assert "standby_power_capture_now(now);" in unified_source, "standby session captures gauge data before and during sleep"
-assert "s.reports_remaining=2;" in unified_source and "s.next_report_at=now+10000UL;" in unified_source, "BOOT wake delays and repeats the frozen report for USB reconnect"
+assert "s.complete=true;" in unified_source, "BOOT wake freezes a completed standby measurement session"
 assert "[T5-POWER-CACHE] ===== FROZEN PRE-USB STANDBY REPORT =====" in unified_source, "cached report is clearly distinguished from live charging telemetry"
 assert "meshink_power_light_sleep_stats_reset" in power_backend_header and "MeshInkLightSleepStats" in power_types_source, "light-sleep accounting stays behind the generic power boundary"
 assert "esp_timer_get_time()" in power_backend_source, "board backend measures actual light-sleep residence time"
@@ -675,8 +675,7 @@ assert "power_last_standby" not in unified_source, "cached standby report must n
 assert "if(standby&&!standby_power.active)standby_power_begin(now);" in unified_source, "session begins from authoritative active state"
 assert "else if(!standby&&standby_power.active)standby_power_finish(now);" in unified_source, "session freezes whenever standby has ended"
 assert unified_source.count("power_logging_tick();") == 2, "power logger observes both pre-UI and post-UI standby state"
-assert "full cached report in 5s" in unified_source, "wake gives an immediate cached-report-ready marker"
-assert "s.next_report_at=now+5000UL;" in unified_source, "first full cached report follows five seconds after wake"
+assert "connect USB to print cached report" in unified_source, "wake freezes data without depending on sleeping USB serial"
 
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
@@ -815,3 +814,12 @@ contains("hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),118))", 
 contains("open_screen(Screen::NightSchedule);return true;", "Edit Times opens Night Schedule")
 assert "meshink_night_schedule_top" not in ui_layout_source, "abandoned bottom Night Schedule geometry must be removed"
 assert 'centred("NIGHT SCHEDULE",schedule_y' not in source, "Night Schedule must not be drawn over lower settings rows"
+
+# Test37 uses external-power arrival only as a post-measurement report trigger.
+# Cached battery-only data is frozen before USB is connected; charging current
+# is never substituted for standby consumption.
+assert "if(standby_power.complete&&!cached_report_usb_armed&&external)" in unified_source, "USB arrival arms cached report output"
+assert "standby_power.reports_remaining=3;" in unified_source, "cached report repeats after USB enumeration"
+assert "standby_power.next_report_at=now+3000UL;" in unified_source, "first cached report waits briefly for USB enumeration"
+assert "standby_power.next_report_at=millis()+5000UL;" in unified_source, "subsequent cached report retries are spaced for monitor attachment"
+assert "s.reports_remaining=0;" in unified_source and "s.next_report_at=0;" in unified_source, "BOOT wake freezes data but does not print before USB arrives"

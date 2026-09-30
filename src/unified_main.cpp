@@ -58,6 +58,7 @@ struct StandbyPowerSession {
 static CachedPowerSample standby_fallback_samples[256];
 static StandbyPowerSession standby_power{};
 static uint32_t awake_power_sample_at=0;
+static bool cached_report_usb_armed=false;
 
 static bool capture_power_sample(CachedPowerSample& out,uint32_t elapsed_seconds) {
     MeshInkPowerTelemetry telemetry{};
@@ -137,9 +138,9 @@ static void standby_power_finish(uint32_t now) {
     s.sleep=meshink_power_light_sleep_stats();
     s.active=false;
     s.complete=true;
-    s.reports_remaining=2;
-    s.next_report_at=now+5000UL;
-    Serial.printf("[T5-POWER-CACHE] standby measurement frozen elapsed=%lus samples=%lu; full cached report in 5s\n",
+    s.reports_remaining=0;
+    s.next_report_at=0;
+    Serial.printf("[T5-POWER-CACHE] standby measurement frozen elapsed=%lus samples=%lu; connect USB to print cached report\n",
                   (unsigned long)((s.ended_at-s.started_at)/1000UL),
                   (unsigned long)s.total_samples);
     Serial.flush();
@@ -214,11 +215,19 @@ static void power_logging_tick() {
         return;
     }
 
+    const bool external=meshink_power_external_present();
+    if(standby_power.complete&&!cached_report_usb_armed&&external){
+        cached_report_usb_armed=true;
+        standby_power.reports_remaining=3;
+        standby_power.next_report_at=now+3000UL;
+    }
+    if(!external&&standby_power.complete)cached_report_usb_armed=false;
+
     if(standby_power.complete&&standby_power.reports_remaining&&
        (int32_t)(now-standby_power.next_report_at)>=0){
         print_cached_standby_report();
         --standby_power.reports_remaining;
-        standby_power.next_report_at=millis()+10000UL;
+        standby_power.next_report_at=millis()+5000UL;
     }
 
     if(!awake_power_sample_at||now-awake_power_sample_at>=POWER_SAMPLE_INTERVAL_MS){
@@ -232,7 +241,7 @@ static void power_logging_tick() {
                           companion_mode?"companion":"local",(unsigned long)getCpuFrequencyMhz(),
                           (unsigned)sample.battery_mv,(int)sample.current_ma,
                           (unsigned)sample.battery_percent,(unsigned)sample.remaining_mah,
-                          (unsigned)sample.full_mah,meshink_power_external_present()?1U:0U);
+                          (unsigned)sample.full_mah,external?1U:0U);
         }
     }
 }
