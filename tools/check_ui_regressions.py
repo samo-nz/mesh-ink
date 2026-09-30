@@ -650,7 +650,7 @@ assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test33 LilyGO ra
 # Test34 measures the CPU-only standby saving before moving to event-driven
 # indefinite sleep. Radio/GPS hardware policy stays unchanged.
 assert "meshink_power_light_sleep_ms(12);" in runtime_source, "standby MeshCore loop uses the existing 12 ms idle slot for light sleep"
-assert "if(ui_is_standby())meshink_power_light_sleep_ms(12);" in runtime_source, "light sleep is restricted to standby"
+assert "meshink_power_light_sleep_ms(12);" in runtime_source, "short cadence light sleep remains available during standby"
 assert "esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);" in power_backend_source, "board backend owns the ESP timer wake primitive"
 assert "esp_light_sleep_start();" in power_backend_source, "board backend enters ESP light sleep"
 assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);" in power_backend_source, "short standby timer cannot leak into later deep sleep"
@@ -823,3 +823,12 @@ assert "standby_power.reports_remaining=3;" in unified_source, "cached report re
 assert "standby_power.next_report_at=now+3000UL;" in unified_source, "first cached report waits briefly for USB enumeration"
 assert "standby_power.next_report_at=millis()+5000UL;" in unified_source, "subsequent cached report retries are spaced for monitor attachment"
 assert "s.reports_remaining=0;" in unified_source and "s.next_report_at=0;" in unified_source, "BOOT wake freezes data but does not print before USB arrives"
+
+# Test38 isolates steady light-sleep residency from the test34 12 ms cadence.
+# It does not change LoRa/GPS rail policy or enter deep sleep.
+assert "standby_long_sleep_ready_at=sleep_now+15000UL;" in runtime_source, "long light-sleep test waits 15 seconds after standby begins"
+assert "meshink_power_light_sleep_ms(300000UL,true);" in runtime_source, "standby enters five-minute light-sleep blocks"
+assert "standby_long_sleep_ready_at=millis()+3000UL;" in runtime_source, "wake leaves a three-second short-cycle window for the existing BOOT hold"
+assert "bool primary_button_wake=false" in power_backend_header, "generic power boundary exposes optional primary-button wake"
+assert "esp_sleep_enable_ext0_wakeup((gpio_num_t)T5_PIN_BOOT_BUTTON,0);" in power_backend_source, "T5 long light sleep can wake early from BOOT"
+assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);" in power_backend_source, "experimental BOOT wake source is removed after light sleep"
