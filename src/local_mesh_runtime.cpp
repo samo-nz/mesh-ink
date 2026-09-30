@@ -159,14 +159,14 @@ class MessageStore{
                           (unsigned)records_written,(unsigned)sizeof(records_));
             return;
         }
-        Serial.printf("[T5-STORE] created fixed store: %u messages, %u bytes\n",(unsigned)MAX_STORED_MESSAGES,(unsigned)(sizeof(header_)+sizeof(records_)));
+        T5_DEBUGF(T5_LOG_MESH,"[T5-STORE] created fixed store: %u messages, %u bytes\n",(unsigned)MAX_STORED_MESSAGES,(unsigned)(sizeof(header_)+sizeof(records_)));
     }
 public:
     void begin(){
         File f=SPIFFS.open(STORE_PATH,"r");
         if(!f||f.size()!=(int)(sizeof(header_)+sizeof(records_))){
             if(f)f.close();
-            Serial.println("[T5-STORE] message store missing/size mismatch; recreating");
+            T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] message store missing/size mismatch; recreating");
             create();return;
         }
         const size_t header_read=f.read((uint8_t*)&header_,sizeof(header_));
@@ -737,7 +737,7 @@ void local_mesh_prepare_shutdown(){
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_shutdown();
 #endif
-    Serial.println("[T5-SHUTDOWN] LoRa radio sleep requested");
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] LoRa radio sleep requested");
 }
 uint16_t local_mesh_direct_unread_total(){return provider.direct_unread_total();}
 uint16_t local_mesh_channel_unread_total(){return provider.channel_unread_total();}

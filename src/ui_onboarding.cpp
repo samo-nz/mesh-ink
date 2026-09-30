@@ -34,7 +34,7 @@
 #endif
 
 void request_companion_mode() __attribute__((weak));
-void request_companion_mode() { Serial.println("[T5-UI] companion mode requires unified build"); }
+void request_companion_mode() {}
 
 // UI milestone 0.1.0: standalone onboarding. Bluetooth, radio and GPS are not
 // started in this target. Saved values are device-owned and will be handed to
@@ -2076,7 +2076,7 @@ static void full_display_clean(const char* reason) {
 static void set_touch_power(bool enabled);
 
 static void request_hardware_shutdown() {
-    Serial.println("[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
     centred("POWERED OFF",ui_y(250),6,0,true);
@@ -2091,16 +2091,16 @@ static void request_hardware_shutdown() {
     set_touch_power(false);
     local_mesh_prepare_shutdown();
     SPIFFS.end();
-    Serial.println("[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
 }
 
 static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
     if(critical.battery_mv_valid)
-        Serial.printf("[T5-POWER] CRITICAL battery=%umV source=%s; entering ship mode\n",
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; entering ship mode\n",
                       (unsigned)critical.battery_mv,source?source:"unknown");
     else
-        Serial.printf("[T5-POWER] CRITICAL battery source=%s; entering ship mode\n",
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; entering ship mode\n",
                       source?source:"unknown");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
     text_refresh_pending=false;message_alert_active=false;
@@ -2126,7 +2126,7 @@ static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,
     if(mesh_is_ready) {
         local_mesh_prepare_shutdown();
         SPIFFS.end();
-        Serial.println("[T5-POWER] low-battery shutdown: mesh/storage stopped");
+        T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] low-battery mesh/storage stopped");
     }
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
@@ -2346,7 +2346,7 @@ static void append(char c) {
         }
         return;
     }
-    if(!legal_name_character(c)){Serial.printf("[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
+    if(!legal_name_character(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
     size_t n=strlen(node_name); if (n<20) { node_name[n]=c; node_name[n+1]=0; saved=false; }
 }
@@ -2994,7 +2994,7 @@ void ui_setup() {
     if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;apply_timezone();
     if(saved_name.length()){
         size_t out=0;
-        for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else Serial.printf("[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
+        for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
         node_name[out]=0;
     }else if(!setup_complete){
         // Generate once per new device and persist immediately: rebooting
@@ -3008,7 +3008,7 @@ void ui_setup() {
             initial_name.putString("name",node_name);
             initial_name.end();
         }
-        Serial.printf("[T5-BOOT] generated first-setup device name: %s\n",node_name);
+        T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] generated first-setup device name: %s\n",node_name);
     }
     if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
     update_status_hardware();
@@ -3034,7 +3034,7 @@ void ui_show_storage_initializing() {
     meshink_display_fill_rect({0,ui_y(704),portrait_layout().width,ui_h(65)},0xFF,fb);
     centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
     refresh(MeshInkRefreshMode::FastGray16);
-    Serial.println("[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
 }
 
 void ui_finish_startup() {
@@ -3069,7 +3069,7 @@ void ui_finish_startup() {
 void ui_loop() {
     t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     if(hardware_failure){
-        static uint32_t report_at=0;if(millis()-report_at>=60000){report_at=millis();Serial.println("[T5-ERROR] radio unavailable; startup halted; press RST to retry");}
+
         delay(100);return;
     }
     service_critical_battery();
@@ -3474,7 +3474,7 @@ void ui_apply_initial_radio_preset(){
     if(setup_complete||selected_preset==0)return;
     if(apply_selected_preset()){
         const Preset& preset=PRESETS[selected_preset];
-        Serial.printf("[T5-BOOT] initial radio preset %s: %lu.%03lu MHz SF%u BW%.1f CR%u %uB\n",
+        T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] initial radio preset %s: %lu.%03lu MHz SF%u BW%.1f CR%u %uB\n",
             preset.title,(unsigned long)(preset.frequency_khz/1000),
             (unsigned long)(preset.frequency_khz%1000),preset.spreading_factor,
             (double)preset.bandwidth_khz,preset.coding_rate,preset.path_hash_bytes);

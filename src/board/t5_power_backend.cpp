@@ -64,8 +64,7 @@ bool find_charger(uint8_t& address,uint8_t& reg09) {
 }
 
 [[noreturn]] void deep_sleep_fallback(const char* reason) {
-    Serial.printf("[T5-SHUTDOWN] entering deep-sleep fallback reason=%s wake=BOOT/GPIO0\n",reason);
-    Serial.flush();
+    (void)reason;
     esp_sleep_enable_ext0_wakeup((gpio_num_t)T5_PIN_BOOT_BUTTON,0);
     delay(50);
     esp_deep_sleep_start();
@@ -370,8 +369,7 @@ void meshink_power_recover_boot_path() {
     }
     const uint8_t restored=(uint8_t)((reg09&~BATFET_DIS)|BATFET_RST_EN);
     const bool ok=write_byte(address,0x09,restored);
-    Serial.printf("[T5-BOOT] PMIC battery path recovery address=0x%02X REG09 0x%02X->0x%02X result=%s\n",
-                  address,reg09,restored,ok?"OK":"FAILED");
+    if(!ok)Serial.println("[T5-ERROR] PMIC battery path recovery failed");
     delay(150);
 }
 
@@ -384,7 +382,7 @@ void meshink_power_recover_boot_path() {
 
     if(!find_charger(address,reg09)) {
         if(low_battery)
-            Serial.println("[T5-POWER] low-battery PMIC unavailable; deep-sleep fallback");
+            Serial.println("[T5-ERROR] low-battery PMIC unavailable; deep-sleep fallback");
         else
             Serial.println("[T5-SHUTDOWN] ERROR: BQ25896 not detected at 0x6B or 0x6A");
         deep_sleep_fallback(low_battery?"LOW_BATTERY_PMIC_NOT_FOUND":"PMIC_NOT_FOUND");
@@ -392,8 +390,6 @@ void meshink_power_recover_boot_path() {
 
     const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
     if(low_battery) {
-        Serial.printf("[T5-POWER] low-battery ship mode PMIC=0x%02X REG09=0x%02X->0x%02X\n",
-                      address,reg09,requested);
     }
 
     Serial.flush();
@@ -405,7 +401,5 @@ void meshink_power_recover_boot_path() {
     // On battery alone BATFET_DIS removes SYS power and execution stops here.
     // If execution continues, VBUS is present; sleep rather than resume the UI.
     delay(750);
-    if(!low_battery)
-        Serial.println("[T5-SHUTDOWN] PMIC command returned; USB/VBUS is probably present, using deep sleep until power is removed");
     deep_sleep_fallback(low_battery?"LOW_BATTERY_VBUS_PRESENT":"VBUS_STILL_POWERED");
 }

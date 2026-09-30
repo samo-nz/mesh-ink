@@ -38,7 +38,6 @@ void request_companion_mode() {
         mode.putBool("companion_once", true);
         mode.end();
     }
-    Serial.println("[T5-BOOT] one-shot companion mode saved; restarting");
     delay(150);
     ESP.restart();
 }
@@ -57,7 +56,6 @@ static void companion_exit_button() {
     const bool pressed = meshink_primary_button_pressed();
     if (pressed && pressed_at == 0) pressed_at = millis();
     if (pressed && pressed_at != 0 && millis() - pressed_at >= 2000) {
-        Serial.println("[T5-BOOT] companion exit requested; returning to local UI now");
         companion_prepare_exit();
         delay(50);
         ESP.restart();
@@ -69,20 +67,13 @@ void setup() {
     Serial.begin(115200);
     meshink_buttons_begin();
     companion_mode = consume_companion_request();
-    Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
-                  companion_mode ? "BT companion" : "local UI");
 #if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
-    Serial.printf("[T5-BOOT] data-cache-line=%dB cache64-experiment=%d\n",
-                  CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, T5_CACHE64_EXPERIMENT);
 #endif
 #if T5_CACHE64_EXPERIMENT
     const bool psram_ok=psramFound();
-    Serial.printf("[T5-BOOT] psram-found=%d size=%lu free=%lu\n",
-                  psram_ok?1:0,(unsigned long)ESP.getPsramSize(),
-                  (unsigned long)ESP.getFreePsram());
     if(!psram_ok){
         cache64_psram_blocked=true;
-        Serial.println("[T5-BOOT] FATAL cache64 PSRAM unavailable; UI start blocked to prevent EPDiy reboot loop");
+        Serial.println("[T5-ERROR] cache64 PSRAM unavailable; UI start blocked");
         return;
     }
 #endif

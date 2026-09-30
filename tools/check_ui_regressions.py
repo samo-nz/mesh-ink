@@ -212,7 +212,6 @@ for shutdown_step in (
     "meshink_radio_power_off();",
     "meshink_board_companion_release_resources();",
     "SPIFFS.end();",
-    "Serial.flush();",
 ):
     assert shutdown_step in shutdown_body, f"companion shutdown missing {shutdown_step}"
 assert "const bool ble_connected=bluetooth_interface.isConnected();" in shutdown_body, "shutdown checks BLE connection before disabling transport"
@@ -227,14 +226,12 @@ assert "meshink_board_companion_exit_feedback_begin();" in shutdown_body, "accep
 exit_feedback_body = board_target_source.split("void meshink_board_companion_exit_feedback_begin() {",1)[1].split("void meshink_board_companion_release_resources()",1)[0]
 assert "meshink_power_frontlight_begin();" in exit_feedback_body, "companion exit reasserts frontlight hardware before acknowledgement"
 assert "meshink_power_frontlight_set(100);" in exit_feedback_body, "companion exit drives full-brightness acknowledgement"
-assert "[T5-LIGHT] companion exit acknowledgement brightness=100%" in exit_feedback_body, "companion exit frontlight acknowledgement is observable in field logs"
 assert "t5_companion_show_returning_notice" not in companion_source and "t5_companion_show_returning_notice" not in board_target_source, "companion exit must not reinitialize EPDiy before reboot"
 assert 'RETURNING TO LOCAL UI' not in board_target_source, "unsafe retained reboot screen remains removed"
 release_body = board_target_source.split("void meshink_board_companion_release_resources()",1)[1].split("void T5Board::begin()",1)[0]
 for handoff_step in ("radio_hal.detachInterrupt(P_LORA_DIO_1);","radio_spi.end();"):
     assert handoff_step in release_body, f"companion radio cleanup missing {handoff_step}"
 assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exit must not tear down the global GPIO ISR service"
-assert 'companion shutdown complete elapsed=%lums' in companion_source, "hardware log reports measured companion shutdown duration"
 assert 'notice_meshink_logo(160, fb);' in companion_notice_source, "companion screen uses MeshInk splash artwork"
 assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in companion_notice_source, "companion screen labels Bluetooth mode below logo"
 assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in companion_notice_source, "companion screen uses board-provided primary-button label"
@@ -557,9 +554,9 @@ assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malfo
 contains("static void audit_ui_geometry()", "test8 boot-time geometry self-audit")
 contains("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d", "geometry audit emits versioned board/display summary")
 contains("[T5-TOUCH] tap screen=%s x=%d y=%d", "touch diagnostics identify screen and coordinates")
-assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" in cache64_build_flags, "test9 cache64 build must run boot geometry audit"
-assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" in cache64_build_flags, "test9 field build must enable backend identity diagnostics"
-assert "-DT5_LOG_UI=1" in cache64_build_flags, "test9 cache64 build must include targeted UI logs"
+assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build must not force geometry serial diagnostics"
+assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build must not force touch serial diagnostics"
+assert "-DT5_LOG_UI=1" not in cache64_build_flags, "release cache64 build must not force UI serial diagnostics"
 assert 'if(!keyboard_visible&&!keyboard_landscape)' in source and '[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u' in source, "test9 non-keyboard touch logging must remain consumer-side"
 assert "-DT5_LOG_MAP=1" not in cache64_build_flags, "test9 must not enable high-volume map diagnostics in cache64 build"
 
@@ -795,3 +792,11 @@ assert "GaugeDiagnosticSnapshot" not in power_backend_source, "release backend m
 for release_power_debug_source in (source, runtime_source, unified_source, board_target_source, power_backend_source):
     assert "T5_LOG_POWER" not in release_power_debug_source, "release source still contains power debug reporting"
 assert "delay(12);" in source and "if(!standby_active)delay(12);" not in source, "UI restores the established unconditional 12 ms idle delay"
+
+# Test40 release serial policy: normal operation is quiet; actionable faults remain.
+assert '[T5-BOOT] firmware=%s mode=%s' not in unified_source, "release boot must not print routine firmware/mode text"
+assert '[T5-BLE] scan response name=' not in companion_source, "release companion mode must not print BLE setup chatter"
+assert 'companion shutdown complete elapsed=' not in companion_source, "release companion shutdown must not print routine timing"
+assert 'Serial.printf("[T5-RADIO]' not in board_target_source and 'Serial.println("[T5-RADIO]' not in board_target_source, "release radio bring-up must not print routine diagnostics"
+assert 'Serial.printf("[T5-BOOT] GPS module=' not in board_target_source, "release GPS startup must not print module diagnostics"
+assert '[T5-ERROR]' in unified_source and '[T5-ERROR]' in power_backend_source, "release serial path retains actionable error reporting"

@@ -157,7 +157,7 @@ void meshink_board_start_local_radio_settle(){
     t5_radio_shared_bus_idle(true);
     radio_gps_rail_start_ok=t5_set_radio_gps_rail(true,0);
     radio_gps_rail_started_at=radio_gps_rail_start_ok?millis():0;
-    Serial.printf("[T5-RADIO] early rail start=%s at=%lums\n",
+    T5_TRACE("radio: early rail start=%s at=%lums\n",
         radio_gps_rail_start_ok?"OK":"FAILED",(unsigned long)radio_gps_rail_started_at);
 }
 
@@ -172,7 +172,7 @@ static bool t5_wait_local_radio_settle(){
     }
     const uint32_t elapsed=millis()-radio_gps_rail_started_at;
     const uint32_t remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0;
-    Serial.printf("[T5-RADIO] rail settle elapsed=%lums remaining=%lums\n",
+    T5_TRACE("radio: rail settle elapsed=%lums remaining=%lums\n",
         (unsigned long)elapsed,(unsigned long)remaining);
     if(remaining)delay(remaining);
     return true;
@@ -663,7 +663,7 @@ void meshink_board_companion_exit_feedback_begin() {
     // acknowledgement.
     meshink_power_frontlight_begin();
     meshink_power_frontlight_set(100);
-    Serial.println("[T5-LIGHT] companion exit acknowledgement brightness=100%");
+    T5_TRACE("frontlight: companion exit acknowledgement brightness=100%%\n");
 }
 
 void meshink_board_companion_release_resources() {
@@ -739,7 +739,7 @@ bool radio_init() {
             pinMode(P_LORA_RESET,OUTPUT);
             digitalWrite(P_LORA_RESET,LOW);delay(20);
             digitalWrite(P_LORA_RESET,HIGH);delay(120);
-            Serial.println("[T5-RADIO] recovery=spi-reset+sx1262-reset");
+            T5_TRACE("radio: recovery=spi-reset+sx1262-reset\n");
         }else if(attempt==3){
             // Escalation 2: this still occurs before removable storage is
             // mounted, so the H752-01 shared LoRa/GPS rail can be safely
@@ -750,14 +750,14 @@ bool radio_init() {
             const bool on=off&&t5_set_radio_gps_rail(true,1500);
             radio_gps_rail_start_ok=on;
             radio_gps_rail_started_at=on?millis():0;
-            Serial.printf("[T5-RADIO] recovery=rail-cycle off=%u on=%u\n",off?1U:0U,on?1U:0U);
+            T5_TRACE("radio: recovery=rail-cycle off=%u on=%u\n",off?1U:0U,on?1U:0U);
             if(!on)continue;
         }else{
             t5_radio_shared_bus_idle(true);
         }
 
         const uint32_t attempt_started=millis();
-        Serial.printf("[T5-RADIO] init attempt=%u/3 lora-cs=%d sd-cs=%d busy=%d reset=%d\n",
+        T5_TRACE("radio: init attempt=%u/3 lora-cs=%d sd-cs=%d busy=%d reset=%d\n",
             attempt,digitalRead(T5_PIN_LORA_CS),digitalRead(T5_PIN_SD_CS),
             digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET));
         // CustomSX1262::std_init prints RadioLib's numeric failure code on error.
@@ -770,17 +770,17 @@ bool radio_init() {
             // settings; MeshCore's protocol parameters remain unchanged.
             constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
             const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
-            Serial.printf("[T5-RADIO] post-init TCXO=%.1fV result=%d\n",
+            T5_TRACE("radio: post-init TCXO=%.1fV result=%d\n",
                 (double)LILYGO_TCXO_VOLTAGE,(int)tcxo_state);
             if(tcxo_state!=RADIOLIB_ERR_NONE)ready=false;
             if(ready){
                 const int16_t rf_switch_state=radio.setDio2AsRfSwitch(true);
-                Serial.printf("[T5-RADIO] post-init DIO2 RF-switch result=%d\n",
+                T5_TRACE("radio: post-init DIO2 RF-switch result=%d\n",
                     (int)rf_switch_state);
                 if(rf_switch_state!=RADIOLIB_ERR_NONE)ready=false;
             }
         }
-        Serial.printf("[T5-RADIO] init attempt=%u result=%s elapsed=%lums busy=%d\n",
+        T5_TRACE("radio: init attempt=%u result=%s elapsed=%lums busy=%d\n",
             attempt,ready?"OK":"FAILED",(unsigned long)(millis()-attempt_started),
             digitalRead(P_LORA_BUSY));
         if(!ready&&attempt<3)delay(500);
@@ -821,7 +821,7 @@ bool radio_init() {
             gps_stream.clearValidation();
             T5_GPS_TRACE("gps: startup probe inconclusive; background retry enabled\n");
         }
-        Serial.printf("[T5-BOOT] GPS module=%s baud=%lu%s\n",
+        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
             gps_module_name(),(unsigned long)Serial1.baudRate(),
             gps_baud_locked?"":" (NMEA not yet confirmed)");
         T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
@@ -838,7 +838,7 @@ MeshInkRadioFailureClass t5_classify_radio_failure() {
     // a hardware-match classification rather than an absolute identity claim.
     uint8_t pca_config=0;
     if(!pca_read(0x06,pca_config)) {
-        Serial.println("[T5-HW] radio failure: PCA9535 absent; not classifying as H752-01 Lite");
+        T5_TRACE("radio failure: PCA9535 absent; not classifying as H752-01 Lite\n");
         return MeshInkRadioFailureClass::Unknown;
     }
 
@@ -861,7 +861,7 @@ MeshInkRadioFailureClass t5_classify_radio_failure() {
             if(gps_present)break;
         }
     }
-    Serial.printf("[T5-HW] radio failure classification: H752-01=yes GPS-NMEA=%s\n",
+    T5_TRACE("radio failure classification: H752-01=yes GPS-NMEA=%s\n",
                   gps_present?"yes":"no");
     return gps_present?MeshInkRadioFailureClass::RadioFault:MeshInkRadioFailureClass::MissingHardwareVariant;
 #else

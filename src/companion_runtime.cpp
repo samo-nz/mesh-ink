@@ -74,9 +74,6 @@ static void companion_configure_ble_scan_response(const char* prefix,const char*
     if(truncated)scan_response.setShortName(scan_name);
     else scan_response.setName(scan_name);
     BLEDevice::getAdvertising()->setScanResponseData(scan_response);
-    Serial.printf("[T5-BLE] scan response name='%s' kind=%s payload=%u/31 bytes\n",
-                  scan_name,truncated?"short":"complete",
-                  (unsigned)scan_response.getPayload().size());
 }
 
 MyMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tables, store);
@@ -88,7 +85,7 @@ void companion_setup() {
     meshink_show_companion_notice();
     meshink_board_begin_companion();
     if (!meshink_radio_initialize()) {
-        Serial.printf("[T5-BOOT] fatal: %s initialization failed\n",meshink_radio_name());
+        Serial.printf("[T5-ERROR] %s initialization failed\n",meshink_radio_name());
         while (true) delay(1000);
     }
     fast_rng.begin(meshink_radio_rng_seed());
@@ -132,12 +129,9 @@ static bool companion_persist_contact(const ContactInfo& contact) {
 }
 
 void companion_prepare_exit() {
-    const uint32_t shutdown_started=millis();
     meshink_board_companion_exit_feedback_begin();
 
     const bool ble_connected=bluetooth_interface.isConnected();
-    Serial.printf("[T5-BOOT] companion shutdown: BLE connected=%u; stopping MeshCore interface\n",
-                  ble_connected?1U:0U);
 
     // Upstream SerialBLEInterface::disable() always calls disconnect(last_conn_id).
     // If the phone has already disconnected, that stale ID makes Bluedroid emit
@@ -161,7 +155,6 @@ void companion_prepare_exit() {
     }
     BLEDevice::deinit(false);
 
-    Serial.println("[T5-BOOT] companion shutdown: saving MeshCore state");
     the_mesh.savePrefs();
     store.saveContacts(&the_mesh,companion_persist_contact);
     store.saveChannels(&the_mesh);
@@ -170,14 +163,10 @@ void companion_prepare_exit() {
     meshink_gps_shutdown();
 #endif
 
-    Serial.println("[T5-BOOT] companion shutdown: powering radio down");
     meshink_radio_power_off();
     meshink_board_companion_release_resources();
     SPIFFS.end();
 
-    Serial.printf("[T5-BOOT] companion shutdown complete elapsed=%lums\n",
-                  (unsigned long)(millis()-shutdown_started));
-    Serial.flush();
 }
 
 void local_mesh_setup() {
@@ -197,11 +186,10 @@ void local_mesh_setup() {
     // actually necessary (first install or filesystem recovery).
     bool storage_mounted=SPIFFS.begin(false);
     if(!storage_mounted){
-        Serial.println("[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
+        T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
         ui_show_storage_initializing();
         storage_mounted=SPIFFS.begin(true);
     }
-    Serial.printf("[T5-STORE] SPIFFS mount result=%s\n",storage_mounted?"OK":"FAILED");
     store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
     meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
@@ -221,7 +209,6 @@ void local_mesh_setup() {
             settings->gps_interval=0;
             the_mesh.savePrefs();
             initial_gps.putBool("gps_default_v1",true);
-            Serial.println("[T5-BOOT] new setup GPS default: enabled, continuous");
         }
         initial_gps.end();
     }
@@ -232,7 +219,6 @@ void local_mesh_setup() {
     ui_mesh_ready();
     ui_apply_initial_radio_preset(); // fix first boot's displayed-vs-active radio mismatch
     local_runtime_ready=true;
-    Serial.printf("[T5-BOOT] MeshCore ready: contacts=%d\n",the_mesh.getNumContacts());
     T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
 }
 bool local_mesh_is_running(){return local_runtime_ready;}
