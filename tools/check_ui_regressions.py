@@ -858,3 +858,13 @@ assert "local_mesh_request_diagnostics()" in source and "draw_diagnostics()" in 
 assert "frame[2]={56,type}" in runtime_source, "diagnostics uses upstream CMD_GET_STATS"
 assert "PACKETS RX/TX %lu / %lu" in runtime_source and "AIRTIME TX/RX %lu / %lu S" in runtime_source, "diagnostics decodes packet and radio counters"
 assert 'settings_row("HELP","USING MESHINK",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
+
+# Test46: a message received while its conversation is visibly open is already
+# seen and must not create contact/channel or bottom-tab unread dots.
+assert "bool ui_chat_is_visible(bool channel)" in source, "UI exposes a single visible-chat predicate for unread handling"
+assert "return !standby_active&&(channel?screen==Screen::ChannelChat:screen==Screen::ContactChat);" in source, "visible chat excludes standby and distinguishes private/channel chats"
+assert "ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6)" in runtime_source, "matching visible private chat suppresses provider unread increment"
+assert "ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel" in runtime_source, "matching visible channel chat suppresses provider unread increment"
+assert "if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}" in runtime_source, "private unread increments only when unseen"
+assert "if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;" in runtime_source, "channel unread increments only when unseen"
+assert "const bool visible=ui_chat_is_visible(channel);" in source, "bottom-tab unread uses the same visible-chat predicate"

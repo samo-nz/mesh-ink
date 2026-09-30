@@ -3550,10 +3550,14 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     }
 }
 
+bool ui_chat_is_visible(bool channel){
+    return !standby_active&&(channel?screen==Screen::ChannelChat:screen==Screen::ContactChat);
+}
+
 void ui_notify_message_received(bool channel){
-    const bool visible=channel?screen==Screen::ChannelChat:screen==Screen::ContactChat;
+    const bool visible=ui_chat_is_visible(channel);
     if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
-    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active);
+    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d visible=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active,visible);
 }
 
 void ui_notify_advert_result(bool flood,bool ok){

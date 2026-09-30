@@ -378,13 +378,15 @@ public:
         rebuild_active();
     }
     void received_direct(const uint8_t* key,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
-        auto& unread=direct_unread(key);if(unread<255)unread++;
+        const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
+        if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
         auto* stored=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
         if(has_rf){auto& meta=meta_for(stored->sequence);meta.has_rx=true;meta.snr_q4=snr_q4;meta.path_len=path_len;}
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
-        if(channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
+        const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
+        if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
         auto* stored=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
         if(has_rf){auto& meta=meta_for(stored->sequence);meta.has_rx=true;meta.snr_q4=snr_q4;meta.path_len=path_len;}
         refresh(true);ui_notify_message_received(true);
