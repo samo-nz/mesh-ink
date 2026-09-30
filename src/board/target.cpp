@@ -779,12 +779,18 @@ bool radio_init() {
             const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
             T5_TRACE("radio: post-init TCXO=%.1fV result=%d\n",
                 (double)LILYGO_TCXO_VOLTAGE,(int)tcxo_state);
-            if(tcxo_state!=RADIOLIB_ERR_NONE)ready=false;
+            if(tcxo_state!=RADIOLIB_ERR_NONE){
+                Serial.printf("[T5-ERROR] SX1262 TCXO 2.4V setup failed code=%d\n",(int)tcxo_state);
+                ready=false;
+            }
             if(ready){
                 const int16_t rf_switch_state=radio.setDio2AsRfSwitch(true);
                 T5_TRACE("radio: post-init DIO2 RF-switch result=%d\n",
                     (int)rf_switch_state);
-                if(rf_switch_state!=RADIOLIB_ERR_NONE)ready=false;
+                if(rf_switch_state!=RADIOLIB_ERR_NONE){
+                    Serial.printf("[T5-ERROR] SX1262 DIO2 RF-switch setup failed code=%d\n",(int)rf_switch_state);
+                    ready=false;
+                }
             }
         }
         T5_TRACE("radio: init attempt=%u result=%s elapsed=%lums busy=%d\n",

@@ -638,8 +638,10 @@ tcxo_at=board_target_source.index("radio.setTCXO(LILYGO_TCXO_VOLTAGE)")
 rf_switch_at=board_target_source.index("radio.setDio2AsRfSwitch(true)")
 std_init_at=board_target_source.index("ready=radio.std_init(&radio_spi)")
 assert std_init_at < tcxo_at < rf_switch_at, "radio hardware order must be begin -> TCXO 2.4 V -> DIO2 RF switch"
-assert "post-init TCXO=%.1fV result=%d" in board_target_source, "TCXO post-init result remains observable in field logs"
-assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch post-init result remains observable in field logs"
+assert "post-init TCXO=%.1fV result=%d" in board_target_source, "TCXO post-init result remains available to targeted diagnostics"
+assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch post-init result remains available to targeted diagnostics"
+assert "[T5-ERROR] SX1262 TCXO 2.4V setup failed code=%d" in board_target_source, "release serial reports TCXO setup failures"
+assert "[T5-ERROR] SX1262 DIO2 RF-switch setup failed code=%d" in board_target_source, "release serial reports DIO2 RF-switch setup failures"
 assert '-DSX126X_DIO3_TCXO_VOLTAGE=' not in platformio_source, "RadioLib begin stage must use its default TCXO drive"
 assert '-DSX126X_DIO2_AS_RF_SWITCH=' not in platformio_source, "DIO2 setup must not happen inside std_init before TCXO 2.4 V"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test33 LilyGO radio alignment must not change SD access speed"
@@ -815,3 +817,9 @@ assert '[T5-INIT] rtc=PCF8563 OK' in board_target_source and '[T5-WARN] rtc=' in
 assert '[T5-INIT] battery-gauge=OK voltage=%umV' in board_target_source, "startup reports battery gauge readiness"
 assert '[T5-INIT] storage=SPIFFS OK' in companion_source, "startup reports filesystem readiness"
 assert '[T5-INIT] startup=READY' in unified_source, "local boot ends with a concise ready marker"
+
+# Test43: final field candidate keeps startup terms unambiguous and radio
+# electrical failures actionable without restoring verbose diagnostics.
+assert '[T5-INIT] wifi-bt=OK wifi=off bt=off' in unified_source, "local startup labels ESP Wi-Fi/Bluetooth state explicitly"
+assert '[T5-INIT] wifi-bt=OK wifi=off bt=ready' in unified_source, "companion startup labels ESP Wi-Fi/Bluetooth state explicitly"
+assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startup label must not return"

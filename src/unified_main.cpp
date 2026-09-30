@@ -93,7 +93,7 @@ void setup() {
         const MeshInkWirelessState companion_ready=meshink_wireless_read_state();
         check_companion_wireless_state("companion-ready",companion_ready);
         if(meshink_wireless_companion_radios_ready(companion_ready))
-            Serial.println("[T5-INIT] wireless=OK wifi=off bt=ready");
+            Serial.println("[T5-INIT] wifi-bt=OK wifi=off bt=ready");
         Serial.println("[T5-INIT] companion=READY");
     } else {
         // Standalone UI never uses the ESP32-S3 2.4 GHz radios. Explicitly
@@ -108,7 +108,7 @@ void setup() {
         const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
         check_local_wireless_state("local-post-mesh",local_ready);
         if(meshink_wireless_local_radios_off(local_ready))
-            Serial.println("[T5-INIT] wireless=OK wifi=off bt=off");
+            Serial.println("[T5-INIT] wifi-bt=OK wifi=off bt=off");
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
         ui_finish_startup();  // only now show a tappable setup/home screen
         if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
