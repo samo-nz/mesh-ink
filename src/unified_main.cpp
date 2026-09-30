@@ -6,6 +6,7 @@
 #include "map_tiles.h"
 #include "hardware/wireless.h"
 #include "hardware/buttons.h"
+#include "hardware/board.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -67,7 +68,11 @@ void setup() {
     Serial.begin(115200);
     meshink_buttons_begin();
     companion_mode = consume_companion_request();
+    Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=%s\n",
+                  T5_FIRMWARE_VERSION,meshink_board_name(),
+                  companion_mode?"companion":"local");
 #if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
+    Serial.printf("[T5-BOOT] cache-line=%dB\n",CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE);
 #endif
 #if T5_CACHE64_EXPERIMENT
     const bool psram_ok=psramFound();
@@ -76,6 +81,7 @@ void setup() {
         Serial.println("[T5-ERROR] cache64 PSRAM unavailable; UI start blocked");
         return;
     }
+    Serial.println("[T5-INIT] psram=OK");
 #endif
     if (companion_mode) {
         // Wi-Fi is never used, even in Bluetooth Companion Mode. Keep its
@@ -84,7 +90,11 @@ void setup() {
         if(!before.wifi_off)
             Serial.println("[T5-ERROR] companion startup could not disable Wi-Fi");
         companion_setup();
-        check_companion_wireless_state("companion-ready",meshink_wireless_read_state());
+        const MeshInkWirelessState companion_ready=meshink_wireless_read_state();
+        check_companion_wireless_state("companion-ready",companion_ready);
+        if(meshink_wireless_companion_radios_ready(companion_ready))
+            Serial.println("[T5-INIT] wireless=OK wifi=off bt=ready");
+        Serial.println("[T5-INIT] companion=READY");
     } else {
         // Standalone UI never uses the ESP32-S3 2.4 GHz radios. Explicitly
         // stop/deinitialize both stacks before local startup, then enforce and
@@ -95,10 +105,13 @@ void setup() {
             meshink_wireless_force_local_radios_off());
         ui_setup();           // show boot logo while storage/radio initialize
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
-        check_local_wireless_state("local-post-mesh",
-            meshink_wireless_force_local_radios_off());
+        const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
+        check_local_wireless_state("local-post-mesh",local_ready);
+        if(meshink_wireless_local_radios_off(local_ready))
+            Serial.println("[T5-INIT] wireless=OK wifi=off bt=off");
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
         ui_finish_startup();  // only now show a tappable setup/home screen
+        if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
     }
 }
 

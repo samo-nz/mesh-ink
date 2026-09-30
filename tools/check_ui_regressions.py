@@ -795,7 +795,7 @@ for release_power_debug_source in (source, runtime_source, unified_source, board
 assert "delay(12);" in source and "if(!standby_active)delay(12);" not in source, "UI restores the established unconditional 12 ms idle delay"
 
 # Test40 release serial policy: normal operation is quiet; actionable faults remain.
-assert '[T5-BOOT] firmware=%s mode=%s' not in unified_source, "release boot must not print routine firmware/mode text"
+assert '[T5-BOOT] MeshInk %s board=%s mode=%s' in unified_source, "release boot prints a concise version/board/mode header"
 assert '[T5-BLE] scan response name=' not in companion_source, "release companion mode must not print BLE setup chatter"
 assert 'companion shutdown complete elapsed=' not in companion_source, "release companion shutdown must not print routine timing"
 assert 'Serial.printf("[T5-RADIO]' not in board_target_source and 'Serial.println("[T5-RADIO]' not in board_target_source, "release radio bring-up must not print routine diagnostics"
@@ -805,3 +805,13 @@ assert '[T5-ERROR]' in unified_source and '[T5-ERROR]' in power_backend_source, 
 # Test41: five-minute status cadence is standby-only; normal UI updates each minute.
 assert "status_wall_minute!=status_bar_painted_minute" in source, "normal UI clock updates each wall-clock minute"
 assert "status_slot!=status_bar_painted_slot" in source, "standby keeps five-minute clock cadence"
+
+# Test42: concise startup transcript, then quiet steady state.
+assert '[T5-INIT] psram=OK' in unified_source, "startup reports PSRAM readiness"
+assert '[T5-INIT] display=OK' in source and '[T5-INIT] touch=OK' in source, "startup reports display/touch initialization"
+assert '[T5-INIT] radio=SX1262 OK' in board_target_source, "startup reports radio readiness"
+assert '[T5-INIT] gps=%s baud=%lu OK' in board_target_source and '[T5-WARN] gps=NMEA not confirmed; background retry active' in board_target_source, "startup reports confirmed GPS or explicit fallback warning"
+assert '[T5-INIT] rtc=PCF8563 OK' in board_target_source and '[T5-WARN] rtc=' in board_target_source, "startup reports RTC success or fallback warning"
+assert '[T5-INIT] battery-gauge=OK voltage=%umV' in board_target_source, "startup reports battery gauge readiness"
+assert '[T5-INIT] storage=SPIFFS OK' in companion_source, "startup reports filesystem readiness"
+assert '[T5-INIT] startup=READY' in unified_source, "local boot ends with a concise ready marker"

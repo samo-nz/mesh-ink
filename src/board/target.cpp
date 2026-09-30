@@ -47,7 +47,9 @@ static uint8_t to_bcd(uint8_t v){return (uint8_t)(((v/10)<<4)|(v%10));}
 void T5RTCClock::begin(){
     uint8_t r[7]{};
     if(!idf_read(0x51,0x02,r,sizeof(r))){
-        valid_=false;T5_TRACE("rtc: PCF8563 read failed; system fallback active\n");return;
+        valid_=false;
+        Serial.println("[T5-WARN] rtc=PCF8563 unavailable; system/GPS fallback active");
+        return;
     }
     const bool voltage_low=(r[0]&0x80)!=0;
     const uint8_t second=from_bcd(r[0]&0x7F),minute=from_bcd(r[1]&0x7F),hour=from_bcd(r[2]&0x3F);
@@ -56,16 +58,18 @@ void T5RTCClock::begin(){
     if(valid_){
         const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
         timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-        T5_TRACE("rtc: PCF8563 valid UTC=%04u-%02u-%02u %02u:%02u:%02u epoch=%lu\n",
-            2000+year,month,day,hour,minute,second,(unsigned long)utc);
+        Serial.println("[T5-INIT] rtc=PCF8563 OK");
     }else{
-        T5_TRACE("rtc: PCF8563 INVALID voltage-low=%u raw=%02X/%02X/%02X %02X/%02X/%02X\n",
-            voltage_low,r[2],r[1],r[0],r[3],r[5],r[6]);
+        Serial.println("[T5-WARN] rtc=PCF8563 invalid; system/GPS fallback active");
     }
 }
 uint32_t T5RTCClock::getCurrentTime(){
     if(!valid_)return (uint32_t)time(nullptr);
-    uint8_t r[7]{};if(!idf_read(0x51,0x02,r,sizeof(r))||(r[0]&0x80)){valid_=false;return (uint32_t)time(nullptr);}
+    uint8_t r[7]{};if(!idf_read(0x51,0x02,r,sizeof(r))||(r[0]&0x80)){
+        valid_=false;
+        Serial.println("[T5-WARN] rtc read failed; system/GPS fallback active");
+        return (uint32_t)time(nullptr);
+    }
     return DateTime(2000+from_bcd(r[6]),from_bcd(r[5]&0x1F),from_bcd(r[3]&0x3F),
         from_bcd(r[2]&0x3F),from_bcd(r[1]&0x7F),from_bcd(r[0]&0x7F)).unixtime();
 }
@@ -86,8 +90,7 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
         to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
     valid_=idf_write(0x51,0x02,r,sizeof(r));
     timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-    T5_TRACE("rtc: %s sync UTC=%lu hardware-write=%s\n",trusted_gps?"trusted GPS":"system",
-        (unsigned long)utc,valid_?"OK":"FAILED");
+    if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
 }
 void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
 
@@ -691,7 +694,9 @@ void T5Board::begin() {
     t5_radio_shared_bus_idle(true);
     enableRadioGpsRail();
     meshink_power_prepare_board();
-    getBattMilliVolts();
+    const uint16_t startup_battery_mv=getBattMilliVolts();
+    if(startup_battery_mv)Serial.printf("[T5-INIT] battery-gauge=OK voltage=%umV\n",(unsigned)startup_battery_mv);
+    else Serial.println("[T5-ERROR] battery gauge unavailable during startup");
     T5_TRACE("board: disabling touch and frontlight\n");
     meshink_touch_set_power(false);
     meshink_power_frontlight_set(0); // frontlight remains disabled in companion mode
@@ -715,7 +720,9 @@ void T5Board::beginLocal() {
     // Unified/local mode calls beginLocal(), not begin(). Without this call
     // the 1500mAh factory-profile migration ran only in BLE companion mode.
     meshink_power_prepare_board();
-    getBattMilliVolts();
+    const uint16_t startup_battery_mv=getBattMilliVolts();
+    if(startup_battery_mv)Serial.printf("[T5-INIT] battery-gauge=OK voltage=%umV\n",(unsigned)startup_battery_mv);
+    else Serial.println("[T5-ERROR] battery gauge unavailable during startup");
 #if ENV_INCLUDE_GPS == 1
     Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
     Serial1.begin(9600);
@@ -787,7 +794,8 @@ bool radio_init() {
     }
 
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
-    if(!ready)Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
+    if(ready)Serial.println("[T5-INIT] radio=SX1262 OK");
+    else Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
 #if ENV_INCLUDE_GPS == 1
     // LoRa and GPS share the PCA9535-controlled rail; radio initialization
     // ensures power is available before probing GPS. T5 boards carry either
@@ -819,7 +827,10 @@ bool radio_init() {
             detected_gps_baud = 9600;
             Serial1.updateBaudRate(detected_gps_baud);
             gps_stream.clearValidation();
-            T5_GPS_TRACE("gps: startup probe inconclusive; background retry enabled\n");
+            Serial.println("[T5-WARN] gps=NMEA not confirmed; background retry active");
+        } else {
+            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
+                gps_module_name(),(unsigned long)Serial1.baudRate());
         }
         T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
             gps_module_name(),(unsigned long)Serial1.baudRate(),

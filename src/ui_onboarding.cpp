@@ -2967,6 +2967,7 @@ void ui_setup() {
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
     meshink_display_init();
+    Serial.println("[T5-INIT] display=OK");
     // EPDiy has now established the shared board/I2C environment. Start the
     // LoRa/GPS rail before framebuffer, preferences and splash rendering so
     // those operations overlap its required settling time.
@@ -2974,6 +2975,7 @@ void ui_setup() {
     set_ui_orientation(MeshInkOrientation::Portrait);
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
+    Serial.println("[T5-INIT] touch=OK");
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
 #if MESHINK_GEOMETRY_DIAGNOSTICS
     audit_ui_geometry();

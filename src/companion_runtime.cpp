@@ -89,7 +89,9 @@ void companion_setup() {
         while (true) delay(1000);
     }
     fast_rng.begin(meshink_radio_rng_seed());
-    SPIFFS.begin(true);
+    const bool storage_mounted=SPIFFS.begin(true);
+    if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
+    else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
     store.begin();
     the_mesh.begin(false);
     bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
@@ -175,7 +177,7 @@ void local_mesh_setup() {
     const bool radio_ready=meshink_radio_initialize();
     if (!radio_ready) {
         const MeshInkRadioFailureClass failure=meshink_radio_classify_failure();
-        Serial.printf("[T5-MESH] ERROR: %s unavailable; failure-class=%u\n",meshink_radio_name(),(unsigned)failure);
+        Serial.printf("[T5-ERROR] %s unavailable; failure-class=%u\n",meshink_radio_name(),(unsigned)failure);
         ui_show_radio_failure(failure);
         return;
     }
@@ -190,6 +192,8 @@ void local_mesh_setup() {
         ui_show_storage_initializing();
         storage_mounted=SPIFFS.begin(true);
     }
+    if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
+    else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
     store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
     meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
