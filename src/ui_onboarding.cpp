@@ -857,6 +857,57 @@ static void draw_envelope_icon(int x,int y) {
     }
 }
 
+static void draw_standby_envelope_icon(int x,int y) {
+    // Large 120x80 envelope for the standby summary card.
+    const int w=ui_w(120),h=ui_h(80),stroke=max(ui_w(5),ui_h(5));
+    meshink_display_fill_rect({x,y,w,stroke},0,fb);
+    meshink_display_fill_rect({x,y+h-stroke,w,stroke},0,fb);
+    meshink_display_fill_rect({x,y,stroke,h},0,fb);
+    meshink_display_fill_rect({x+w-stroke,y,stroke,h},0,fb);
+    const int cx=x+w/2;
+    for(int d=-stroke/2;d<=stroke/2;++d) {
+        line(x+stroke,y+stroke+d,cx,y+ui_h(44)+d);
+        line(x+w-stroke-1,y+stroke+d,cx,y+ui_h(44)+d);
+    }
+}
+
+static void fill_standby_disc(int cx,int cy,int radius) {
+    const int rr=radius*radius;
+    for(int dy=-radius;dy<=radius;++dy) {
+        int dx=radius;
+        while(dx>0&&dx*dx+dy*dy>rr)--dx;
+        meshink_display_fill_rect({cx-dx,cy+dy,dx*2+1,1},0,fb);
+    }
+}
+
+static void draw_standby_channel_icon(int x,int y) {
+    // Three-person silhouette matching the standby mockup while remaining
+    // entirely within the generic display primitive boundary.
+    const int centre_x=x+ui_w(63);
+    fill_standby_disc(centre_x,y+ui_h(21),ui_w(18));
+    fill_standby_disc(x+ui_w(24),y+ui_h(31),ui_w(13));
+    fill_standby_disc(x+ui_w(102),y+ui_h(31),ui_w(13));
+
+    meshink_display_fill_rect({x+ui_w(38),y+ui_h(46),ui_w(50),ui_h(34)},0,fb);
+    meshink_display_fill_rect({x+ui_w(31),y+ui_h(59),ui_w(64),ui_h(21)},0,fb);
+    meshink_display_fill_rect({x+ui_w(8),y+ui_h(52),ui_w(28),ui_h(28)},0,fb);
+    meshink_display_fill_rect({x+ui_w(90),y+ui_h(52),ui_w(28),ui_h(28)},0,fb);
+}
+
+static void draw_standby_card(const MeshInkUiRect& rect) {
+    meshink_display_fill_rect({rect.x,rect.y,rect.width,rect.height},0xFF,fb);
+    const int border=max(ui_w(5),ui_h(5));
+    for(int inset=0;inset<border;++inset)
+        meshink_display_draw_rect(
+            {rect.x+inset,rect.y+inset,rect.width-inset*2,rect.height-inset*2},
+            0,fb);
+}
+
+static void standby_centred(const char* value,const MeshInkUiRect& rect,int y,int scale,bool bold=true) {
+    const int width=(int)strlen(value)*6*scale;
+    text(value,rect.x+(rect.width-width)/2,y,scale,0,bold);
+}
+
 static void draw_battery_icon(int x,int y,int level=-1) {
     meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);
     if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;meshink_display_fill_rect({x+2,y+8,fill,14},0,fb);}
@@ -1702,24 +1753,41 @@ static void draw_help() {
     draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",layout.section_margin,ui_y(762),39,2,0,false,5);
 }
 
+static void draw_meshink_logo(int top,bool compact=false);
+
 static void draw_standby(){
-    meshink_display_set_all_white(&display);draw_status_bar();centred("STANDBY",ui_y(126),5,0,true);
-    const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect direct_rect=ui_rect(24,240,492,150);
-    const MeshInkUiRect channel_rect=ui_rect(24,420,492,150);
-    box(direct_rect);
-    draw_envelope_icon(direct_rect.x+ui_w(24),direct_rect.y+ui_h(42));
-    text("PRIVATE MESSAGES",direct_rect.x+ui_w(76),direct_rect.y+ui_h(26),3,0,true);
+    meshink_display_set_all_white(&display);
+    draw_status_bar();
+
+    // Standby is the device's main at-rest face: use the exact same full-size
+    // generated MeshInk artwork as About/splash rather than a text heading.
+    draw_meshink_logo(ui_y(70),false);
+
+    const MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
+    const MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
+
+    draw_standby_card(direct_rect);
+    draw_standby_envelope_icon(
+        direct_rect.x+(direct_rect.width-ui_w(120))/2,
+        direct_rect.y+ui_h(28));
     char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);
-    text(direct,direct_rect.x+ui_w(76),direct_rect.y+ui_h(78),4,0,true);
-    box(channel_rect);
-    text("#",channel_rect.x+ui_w(24),channel_rect.y+ui_h(44),4,0,true);
-    text("CHANNEL MESSAGES",channel_rect.x+ui_w(76),channel_rect.y+ui_h(26),3,0,true);
+    standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11);
+    standby_centred("PRIVATE",direct_rect,direct_rect.y+ui_h(224),3);
+    standby_centred("MESSAGES",direct_rect,direct_rect.y+ui_h(260),3);
+
+    draw_standby_card(channel_rect);
+    draw_standby_channel_icon(
+        channel_rect.x+(channel_rect.width-ui_w(126))/2,
+        channel_rect.y+ui_h(22));
     char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);
-    text(channel,channel_rect.x+ui_w(76),channel_rect.y+ui_h(78),4,0,true);
+    standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11);
+    standby_centred("CHANNEL",channel_rect,channel_rect.y+ui_h(224),3);
+    standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
+
+    meshink_display_fill_rect({ui_x(24),ui_y(805),ui_w(492),ui_h(3)},0,fb);
     char wake_button[40];
     snprintf(wake_button,sizeof(wake_button),"HOLD %s FOR TWO SECONDS TO WAKE",meshink_primary_button_name());
-    centred(wake_button,ui_y(820),2,0,true);
+    centred(wake_button,ui_y(840),2,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
@@ -1744,7 +1812,7 @@ static void draw_night_schedule(){
     draw_wrapped("The selected timezone from GPS settings is used automatically.",layout.section_margin,ui_y(740),39,2,0,true,3);
 }
 
-static void draw_meshink_logo(int top,bool compact=false) {
+static void draw_meshink_logo(int top,bool compact) {
     (void)compact;
     constexpr uint8_t shades[4]={0x00,0x55,0xAA,0xFF};
     const int target_width=ui_w(MESHINK_LOGO_WIDTH);

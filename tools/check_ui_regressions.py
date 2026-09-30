@@ -823,3 +823,16 @@ assert '[T5-INIT] startup=READY' in unified_source, "local boot ends with a conc
 assert '[T5-INIT] wifi-bt=OK wifi=off bt=off' in unified_source, "local startup labels ESP Wi-Fi/Bluetooth state explicitly"
 assert '[T5-INIT] wifi-bt=OK wifi=off bt=ready' in unified_source, "companion startup labels ESP Wi-Fi/Bluetooth state explicitly"
 assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startup label must not return"
+
+# Test44: field standby redesign uses the existing full-size MeshInk bitmap and
+# two side-by-side, thick-bordered unread summary cards.
+assert "draw_meshink_logo(ui_y(70),false);" in source, "standby uses the existing full-size MeshInk logo"
+assert 'centred("STANDBY"' not in source, "standby text heading is replaced by the logo"
+assert "ui_rect(20,445,244,310)" in source and "ui_rect(276,445,244,310)" in source, "standby summary cards are side by side"
+assert "draw_standby_envelope_icon" in source, "standby provides a dedicated large envelope icon"
+assert "draw_standby_channel_icon" in source, "standby provides a dedicated large channel people icon"
+assert "standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11)" in source, "private unread count is oversized"
+assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in source, "channel unread count is oversized"
+assert "const int border=max(ui_w(5),ui_h(5));" in source, "standby card outlines are substantially thicker"
+assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
+assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "standby retains the lower wake instruction separator"
