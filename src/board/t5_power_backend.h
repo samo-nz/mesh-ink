@@ -10,15 +10,6 @@ bool meshink_power_read_battery_percent(uint8_t& percent);
 bool meshink_power_read_charge_state(MeshInkChargeState& state);
 bool meshink_power_external_present();
 bool meshink_power_read_status(MeshInkPowerStatus& status);
-bool meshink_power_read_telemetry(MeshInkPowerTelemetry& telemetry);
-
-// Board-owned light sleep used by the standby runtime. The caller keeps
-// protocol scheduling policy; the backend owns the ESP-specific sleep primitive.
-// Long experimental sleeps may also allow the board's primary button to wake
-// the MCU early; short cadence sleeps leave that wake source disabled.
-void meshink_power_light_sleep_ms(uint32_t duration_ms,bool primary_button_wake=false);
-void meshink_power_light_sleep_stats_reset();
-MeshInkLightSleepStats meshink_power_light_sleep_stats();
 
 // Battery topology, chemistry and cutoff/debounce policy belong to the board
 // backend. Application code receives only the resulting critical state.
@@ -28,9 +19,8 @@ bool meshink_power_poll_critical(MeshInkPowerCriticalState& state);
 // Board-owned user guidance for restoring power after shutdown/deep sleep.
 const MeshInkPowerWakeInfo& meshink_power_wake_info();
 
-// Board-specific gauge/profile startup and optional diagnostics.
+// Board-specific battery-gauge profile startup.
 void meshink_power_prepare_board();
-void meshink_power_diagnostics_tick();
 
 // Restore the battery path if a previous ship-mode request left BATFET disabled.
 void meshink_power_recover_boot_path();

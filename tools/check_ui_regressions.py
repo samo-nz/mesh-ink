@@ -582,11 +582,10 @@ assert "meshink_power_wake_info()" in source, "shutdown screens use board-owned 
 assert "T5_WAKE_INFO" in power_backend_source and "PRESS PWR BUTTON" in power_backend_source and "HOLD BOOT TO WAKE" in power_backend_source, "T5 backend owns physical wake instructions"
 assert "T5_PIN_FRONTLIGHT" not in board_target_source, "board runtime no longer drives frontlight pin directly"
 assert "meshink_power_frontlight_begin();" in board_target_source and "meshink_power_frontlight_set(100);" in board_target_source, "companion frontlight uses power backend"
-for moved_power_impl in ("BQ27220_ADDR", "BQ25896", "T5_FACTORY_GAUGE_PROFILE", "GaugeDiagnosticSnapshot", "gauge_apply_factory_profile_if_needed"):
+for moved_power_impl in ("BQ27220_ADDR", "BQ25896", "T5_FACTORY_GAUGE_PROFILE", "gauge_apply_factory_profile_if_needed"):
     assert moved_power_impl not in board_target_source, f"target.cpp still owns power implementation: {moved_power_impl}"
     assert moved_power_impl in power_backend_source, f"T5 power backend missing consolidated implementation: {moved_power_impl}"
 assert "meshink_power_prepare_board();" in board_target_source, "board startup delegates gauge/profile preparation"
-assert "meshink_power_diagnostics_tick();" in board_target_source, "GPS loop delegates power diagnostics"
 
 # Test30 removable-storage boundary. Maps/PMTiles own archive semantics only;
 # the selected board backend owns SD wiring, shared SPI and the tuned bus clock.
@@ -646,36 +645,6 @@ assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch p
 assert '-DSX126X_DIO3_TCXO_VOLTAGE=' not in platformio_source, "RadioLib begin stage must use its default TCXO drive"
 assert '-DSX126X_DIO2_AS_RF_SWITCH=' not in platformio_source, "DIO2 setup must not happen inside std_init before TCXO 2.4 V"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test33 LilyGO radio alignment must not change SD access speed"
-
-# Test34 measures the CPU-only standby saving before moving to event-driven
-# indefinite sleep. Radio/GPS hardware policy stays unchanged.
-assert "meshink_power_light_sleep_ms(12);" in runtime_source, "standby MeshCore loop uses the existing 12 ms idle slot for light sleep"
-assert "meshink_power_light_sleep_ms(12);" in runtime_source, "short cadence light sleep remains available during standby"
-assert "esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);" in power_backend_source, "board backend owns the ESP timer wake primitive"
-assert "esp_light_sleep_start();" in power_backend_source, "board backend enters ESP light sleep"
-assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);" in power_backend_source, "short standby timer cannot leak into later deep sleep"
-assert "meshink_power_read_telemetry" in power_backend_header and "current_ma" in power_types_source, "generic power telemetry exposes BQ27220 current without leaking gauge registers"
-assert "[T5-POWER] sample mode=%s standby=0" in unified_source, "10-second awake power samples remain observable"
-assert "if(!standby_active)delay(12);" in source, "awake UI keeps the old delay while standby uses real light sleep"
-
-# Test35 caches battery telemetry while USB CDC is unavailable in light sleep,
-# then prints the frozen pre-USB measurements after a deliberate standby wake.
-assert "STANDBY_POWER_SAMPLE_CAPACITY=8192" in unified_source, "standby cache covers roughly 22 hours at ten-second cadence"
-assert "ps_malloc(sizeof(CachedPowerSample)*STANDBY_POWER_SAMPLE_CAPACITY)" in unified_source, "long standby trace uses PSRAM instead of scarce internal RAM"
-assert "USB CDC is intentionally silent during light-sleep standby" in unified_source, "standby telemetry must be cached rather than streamed over USB"
-assert "standby_power_capture_now(now);" in unified_source, "standby session captures gauge data before and during sleep"
-assert "s.complete=true;" in unified_source, "BOOT wake freezes a completed standby measurement session"
-assert "[T5-POWER-CACHE] ===== FROZEN PRE-USB STANDBY REPORT =====" in unified_source, "cached report is clearly distinguished from live charging telemetry"
-assert "meshink_power_light_sleep_stats_reset" in power_backend_header and "MeshInkLightSleepStats" in power_types_source, "light-sleep accounting stays behind the generic power boundary"
-assert "esp_timer_get_time()" in power_backend_source, "board backend measures actual light-sleep residence time"
-
-# Test36 makes the cached session itself authoritative and observes UI-driven
-# standby transitions both before and after the UI pass.
-assert "power_last_standby" not in unified_source, "cached standby report must not depend on a separate edge latch"
-assert "if(standby&&!standby_power.active)standby_power_begin(now);" in unified_source, "session begins from authoritative active state"
-assert "else if(!standby&&standby_power.active)standby_power_finish(now);" in unified_source, "session freezes whenever standby has ended"
-assert unified_source.count("power_logging_tick();") == 2, "power logger observes both pre-UI and post-UI standby state"
-assert "connect USB to print cached report" in unified_source, "wake freezes data without depending on sleeping USB serial"
 
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
@@ -815,20 +784,14 @@ contains("open_screen(Screen::NightSchedule);return true;", "Edit Times opens Ni
 assert "meshink_night_schedule_top" not in ui_layout_source, "abandoned bottom Night Schedule geometry must be removed"
 assert 'centred("NIGHT SCHEDULE",schedule_y' not in source, "Night Schedule must not be drawn over lower settings rows"
 
-# Test37 uses external-power arrival only as a post-measurement report trigger.
-# Cached battery-only data is frozen before USB is connected; charging current
-# is never substituted for standby consumption.
-assert "if(standby_power.complete&&!cached_report_usb_armed&&external)" in unified_source, "USB arrival arms cached report output"
-assert "standby_power.reports_remaining=3;" in unified_source, "cached report repeats after USB enumeration"
-assert "standby_power.next_report_at=now+3000UL;" in unified_source, "first cached report waits briefly for USB enumeration"
-assert "standby_power.next_report_at=millis()+5000UL;" in unified_source, "subsequent cached report retries are spaced for monitor attachment"
-assert "s.reports_remaining=0;" in unified_source and "s.next_report_at=0;" in unified_source, "BOOT wake freezes data but does not print before USB arrives"
-
-# Test38 isolates steady light-sleep residency from the test34 12 ms cadence.
-# It does not change LoRa/GPS rail policy or enter deep sleep.
-assert "standby_long_sleep_ready_at=sleep_now+15000UL;" in runtime_source, "long light-sleep test waits 15 seconds after standby begins"
-assert "meshink_power_light_sleep_ms(300000UL,true);" in runtime_source, "standby enters five-minute light-sleep blocks"
-assert "standby_long_sleep_ready_at=millis()+3000UL;" in runtime_source, "wake leaves a three-second short-cycle window for the existing BOOT hold"
-assert "bool primary_button_wake=false" in power_backend_header, "generic power boundary exposes optional primary-button wake"
-assert "esp_sleep_enable_ext0_wakeup((gpio_num_t)T5_PIN_BOOT_BUTTON,0);" in power_backend_source, "T5 long light sleep can wake early from BOOT"
-assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);" in power_backend_source, "experimental BOOT wake source is removed after light sleep"
+# Release cleanup after the temporary test34-test38 power experiments.
+assert "meshink_power_light_sleep" not in runtime_source, "release runtime must not contain experimental light sleep"
+assert "meshink_power_light_sleep" not in power_backend_source and "meshink_power_light_sleep" not in power_backend_header, "release power backend must not expose light-sleep experiment APIs"
+assert "MeshInkPowerTelemetry" not in power_types_source and "meshink_power_read_telemetry" not in power_backend_header, "release build must not retain test-only current telemetry"
+assert "MeshInkLightSleepStats" not in power_types_source, "release build must not retain light-sleep measurement counters"
+assert "[T5-POWER-CACHE]" not in unified_source and "power_logging_tick" not in unified_source, "release unified runtime must not cache or print power-test reports"
+assert "meshink_power_diagnostics_tick" not in board_target_source and "meshink_power_diagnostics_tick" not in power_backend_header, "release board loop must not run periodic power diagnostics"
+assert "GaugeDiagnosticSnapshot" not in power_backend_source, "release backend must not retain power snapshot diagnostics"
+for release_power_debug_source in (source, runtime_source, unified_source, board_target_source, power_backend_source):
+    assert "T5_LOG_POWER" not in release_power_debug_source, "release source still contains power debug reporting"
+assert "delay(12);" in source and "if(!standby_active)delay(12);" not in source, "UI restores the established unconditional 12 ms idle delay"

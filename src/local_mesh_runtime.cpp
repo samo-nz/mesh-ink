@@ -9,7 +9,6 @@
 #include "hardware/gps.h"
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
-#include "hardware/power.h"
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
@@ -277,9 +276,6 @@ public:
         const uint32_t interval=ui_is_standby()?60000:10000;
         if(!force&&millis()-refreshed_at_<interval)return;
         refreshed_at_=millis();
-#if T5_LOG_POWER
-        const uint32_t started=micros();
-#endif
         contact_count_=channel_count_=conversation_count_=advert_count_=0;
         ContactInfo contact{};auto iterator=t5_mesh().startContactsIterator();
         while(contact_count_<MAX_UI_CONTACTS&&iterator.hasNext(&t5_mesh(),contact)){
@@ -335,10 +331,6 @@ public:
             }
         }
         rebuild_active();
-#if T5_LOG_POWER
-        static uint32_t last_report=0;
-        if(force||millis()-last_report>=60000){last_report=millis();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] model refresh=%luus interval=%lums contacts=%u channels=%u adverts=%u standby=%d\n",(unsigned long)(micros()-started),(unsigned long)interval,(unsigned)contact_count_,(unsigned)channel_count_,(unsigned)advert_count_,ui_is_standby());}
-#endif
     }
     void received_direct(const uint8_t* key,uint32_t timestamp,const char* text){auto& unread=direct_unread(key);if(unread<255)unread++;store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);refresh(true);ui_notify_message_received(false);}
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text){if(channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);refresh(true);ui_notify_message_received(true);}
@@ -690,29 +682,6 @@ void local_mesh_loop(){
     if(location.available){const bool waiting=location.waiting_time_sync;if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location.timestamp);was_waiting=waiting;}
 #endif
 #endif
-#if T5_LOG_POWER
-    static uint32_t radio_report_at=0;
-    if(millis()-radio_report_at>=60000){radio_report_at=millis();const MeshInkRadioStats stats=meshink_radio_stats();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] radio continuous-rx=%d received=%lu errors=%lu sent=%lu boosted=%d (duty cycle intentionally disabled)\n",stats.continuous_rx,(unsigned long)stats.packets_received,(unsigned long)stats.receive_errors,(unsigned long)stats.packets_sent,stats.boosted_gain);}
-#endif
-    // test38: isolate steady ESP32 light-sleep draw from the 12 ms wake cadence.
-    // Give standby 15 s to settle, then sleep for five minutes at a time. BOOT
-    // is an early wake source for the long block. After every long-block wake,
-    // keep the old 12 ms cadence for three seconds so the existing two-second
-    // BOOT hold can be observed by ui_loop before another long block begins.
-    static uint32_t standby_long_sleep_ready_at=0;
-    if(ui_is_standby()){
-        const uint32_t sleep_now=millis();
-        if(!standby_long_sleep_ready_at)
-            standby_long_sleep_ready_at=sleep_now+15000UL;
-        if((int32_t)(sleep_now-standby_long_sleep_ready_at)>=0){
-            meshink_power_light_sleep_ms(300000UL,true);
-            standby_long_sleep_ready_at=millis()+3000UL;
-        }else{
-            meshink_power_light_sleep_ms(12);
-        }
-    }else{
-        standby_long_sleep_ready_at=0;
-    }
 }
 bool local_mesh_send_active(const char* text){
     if(!text||!text[0])return false;const uint32_t now=time(nullptr);

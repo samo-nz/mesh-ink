@@ -1,15 +1,9 @@
 #include <Arduino.h>
 #include <driver/i2c.h>
 #include <esp_sleep.h>
-#include <esp_timer.h>
 
 #include "board_profile.h"
 #include "t5_power_backend.h"
-#include "../t5_logging.h"
-
-#define T5_TRACE(...) T5_DEBUGF(T5_LOG_BOARD, "[T5] " __VA_ARGS__)
-#define T5_POWER_TRACE(...) T5_DEBUGF(T5_LOG_POWER, "[T5] " __VA_ARGS__)
-
 namespace {
 
 static constexpr uint8_t BQ27220_ADDR = 0x55;
@@ -148,21 +142,15 @@ static void gauge_apply_factory_profile_if_needed() {
     uint16_t design=0,voltage=0,battery_status=0,operation=0,control=0;
     if(!gauge_word(0x3C,design)||!gauge_word(0x08,voltage)||
        !gauge_word(0x0A,battery_status)||!gauge_word(0x3A,operation)||
-       !gauge_word(0x00,control)) {
-        T5_POWER_TRACE("gauge profile: telemetry unavailable; no changes made\n");return;
-    }
-    if(design==1500) {
-        T5_POWER_TRACE("gauge profile: design=1500mAh; no configuration write needed\n");return;
-    }
+       !gauge_word(0x00,control))return;
+    if(design==1500)return;
+
     // Only migrate the board's known factory-default 3000-mAh mismatch.
     // Do not overwrite an unknown/replacement battery or unexpected gauge state.
     if(design!=3000||voltage<3000||voltage>4250||!(battery_status&0x0008)||
-       !(operation&0x0020)||(operation&0x0400)||(control&0x0007)) {
-        T5_POWER_TRACE("gauge profile: SKIP unexpected state design=%u voltage=%u battery=0x%04X operation=0x%04X control=0x%04X\n",
-                 design,voltage,battery_status,operation,control);return;
-    }
-    T5_POWER_TRACE("gauge profile: factory 1500mAh migration requested (reported=%umAh)\n",design);
-    uint8_t sec=(operation>>1)&3;bool cfg=(operation&0x0400)!=0;
+       !(operation&0x0020)||(operation&0x0400)||(control&0x0007))return;
+
+    const uint8_t sec=(operation>>1)&3;
     bool unlocked=false,config_entered=false,profile_ok=false,rollback_ok=true;
     uint16_t originals[T5_PROFILE_COUNT]{};
     bool modified[T5_PROFILE_COUNT]{};
@@ -170,40 +158,27 @@ static void gauge_apply_factory_profile_if_needed() {
     do {
         if(sec==3) {
             if(!gauge_control_command(0x0414)||!gauge_control_command(0x3672)||
-               !gauge_wait_state(2,0,500)) {
-                T5_POWER_TRACE("gauge profile: UNSEAL failed\n");break;
-            }
+               !gauge_wait_state(2,0,500))break;
         } else if(sec!=2&&sec!=1) {
-            T5_POWER_TRACE("gauge profile: unexpected security state=%u\n",sec);break;
+            break;
         }
         unlocked=true;
+
         if(sec!=1) {
             if(!gauge_control_command(0xFFFF)||!gauge_control_command(0xFFFF)||
-               !gauge_wait_state(1,0,500)) {
-                T5_POWER_TRACE("gauge profile: FULL ACCESS failed\n");break;
-            }
+               !gauge_wait_state(1,0,500))break;
         }
+
         for(size_t i=0;i<T5_PROFILE_COUNT;++i) {
-            if(!gauge_profile_read(T5_FACTORY_GAUGE_PROFILE[i],originals[i])) {
-                T5_POWER_TRACE("gauge profile: preflight read failed at 0x%04X; NO WRITES\n",
-                         T5_FACTORY_GAUGE_PROFILE[i].address);break;
-            }
+            if(!gauge_profile_read(T5_FACTORY_GAUGE_PROFILE[i],originals[i]))break;
             ++changed;
         }
         if(changed!=T5_PROFILE_COUNT)break;
-        if(originals[4]!=3000) {
-            T5_POWER_TRACE("gauge profile: preflight design RAM=%u differs from live design=3000; aborting\n",originals[4]);
-            break;
-        }
-        changed=0;
-        for(size_t i=0;i<T5_PROFILE_COUNT;++i)
-            if(originals[i]!=T5_FACTORY_GAUGE_PROFILE[i].value)++changed;
-        T5_POWER_TRACE("gauge profile: verified %u fields, %u differ from LILYGO profile\n",
-                 (unsigned)T5_PROFILE_COUNT,(unsigned)changed);
-        if(!gauge_control_command(0x0090)||!gauge_wait_state(1,1,1200)) {
-            T5_POWER_TRACE("gauge profile: CONFIG UPDATE entry failed\n");break;
-        }
+        if(originals[4]!=3000)break;
+
+        if(!gauge_control_command(0x0090)||!gauge_wait_state(1,1,1200))break;
         config_entered=true;
+
         bool write_ok=true;
         for(size_t i=0;i<T5_PROFILE_COUNT;++i) {
             const auto& field=T5_FACTORY_GAUGE_PROFILE[i];
@@ -212,8 +187,8 @@ static void gauge_apply_factory_profile_if_needed() {
             // Mark it first so even that field is included in rollback.
             modified[i]=true;
             if(!gauge_profile_write(field,field.value)) {
-                T5_POWER_TRACE("gauge profile: WRITE OR VERIFY FAILED address=0x%04X\n",field.address);
-                write_ok=false;break;
+                write_ok=false;
+                break;
             }
         }
         if(!write_ok) {
@@ -221,28 +196,25 @@ static void gauge_apply_factory_profile_if_needed() {
             // CFGUPDATE. A failed rollback is reported loudly, never hidden.
             for(size_t i=0;i<T5_PROFILE_COUNT;++i)if(modified[i])
                 if(!gauge_profile_write(T5_FACTORY_GAUGE_PROFILE[i],originals[i]))rollback_ok=false;
-            T5_POWER_TRACE("gauge profile: update failed; rollback=%s\n",rollback_ok?"OK":"FAILED");
             if(!rollback_ok)Serial.println("[T5-ERROR] battery gauge profile rollback failed");
             break;
         }
-        if(!gauge_control_command(0x0091)) {
-            T5_POWER_TRACE("gauge profile: EXIT/REINIT command failed\n");break;
-        }
+
+        if(!gauge_control_command(0x0091))break;
         config_entered=false;
         delay(2000);
+
         uint8_t post_sec=0;bool post_cfg=true;
         uint16_t result=0,fcc=0,soc=0;
         if(gauge_security_state(post_sec,post_cfg)&&!post_cfg&&
            gauge_word(0x3C,result)&&gauge_word(0x12,fcc)&&gauge_word(0x2C,soc)&&
-           result==1500&&fcc<=1500&&soc<=100) {
-            profile_ok=true;
-            T5_POWER_TRACE("gauge profile: SUCCESS design=%umAh FCC=%umAh SOC=%u%%\n",result,fcc,soc);
-        } else T5_POWER_TRACE("gauge profile: POST-UPDATE VALIDATION FAILED design=%u FCC=%u SOC=%u cfg=%u\n",
-                       result,fcc,soc,post_cfg);
+           result==1500&&fcc<=1500&&soc<=100)profile_ok=true;
     }while(false);
+
     if(config_entered) {
         // Whether update or rollback failed, leave the gauge out of CFGUPDATE.
-        if(!gauge_control_command(0x0092))Serial.println("[T5-ERROR] battery gauge emergency config exit failed");
+        if(!gauge_control_command(0x0092))
+            Serial.println("[T5-ERROR] battery gauge emergency config exit failed");
         delay(300);
     }
     if(unlocked) {
@@ -252,156 +224,9 @@ static void gauge_apply_factory_profile_if_needed() {
         // An interrupted unseal attempt may have succeeded; seal defensively.
         gauge_control_command(0x0030);
     }
-    if(!profile_ok)Serial.println("[T5-ERROR] battery gauge profile not verified; do not trust battery percentage");
+    if(!profile_ok)
+        Serial.println("[T5-ERROR] battery gauge profile not verified; do not trust battery percentage");
 }
-
-#if T5_DIAGNOSTICS
-static bool gauge_dm_read_word(uint16_t address,uint16_t& result) {
-    // TI SLUUBD4A section 6.1: select the RAM address at 0x3E/0x3F,
-    // then read its big-endian value from the MAC data window at 0x40.
-    // The address selector is LOW byte first (for 0x929F: 0x9F,0x92).
-    // Merely selecting an address does NOT commit a change to data memory.
-    const uint8_t pointer[2]={(uint8_t)address,(uint8_t)(address>>8)};
-    uint8_t bytes[2]{};
-    if(!write_bytes(BQ27220_ADDR,0x3E,pointer,sizeof(pointer)))return false;
-    delay(2);
-    if(!read_bytes(BQ27220_ADDR,0x40,bytes,sizeof(bytes)))return false;
-    result=((uint16_t)bytes[0]<<8)|bytes[1];
-    delayMicroseconds(70);
-    return true;
-}
-#endif
-
-static bool pmic_byte(uint8_t reg, uint8_t& result) {
-    constexpr uint8_t BQ25896_ADDR = 0x6B;
-    return read_bytes(BQ25896_ADDR,reg,&result,1);
-}
-
-struct GaugeDiagnosticSnapshot {
-    uint16_t control_status=0;
-    uint16_t temperature=0;
-    uint16_t voltage=0;
-    uint16_t battery_status=0;
-    uint16_t current_raw=0;
-    uint16_t remaining=0;
-    uint16_t full=0;
-    uint16_t cycle_count=0;
-    uint16_t soc=0;
-    uint16_t soh=0;
-    uint16_t charging_voltage=0;
-    uint16_t charging_current=0;
-    uint16_t operation_status=0;
-    uint16_t design_capacity=0;
-};
-
-static bool gauge_diagnostic_snapshot(GaugeDiagnosticSnapshot& s) {
-    // Registers and byte order are BQ27220-specific (TI SLUUBD4A, table 2-1).
-    return gauge_word(0x00,s.control_status)&&gauge_word(0x06,s.temperature)&&
-        gauge_word(0x08,s.voltage)&&gauge_word(0x0A,s.battery_status)&&
-        gauge_word(0x0C,s.current_raw)&&gauge_word(0x10,s.remaining)&&
-        gauge_word(0x12,s.full)&&gauge_word(0x2A,s.cycle_count)&&
-        gauge_word(0x2C,s.soc)&&gauge_word(0x2E,s.soh)&&
-        gauge_word(0x30,s.charging_voltage)&&gauge_word(0x32,s.charging_current)&&
-        gauge_word(0x3A,s.operation_status)&&gauge_word(0x3C,s.design_capacity);
-}
-
-static uint8_t last_charger_state=0xFF;
-
-void meshink_power_diagnostics_report(const char* reason) {
-#if T5_DIAGNOSTICS
-    uint8_t reg00=0,reg04=0,reg0b=0,reg0c=0,reg0e=0,reg10=0,reg11=0,reg12=0;
-    const bool charger_ok=pmic_byte(0x00,reg00)&&pmic_byte(0x04,reg04)&&
-        pmic_byte(0x0B,reg0b)&&pmic_byte(0x0C,reg0c)&&pmic_byte(0x0E,reg0e)&&
-        pmic_byte(0x10,reg10)&&pmic_byte(0x11,reg11)&&pmic_byte(0x12,reg12);
-    if(charger_ok){
-        static const char* charge_names[]={"IDLE","PRECHARGE","FAST","DONE"};
-        const uint8_t charge=(reg0b>>3)&0x03;
-        const unsigned input_limit=100U+50U*(reg00&0x3F);
-        const unsigned target_current=64U*(reg04&0x7F);
-        const unsigned adc_battery=2304U+20U*(reg0e&0x7F);
-        const unsigned adc_vbus=2600U+100U*(reg11&0x7F);
-        const unsigned adc_charge=50U*(reg12&0x7F);
-        T5_POWER_TRACE("power snapshot reason=%s uptime=%lums\n",reason,(unsigned long)millis());
-        T5_POWER_TRACE("charger: VBUS=%umV good=%u source=%u state=%s(%u) IINLIM=%umA ICHG_TARGET=%umA ICHG_ADC=%umA BAT_ADC=%umV TS=0x%02X fault=0x%02X\n",
-            adc_vbus,(reg11>>7)&1,(reg0b>>5)&7,charge_names[charge],charge,input_limit,target_current,
-            adc_charge,adc_battery,reg10,reg0c);
-        last_charger_state=charge;
-    }else T5_POWER_TRACE("charger: BQ25896 diagnostic read failed\n");
-
-    GaugeDiagnosticSnapshot s{};
-    if(gauge_diagnostic_snapshot(s)){
-        const int current=(int16_t)s.current_raw;
-        const int temp_c10=(int)s.temperature-2731;
-        T5_POWER_TRACE("gauge: voltage=%umV current=%dmA SOC=%u%% SOH=%u%% RM=%umAh FCC=%umAh Design=%umAh cycles=%u temp=%d.%dC\n",
-            s.voltage,current,s.soc,s.soh,s.remaining,s.full,s.design_capacity,s.cycle_count,
-            temp_c10/10,abs(temp_c10%10));
-        T5_POWER_TRACE("gauge request: charging_voltage=%umV charging_current=%umA\n",
-            s.charging_voltage,s.charging_current);
-        if(s.design_capacity!=1500)
-            T5_POWER_TRACE("gauge: CAPACITY MISMATCH fitted=1500mAh reported=%umAh; SOC and FCC not yet trustworthy\n",s.design_capacity);
-        if(!strcmp(reason,"early-boot")) {
-            const uint8_t security=(s.operation_status>>1)&3;
-            if(security==3) {
-                T5_POWER_TRACE("gauge profile audit: SEALED (SEC=3), data-memory values NOT readable; previous 0 readings were invalid, not settings\n");
-            } else {
-                uint16_t full=0,design=0,nominal=0,charge_current=0,charge_voltage=0,taper=0;
-                const bool profile_ok=gauge_dm_read_word(0x929D,full)&&
-                    gauge_dm_read_word(0x929F,design)&&gauge_dm_read_word(0x92A3,nominal);
-                const bool charge_ok=gauge_dm_read_word(0x91FB,charge_current)&&
-                    gauge_dm_read_word(0x91FD,charge_voltage)&&gauge_dm_read_word(0x9201,taper);
-                if(profile_ok&&design>=100&&design<=32000&&nominal>=2500&&nominal<=5000)
-                    T5_POWER_TRACE("gauge profile1 RAM: initial_FCC=%umAh design=%umAh nominal=%umV\n",full,design,nominal);
-                else T5_POWER_TRACE("gauge profile1 RAM: invalid or unavailable; do not infer values\n");
-                if(charge_ok&&charge_voltage>=2500&&charge_voltage<=4600)
-                    T5_POWER_TRACE("gauge profile RAM: requested_charge=%umA charge_voltage=%umV taper=%umA\n",
-                        charge_current,charge_voltage,taper);
-                else T5_POWER_TRACE("gauge profile RAM: invalid or unavailable; do not infer values\n");
-            }
-            T5_POWER_TRACE("gauge profile audit: no unseal, config change or calibration performed\n");
-        }
-        T5_TRACE("gauge BatteryStatus=0x%04X FC=%u TCA=%u OCVCOMP=%u OCVFAIL=%u OCVGD=%u BATTPRES=%u SLEEP=%u SYSDWN=%u DSG=%u\n",
-            s.battery_status,(s.battery_status>>9)&1,(s.battery_status>>6)&1,
-            (s.battery_status>>14)&1,(s.battery_status>>13)&1,(s.battery_status>>5)&1,
-            (s.battery_status>>3)&1,(s.battery_status>>12)&1,(s.battery_status>>1)&1,
-            s.battery_status&1);
-        T5_TRACE("gauge OperationStatus=0x%04X INITCOMP=%u CFGUPDATE=%u VDQ=%u SMTH=%u SEC=%u CALMD=%u ControlStatus=0x%04X CCA=%u BCA=%u SNOOZE=%u BATT_ID=%u\n",
-            s.operation_status,(s.operation_status>>5)&1,(s.operation_status>>10)&1,
-            (s.operation_status>>4)&1,(s.operation_status>>6)&1,
-            (s.operation_status>>1)&3,s.operation_status&1,s.control_status,
-            (s.control_status>>5)&1,(s.control_status>>4)&1,(s.control_status>>3)&1,
-            s.control_status&7);
-    }else T5_POWER_TRACE("gauge: BQ27220 diagnostic read failed\n");
-#else
-    (void)reason;
-#endif
-}
-
-static void t5_power_diagnostics_tick_impl() {
-#if T5_DIAGNOSTICS
-    static uint32_t probed_at=0;
-    static uint32_t reported_at=0;
-    const uint32_t now=millis();
-    if(probed_at&&now-probed_at<5000)return;
-    probed_at=now?now:1;
-
-    uint8_t reg0b=0;
-    if(!pmic_byte(0x0B,reg0b))return;
-    const uint8_t state=(reg0b>>3)&0x03;
-    const bool first=last_charger_state==0xFF;
-    const bool changed=!first&&state!=last_charger_state;
-    const bool fast_to_done=last_charger_state==2&&state==3;
-    const bool periodic=!reported_at||now-reported_at>=60000;
-    if(changed||periodic){
-        const char* reason=fast_to_done?"charger-FAST-to-DONE":
-            (changed?"charger-state-change":"periodic");
-        meshink_power_diagnostics_report(reason);
-        reported_at=now?now:1;
-    }else{
-        last_charger_state=state;
-    }
-#endif
-}
-
 
 static MeshInkPowerWakeInfo make_t5_wake_info() {
     MeshInkPowerWakeInfo info;
@@ -424,51 +249,6 @@ const MeshInkPowerWakeInfo& meshink_power_wake_info() {
 
 void meshink_power_prepare_board() {
     gauge_apply_factory_profile_if_needed();
-    meshink_power_diagnostics_report("early-boot");
-}
-
-void meshink_power_diagnostics_tick() {
-    t5_power_diagnostics_tick_impl();
-}
-
-bool meshink_power_read_telemetry(MeshInkPowerTelemetry& telemetry) {
-    uint16_t voltage=0,current_raw=0,remaining=0,full=0,soc=0;
-    if(!gauge_word(0x08,voltage)||!gauge_word(0x0C,current_raw)||
-       !gauge_word(0x10,remaining)||!gauge_word(0x12,full)||
-       !gauge_word(0x2C,soc)||voltage<2500||voltage>5000||soc>100)return false;
-    telemetry.battery_mv=voltage;
-    telemetry.current_ma=(int16_t)current_raw;
-    telemetry.remaining_mah=remaining;
-    telemetry.full_mah=full;
-    telemetry.battery_percent=(uint8_t)soc;
-    return true;
-}
-
-static MeshInkLightSleepStats t5_light_sleep_stats{};
-
-void meshink_power_light_sleep_ms(uint32_t duration_ms,bool primary_button_wake) {
-    if(!duration_ms)return;
-    esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);
-    if(primary_button_wake)
-        esp_sleep_enable_ext0_wakeup((gpio_num_t)T5_PIN_BOOT_BUTTON,0);
-    const int64_t started_us=esp_timer_get_time();
-    esp_light_sleep_start();
-    const int64_t ended_us=esp_timer_get_time();
-    ++t5_light_sleep_stats.calls;
-    if(ended_us>started_us)t5_light_sleep_stats.total_us+=(uint64_t)(ended_us-started_us);
-    // Never leak experimental light-sleep wake sources into later deep sleep
-    // or board shutdown paths.
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
-    if(primary_button_wake)
-        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);
-}
-
-void meshink_power_light_sleep_stats_reset() {
-    t5_light_sleep_stats=MeshInkLightSleepStats{};
-}
-
-MeshInkLightSleepStats meshink_power_light_sleep_stats() {
-    return t5_light_sleep_stats;
 }
 
 void meshink_power_frontlight_begin() {
@@ -571,9 +351,6 @@ bool meshink_power_poll_critical(MeshInkPowerCriticalState& state) {
         return false;
     }
     if(low_samples<T5_CRITICAL_SAMPLES)++low_samples;
-    T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] low battery sample %u/%u: %umV\n",
-              (unsigned)low_samples,(unsigned)T5_CRITICAL_SAMPLES,
-              (unsigned)millivolts);
     if(low_samples<T5_CRITICAL_SAMPLES)return false;
 
     state.critical=true;
@@ -585,17 +362,15 @@ void meshink_power_recover_boot_path() {
     constexpr uint8_t BATFET_RST_EN=1u<<2;
     uint8_t address=0,reg09=0;
     if(!find_charger(address,reg09)) {
-        Serial.println("[T5-POWER] boot PMIC recovery skipped: charger not detected");
+        Serial.println("[T5-ERROR] boot PMIC recovery skipped: charger not detected");
         return;
     }
     if(!(reg09&BATFET_DIS)) {
-        T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] boot PMIC address=0x%02X REG09=0x%02X battery path ready\n",
-                  address,reg09);
         return;
     }
     const uint8_t restored=(uint8_t)((reg09&~BATFET_DIS)|BATFET_RST_EN);
     const bool ok=write_byte(address,0x09,restored);
-    Serial.printf("[T5-POWER] boot PMIC recovery address=0x%02X REG09 0x%02X->0x%02X result=%s\n",
+    Serial.printf("[T5-BOOT] PMIC battery path recovery address=0x%02X REG09 0x%02X->0x%02X result=%s\n",
                   address,reg09,restored,ok?"OK":"FAILED");
     delay(150);
 }
@@ -619,11 +394,6 @@ void meshink_power_recover_boot_path() {
     if(low_battery) {
         Serial.printf("[T5-POWER] low-battery ship mode PMIC=0x%02X REG09=0x%02X->0x%02X\n",
                       address,reg09,requested);
-    } else {
-        T5_DEBUGF(T5_LOG_POWER,"[T5-SHUTDOWN] PMIC detected address=0x%02X REG09 before=0x%02X\n",
-                  address,reg09);
-        T5_DEBUGF(T5_LOG_POWER,"[T5-SHUTDOWN] preserving wake reset; REG09 request=0x%02X BATFET_DIS=1\n",
-                  requested);
     }
 
     Serial.flush();

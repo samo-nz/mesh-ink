@@ -54,9 +54,9 @@ static void companion_set_low_power_cpu() {
     static constexpr uint32_t COMPANION_CPU_MHZ=80;
     const bool accepted=setCpuFrequencyMhz(COMPANION_CPU_MHZ);
     const uint32_t actual=getCpuFrequencyMhz();
-    Serial.printf("[T5-POWER] companion cpu target=%lu actual=%luMHz result=%s\n",
-                  (unsigned long)COMPANION_CPU_MHZ,(unsigned long)actual,
-                  accepted&&actual==COMPANION_CPU_MHZ?"OK":"ERROR");
+    if(!accepted||actual!=COMPANION_CPU_MHZ)
+        Serial.printf("[T5-ERROR] companion CPU target=%lu actual=%luMHz\n",
+                      (unsigned long)COMPANION_CPU_MHZ,(unsigned long)actual);
 }
 
 static void companion_configure_ble_scan_response(const char* prefix,const char* node_name) {

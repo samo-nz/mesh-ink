@@ -22,7 +22,6 @@
 
 #define T5_TRACE(...) T5_DEBUGF(T5_LOG_BOARD, "[T5] " __VA_ARGS__)
 #define T5_GPS_TRACE(...) T5_DEBUGF(T5_LOG_GPS, "[T5] " __VA_ARGS__)
-#define T5_POWER_TRACE(...) T5_DEBUGF(T5_LOG_POWER, "[T5] " __VA_ARGS__)
 
 T5Board board;
 
@@ -494,7 +493,6 @@ public:
         T5_GPS_TRACE("gps: disabled by MeshCore sensor setting\n");
     }
     void loop() override {
-        meshink_power_diagnostics_tick();
         // Keep receiver-data watchdog operational in production. Previously
         // this timestamp was updated only inside the diagnostics build.
         const int pending = Serial1.available();
@@ -654,16 +652,7 @@ uint16_t T5Board::getBattMilliVolts() {
     sampled_at = now == 0 ? 1 : now;
 
     uint16_t voltage = 0;
-    if (meshink_power_read_battery_mv(voltage)) {
-        cached_mv = voltage;
-        uint8_t soc = 0;
-        if (meshink_power_read_battery_percent(soc))
-            T5_POWER_TRACE("battery: backend voltage=%u mV SOC=%u%%\n", cached_mv, soc);
-        else
-            T5_POWER_TRACE("battery: backend voltage=%u mV; SOC unavailable\n", cached_mv);
-    } else {
-        T5_POWER_TRACE("battery: backend read failed or voltage invalid, cached=%u mV\n", cached_mv);
-    }
+    if (meshink_power_read_battery_mv(voltage))cached_mv = voltage;
     return cached_mv;
 }
 

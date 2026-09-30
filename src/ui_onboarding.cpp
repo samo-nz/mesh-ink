@@ -389,10 +389,9 @@ struct MapTapSequence{
 static MapTapSequence map_taps{};
 static uint32_t navigation_touch_cutoff_ms=0;
 
-static bool set_cpu_target(uint32_t mhz,const char* reason,bool verbose=true){
+static bool set_cpu_target(uint32_t mhz,const char* reason){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
     if(!accepted||actual!=mhz)Serial.printf("[T5-ERROR] CPU target=%lu actual=%lu MHz reason=%s\n",(unsigned long)mhz,(unsigned long)actual,reason);
-    else T5_DEBUGF(T5_LOG_POWER && verbose,"[T5-POWER] cpu target=%lu actual=%lu MHz apb=%lu MHz reason=%s result=OK\n",(unsigned long)mhz,(unsigned long)(getApbFrequency()/1000000),reason);
     return accepted&&actual==mhz;
 }
 
@@ -402,10 +401,10 @@ struct T5CpuBoostScope {
     explicit T5CpuBoostScope(bool enabled,const char* reason):
         previous_mhz(getCpuFrequencyMhz()),restore(false){
         if(enabled&&previous_mhz<240)
-            restore=set_cpu_target(240,reason,false);
+            restore=set_cpu_target(240,reason);
     }
     ~T5CpuBoostScope(){
-        if(restore)set_cpu_target(previous_mhz,"ui-draw-complete",false);
+        if(restore)set_cpu_target(previous_mhz,"ui-draw-complete");
     }
 };
 
@@ -1959,13 +1958,13 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
-    set_cpu_target(240,"display-refresh",false);
+    set_cpu_target(240,"display-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err = meshink_display_update_screen(&display,mode,(int)meshink_display_ambient_temperature());
     // The map stays clear when the panel is powered down as soon as EPDiy's
     // synchronous DU waveform completes. Do not reintroduce a powered hold.
     meshink_display_poweroff();
-    set_cpu_target(standby_active?80:160,"display-complete",false);
+    set_cpu_target(standby_active?80:160,"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
     t5_timing_display_end(timing_display_started);
@@ -1979,12 +1978,12 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
-    set_cpu_target(240,"display-area-refresh",false);
+    set_cpu_target(240,"display-area-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err=meshink_display_update_area(
         &display,mode,(int)meshink_display_ambient_temperature(),area);
     meshink_display_poweroff();
-    set_cpu_target(standby_active?80:160,"display-area-complete",false);
+    set_cpu_target(standby_active?80:160,"display-area-complete");
     const uint32_t elapsed=millis()-started;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
@@ -2058,7 +2057,7 @@ static void load_map_with_feedback(bool already_on_map) {
     // PNG decoding run synchronously. Refreshing the loading toast lowered
     // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
     // display-performance setting for the CPU-heavy raster render.
-    set_cpu_target(240,"map-render",false);
+    set_cpu_target(240,"map-render");
     draw_screen();
 
     // Prepare the completed terrain black, then reveal the finished map.
@@ -2857,13 +2856,10 @@ static void set_touch_power(bool enabled){
     if(enabled){
         touch_enabled=true;
         if(touch_task_handle)xTaskNotifyGive(touch_task_handle);
-        T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] touch backend %s enabled\n",meshink_touch_backend_name());
-    }else{
-        T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] touch backend %s disabled\n",meshink_touch_backend_name());
     }
 }
 
-static void enter_standby(const char* reason){
+static void enter_standby(const char*){
     if(standby_active)return;
     // Standby owns the whole display. Dismiss transient quick settings first
     // so it cannot remain layered over, or reappear immediately after, standby.
@@ -2883,7 +2879,7 @@ static void enter_standby(const char* reason){
     // Enter standby with an exact clock/battery sample. Periodic status updates
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
-    T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] entering reason=%s timeout=%s\n",reason,standby_timeout_name());draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
 }
 
 static void leave_standby(){
@@ -2896,7 +2892,6 @@ static void leave_standby(){
         set_ui_orientation(MeshInkOrientation::Portrait);
     }
     set_cpu_target(160,"wake");
-    T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] leaving; restoring local UI");
     draw_screen();
     if(screen==Screen::Maps&&!keyboard_landscape) {
         T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] Maps wake uses black-prep reveal");
@@ -2908,10 +2903,9 @@ static void leave_standby(){
 
 static void start_message_alert(){
     const uint32_t now=millis();
-    if(message_alert_active){T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] message alert coalesced into active sequence");return;}
-    if((int32_t)(now-message_alert_cooldown_until)<0){T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] message alert suppressed by cooldown");return;}
+    if(message_alert_active)return;
+    if((int32_t)(now-message_alert_cooldown_until)<0)return;
     message_alert_active=true;message_alert_phase=0;message_alert_deadline=now;
-    T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] combined EPD/frontlight message alert started");
 }
 
 static void service_message_alert(){
@@ -2936,7 +2930,6 @@ static void service_message_alert(){
             update_status_hardware();
             draw_screen();force_redraw(MeshInkRefreshMode::Gray16,"MESSAGE_ALERT_RESTORE",false);
             status_dirty=false;status_bar_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
-            T5_DEBUGLN(T5_LOG_POWER,"[T5-STANDBY] combined message alert complete; standby screen restored with GC16");
             break;
     }
 }
@@ -3240,9 +3233,6 @@ void ui_loop() {
         bool icon_changed=false;
         update_charge_state(&icon_changed);
         if(icon_changed&&!message_alert_active){
-            T5_DEBUGF(T5_LOG_POWER,"[T5-STANDBY] charging icon=%s state=%s\n",
-                meshink_power_is_charging(status_charge_state)?"ON":"OFF",
-                meshink_power_charge_state_name(status_charge_state));
             status_bar_dirty=true;
         }
     }
@@ -3321,13 +3311,7 @@ void ui_loop() {
     if(message_alert_active)t5_timing_set_ui_action(T5UiAction::MessageAlert);
     service_message_alert();
     t5_timing_set_ui_action(T5UiAction::None);
-#if T5_LOG_POWER
-    static uint32_t power_report_at=0,loop_count=0;loop_count++;
-    if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
-#endif
-    // In standby the equivalent 12 ms idle slot is now real ESP light sleep
-    // inside local_mesh_loop(); awake UI retains the established delay.
-    if(!standby_active)delay(12);
+    delay(12);
 }
 
 bool ui_is_standby(){return standby_active;}
