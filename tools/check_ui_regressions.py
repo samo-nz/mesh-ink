@@ -190,10 +190,10 @@ for backend_detail in (
     assert backend_detail in wireless_backend_source, f"T5 wireless backend missing {backend_detail}"
 assert 'meshink_wireless_force_local_radios_off()' in unified_source, "local boot forces Wi-Fi and Bluetooth off"
 assert unified_source.count('meshink_wireless_force_local_radios_off()') == 2, "local wireless policy is enforced before and after MeshCore startup"
-assert 'report_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
-assert 'report_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
+assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
+assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
 assert 'meshink_wireless_force_wifi_off()' in unified_source, "companion boot explicitly keeps unused Wi-Fi off"
-assert 'report_companion_wireless_state("companion-ready"' in unified_source, "companion boot verifies Wi-Fi off and Bluetooth active"
+assert 'check_companion_wireless_state("companion-ready"' in unified_source, "companion boot verifies Wi-Fi off and Bluetooth active"
 assert 'returning from companion mode always' not in unified_source.lower() or 'reboots through this same path' in unified_source, "companion return documents local re-verification"
 
 # Companion exit must quiesce the active MeshCore runtime before ESP.restart().
