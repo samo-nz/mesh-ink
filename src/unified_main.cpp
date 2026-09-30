@@ -6,6 +6,7 @@
 #include "map_tiles.h"
 #include "hardware/wireless.h"
 #include "hardware/buttons.h"
+#include "hardware/power.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -13,6 +14,27 @@
 
 static bool companion_mode = false;
 static bool cache64_psram_blocked = false;
+
+static void report_power_sample() {
+    static uint32_t sampled_at=0;
+    const uint32_t now=millis();
+    if(sampled_at&&now-sampled_at<10000UL)return;
+    sampled_at=now?now:1;
+    MeshInkPowerTelemetry sample{};
+    if(!meshink_power_read_telemetry(sample)){
+        Serial.printf("[T5-POWER] sample mode=%s standby=%u result=UNAVAILABLE\n",
+                      companion_mode?"companion":"local",
+                      (!companion_mode&&ui_is_standby())?1U:0U);
+        return;
+    }
+    Serial.printf("[T5-POWER] sample mode=%s standby=%u cpu=%luMHz voltage=%umV current=%dmA soc=%u%% remaining=%umAh full=%umAh external=%u\n",
+                  companion_mode?"companion":"local",
+                  (!companion_mode&&ui_is_standby())?1U:0U,
+                  (unsigned long)getCpuFrequencyMhz(),
+                  (unsigned)sample.battery_mv,(int)sample.current_ma,
+                  (unsigned)sample.battery_percent,(unsigned)sample.remaining_mah,
+                  (unsigned)sample.full_mah,meshink_power_external_present()?1U:0U);
+}
 
 static void report_local_wireless_state(const char* phase,const MeshInkWirelessState& state) {
     const bool ok=meshink_wireless_local_radios_off(state);
@@ -115,6 +137,7 @@ void setup() {
 
 void loop() {
     if(cache64_psram_blocked){delay(1000);return;}
+    report_power_sample();
     if (companion_mode) {
         companion_loop();
         companion_exit_button();

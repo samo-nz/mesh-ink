@@ -168,10 +168,12 @@ contains("[T5-UI] status-bar clock=%02d:%02d", "status clock logging occurs when
 contains("refresh_area(MeshInkRefreshMode::Direct,", "status bar uses area refresh")
 contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);", "status area is limited to the bar")
 contains("static int16_t status_gps_satellites_bar = 0;", "status bar owns a separately throttled satellite count")
-contains("now-last_satellite_bar_refresh>=3000UL", "visible satellite count is throttled to three seconds")
+contains("now-last_satellite_bar_refresh>=5000UL", "visible satellite count is throttled to five seconds")
 contains("status_gps_satellites_bar=satellites;", "throttled satellite display eventually adopts latest live count")
-contains('reason=gps-satellites-3s', "throttled satellite refreshes are observable in logs")
+contains('reason=gps-satellites-5s', "throttled satellite refreshes are observable in logs")
 contains("!standby_active&&enabled&&has_fix&&", "satellite count does not trigger status refresh while hidden in standby")
+contains("if(state_changed&&!standby_active)", "GPS state changes do not independently repaint the status bar in standby")
+contains("if(!standby_active&&((screen==Screen::GpsSettings", "GPS detail/state changes do not redraw page content in standby")
 assert "standby_quantized" not in source, "standby must keep exact clock and battery values"
 
 # Test16 local wireless power policy. UI/runtime code must use the generic
@@ -644,6 +646,17 @@ assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch p
 assert '-DSX126X_DIO3_TCXO_VOLTAGE=' not in platformio_source, "RadioLib begin stage must use its default TCXO drive"
 assert '-DSX126X_DIO2_AS_RF_SWITCH=' not in platformio_source, "DIO2 setup must not happen inside std_init before TCXO 2.4 V"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test33 LilyGO radio alignment must not change SD access speed"
+
+# Test34 measures the CPU-only standby saving before moving to event-driven
+# indefinite sleep. Radio/GPS hardware policy stays unchanged.
+assert "meshink_power_light_sleep_ms(12);" in runtime_source, "standby MeshCore loop uses the existing 12 ms idle slot for light sleep"
+assert "if(ui_is_standby())meshink_power_light_sleep_ms(12);" in runtime_source, "light sleep is restricted to standby"
+assert "esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);" in power_backend_source, "board backend owns the ESP timer wake primitive"
+assert "esp_light_sleep_start();" in power_backend_source, "board backend enters ESP light sleep"
+assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);" in power_backend_source, "short standby timer cannot leak into later deep sleep"
+assert "meshink_power_read_telemetry" in power_backend_header and "current_ma" in power_types_source, "generic power telemetry exposes BQ27220 current without leaking gauge registers"
+assert "[T5-POWER] sample mode=%s standby=%u" in unified_source, "10-second awake/standby power samples remain observable"
+assert "if(!standby_active)delay(12);" in source, "awake UI keeps the old delay while standby uses real light sleep"
 
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"

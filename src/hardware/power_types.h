@@ -28,6 +28,14 @@ struct MeshInkPowerCriticalState {
     uint16_t battery_mv = 0;
 };
 
+struct MeshInkPowerTelemetry {
+    uint16_t battery_mv = 0;
+    int16_t current_ma = 0;
+    uint16_t remaining_mah = 0;
+    uint16_t full_mah = 0;
+    uint8_t battery_percent = 0;
+};
+
 // User-facing wake guidance is board-owned because the physical control that
 // restores power may not be readable or controllable by the running firmware.
 struct MeshInkPowerWakeInfo {

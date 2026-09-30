@@ -3325,7 +3325,9 @@ void ui_loop() {
     static uint32_t power_report_at=0,loop_count=0;loop_count++;
     if(millis()-power_report_at>=60000){const uint32_t elapsed=static_cast<uint32_t>(millis()-power_report_at);T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] health cpu=%luMHz apb=%luMHz standby=%d loops=%lu/s heap=%u psram=%u stack=%u touch=%s\n",(unsigned long)getCpuFrequencyMhz(),(unsigned long)(getApbFrequency()/1000000),standby_active,(unsigned long)(loop_count*1000/elapsed),ESP.getFreeHeap(),ESP.getFreePsram(),(unsigned)uxTaskGetStackHighWaterMark(nullptr),touch_enabled?"active":"suspended");power_report_at=millis();loop_count=0;}
 #endif
-    delay(12);
+    // In standby the equivalent 12 ms idle slot is now real ESP light sleep
+    // inside local_mesh_loop(); awake UI retains the established delay.
+    if(!standby_active)delay(12);
 }
 
 bool ui_is_standby(){return standby_active;}
@@ -3416,7 +3418,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
     }else if(!standby_active&&enabled&&has_fix&&
              status_gps_satellites_bar!=satellites&&
              (!last_satellite_bar_refresh||
-              now-last_satellite_bar_refresh>=3000UL)){
+              now-last_satellite_bar_refresh>=5000UL)){
         status_gps_satellites_bar=satellites;
         last_satellite_bar_refresh=now?now:1;
         satellites_refresh=true;
@@ -3438,17 +3440,17 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         if(marker_moved)last_marker_refresh=now;
     }
     const bool detail_refresh=detail_changed&&screen==Screen::GpsSettings&&now-last_detail_refresh>=10000;
-    if(state_changed){
+    if(state_changed&&!standby_active){
         status_bar_dirty=true;
         T5_DEBUGLN(T5_LOG_UI,"[T5-UI] status-bar refresh queued reason=gps-state");
     }else if(satellites_refresh){
         status_bar_dirty=true;
-        T5_DEBUGLN(T5_LOG_UI,"[T5-UI] status-bar refresh queued reason=gps-satellites-3s");
+        T5_DEBUGLN(T5_LOG_UI,"[T5-UI] status-bar refresh queued reason=gps-satellites-5s");
     }
     // GPS Settings exposes receiver details in the page body, and Maps owns
     // the moving position marker. Those are genuine content changes and keep
     // the existing screen redraw path.
-    if((screen==Screen::GpsSettings&&(state_changed||detail_refresh))||marker_moved){
+    if(!standby_active&&((screen==Screen::GpsSettings&&(state_changed||detail_refresh))||marker_moved)){
         if(screen==Screen::GpsSettings)last_detail_refresh=now;
         status_dirty=true;
         T5_DEBUGLN(T5_LOG_UI,marker_moved?"[T5-UI] refresh queued reason=map-own-position":

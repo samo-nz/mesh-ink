@@ -430,6 +430,28 @@ void meshink_power_diagnostics_tick() {
     t5_power_diagnostics_tick_impl();
 }
 
+bool meshink_power_read_telemetry(MeshInkPowerTelemetry& telemetry) {
+    uint16_t voltage=0,current_raw=0,remaining=0,full=0,soc=0;
+    if(!gauge_word(0x08,voltage)||!gauge_word(0x0C,current_raw)||
+       !gauge_word(0x10,remaining)||!gauge_word(0x12,full)||
+       !gauge_word(0x2C,soc)||voltage<2500||voltage>5000||soc>100)return false;
+    telemetry.battery_mv=voltage;
+    telemetry.current_ma=(int16_t)current_raw;
+    telemetry.remaining_mah=remaining;
+    telemetry.full_mah=full;
+    telemetry.battery_percent=(uint8_t)soc;
+    return true;
+}
+
+void meshink_power_light_sleep_ms(uint32_t duration_ms) {
+    if(!duration_ms)return;
+    esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);
+    esp_light_sleep_start();
+    // Do not leave this short experimental timer armed for any later deep sleep
+    // or board shutdown path.
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+}
+
 void meshink_power_frontlight_begin() {
     pinMode(T5_PIN_FRONTLIGHT,OUTPUT);
     digitalWrite(T5_PIN_FRONTLIGHT,LOW);

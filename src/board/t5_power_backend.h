@@ -10,6 +10,11 @@ bool meshink_power_read_battery_percent(uint8_t& percent);
 bool meshink_power_read_charge_state(MeshInkChargeState& state);
 bool meshink_power_external_present();
 bool meshink_power_read_status(MeshInkPowerStatus& status);
+bool meshink_power_read_telemetry(MeshInkPowerTelemetry& telemetry);
+
+// Short board-owned light sleep used by the standby runtime. The caller keeps
+// protocol scheduling policy; the backend owns the ESP-specific sleep primitive.
+void meshink_power_light_sleep_ms(uint32_t duration_ms);
 
 // Battery topology, chemistry and cutoff/debounce policy belong to the board
 // backend. Application code receives only the resulting critical state.

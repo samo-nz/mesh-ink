@@ -9,6 +9,7 @@
 #include "hardware/gps.h"
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
+#include "hardware/power.h"
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
@@ -693,6 +694,10 @@ void local_mesh_loop(){
     static uint32_t radio_report_at=0;
     if(millis()-radio_report_at>=60000){radio_report_at=millis();const MeshInkRadioStats stats=meshink_radio_stats();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] radio continuous-rx=%d received=%lu errors=%lu sent=%lu boosted=%d (duty cycle intentionally disabled)\n",stats.continuous_rx,(unsigned long)stats.packets_received,(unsigned long)stats.receive_errors,(unsigned long)stats.packets_sent,stats.boosted_gain);}
 #endif
+    // test34: replace only the existing standby idle slot with ESP32 light
+    // sleep. MeshCore still executes at the same ~12 ms cadence and the SX1262
+    // remains in its existing continuous-RX configuration.
+    if(ui_is_standby())meshink_power_light_sleep_ms(12);
 }
 bool local_mesh_send_active(const char* text){
     if(!text||!text[0])return false;const uint32_t now=time(nullptr);
