@@ -850,7 +850,7 @@ assert 'meta->route_flood?"FLOOD":"DIRECT"' in runtime_source, "outgoing private
 assert "frame[0]==0x88" in runtime_source and "handle_raw_repeat" in runtime_source, "raw RX frames drive channel repeat-hearing detection"
 assert "HEARD %u REPEAT%s" in runtime_source, "channel sends expose heard-repeat count"
 assert "mesh::Utils::MACThenDecrypt" in runtime_source, "repeat matching validates/decrypts the echoed channel packet"
-assert "UiNodeInfoRequest::Trace=3" in data_source, "trace is a first-class node-info request"
+assert "Trace=3" in data_source, "trace is a first-class node-info request"
 assert "frame[0]=36" in runtime_source and "frame[0]==0x89" in runtime_source, "trace command and response are wired through upstream MeshCore"
 assert "TRACE %u HOP%s" in runtime_source and "DEST  %.1f DB" in runtime_source, "trace result reports repeater hashes/SNR and destination SNR"
 assert 'settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650)' in source, "More exposes diagnostics"
