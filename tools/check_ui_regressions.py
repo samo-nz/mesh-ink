@@ -528,7 +528,7 @@ for backend_detail in (
 ):
     assert backend_detail in power_backend_source, f"T5 power backend missing {backend_detail}"
 assert "meshink_power_read_battery_mv(voltage)" in board_source, "MeshCore battery voltage uses shared power backend"
-assert "meshink_power_read_battery_percent(soc)" in board_source, "MeshCore diagnostics use backend-provided battery percentage"
+assert "meshink_power_read_battery_percent(soc)" not in board_source, "MeshCore battery cache avoids the removed diagnostic-only SOC read"
 assert "meshink_power_recover_boot_path();" in source, "UI delegates boot battery-path recovery"
 contains("MeshInkPowerCriticalState boot_power{};", "boot critical check uses generic power result")
 contains("meshink_power_boot_critical(boot_power)", "boot critical decision belongs to backend")
