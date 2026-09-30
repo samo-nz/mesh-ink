@@ -669,6 +669,15 @@ assert "[T5-POWER-CACHE] ===== FROZEN PRE-USB STANDBY REPORT =====" in unified_s
 assert "meshink_power_light_sleep_stats_reset" in power_backend_header and "MeshInkLightSleepStats" in power_types_source, "light-sleep accounting stays behind the generic power boundary"
 assert "esp_timer_get_time()" in power_backend_source, "board backend measures actual light-sleep residence time"
 
+# Test36 makes the cached session itself authoritative and observes UI-driven
+# standby transitions both before and after the UI pass.
+assert "power_last_standby" not in unified_source, "cached standby report must not depend on a separate edge latch"
+assert "if(standby&&!standby_power.active)standby_power_begin(now);" in unified_source, "session begins from authoritative active state"
+assert "else if(!standby&&standby_power.active)standby_power_finish(now);" in unified_source, "session freezes whenever standby has ended"
+assert unified_source.count("power_logging_tick();") == 2, "power logger observes both pre-UI and post-UI standby state"
+assert "full cached report in 5s" in unified_source, "wake gives an immediate cached-report-ready marker"
+assert "s.next_report_at=now+5000UL;" in unified_source, "first full cached report follows five seconds after wake"
+
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"
 assert "enum class MeshInkRadioFailureClass" in radio_types_source, "radio failure vocabulary is board independent"

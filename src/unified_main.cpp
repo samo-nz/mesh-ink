@@ -57,7 +57,6 @@ struct StandbyPowerSession {
 
 static CachedPowerSample standby_fallback_samples[256];
 static StandbyPowerSession standby_power{};
-static bool power_last_standby=false;
 static uint32_t awake_power_sample_at=0;
 
 static bool capture_power_sample(CachedPowerSample& out,uint32_t elapsed_seconds) {
@@ -123,6 +122,9 @@ static void standby_power_begin(uint32_t now) {
     s.next_sample_at=now+POWER_SAMPLE_INTERVAL_MS;
     meshink_power_light_sleep_stats_reset();
     standby_power_capture_now(now);
+    Serial.printf("[T5-POWER-CACHE] standby measurement started capacity=%u sample_interval=%lus\n",
+                  (unsigned)s.capacity,(unsigned long)(POWER_SAMPLE_INTERVAL_MS/1000UL));
+    Serial.flush();
 }
 
 static void standby_power_finish(uint32_t now) {
@@ -136,7 +138,11 @@ static void standby_power_finish(uint32_t now) {
     s.active=false;
     s.complete=true;
     s.reports_remaining=2;
-    s.next_report_at=now+10000UL;
+    s.next_report_at=now+5000UL;
+    Serial.printf("[T5-POWER-CACHE] standby measurement frozen elapsed=%lus samples=%lu; full cached report in 5s\n",
+                  (unsigned long)((s.ended_at-s.started_at)/1000UL),
+                  (unsigned long)s.total_samples);
+    Serial.flush();
 }
 
 static void print_hms(uint32_t seconds,char out[16]) {
@@ -193,9 +199,10 @@ static void power_logging_tick() {
     const uint32_t now=millis();
     const bool standby=!companion_mode&&ui_is_standby();
 
-    if(standby&&!power_last_standby)standby_power_begin(now);
-    else if(!standby&&power_last_standby)standby_power_finish(now);
-    power_last_standby=standby;
+    // The measurement session is the source of truth. Do not rely on a
+    // separate edge latch: USB/light-sleep can make observation timing awkward.
+    if(standby&&!standby_power.active)standby_power_begin(now);
+    else if(!standby&&standby_power.active)standby_power_finish(now);
 
     if(standby){
         if((int32_t)(now-standby_power.next_sample_at)>=0){
@@ -348,5 +355,8 @@ void loop() {
         t5_timing_section_end(T5TimingSection::Ui,ui_started);
         t5_timing_cycle_end(cycle_started);
         t5_timing_service();
+        // Catch standby transitions caused inside ui_loop() immediately. This
+        // freezes BOOT-wake telemetry before the user reconnects USB.
+        power_logging_tick();
     }
 }
