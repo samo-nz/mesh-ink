@@ -420,7 +420,7 @@ assert "[T5-TOUCH] input queue full" not in source, "touch producer must never p
 # 1.8.10: full-screen framebuffer composition may use a short 240 MHz burst,
 # but must restore the previous clock immediately afterwards.
 contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
-contains('set_cpu_target(previous_mhz,"ui-draw-complete",false);', "UI draw boost restores previous CPU clock")
+contains('set_cpu_target(previous_mhz,"ui-draw-complete");', "UI draw boost restores previous CPU clock")
 contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
 contains("const bool stale_navigation_tap=", "UI filters touch releases queued during blocking navigation")
 contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale-touch filter excludes keyboard and Quick Settings")
