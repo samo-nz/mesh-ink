@@ -655,8 +655,19 @@ assert "esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);" in power_
 assert "esp_light_sleep_start();" in power_backend_source, "board backend enters ESP light sleep"
 assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);" in power_backend_source, "short standby timer cannot leak into later deep sleep"
 assert "meshink_power_read_telemetry" in power_backend_header and "current_ma" in power_types_source, "generic power telemetry exposes BQ27220 current without leaking gauge registers"
-assert "[T5-POWER] sample mode=%s standby=%u" in unified_source, "10-second awake/standby power samples remain observable"
+assert "[T5-POWER] sample mode=%s standby=0" in unified_source, "10-second awake power samples remain observable"
 assert "if(!standby_active)delay(12);" in source, "awake UI keeps the old delay while standby uses real light sleep"
+
+# Test35 caches battery telemetry while USB CDC is unavailable in light sleep,
+# then prints the frozen pre-USB measurements after a deliberate standby wake.
+assert "STANDBY_POWER_SAMPLE_CAPACITY=8192" in unified_source, "standby cache covers roughly 22 hours at ten-second cadence"
+assert "ps_malloc(sizeof(CachedPowerSample)*STANDBY_POWER_SAMPLE_CAPACITY)" in unified_source, "long standby trace uses PSRAM instead of scarce internal RAM"
+assert "USB CDC is intentionally silent during light-sleep standby" in unified_source, "standby telemetry must be cached rather than streamed over USB"
+assert "standby_power_capture_now(now);" in unified_source, "standby session captures gauge data before and during sleep"
+assert "s.reports_remaining=2;" in unified_source and "s.next_report_at=now+10000UL;" in unified_source, "BOOT wake delays and repeats the frozen report for USB reconnect"
+assert "[T5-POWER-CACHE] ===== FROZEN PRE-USB STANDBY REPORT =====" in unified_source, "cached report is clearly distinguished from live charging telemetry"
+assert "meshink_power_light_sleep_stats_reset" in power_backend_header and "MeshInkLightSleepStats" in power_types_source, "light-sleep accounting stays behind the generic power boundary"
+assert "esp_timer_get_time()" in power_backend_source, "board backend measures actual light-sleep residence time"
 
 # Test21 radio and board-capability boundaries.
 assert "MESHINK_RADIO_BACKEND_HEADER" in radio_selector_source, "radio backend is compile-time selectable"

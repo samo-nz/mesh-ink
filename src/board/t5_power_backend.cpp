@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <driver/i2c.h>
 #include <esp_sleep.h>
+#include <esp_timer.h>
 
 #include "board_profile.h"
 #include "t5_power_backend.h"
@@ -443,13 +444,27 @@ bool meshink_power_read_telemetry(MeshInkPowerTelemetry& telemetry) {
     return true;
 }
 
+static MeshInkLightSleepStats t5_light_sleep_stats{};
+
 void meshink_power_light_sleep_ms(uint32_t duration_ms) {
     if(!duration_ms)return;
     esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);
+    const int64_t started_us=esp_timer_get_time();
     esp_light_sleep_start();
+    const int64_t ended_us=esp_timer_get_time();
+    ++t5_light_sleep_stats.calls;
+    if(ended_us>started_us)t5_light_sleep_stats.total_us+=(uint64_t)(ended_us-started_us);
     // Do not leave this short experimental timer armed for any later deep sleep
     // or board shutdown path.
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+}
+
+void meshink_power_light_sleep_stats_reset() {
+    t5_light_sleep_stats=MeshInkLightSleepStats{};
+}
+
+MeshInkLightSleepStats meshink_power_light_sleep_stats() {
+    return t5_light_sleep_stats;
 }
 
 void meshink_power_frontlight_begin() {

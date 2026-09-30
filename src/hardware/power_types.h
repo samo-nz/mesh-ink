@@ -36,6 +36,11 @@ struct MeshInkPowerTelemetry {
     uint8_t battery_percent = 0;
 };
 
+struct MeshInkLightSleepStats {
+    uint64_t calls = 0;
+    uint64_t total_us = 0;
+};
+
 // User-facing wake guidance is board-owned because the physical control that
 // restores power may not be readable or controllable by the running firmware.
 struct MeshInkPowerWakeInfo {
