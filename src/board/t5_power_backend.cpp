@@ -446,17 +446,21 @@ bool meshink_power_read_telemetry(MeshInkPowerTelemetry& telemetry) {
 
 static MeshInkLightSleepStats t5_light_sleep_stats{};
 
-void meshink_power_light_sleep_ms(uint32_t duration_ms) {
+void meshink_power_light_sleep_ms(uint32_t duration_ms,bool primary_button_wake) {
     if(!duration_ms)return;
     esp_sleep_enable_timer_wakeup((uint64_t)duration_ms*1000ULL);
+    if(primary_button_wake)
+        esp_sleep_enable_ext0_wakeup((gpio_num_t)T5_PIN_BOOT_BUTTON,0);
     const int64_t started_us=esp_timer_get_time();
     esp_light_sleep_start();
     const int64_t ended_us=esp_timer_get_time();
     ++t5_light_sleep_stats.calls;
     if(ended_us>started_us)t5_light_sleep_stats.total_us+=(uint64_t)(ended_us-started_us);
-    // Do not leave this short experimental timer armed for any later deep sleep
-    // or board shutdown path.
+    // Never leak experimental light-sleep wake sources into later deep sleep
+    // or board shutdown paths.
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    if(primary_button_wake)
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);
 }
 
 void meshink_power_light_sleep_stats_reset() {
