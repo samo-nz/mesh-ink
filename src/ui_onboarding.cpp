@@ -2859,7 +2859,8 @@ static void set_touch_power(bool enabled){
     }
 }
 
-static void enter_standby(const char*){
+static void enter_standby(const char* reason){
+    (void)reason;
     if(standby_active)return;
     // Standby owns the whole display. Dismiss transient quick settings first
     // so it cannot remain layered over, or reappear immediately after, standby.
