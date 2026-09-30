@@ -660,7 +660,7 @@ assert "meshink_radio_meshcore()" in companion_source, "MeshCore composition con
 assert "meshink_radio_initialize()" in companion_source, "companion/local startup uses radio backend"
 assert "meshink_radio_rng_seed()" in companion_source, "runtime RNG seeding uses radio backend"
 assert "meshink_radio_apply_params(" in runtime_source, "radio preset application uses backend"
-assert "meshink_radio_stats()" in runtime_source, "radio health logging uses generic stats"
+assert "meshink_radio_stats()" not in runtime_source, "release runtime omits periodic radio health logging"
 assert "meshink_radio_power_off()" in runtime_source and "meshink_radio_power_off()" in companion_source, "radio shutdown uses backend"
 for leaked_radio in ("radio_driver", "CustomSX1262Wrapper", "t5_classify_radio_failure", "T5RadioFailureClass"):
     assert leaked_radio not in runtime_source, f"local runtime leaked T5 radio detail: {leaked_radio}"
