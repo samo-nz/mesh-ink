@@ -189,18 +189,17 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION includes the Bluetooth Companion Mode watchdog fix
-          from the 1.9.1 release baseline.
+          MeshInk $VERSION promotes the field-tested 1.9.1-test.46 firmware
+          to the stable release channel.
 
-          The 1.9.0 cache64 release could starve the ESP32-S3 CPU1 idle task
-          while running Bluetooth Companion Mode. The companion service loop
-          now yields to FreeRTOS each cycle while continuing to service MeshCore,
-          Bluetooth, sensors and the RTC.
+          This release keeps the 1.9.1 Bluetooth Companion Mode watchdog fix
+          and includes the testing branch's hardware-abstraction work while
+          preserving the field-tested H752-01/V2 electrical behavior.
 
-          Testing additionally carries hardware-portability refactoring. The
-          field-tested H752-01/V2 electrical behavior remains the reference
-          implementation while hardware-specific assumptions are moved behind
-          component interfaces.
+          It also includes the accumulated UI, touch, keyboard, GPS, Maps,
+          power-management and messaging refinements validated through the
+          test.46 field build, including suppression of unread indicators for
+          conversations that are already visibly open.
 
           The update image does not intentionally erase existing MeshCore
           settings, contacts, message history, or saved MeshInk credentials.
