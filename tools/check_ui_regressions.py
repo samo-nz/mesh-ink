@@ -153,7 +153,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert re.fullmatch(r"(?:1\.9\.1-test\.\d+|\d+\.\d+\.\d+)", firmware_version.group(1)), "firmware version must be a numbered test build or stable semantic version"
+assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+)?", firmware_version.group(1)), "firmware version must be a stable semantic version or numbered test build"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
 # standby retains the lower-power five-minute cadence. Event-driven redraws may
@@ -868,3 +868,18 @@ assert "ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel" in r
 assert "if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}" in runtime_source, "private unread increments only when unseen"
 assert "if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;" in runtime_source, "channel unread increments only when unseen"
 assert "const bool visible=ui_chat_is_visible(channel);" in source, "bottom-tab unread uses the same visible-chat predicate"
+
+
+# Test47: LAST HEARD uses MeshCore's per-contact lastmod (our T5 clock), while
+# LAST ADVERT remains the remote advertisement timestamp.
+assert "format_last_heard(contact.lastmod,heard)" in runtime_source, "contact list LAST HEARD must use MeshCore lastmod"
+assert 'snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard)' in runtime_source, "contact list labels lastmod as heard activity"
+assert "if(contact.lastmod)format_time(contact.lastmod,item.time)" in runtime_source, "contact list time column follows lastmod"
+assert "format_last_heard(detail_contact_.lastmod,self->detail_seen_)" in runtime_source, "node Overview LAST HEARD must use lastmod"
+assert "now>=detail_contact_.last_advert_timestamp" in runtime_source and "detail_advert_age_" in runtime_source, "LAST ADVERT remains based on last_advert_timestamp"
+assert "INFO REPLY %s" not in runtime_source and "recent_info_.reply_millis" not in runtime_source, "one-node info cache must not override LAST HEARD"
+assert "contact->lastmod=heard" in runtime_source and "meshink_rtc_current_time()" in runtime_source, "matched local receptions advance lastmod using the T5 clock"
+assert "note_heard(key,6); // includes CLI/direct payloads" in runtime_source, "all attributable inbound direct payloads advance LAST HEARD"
+assert "note_heard(detail_contact_.id.pub_key,PUB_KEY_SIZE);" in runtime_source, "matched status/telemetry/path/trace replies advance LAST HEARD"
+assert "provider.heard(pending_direct.key,6)" in runtime_source, "valid end-to-end delivery ACK advances LAST HEARD"
+assert "memcpy(&detail_contact_.lastmod,item.frame+p,4)" in runtime_source, "discovered-contact details retain MeshCore lastmod when supplied"
