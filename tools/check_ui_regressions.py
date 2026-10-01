@@ -1052,6 +1052,7 @@ assert "ui_text_width(short_name,2),ui_text_width(age,2)" in source, "map label 
 assert "meshink_map_control_rect(portrait_layout(),(int)control)" in source, "map labels avoid the visible map controls"
 assert "const int label_bottom=ui_y(766);" in source, "map node labels stay clear of bottom map overlays"
 assert "const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);" in source, "map zoom background follows proportional text width"
+assert "const int scale_backing_width=max(pixels+ui_w(12),ui_text_width(scale,2)+ui_w(16));" in source, "map scale backing covers both the physical bar and proportional label"
 assert "const int natural=ui_text_width(message,scale)+ui_w(48);" in source and "portrait_layout().width-ui_w(24)" in source, "toasts are proportional and screen-bounded"
 assert "const int width=ui_text_width(value,scale);" in source[source.index("static void standby_centred"):], "standby labels use proportional centering"
 assert "for (const auto& g : FONT) if (g.c == '?') return g.r;" in source, "unsupported text is visible rather than silently blank"
