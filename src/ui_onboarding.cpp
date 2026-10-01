@@ -849,10 +849,11 @@ static void audit_ui_geometry() {
 #endif
 
 static void key(const char* label,const meshink_keyboard::Rect& rect) {
-    box(rect.x,rect.y,rect.width,rect.height);
-    int scale=((int)strlen(label)*18+8<=rect.width)?3:2;
-    text(label,rect.x+(rect.width-(int)strlen(label)*6*scale)/2,
-         rect.y+(rect.height-7*scale)/2,scale,0,true);
+    rounded_box(rect.x,rect.y,rect.width,rect.height,max(ui_w(7),ui_h(7)),false);
+    int scale=3;
+    if(ui_text_width(label,scale)+ui_w(8)>rect.width)scale=2;
+    ui_text(label,rect.x+(rect.width-ui_text_width(label,scale))/2,
+            rect.y+(rect.height-7*scale)/2,scale,0,true);
 }
 
 static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
@@ -918,11 +919,12 @@ static void draw_landscape_keyboard(){
     const auto metrics=keyboard_metrics(true);
     meshink_display_set_all_white(&display);
     const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
-    MeshInkRect entry={metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height};
-    meshink_display_draw_rect(entry,0,fb);
+    rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
+                max(ui_w(10),ui_h(10)),false);
     const int entry_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,960);
     const int entry_y=metrics.entry.y+meshink_keyboard::scale_axis(16,metrics.height,540);
-    draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),entry_x,entry_y,48,4,0,true,2);
+    ui_draw_wrapped(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
+                    entry_x,entry_y,metrics.entry.width-ui_w(32),4,0,false,2);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
@@ -1058,12 +1060,7 @@ static void draw_standby_channel_icon(int x,int y) {
 }
 
 static void draw_standby_card(const MeshInkUiRect& rect) {
-    meshink_display_fill_rect({rect.x,rect.y,rect.width,rect.height},0xFF,fb);
-    const int border=max(ui_w(5),ui_h(5));
-    for(int inset=0;inset<border;++inset)
-        meshink_display_draw_rect(
-            {rect.x+inset,rect.y+inset,rect.width-inset*2,rect.height-inset*2},
-            0,fb);
+    rounded_box(rect,max(ui_w(22),ui_h(22)),false);
 }
 
 static void standby_centred(const char* value,const MeshInkUiRect& rect,int y,int scale,bool bold=true) {
@@ -1565,15 +1562,15 @@ static void draw_maps() {
     const MeshInkUiRect zoom_in=meshink_map_control_rect(layout,0);
     const MeshInkUiRect zoom_out=meshink_map_control_rect(layout,1);
     const MeshInkUiRect locate=meshink_map_control_rect(layout,2);
-    box(zoom_in,true);
+    rounded_box(zoom_in,max(ui_w(12),ui_h(12)),true);
     meshink_display_fill_rect({zoom_in.x+ui_w(20),zoom_in.y+ui_h(30),ui_w(26),ui_h(5)},0xFF,fb);
     meshink_display_fill_rect({zoom_in.x+ui_w(30),zoom_in.y+ui_h(20),ui_w(5),ui_h(26)},0xFF,fb);
-    box(zoom_out,true);
+    rounded_box(zoom_out,max(ui_w(12),ui_h(12)),true);
     meshink_display_fill_rect({zoom_out.x+ui_w(20),zoom_out.y+ui_h(30),ui_w(26),ui_h(5)},0xFF,fb);
     long own_latitude=0,own_longitude=0;bool own_current_fix=false;
     const bool has_own_location=map_device_position(own_latitude,own_longitude,own_current_fix);
     if(has_own_location){
-        box(locate,true);
+        rounded_box(locate,max(ui_w(12),ui_h(12)),true);
         const int target_x=locate.x+ui_w(12),target_y=locate.y+ui_h(12);
         meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(6),ui_w(33),ui_h(5)},0xFF,fb);
         meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(34),ui_w(33),ui_h(5)},0xFF,fb);
@@ -1599,8 +1596,8 @@ static void draw_maps() {
     text(scale,ui_x(28),ui_y(850),2,0,true);
     if(!result.sd_ready){
         const MeshInkUiRect warning=ui_rect(80,300,380,80);
-        meshink_display_fill_rect({warning.x,warning.y,warning.width,warning.height},0xFF,fb);
-        centred("SD CARD / MAPS UNAVAILABLE",ui_y(328),2,0,true);
+        ui_section_card(warning);
+        ui_centred("SD card / maps unavailable",ui_y(328),2,0,true);
     }
     draw_bottom_nav(2);
 }
@@ -1918,22 +1915,32 @@ static void draw_more() {
 static void draw_diagnostics() {
     draw_app_header("DIAGNOSTICS",true);
     const MeshInkUiLayout& layout=portrait_layout();
-    text("CORE",layout.section_margin,ui_y(130),3,0,true);
-    draw_wrapped(local_mesh_diagnostics_core(),layout.section_margin,ui_y(170),39,2,0,true,5);
-    text("RADIO",layout.section_margin,ui_y(330),3,0,true);
-    draw_wrapped(local_mesh_diagnostics_radio(),layout.section_margin,ui_y(370),39,2,0,true,5);
-    text("PACKETS",layout.section_margin,ui_y(530),3,0,true);
-    draw_wrapped(local_mesh_diagnostics_packets(),layout.section_margin,ui_y(570),39,2,0,true,5);
-    const MeshInkUiRect action=meshink_node_action_rect(layout);box(action,true);
+    const MeshInkUiRect core=meshink_outer_row_rect(layout,120,180);
+    const MeshInkUiRect radio=meshink_outer_row_rect(layout,312,180);
+    const MeshInkUiRect packets=meshink_outer_row_rect(layout,504,180);
+    ui_section_card(core);ui_section_card(radio);ui_section_card(packets);
+    ui_text("CORE",layout.content_text_x,core.y+ui_h(13),3,0,true);
+    ui_draw_wrapped(local_mesh_diagnostics_core(),layout.content_text_x,core.y+ui_h(52),
+                    core.width-ui_w(32),2,0,false,5);
+    ui_text("RADIO",layout.content_text_x,radio.y+ui_h(13),3,0,true);
+    ui_draw_wrapped(local_mesh_diagnostics_radio(),layout.content_text_x,radio.y+ui_h(52),
+                    radio.width-ui_w(32),2,0,false,5);
+    ui_text("PACKETS",layout.content_text_x,packets.y+ui_h(13),3,0,true);
+    ui_draw_wrapped(local_mesh_diagnostics_packets(),layout.content_text_x,packets.y+ui_h(52),
+                    packets.width-ui_w(32),2,0,false,5);
+    const MeshInkUiRect action=meshink_node_action_rect(layout);
     const char* label=local_mesh_diagnostics_busy()?"REFRESHING...":"REFRESH STATS";
-    text(label,action.x+(action.width-(int)strlen(label)*12)/2,
-         action.y+(action.height-ui_h(14))/2,2,0xFF,true);
+    ui_action_button(label,action,true);
 }
 
 static void draw_advert_menu() {
     draw_app_header("ADVERTISE",true);
     settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
-    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",portrait_layout().section_margin,ui_y(500),39,2,0,true,4);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect note=meshink_outer_row_rect(layout,490,150);
+    ui_section_card(note);
+    ui_draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",
+                    layout.content_text_x,note.y+ui_h(22),note.width-ui_w(32),3,0,false,4);
 }
 
 static void settings_row(const char* title,const char* subtitle,int reference_y) {
