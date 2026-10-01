@@ -479,6 +479,7 @@ static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BY
 
 static const uint8_t* glyph(char c) {
     for (const auto& g : FONT) if (g.c == c) return g.r;
+    for (const auto& g : FONT) if (g.c == '?') return g.r;
     return FONT[0].r;
 }
 
@@ -1088,8 +1089,8 @@ static void draw_standby_card(const MeshInkUiRect& rect) {
 }
 
 static void standby_centred(const char* value,const MeshInkUiRect& rect,int y,int scale,bool bold=true) {
-    const int width=(int)strlen(value)*6*scale;
-    text(value,rect.x+(rect.width-width)/2,y,scale,0,bold);
+    const int width=ui_text_width(value,scale);
+    ui_text(value,rect.x+(rect.width-width)/2,y,scale,0,bold);
 }
 
 static void draw_battery_icon(int x,int y,int level=-1) {
@@ -1107,6 +1108,10 @@ static void draw_status_bar() {
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
     meshink_display_draw_rect({0,0,layout.width,status_height},0,fb);
+    auto compact_count=[](uint16_t value,char out[5]){
+        if(value>99)strcpy(out,"99+");
+        else snprintf(out,5,"%u",(unsigned)value);
+    };
     int left=ui_x(6);
     if(meshink_board_has_gps()){
         if(!status_gps_enabled)draw_target_icon(ui_x(6),ui_y(9),true);
@@ -1116,12 +1121,21 @@ static void draw_status_bar() {
         if(!standby_active&&status_gps_enabled&&status_gps_fix) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-            text(satellites,ui_x(43),ui_y(13),3,0,true);
-            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(12);
+            text(satellites,ui_x(43),ui_y(17),2,0,true);
+            left=ui_x(43)+(int)strlen(satellites)*12+ui_w(8);
         }
     }
-    if(status_unread){draw_envelope_icon(left,ui_y(9));left+=ui_w(36);char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,ui_y(13),3,0,true);left+=(int)strlen(count)*18+ui_w(12);}
-    if(status_channel_unread){text("#",left,ui_y(13),3,0,true);left+=ui_w(22);char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,ui_y(13),3,0,true);}
+    if(status_unread){
+        draw_envelope_icon(left,ui_y(9));left+=ui_w(36);
+        char count[5];compact_count(status_unread,count);
+        text(count,left,ui_y(17),2,0,true);
+        left+=(int)strlen(count)*12+ui_w(8);
+    }
+    if(status_channel_unread){
+        text("#",left,ui_y(17),2,0,true);left+=ui_w(16);
+        char count[5];compact_count(status_channel_unread,count);
+        text(count,left,ui_y(17),2,0,true);
+    }
     char clock_text[8];
     if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
     else snprintf(clock_text,sizeof(clock_text),"--:--");
@@ -1144,16 +1158,16 @@ static void draw_status_bar() {
 // Share the same small black notification style between ordinary settings
 // toasts and the synchronous Maps loading message (which has no timeout).
 static MeshInkRect toast_message_rect(const char* message) {
-    const int scale=3,w=max(ui_w(300),(int)strlen(message)*6*scale+ui_w(48)),h=ui_h(72);
-    return {(portrait_layout().width-w)/2,ui_y(640),w,h};
+    const int scale=3;
+    const int natural=ui_text_width(message,scale)+ui_w(48);
+    const int w=min(portrait_layout().width-ui_w(24),max(ui_w(300),natural));
+    return {(portrait_layout().width-w)/2,ui_y(640),w,ui_h(72)};
 }
 static void draw_toast_message(const char* message) {
     const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
-    const int x=rect.x,y=rect.y,w=rect.width,h=rect.height;
-    meshink_display_fill_rect({x+r,y,w-2*r,h},0,fb);meshink_display_fill_rect({x,y+r,w,h-2*r},0,fb);
-    meshink_display_fill_rect({x+ui_w(5),y+ui_h(5),w-ui_w(10),h-ui_h(10)},0,fb);
-    text(message,x+(w-(int)strlen(message)*6*scale)/2,y+ui_h(25),scale,0xFF,true);
+    rounded_fill(rect.x,rect.y,rect.width,rect.height,r,0);
+    ui_centred_fit(message,rect.y+ui_h(25),rect.width-ui_w(24),scale,0xFF,true);
 }
 static void draw_toast() {
     if(toast_visible)draw_toast_message(toast_message);
@@ -1198,7 +1212,7 @@ static void draw_presets() {
     draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect back_rect=meshink_preset_back_rect(layout);
-    ui_text("< BACK",back_rect.x+ui_w(12),back_rect.y+ui_h(14),2,0,true);
+    ui_action_button("< BACK",back_rect,false);
     ui_centred("RADIO PRESETS",ui_y(92),4,0,true);
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
@@ -1449,7 +1463,6 @@ static void draw_map_nodes() {
         const auto& n=map_marker_hits[i];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
         char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
-        const int w=min(230,max(48,(int)strlen(short_name)*12+8));
         char age[16];
         if(node.gps_from_reply){
             // This is when our T5 RECEIVED GPS telemetry, not the remote fix time.
@@ -1462,15 +1475,21 @@ static void draw_map_nodes() {
             if(seconds<3600)snprintf(age,sizeof(age),"ADV %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"ADV %luh",(unsigned long)(seconds/3600));
             else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));}
+        const int w=min(230,max(48,max(ui_text_width(short_name,2),ui_text_width(age,2))+8));
         const int offsets[4][2]={{12,-18},{-12-w,-18},{12,12},{-12-w,12}};
         int lx=0,ly=0;bool placed=false;
+        const int label_bottom=ui_y(766);
         for(const auto& offset:offsets) {
             const int x=n.x+offset[0],y=n.y+offset[1];
-            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>map_bottom()-3)continue;
+            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>label_bottom)continue;
             bool overlap=false;
-            for(size_t j=0;j<occupied_count;++j)if(x<occupied[j].x+occupied[j].w+4&&
+            for(size_t control=0;control<3&&!overlap;++control){
+                const MeshInkUiRect r=meshink_map_control_rect(portrait_layout(),(int)control);
+                if(x<r.x+r.width+4&&x+w+4>r.x&&y<r.y+r.height+4&&y+38>r.y)overlap=true;
+            }
+            for(size_t j=0;j<occupied_count&&!overlap;++j)if(x<occupied[j].x+occupied[j].w+4&&
                 x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
-                {overlap=true;break;}
+                overlap=true;
             if(!overlap){lx=x;ly=y;placed=true;break;}
         }
         if(!placed)continue; // Keep the true-position dot even if labels collide.
@@ -1582,7 +1601,7 @@ static void draw_maps() {
         ui_text("NO MAP TILES HERE",ui_x(22),ui_y(778),2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
-    const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);
+    const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);
     meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);
     ui_text(zoom,ui_x(22),ui_y(816),2,0,true);
 
@@ -1836,7 +1855,7 @@ static void draw_contact_details() {
     if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.node_type,details_page);
-    ui_centred(node.name,ui_y(126),4,0,true);
+    ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,true);
     ui_centred(node_role_label(node.node_type),ui_y(174),2,0,true);
     auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
         ui_action_button(label,rect,selected);
@@ -1993,8 +2012,10 @@ static void settings_row(const char* title,const char* subtitle,int reference_y)
     ui_section_card(row);
     ui_text_fit(title,layout.content_text_x,row.y+ui_h(13),
                 row.width-ui_w(76),3,0,true);
+    const int subtitle_width=row.width-ui_w(76);
+    const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;
     ui_text_fit(subtitle,layout.content_text_x,row.y+ui_h(55),
-                row.width-ui_w(76),3,0,false);
+                subtitle_width,subtitle_scale,0,false);
     ui_text(">",layout.settings_arrow_x,row.y+ui_h(39),3,0,true);
 }
 
@@ -2016,7 +2037,8 @@ static void draw_settings() {
 static void draw_radio_settings() {
     draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
     settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
-    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE",path_hash_label(),510);
+    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);
+    if(!keyboard_visible)settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
 }
 
