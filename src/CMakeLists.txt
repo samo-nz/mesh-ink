@@ -8,6 +8,7 @@ idf_component_register(
         "companion_notice.cpp"
         "companion_runtime.cpp"
         "local_mesh_runtime.cpp"
+        "message_store.cpp"
         "map_tiles.cpp"
         "pmtiles_reader.cpp"
         "t5_timing.cpp"
