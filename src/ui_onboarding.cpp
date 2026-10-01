@@ -1891,7 +1891,7 @@ static void draw_contact_details() {
         ui_text("POSITION",layout.section_margin,ui_y(394),2,0,true);
         ui_draw_wrapped(node.position,layout.detail_value_x,ui_y(390),
                         layout.width-layout.detail_value_x-layout.section_margin,3,0,false,2);
-        ui_text_fit(node.position_source,layout.detail_value_x,ui_y(438),
+        ui_text_fit(node.position_source,layout.detail_value_x,ui_y(448),
                     layout.width-layout.detail_value_x-layout.section_margin,2,0,false);
         ui_text("LAST HEARD",layout.section_margin,ui_y(480),2,0,true);
         ui_text_fit(node.last_seen,layout.detail_value_x,ui_y(476),
@@ -2228,10 +2228,12 @@ static void draw_night_schedule(){
     const MeshInkUiRect save_rect=meshink_night_save_rect(layout);
     rounded_box(start_rect,max(ui_w(14),ui_h(14)),night_edit_field==0);
     ui_text("START",start_rect.x+ui_w(18),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
-    ui_text(start,start_rect.x+start_rect.width-ui_w(140),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    ui_text(start,start_rect.x+start_rect.width-ui_w(18)-ui_text_width(start,3),
+            start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
     rounded_box(end_rect,max(ui_w(14),ui_h(14)),night_edit_field==1);
     ui_text("END",end_rect.x+ui_w(18),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
-    ui_text(end,end_rect.x+end_rect.width-ui_w(140),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    ui_text(end,end_rect.x+end_rect.width-ui_w(18)-ui_text_width(end,3),
+            end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
     ui_action_button("-30 MIN",minus_rect,false);
     ui_action_button("+30 MIN",plus_rect,false);
     ui_action_button("SAVE SCHEDULE",save_rect,true);
