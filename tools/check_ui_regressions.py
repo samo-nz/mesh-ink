@@ -1011,3 +1011,4 @@ assert "geometry.text_width,3,color,false,16" in source, "long messages remain r
 assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
 assert "rounded_box(back_rect" in source and "rounded_box(action_rect" in source, "chat header actions share the rounded visual language"
 assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "polished typography/rounding adds no dynamic memory"
+assert "const MessageBubbleGeometry geometry=message_bubble_geometry(message);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse one geometry measurement for drawing"
