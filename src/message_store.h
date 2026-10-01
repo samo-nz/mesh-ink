@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <FS.h>
 #include "ui_data.h"
 
 constexpr size_t MESHINK_MESSAGE_CAPACITY=250;
@@ -45,6 +46,7 @@ struct MeshInkMessageStoreHeader {
 // in RAM; message records are read from SPIFFS into caller-owned scratch space.
 class MeshInkMessageStore {
     MeshInkMessageStoreHeader header_{};
+    mutable File file_{};
     bool initialized_=false;
 
     bool create_empty();
