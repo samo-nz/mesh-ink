@@ -628,12 +628,23 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         if(*cursor=='\n'){++cursor;continue;}
         size_t take=ui_wrap_take(cursor,max_width,scale);
         if(!take)take=1;
-        char line_text[64]{};const size_t copy=min(take,sizeof(line_text)-1);
+        char line_text[160]{};const size_t copy=min(take,sizeof(line_text)-4);
         memcpy(line_text,cursor,copy);
         size_t trim=strlen(line_text);
         while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
-        ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
-        cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+
+        const char* next=cursor+take;
+        while(*next==' ')++next;
+        if(*next=='\n')++next;
+        const bool truncated=(row==max_lines-1)&&*next;
+        if(truncated&&trim<sizeof(line_text)-4){
+            line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
+            line_text[trim]=0;
+            ui_text_fit(line_text,x,y+row*(7*scale+8),max_width,scale,color,bold);
+        }else{
+            ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
+        }
+        cursor=next;
     }
 }
 
@@ -1691,8 +1702,13 @@ static void draw_message_bubble(const UiMessage& message,int y,
 
     char footer[72]{};message_footer_text(message,footer);
     const int footer_width=ui_text_width(footer,2);
-    ui_text(footer,geometry.x+geometry.width-ui_w(14)-footer_width,
-            y+geometry.height-ui_h(27),2,color,true);
+    const int footer_max=geometry.width-ui_w(28);
+    if(footer_width<=footer_max)
+        ui_text(footer,geometry.x+geometry.width-ui_w(14)-footer_width,
+                y+geometry.height-ui_h(27),2,color,true);
+    else
+        ui_text_fit(footer,geometry.x+ui_w(14),y+geometry.height-ui_h(27),
+                    footer_max,2,color,true);
 }
 
 static size_t chat_fill_backwards(size_t end,int available){
@@ -2211,7 +2227,7 @@ static void draw_standby(){
     meshink_display_fill_rect({ui_x(24),ui_y(805),ui_w(492),ui_h(3)},0,fb);
     char wake_button[40];
     snprintf(wake_button,sizeof(wake_button),"HOLD %s FOR TWO SECONDS TO WAKE",meshink_primary_button_name());
-    ui_centred(wake_button,ui_y(840),2,0,true);
+    ui_centred_fit(wake_button,ui_y(840),portrait_layout().width-ui_w(32),2,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
