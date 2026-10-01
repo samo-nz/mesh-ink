@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <string.h>
+#include <esp_heap_caps.h>
 
 namespace {
 constexpr uint32_t STORE_MAGIC=0x354D3554; // T5M5
@@ -35,25 +36,40 @@ MeshInkMessageStore journal;
 
 MeshInkMessageStore& meshink_message_store(){return journal;}
 
+bool MeshInkMessageStore::ensure_storage(){
+    if(records_)return true;
+    records_=(MeshInkStoredMessage*)heap_caps_calloc(
+        MESHINK_MESSAGE_CAPACITY,sizeof(MeshInkStoredMessage),
+        MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!records_){
+        Serial.printf("[T5-STORE] ERROR PSRAM journal allocation failed bytes=%u\n",
+                      (unsigned)records_bytes());
+        return false;
+    }
+    Serial.printf("[T5-STORE] journal buffer=PSRAM bytes=%u\n",
+                  (unsigned)records_bytes());
+    return true;
+}
+
 bool MeshInkMessageStore::write_full(const char* path){
     File f=SPIFFS.open(path,"w");
     if(!f)return false;
     const size_t hw=f.write((const uint8_t*)&header_,sizeof(header_));
-    const size_t rw=f.write((const uint8_t*)records_,sizeof(records_));
+    const size_t rw=f.write((const uint8_t*)records_,records_bytes());
     f.close();
-    return hw==sizeof(header_)&&rw==sizeof(records_);
+    return hw==sizeof(header_)&&rw==records_bytes();
 }
 
 bool MeshInkMessageStore::create_empty(){
     header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
-    memset(records_,0,sizeof(records_));
+    memset(records_,0,records_bytes());
     if(!write_full(STORE_PATH)){
         Serial.println("[T5-STORE] ERROR creating v2 message journal");
         return false;
     }
     Serial.printf("[T5-STORE] created v2 journal: %u messages, %u bytes\n",
                   (unsigned)MESHINK_MESSAGE_CAPACITY,
-                  (unsigned)(sizeof(header_)+sizeof(records_)));
+                  (unsigned)(sizeof(header_)+records_bytes()));
     return true;
 }
 
@@ -99,7 +115,7 @@ bool MeshInkMessageStore::migrate_v1(const MeshInkMessageStoreHeader& legacy_hea
     header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,
              (uint16_t)min((size_t)legacy_header.count,MESHINK_MESSAGE_CAPACITY),
              legacy_header.sequence};
-    memset(records_,0,sizeof(records_));
+    memset(records_,0,records_bytes());
 
     for(uint16_t logical=0;logical<header_.count;++logical){
         const uint16_t physical=(legacy_header.head+logical)%legacy_header.capacity;
@@ -147,6 +163,7 @@ bool MeshInkMessageStore::migrate_v1(const MeshInkMessageStoreHeader& legacy_hea
 
 bool MeshInkMessageStore::begin(){
     if(initialized_)return true;
+    if(!ensure_storage())return false;
 
     // If power was lost after the old v1 file was renamed to the migration
     // backup but before the completed v2 temp file became live, restore the
@@ -177,13 +194,13 @@ bool MeshInkMessageStore::begin(){
        disk.version==STORE_VERSION&&
        disk.capacity==MESHINK_MESSAGE_CAPACITY&&
        disk.head<MESHINK_MESSAGE_CAPACITY&&disk.count<=MESHINK_MESSAGE_CAPACITY&&
-       file_size==sizeof(MeshInkMessageStoreHeader)+sizeof(records_)){
+       file_size==sizeof(MeshInkMessageStoreHeader)+records_bytes()){
         File current=SPIFFS.open(STORE_PATH,"r");
         if(!current)return false;
         const size_t hr=current.read((uint8_t*)&header_,sizeof(header_));
-        const size_t rr=current.read((uint8_t*)records_,sizeof(records_));
+        const size_t rr=current.read((uint8_t*)records_,records_bytes());
         current.close();
-        if(hr!=sizeof(header_)||rr!=sizeof(records_))return false;
+        if(hr!=sizeof(header_)||rr!=records_bytes())return false;
         initialized_=true;
         // A power cut after the v2 file became live but before backup cleanup
         // can leave the old v1 backup behind. The validated v2 file wins.
