@@ -269,7 +269,9 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
-contains("draw_page_indicator(chat_page,pages,layout.bottom_nav_top-ui_h(60));", "conversation history page indicator follows scaled geometry")
+contains("chat_page_bounds_lazy(count,available,chat_page,first,end,has_older);", "conversation history discovers only the requested fixed-height page")
+contains("draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));", "conversation history page indicator follows scaled geometry without requiring total-page scan")
+assert "chat_page_bounds(" not in source, "conversation drawing must not rescan all historical pages to calculate a total"
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
 contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
@@ -944,7 +946,7 @@ assert "MeshInkStoredMessage* records_" not in message_store_header, "journal mu
 assert "MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]" not in message_store_header, "journal records stay exclusively in SPIFFS"
 assert "bool read(size_t logical,MeshInkStoredMessage& out) const;" in message_store_header, "journal exposes fixed-record on-demand reads"
 assert "MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)" in message_store_source, "flash file retains all 250 fixed-size records"
-assert "RAM=%u-byte header only" in message_store_source, "boot transcript reports flash-authoritative journal memory model"
+assert "record-cache=0 header=%uB" in message_store_source, "boot transcript reports zero cached message records"
 assert "mutable File file_{};" in message_store_header, "one lightweight journal file handle is reused for record seeks"
 assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps only tiny journal-position indices"
 assert "mutable MessageView active_message_view_{};" in runtime_source, "UI keeps one scratch rendered message instead of 250"
@@ -953,3 +955,26 @@ assert "store_.read(active_indices_[i],item)" in runtime_source, "individual vis
 assert "heap_caps_calloc" not in message_store_source and "heap_caps_calloc" not in runtime_source, "message history no longer needs large PSRAM allocations"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
 assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal migration remains after display initialization"
+
+
+# Test52: message storage stays responsive/battery-efficient and v1 migration
+# preserves valid history without promoting zero-filled legacy capacity.
+assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
+assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rescan flash only after message history changes"
+assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
+assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews are rebuilt with one linear journal pass"
+assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
+assert "rebuild_active();" not in runtime_source[runtime_source.index("void refresh(bool force=false)"):runtime_source.index("void received_direct")], "periodic provider refresh must not rebuild the active message index"
+assert "for(size_t n=header_.count;n>0;--n)" in message_store_source[message_store_source.index("bool MeshInkMessageStore::find_physical"):message_store_source.index("uint32_t MeshInkMessageStore::append")], "message state lookup searches newest-first"
+assert "for(uint16_t logical=0;ok&&logical<legacy_header.count;++logical)" in message_store_source, "migration reads only the old ring's logical messages, never all 96 physical slots"
+assert "if(legacy.sequence==0)" in message_store_source and "++skipped_blank;" in message_store_source, "unexpected blank legacy active slots are skipped"
+assert "migrated.count=migrated_count;" in message_store_source, "v2 logical count is compacted to valid migrated records"
+assert "for(uint16_t i=migrated_count;ok&&i<MESHINK_MESSAGE_CAPACITY;++i)" in message_store_source, "unused v2 capacity is explicitly blank but outside logical count"
+assert "current.text[sizeof(current.text)-1]=0;" in message_store_source, "legacy text is forced NUL-terminated during migration"
+assert "verified.count==migrated_count" in message_store_source and "verify=SPIFFS.open(STORE_TEMP_PATH" in message_store_source, "completed temp journal is reopened and validated before swapping"
+assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "validated migration keeps the old journal as rollback backup until swap succeeds"
+assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "incompatible live journals get a non-destructive recovery backup"
+assert "preserving before recreate" in message_store_source, "invalid journal handling is explicitly non-destructive"
+assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only tiny page anchors"
+assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat page composition remains height-aware and incremental"
+assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message record is read once and reused for height plus drawing"
