@@ -649,16 +649,6 @@ static void ui_section_card(const MeshInkUiRect& rect) {
     rounded_box(rect,max(ui_w(14),ui_h(14)),false);
 }
 
-static void box(int x, int y, int w, int h, bool selected=false) {
-    MeshInkRect r = {x,y,w,h};
-    if (selected) meshink_display_fill_rect(r, 0, fb);
-    else { meshink_display_fill_rect(r, 0xFF, fb); meshink_display_draw_rect(r, 0, fb); }
-}
-
-static void box(const MeshInkUiRect& rect,bool selected=false) {
-    box(rect.x,rect.y,rect.width,rect.height,selected);
-}
-
 static meshink_keyboard::Metrics keyboard_metrics(bool landscape) {
     const meshink_keyboard::Tuning tuning={
         landscape?MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET:MESHINK_KEYBOARD_PORTRAIT_X_OFFSET,
