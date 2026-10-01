@@ -1622,7 +1622,8 @@ static void draw_maps() {
     char scale[24];
     if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}
     else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
-    meshink_display_fill_rect({ui_x(20),ui_y(850),pixels+ui_w(12),ui_h(34)},0xFF,fb);
+    const int scale_backing_width=max(pixels+ui_w(12),ui_text_width(scale,2)+ui_w(16));
+    meshink_display_fill_rect({ui_x(20),ui_y(850),scale_backing_width,ui_h(34)},0xFF,fb);
     line(ui_x(26),ui_y(872),ui_x(26)+pixels,ui_y(872));
     line(ui_x(26),ui_y(866),ui_x(26),ui_y(878));
     line(ui_x(26)+pixels,ui_y(866),ui_x(26)+pixels,ui_y(878));
