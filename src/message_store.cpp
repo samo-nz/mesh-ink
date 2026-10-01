@@ -12,6 +12,7 @@ constexpr uint16_t LEGACY_STORE_CAPACITY=96;
 constexpr char STORE_PATH[]="/ui_messages.bin";
 constexpr char STORE_TEMP_PATH[]="/ui_messages.v2.tmp";
 constexpr char STORE_BACKUP_PATH[]="/ui_messages.v1.bak";
+constexpr char STORE_INVALID_PATH[]="/ui_messages.invalid.bak";
 
 struct LegacyStoredMessageV1 {
     uint32_t sequence;
@@ -107,8 +108,7 @@ bool MeshInkMessageStore::migrate_v1(const MeshInkMessageStoreHeader& legacy_hea
     if((size_t)old.size()!=expected){old.close();return false;}
 
     MeshInkMessageStoreHeader migrated={
-        STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,
-        (uint16_t)min((size_t)legacy_header.count,MESHINK_MESSAGE_CAPACITY),
+        STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,
         legacy_header.sequence
     };
 
@@ -117,32 +117,82 @@ bool MeshInkMessageStore::migrate_v1(const MeshInkMessageStoreHeader& legacy_hea
     if(!fresh){old.close();return false;}
     bool ok=fresh.write((const uint8_t*)&migrated,sizeof(migrated))==sizeof(migrated);
 
-    for(uint16_t logical=0;ok&&logical<MESHINK_MESSAGE_CAPACITY;++logical){
-        MeshInkStoredMessage current{};
-        if(logical<migrated.count){
-            const uint16_t physical=(legacy_header.head+logical)%legacy_header.capacity;
-            const size_t offset=sizeof(MeshInkMessageStoreHeader)+
-                                (size_t)physical*sizeof(LegacyStoredMessageV1);
-            if(!old.seek(offset)){ok=false;break;}
-            LegacyStoredMessageV1 legacy{};
-            if(old.read((uint8_t*)&legacy,sizeof(legacy))!=sizeof(legacy)){
-                ok=false;break;
-            }
-            current.sequence=legacy.sequence;
-            current.timestamp=legacy.timestamp;
-            current.ack=legacy.ack;
-            current.kind=legacy.kind;
-            current.state=legacy.state;
-            memcpy(current.key,legacy.key,sizeof(current.key));
-            memcpy(current.text,legacy.text,sizeof(current.text));
-            current.path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
-            current.origin=(uint8_t)MeshInkMessageOrigin::LocalUi;
+    uint16_t migrated_count=0;
+    uint16_t skipped_blank=0;
+    uint32_t max_sequence=legacy_header.sequence;
+
+    // Only records inside the v1 ring's logical count are candidates. The old
+    // file always had 96 physical slots, so all slots outside count are merely
+    // zero-filled capacity and must never become messages in v2. If a legacy
+    // active slot is unexpectedly blank (sequence 0 from a partial/failed old
+    // write), skip and compact it rather than preserving a phantom message.
+    for(uint16_t logical=0;ok&&logical<legacy_header.count;++logical){
+        const uint16_t physical=(legacy_header.head+logical)%legacy_header.capacity;
+        const size_t offset=sizeof(MeshInkMessageStoreHeader)+
+                            (size_t)physical*sizeof(LegacyStoredMessageV1);
+        if(!old.seek(offset)){ok=false;break;}
+        LegacyStoredMessageV1 legacy{};
+        if(old.read((uint8_t*)&legacy,sizeof(legacy))!=sizeof(legacy)){
+            ok=false;break;
         }
-        ok=fresh.write((const uint8_t*)&current,sizeof(current))==sizeof(current);
+        if(legacy.sequence==0){
+            ++skipped_blank;
+            continue;
+        }
+
+        MeshInkStoredMessage current{};
+        current.sequence=legacy.sequence;
+        current.timestamp=legacy.timestamp;
+        current.ack=legacy.ack;
+        current.kind=legacy.kind;
+        current.state=legacy.state;
+        memcpy(current.key,legacy.key,sizeof(current.key));
+        memcpy(current.text,legacy.text,sizeof(current.text));
+        current.text[sizeof(current.text)-1]=0;
+        current.path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
+        current.origin=(uint8_t)MeshInkMessageOrigin::LocalUi;
+        if(fresh.write((const uint8_t*)&current,sizeof(current))!=sizeof(current)){
+            ok=false;break;
+        }
+        ++migrated_count;
+        if(legacy.sequence>max_sequence)max_sequence=legacy.sequence;
     }
+
+    // Keep the v2 file fixed-size, but all unused physical capacity remains
+    // outside the logical count and is therefore never exposed to the UI.
+    MeshInkStoredMessage blank{};
+    for(uint16_t i=migrated_count;ok&&i<MESHINK_MESSAGE_CAPACITY;++i)
+        ok=fresh.write((const uint8_t*)&blank,sizeof(blank))==sizeof(blank);
+
+    migrated.count=migrated_count;
+    migrated.sequence=max_sequence;
+    if(ok&&fresh.seek(0))
+        ok=fresh.write((const uint8_t*)&migrated,sizeof(migrated))==sizeof(migrated);
+    else if(ok)ok=false;
+    fresh.flush();
+    const size_t migrated_size=fresh.size();
     old.close();fresh.close();
 
-    if(!ok){
+    const size_t expected_v2=sizeof(MeshInkMessageStoreHeader)+
+                             MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+    if(!ok||migrated_size!=expected_v2){
+        SPIFFS.remove(STORE_TEMP_PATH);
+        return false;
+    }
+
+    // Re-open and validate the completed temp journal before touching the v1
+    // source. This makes the migration swap all-or-nothing from the user's
+    // point of view.
+    File verify=SPIFFS.open(STORE_TEMP_PATH,"r");
+    MeshInkMessageStoreHeader verified{};
+    const bool verified_ok=verify&&
+        verify.read((uint8_t*)&verified,sizeof(verified))==sizeof(verified)&&
+        verified.magic==STORE_MAGIC&&verified.version==STORE_VERSION&&
+        verified.capacity==MESHINK_MESSAGE_CAPACITY&&
+        verified.head==0&&verified.count==migrated_count&&
+        (size_t)verify.size()==expected_v2;
+    if(verify)verify.close();
+    if(!verified_ok){
         SPIFFS.remove(STORE_TEMP_PATH);
         return false;
     }
@@ -159,8 +209,9 @@ bool MeshInkMessageStore::migrate_v1(const MeshInkMessageStoreHeader& legacy_hea
     }
     SPIFFS.remove(STORE_BACKUP_PATH);
     header_=migrated;
-    Serial.printf("[T5-STORE] migrated v1 history: %u messages -> flash-backed v2 capacity %u\n",
-                  (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY);
+    Serial.printf("[T5-STORE] migrated v1 history: %u valid messages, %u blank active slots skipped -> v2 capacity %u\n",
+                  (unsigned)migrated_count,(unsigned)skipped_blank,
+                  (unsigned)MESHINK_MESSAGE_CAPACITY);
     return true;
 }
 
@@ -218,11 +269,21 @@ bool MeshInkMessageStore::begin(){
         return false;
     }
 
-    Serial.printf("[T5-STORE] journal incompatible magic=%08lx version=%u capacity=%u; recreating\n",
+    Serial.printf("[T5-STORE] journal incompatible magic=%08lx version=%u capacity=%u; preserving before recreate\n",
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
+    SPIFFS.remove(STORE_INVALID_PATH);
+    if(!SPIFFS.rename(STORE_PATH,STORE_INVALID_PATH)){
+        Serial.println("[T5-STORE] ERROR preserving incompatible message journal");
+        return false;
+    }
     const bool ok=create_empty();
-    initialized_=ok;
-    return ok;
+    if(!ok){
+        SPIFFS.remove(STORE_PATH);
+        SPIFFS.rename(STORE_INVALID_PATH,STORE_PATH);
+        return false;
+    }
+    initialized_=true;
+    return true;
 }
 
 bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
@@ -234,8 +295,10 @@ bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
 bool MeshInkMessageStore::find_physical(uint32_t sequence,uint16_t& physical) const{
     if(!initialized_||!file_||!sequence)return false;
     MeshInkStoredMessage item{};
-    for(size_t i=0;i<header_.count;++i){
-        const uint16_t p=(header_.head+i)%MESHINK_MESSAGE_CAPACITY;
+    // State/ACK/route updates overwhelmingly target the newest message. Search
+    // newest-first so the common case is one record read instead of up to 250.
+    for(size_t n=header_.count;n>0;--n){
+        const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
         if(!read_record(file_,p,item))break;
         if(item.sequence==sequence){physical=p;return true;}
     }
