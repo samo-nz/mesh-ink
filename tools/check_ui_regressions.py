@@ -12,6 +12,7 @@ source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
 message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
+component_cmake_source = (root / "src" / "CMakeLists.txt").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
@@ -921,7 +922,8 @@ assert "legacy_header.sequence" in message_store_source and "current.sequence=le
 assert 'STORE_TEMP_PATH[]="/ui_messages.v2.tmp"' in message_store_source and 'STORE_BACKUP_PATH[]="/ui_messages.v1.bak"' in message_store_source, "migration uses temporary and backup files"
 assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "migration swaps v2 into place only after writing it"
 assert "original retained" in message_store_source, "migration failure explicitly preserves the testing device's old history"
-assert "+<message_store.cpp>" in platformio_source, "shared journal is compiled into unified firmware"
+assert "+<message_store.cpp>" in platformio_source, "shared journal is compiled into Arduino unified firmware"
+assert '"message_store.cpp"' in component_cmake_source, "shared journal is linked into Arduino+ESP-IDF cache64 firmware"
 assert "class MeshInkMesh final : public MyMesh" in companion_source, "Bluetooth mode observes incoming mesh messages before app sync"
 assert "MeshInkMessageOrigin::CompanionApp" in companion_source, "Bluetooth traffic is tagged in the shared journal"
 assert "class MeshInkBLEInterface final : public SerialBLEInterface" in companion_source, "Bluetooth app commands are observed without changing the phone protocol"
