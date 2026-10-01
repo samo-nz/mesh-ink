@@ -10,6 +10,8 @@ import re
 root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
+message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
+message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
@@ -840,15 +842,18 @@ assert "const int border=max(ui_w(5),ui_h(5));" in source, "standby card outline
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
 assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "standby retains the lower wake instruction separator"
 
-# Test45: MeshCore network feedback is surfaced without changing stored-message format.
-assert "const char* network" in data_source, "message model exposes transient network metadata"
-assert "STORE_VERSION=1" in runtime_source, "network metadata must not migrate or invalidate the existing message store"
+# Test45: MeshCore network feedback is surfaced and its useful RF metadata is
+# persisted in the v2 device journal.
+assert "const char* network" in data_source, "message model exposes network metadata"
+assert "STORE_VERSION=2" in message_store_source, "message journal uses the persistent RF-metadata v2 format"
+assert "int8_t snr_q4=0;" in message_store_header and "uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;" in message_store_header, "received SNR/path metadata lives in the persistent record"
+assert "uint8_t repeats=0;" in message_store_header and "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_header, "repeat and route metadata lives in the persistent record"
 assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
 assert "frame[0]==16&&len>=16" in runtime_source and "frame[0]==17&&len>=11" in runtime_source, "v3 direct/channel frames are parsed explicitly"
 assert "SNR %.1f DB  %u HOP%s" in runtime_source, "received messages expose SNR and hop count"
-assert 'meta->route_flood?"FLOOD":"DIRECT"' in runtime_source, "outgoing private messages expose direct versus flood routing"
+assert "(stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)" in runtime_source, "outgoing private messages expose persisted direct versus flood routing"
 assert "frame[0]==0x88" in runtime_source and "handle_raw_repeat" in runtime_source, "raw RX frames drive channel repeat-hearing detection"
-assert "HEARD %u REPEAT%s" in runtime_source, "channel sends expose heard-repeat count"
+assert "HEARD %u REPEAT%s" in runtime_source, "channel sends expose persisted heard-repeat count"
 assert "mesh::Utils::MACThenDecrypt" in runtime_source, "repeat matching validates/decrypts the echoed channel packet"
 assert "Trace=3" in data_source, "trace is a first-class node-info request"
 assert "frame[0]=36" in runtime_source and "frame[0]==0x89" in runtime_source, "trace command and response are wired through upstream MeshCore"
@@ -904,3 +909,25 @@ assert "detail_contact_.gps_lat=recent_info_.lat;" in runtime_source and "detail
 assert "local_mesh_schedule_contacts_save();" in runtime_source, "GPS position changes use the deferred contact persistence path"
 assert 'strcpy(self->detail_position_source_,"SAVED POSITION")' in runtime_source, "reloaded telemetry-derived coordinates use a provenance-neutral saved-position label"
 assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinates must not be mislabelled as advert-derived"
+
+
+# Test50: one 250-message journal spans standalone and Bluetooth Companion
+# modes, while the testing device's existing 96-message v1 history migrates.
+assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
+assert "LEGACY_STORE_CAPACITY=96" in message_store_source and "LEGACY_STORE_VERSION=1" in message_store_source, "v1 96-message store remains an explicit migration source"
+assert "migrate_v1(disk)" in message_store_source, "v1 store is migrated instead of discarded"
+assert "header_.sequence=legacy_header.sequence" not in message_store_source, "migration initializes sequence through the v2 header assignment"
+assert "legacy_header.sequence" in message_store_source and "current.sequence=legacy.sequence" in message_store_source, "migration preserves journal and per-message sequence values"
+assert 'STORE_TEMP_PATH[]="/ui_messages.v2.tmp"' in message_store_source and 'STORE_BACKUP_PATH[]="/ui_messages.v1.bak"' in message_store_source, "migration uses temporary and backup files"
+assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "migration swaps v2 into place only after writing it"
+assert "original retained" in message_store_source, "migration failure explicitly preserves the testing device's old history"
+assert "+<message_store.cpp>" in platformio_source, "shared journal is compiled into unified firmware"
+assert "class MeshInkMesh final : public MyMesh" in companion_source, "Bluetooth mode observes incoming mesh messages before app sync"
+assert "MeshInkMessageOrigin::CompanionApp" in companion_source, "Bluetooth traffic is tagged in the shared journal"
+assert "class MeshInkBLEInterface final : public SerialBLEInterface" in companion_source, "Bluetooth app commands are observed without changing the phone protocol"
+assert "frame[0]==2&&len>=14&&frame[1]==TXT_TYPE_PLAIN" in companion_source, "BT private sends are captured from CMD_SEND_TXT_MSG"
+assert "frame[0]==3&&len>=8&&frame[1]==TXT_TYPE_PLAIN" in companion_source, "BT channel sends are captured from CMD_SEND_CHANNEL_TXT_MSG"
+assert "pending_.kind==MeshInkMessageKind::Direct&&frame[0]==6&&len>=10" in companion_source, "BT private send is journaled only after MeshCore accepts it"
+assert "pending_.kind==MeshInkMessageKind::Channel&&frame[0]==0" in companion_source, "BT channel send is journaled only after MeshCore accepts it"
+assert "mark_delivered_by_ack(ack)" in companion_source, "later end-to-end BT delivery ACK updates the persisted message"
+assert "meshink_message_store().begin()" in companion_source, "companion mode opens/migrates the same journal"
