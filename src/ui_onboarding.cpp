@@ -1711,7 +1711,7 @@ static size_t chat_fill_backwards(size_t end,int available){
         const UiMessage& message=ui_data->active_message(candidate-1);
         const int h=message_bubble_height(message);
         const int needed=h+(used?ui_h(8):0);
-        if(used&&used+needed>available)break;
+        if(used+needed>available)break;
         used+=needed;--candidate;
         if(used>=available)break;
     }
@@ -1753,7 +1753,7 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     if(page==0&&!has_older)return;
     char page_text[20];
     snprintf(page_text,sizeof(page_text),"PAGE %u",(unsigned)(page+1));
-    const int text_width=(int)strlen(page_text)*12;
+    const int text_width=ui_text_width(page_text,2);
     const int text_left=(meshink_display_logical_width()-text_width)/2;
     ui_centred(page_text,y,2,0,true);
     if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
