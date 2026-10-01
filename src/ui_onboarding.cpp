@@ -1209,8 +1209,10 @@ static void draw_presets() {
         const uint8_t color=index==selected_preset?0xFF:0;
         ui_text_fit(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(11),
                     row_rect.width-ui_w(32),3,color,true);
+        const int detail_width=row_rect.width-ui_w(32);
+        const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;
         ui_text_fit(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(57),
-                    row_rect.width-ui_w(32),3,color,false);
+                    detail_width,detail_scale,color,false);
     }
     const MeshInkUiRect prev_rect=meshink_preset_prev_rect(layout);
     const MeshInkUiRect next_rect=meshink_preset_next_rect(layout);
