@@ -144,6 +144,7 @@ static size_t selected_channel = 0;
 static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
 static size_t contacts_page = 0;
 static size_t channels_page = 0;
+static size_t discovery_page = 0;
 static uint8_t chat_page = 0;
 static constexpr size_t CHAT_PAGE_ANCHORS=250;
 static uint16_t chat_page_starts[CHAT_PAGE_ANCHORS]{};
@@ -1963,8 +1964,19 @@ static void settings_row(const char* title,const char* subtitle,int y);
 
 static void draw_discovery() {
     draw_app_header("DISCOVERED",true);
-    if(!ui_data||!ui_data->advert_count()){ui_centred("NO ADVERTS HEARD",ui_y(300),3,0,true);ui_centred("SEND AN ADVERT OR WAIT",ui_y(350),2);}
-    else for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)draw_list_entry(ui_data->advert(i),120+i*150);
+    if(!ui_data||!ui_data->advert_count()){
+        discovery_page=0;
+        ui_centred("NO ADVERTS HEARD",ui_y(300),3,0,true);
+        ui_centred("SEND AN ADVERT OR WAIT",ui_y(350),2);
+        return;
+    }
+    const size_t count=ui_data->advert_count();
+    clamp_list_page(discovery_page,count);
+    const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;
+    for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
+        draw_list_entry(ui_data->advert(first+row),
+                        portrait_layout().list_top+row*portrait_layout().list_row_stride);
+    draw_list_page_footer(discovery_page,count);
 }
 
 static void draw_more() {
@@ -3163,9 +3175,24 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::Discovery:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
-            if(ui_data)for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)if(hit_outer_row(x,y,portrait_layout().list_top+
-                    i*portrait_layout().list_row_stride,
-                    portrait_layout().list_row_height)){if(ui_data->open_advert(i)){details_from_discovery=true;details_page=0;open_screen(Screen::ContactDetails);}return true;}break;
+            if(ui_data){
+                const size_t count=ui_data->advert_count();
+                clamp_list_page(discovery_page,count);
+                const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;
+                for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                    const size_t index=first+row;
+                    if(hit_outer_row(x,y,portrait_layout().list_top+
+                            row*portrait_layout().list_row_stride,
+                            portrait_layout().list_row_height)){
+                        if(ui_data->open_advert(index)){
+                            details_from_discovery=true;details_page=0;
+                            open_screen(Screen::ContactDetails);
+                        }
+                        return true;
+                    }
+                }
+            }
+            break;
         case Screen::More:
             if(hit_outer_row(x,y,130)){open_screen(Screen::Discovery);return true;}
             if(hit_outer_row(x,y,260)){open_screen(Screen::AdvertMenu);return true;}
@@ -3682,16 +3709,23 @@ void ui_loop() {
             open_screen(Screen::Maps);
             continue;
         }
-        if((screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
-            const size_t count=!ui_data?0:(screen==Screen::Contacts?ui_data->contact_count():ui_data->channel_count());
-            size_t& page=screen==Screen::Contacts?contacts_page:channels_page;
+        if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&
+           abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            const size_t count=!ui_data?0:
+                (screen==Screen::Contacts?ui_data->contact_count():
+                 screen==Screen::Channels?ui_data->channel_count():ui_data->advert_count());
+            size_t& page=screen==Screen::Contacts?contacts_page:
+                         screen==Screen::Channels?channels_page:discovery_page;
             clamp_list_page(page,count);
             const size_t pages=list_page_count(count);
             int next=(int)page+(tap.dy<0?1:-1);
             if(next<0)next=0;if(next>=(int)pages)next=(int)pages-1;
             if((size_t)next!=page){
                 page=(size_t)next;
-                T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",screen==Screen::Contacts?"contacts":"channels",(unsigned)(page+1),(unsigned)pages);
+                const char* name=screen==Screen::Contacts?"contacts":
+                                 screen==Screen::Channels?"channels":"discovery";
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",name,
+                          (unsigned)(page+1),(unsigned)pages);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
