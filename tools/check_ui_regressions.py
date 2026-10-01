@@ -1045,6 +1045,7 @@ assert "const int compose_y=chat_compose_top();" in source, "message composer dr
 assert source.count("chat_compose_top()")>=3, "composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
 assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;" in source, "long settings subtitles shrink before clipping"
+assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
 assert "if(!keyboard_visible)settings_row(\"PATH HASH MODE\",path_hash_label(),510);" in source, "Radio Settings does not draw a row beneath the portrait keyboard"
 assert 'if(value>99)strcpy(out,"99+");' in source, "status unread counters are visually bounded"
 assert "text(count,left,ui_y(17),2,0,true);" in source, "status secondary counters use compact scale-two text"
