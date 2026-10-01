@@ -41,34 +41,27 @@ struct MeshInkMessageStoreHeader {
     uint32_t sequence;
 };
 
+// Flash is authoritative. Only the 16-byte journal header lives permanently
+// in RAM; message records are read from SPIFFS into caller-owned scratch space.
 class MeshInkMessageStore {
     MeshInkMessageStoreHeader header_{};
-    MeshInkStoredMessage* records_=nullptr;
     bool initialized_=false;
 
-    static constexpr size_t records_bytes(){
-        return MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
-    }
-    bool ensure_storage();
-
     bool create_empty();
-    bool write_full(const char* path);
     void write_header();
-    void write_record(uint16_t physical);
+    bool write_record(uint16_t physical,const MeshInkStoredMessage& record);
     bool migrate_v1(const MeshInkMessageStoreHeader& legacy_header);
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
     bool begin();
-    size_t count() const { return header_.count; }
-    const MeshInkStoredMessage& at(size_t logical) const {
-        return records_[(header_.head+logical)%MESHINK_MESSAGE_CAPACITY];
-    }
+    size_t count() const { return initialized_?header_.count:0; }
+    bool read(size_t logical,MeshInkStoredMessage& out) const;
 
-    MeshInkStoredMessage* append(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-                                 const char* text,uint32_t timestamp,UiMessageState state,
-                                 uint32_t ack=0,
-                                 MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi);
+    uint32_t append(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+                    const char* text,uint32_t timestamp,UiMessageState state,
+                    uint32_t ack=0,
+                    MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi);
     void update_state(uint32_t sequence,UiMessageState state);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
