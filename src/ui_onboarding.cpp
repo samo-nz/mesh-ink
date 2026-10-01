@@ -2009,8 +2009,10 @@ static void draw_gps_tuning(){
     ui_text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(13),3,0,true);
     ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(292),3,0,false);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
-    draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",layout.section_margin,ui_y(515),45,2,0,true,5);
-    draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),45,2,0,true,4);
+    ui_draw_wrapped("GPS only may lower receiver load, but can take longer to fix. Choose more satellite systems if reception is poor.",
+                    layout.section_margin,ui_y(515),layout.section_width,2,0,false,5);
+    ui_draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),
+                    layout.section_width,2,0,false,4);
 }
 
 static void draw_timezone(){
@@ -2064,22 +2066,39 @@ static void draw_display_settings() {
 static void draw_help() {
     draw_app_header("USING MESHINK",true);
     const MeshInkUiLayout& layout=portrait_layout();
-    text("QUICK SETTINGS",layout.section_margin,ui_y(142),3,0,true);
-    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",layout.section_margin,ui_y(176),39,2,0,false,3);
+    const MeshInkUiRect quick=meshink_outer_row_rect(layout,118,126);
+    const MeshInkUiRect button=meshink_outer_row_rect(layout,254,166);
+    const MeshInkUiRect keyboard=meshink_outer_row_rect(layout,430,126);
+    const MeshInkUiRect maps=meshink_outer_row_rect(layout,566,126);
+    const MeshInkUiRect companion=meshink_outer_row_rect(layout,702,170);
+    ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard);
+    ui_section_card(maps);ui_section_card(companion);
+
+    ui_text("QUICK SETTINGS",layout.content_text_x,quick.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Swipe down from the top edge for front light, advert flood and power off.",
+                    layout.content_text_x,quick.y+ui_h(48),quick.width-ui_w(32),2,0,false,3);
+
     char button_title[32];
     snprintf(button_title,sizeof(button_title),"%s BUTTON",meshink_primary_button_name());
-    text(button_title,layout.section_margin,ui_y(266),3,0,true);
+    ui_text(button_title,layout.content_text_x,button.y+ui_h(12),3,0,true);
     char button_help[180];
     snprintf(button_help,sizeof(button_help),
-        "Short press refreshes the current screen. Hold %s for 2 seconds to lock screen and enter standby - hold %s for 2 seconds to unlock",
-        meshink_primary_button_name(),meshink_primary_button_name());
-    draw_wrapped(button_help,layout.section_margin,ui_y(300),39,2,0,false,5);
-    text("KEYBOARD",layout.section_margin,ui_y(444),3,0,true);
-    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",layout.section_margin,ui_y(478),39,2,0,false,4);
-    text("MAPS",layout.section_margin,ui_y(586),3,0,true);
-    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",layout.section_margin,ui_y(620),39,2,0,false,4);
-    text("BLUETOOTH COMPANION MODE",layout.section_margin,ui_y(728),3,0,true);
-    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",layout.section_margin,ui_y(762),39,2,0,false,5);
+        "Short press refreshes. Hold %s for 2 seconds for standby; hold again for 2 seconds to wake.",
+        meshink_primary_button_name());
+    ui_draw_wrapped(button_help,layout.content_text_x,button.y+ui_h(48),
+                    button.width-ui_w(32),2,0,false,5);
+
+    ui_text("KEYBOARD",layout.content_text_x,keyboard.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Use LAND for the larger landscape message keyboard.",
+                    layout.content_text_x,keyboard.y+ui_h(48),keyboard.width-ui_w(32),2,0,false,3);
+
+    ui_text("MAPS",layout.content_text_x,maps.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Pan or pinch, double tap to zoom in, triple tap to zoom out.",
+                    layout.content_text_x,maps.y+ui_h(48),maps.width-ui_w(32),2,0,false,3);
+
+    ui_text("BLUETOOTH COMPANION",layout.content_text_x,companion.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Reboots into companion mode for MeshCore apps. Reboot again to return to the local UI.",
+                    layout.content_text_x,companion.y+ui_h(48),companion.width-ui_w(32),2,0,false,5);
 }
 
 static void draw_meshink_logo(int top,bool compact=false);
@@ -2138,7 +2157,8 @@ static void draw_night_schedule(){
     ui_action_button("-30 MIN",minus_rect,false);
     ui_action_button("+30 MIN",plus_rect,false);
     ui_action_button("SAVE SCHEDULE",save_rect,true);
-    draw_wrapped("The selected timezone from GPS settings is used automatically.",layout.section_margin,ui_y(740),39,2,0,true,3);
+    ui_draw_wrapped("The selected timezone from GPS settings is used automatically.",
+                    layout.section_margin,ui_y(740),layout.section_width,2,0,false,3);
 }
 
 static void draw_meshink_logo(int top,bool compact) {
@@ -2169,15 +2189,19 @@ static void draw_meshink_logo(int top,bool compact) {
 
 static void draw_about() {
     draw_app_header("ABOUT",true);
+    const MeshInkUiLayout& layout=portrait_layout();
     draw_meshink_logo(ui_y(118),true);
-    centred("Made by Samo",ui_y(506),3,0,true);
-    centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,true);
-    if(node_name[0])centred(node_name,ui_y(600),3,0,true);
-    centred(UI_VERSION,ui_y(642),3,0,true);
-    text("HARDWARE",portrait_layout().section_margin,ui_y(720),2,0,true);
-    text("LILYGO T5 PRO",ui_x(170),ui_y(720),2);
-    text("CORE",portrait_layout().section_margin,ui_y(770),2,0,true);
-    text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",ui_x(170),ui_y(770),2);
+    ui_centred("Made by Samo",ui_y(506),3,0,true);
+    ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
+    if(node_name[0])ui_centred(node_name,ui_y(600),3,0,true);
+    ui_centred(UI_VERSION,ui_y(642),3,0,true);
+    const MeshInkUiRect info=meshink_outer_row_rect(layout,698,150);
+    ui_section_card(info);
+    ui_text("HARDWARE",layout.content_text_x,info.y+ui_h(18),2,0,true);
+    ui_text("LILYGO T5 PRO",ui_x(170),info.y+ui_h(16),3,0,false);
+    ui_text("CORE",layout.content_text_x,info.y+ui_h(78),2,0,true);
+    ui_text_fit("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",ui_x(170),
+                info.y+ui_h(74),info.x+info.width-ui_x(170)-ui_w(16),2,0,false);
 }
 
 static void draw_screen();
@@ -2214,23 +2238,23 @@ static void draw_quick_panel() {
     meshink_display_fill_rect({0,0,display_width,panel_bottom},0xFF,fb);
     meshink_display_fill_rect({0,panel_bottom-ui_h(4),display_width,ui_h(4)},0x00,fb);
 
-    centred("QUICK SETTINGS",ui_y(34),4,0,true);
-    centred("FRONT LIGHT",ui_y(92),3,0,true);
+    ui_centred("QUICK SETTINGS",ui_y(34),4,0,true);
+    ui_centred("Front light",ui_y(92),3,0,true);
 
-    box(slider);
+    rounded_box(slider,max(ui_w(7),ui_h(7)),false);
     const int thumb_x=slider.x+((int)frontlight_brightness*slider.width)/100;
     const int track_centre_y=slider.y+slider.height/2;
     meshink_display_fill_rect({slider.x,track_centre_y-ui_h(5),
         max(1,thumb_x-slider.x),ui_h(10)},0x00,fb);
-    meshink_display_fill_rect({max(slider.x,thumb_x-ui_w(7)),
-        track_centre_y-ui_h(18),ui_w(14),ui_h(36)},0x00,fb);
+    rounded_fill(max(slider.x,thumb_x-ui_w(9)),track_centre_y-ui_h(19),
+                 ui_w(18),ui_h(38),max(ui_w(8),ui_h(8)),0);
 
-    centred("TAP OR DRAG TO SELECT",ui_y(221),2,0,true);
+    ui_centred("Tap or drag to select",ui_y(221),2,0,false);
 
-    box(minus_button);
+    rounded_box(minus_button,max(ui_w(12),ui_h(12)),false);
     meshink_display_fill_rect({
         minus_button.x+ui_w(37),minus_button.y+ui_h(33),ui_w(38),ui_h(4)},0x00,fb);
-    box(plus_button);
+    rounded_box(plus_button,max(ui_w(12),ui_h(12)),false);
     meshink_display_fill_rect({
         plus_button.x+ui_w(37),plus_button.y+ui_h(33),ui_w(38),ui_h(4)},0x00,fb);
     meshink_display_fill_rect({
@@ -2238,16 +2262,12 @@ static void draw_quick_panel() {
     char level[16];
     if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
-    centred(level,ui_y(273),4,0,true);
+    ui_centred(level,ui_y(273),4,0,true);
 
-    box(advert_button,true);
-    text("ADVERT FLOOD",advert_button.x+(advert_button.width-12*12)/2,
-         advert_button.y+ui_h(39),2,0xFF,true);
-    box(power_button);
-    text("POWER OFF",power_button.x+(power_button.width-9*12)/2,
-         power_button.y+ui_h(39),2,0,true);
+    ui_action_button("ADVERT FLOOD",advert_button,true);
+    ui_action_button("POWER OFF",power_button,false);
 
-    centred("TAP BELOW OR SWIPE UP TO CLOSE",ui_y(560),2,0,true);
+    ui_centred("Tap below or swipe up to close",ui_y(560),2,0,false);
     draw_toast();
 }
 
