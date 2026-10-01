@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include "t5_logging.h"
-#include <SD.h>
 #include <PNGdec.h>
-#include <epdiy.h>
+#include "hardware/display.h"
+#include "hardware/storage.h"
 #include <esp_heap_caps.h>
 #include <math.h>
 #include <string.h>
@@ -10,7 +10,6 @@
 #include "map_tiles.h"
 #include "map_gray.h"
 #include "pmtiles_reader.h"
-#include "board/target.h"
 
 namespace {
 constexpr int TILE_SIZE=256;
@@ -39,9 +38,10 @@ alignas(16) PNG png;
 #if T5_CACHE64_EXPERIMENT
 extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
 #endif
-File file;                 // owns loose PNG file handles
-File* png_file=nullptr;    // borrows the already open PMTiles archive file
+MeshInkStorageFile file;                 // owns loose PNG file handles
+MeshInkStorageFile* png_file=nullptr;    // borrows the already open PMTiles archive file
 uint8_t* target=nullptr;
+MeshInkRect render_clip{0,0,0,0};
 uint8_t* decode_bits=nullptr;
 struct DrawContext {int dx,dy,crop_x,crop_y,crop_size,tile_x,tile_y;};
 DrawContext ctx{};
@@ -58,8 +58,8 @@ bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
 uint32_t sd_retry_after=0,sd_media_epoch=0;
 constexpr uint32_t SD_RETRY_MS=1500;
-// Field-tested read-only SD clock for loose PNG and PMTiles map access.
-constexpr uint32_t MAP_SD_SPI_HZ=25000000;
+// Physical card wiring, SPI ownership and the field-tested bus clock are
+// selected by the storage backend rather than by Maps.
 // Per-render PMTiles/PNG timing. PNG decode includes its nested range I/O;
 // range seek/read counters are logged separately so CPU decode can be inferred.
 uint32_t perf_pmt_lookup_us=0,perf_pmt_range_seek_us=0,perf_pmt_range_read_us=0;
@@ -92,6 +92,11 @@ void reset_map_perf() {
 }
 bool ensure_pmt_png_buffer(size_t n) {
     if(n<=pmt_png_capacity&&pmt_png_buffer)return true;
+    if(!n||n>(size_t)-1-4095U) {
+        Serial.printf("[T5-MAP] rejected impossible PMTiles preload size=%llu\n",
+                      (unsigned long long)n);
+        return false;
+    }
     const size_t wanted=(n+4095U)&~(size_t)4095U;
     uint8_t* next=(uint8_t*)heap_caps_malloc(
         wanted,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
@@ -101,7 +106,7 @@ bool ensure_pmt_png_buffer(size_t n) {
     pmt_png_capacity=wanted;
     return true;
 }
-bool preload_pmt_png(File* archive,uint32_t offset,uint32_t length) {
+bool preload_pmt_png(MeshInkStorageFile* archive,uint32_t offset,uint32_t length) {
     if(!archive||!length||!ensure_pmt_png_buffer(length))return false;
     const uint32_t seek_started=map_perf_now_us();
     const bool seek_ok=archive->position()==offset||archive->seek(offset);
@@ -140,7 +145,7 @@ void mark_sd_unavailable() {
     if(file)file.close();
     png_file=nullptr;
     reset_sd_caches(); // close all archive handles before unmounting
-    if(sd_mounted)SD.end();
+    if(sd_mounted)meshink_storage_end();
     sd_mounted=false;
     map_io_failed=false;
     sd_retry_after=millis()+SD_RETRY_MS;
@@ -150,9 +155,7 @@ void mark_sd_unavailable() {
 bool media_ready(bool probe=true) {
     if(!sd_mounted) {
         if((int32_t)(millis()-sd_retry_after)<0)return false;
-        pinMode(12,OUTPUT);digitalWrite(12,HIGH);
-        SD.end();
-        if(!SD.begin(12,t5_shared_spi(),MAP_SD_SPI_HZ)) {
+        if(!meshink_storage_begin()) {
             sd_retry_after=millis()+SD_RETRY_MS;
             return false;
         }
@@ -160,7 +163,7 @@ bool media_ready(bool probe=true) {
         reset_sd_caches();
         ++sd_media_epoch;
         T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] SD mounted; SPI clock requested=%lu MHz\n",
-                      (unsigned long)(MAP_SD_SPI_HZ/1000000));
+                      (unsigned long)(meshink_storage_bus_hz()/1000000));
     }
     if(probe) {
         // Do not use SD.readRAW() as a card-presence oracle: an otherwise
@@ -170,19 +173,19 @@ bool media_ready(bool probe=true) {
         // before treating a probe error as physical removal.
         bool readable=false;
         if(archives_discovered&&archive_count) {
-            File witness=SD.open(archive_paths[0],FILE_READ);
+            MeshInkStorageFile witness=meshink_storage_open(archive_paths[0]);
             uint8_t magic[8]{};
             readable=witness&&witness.read(magic,sizeof(magic))==sizeof(magic)
                 &&memcmp(magic,"PMTiles",7)==0&&magic[7]==3;
             if(witness)witness.close();
         } else {
-            File maps=SD.open("/maps");
+            MeshInkStorageFile maps=meshink_storage_open("/maps");
             readable=maps&&maps.isDirectory();
             if(maps)maps.close();
             // No map folder is a valid inserted card state, but the absence
             // of a witness cannot establish removal. Never unmount here.
             if(!readable) {
-                File root=SD.open("/");
+                MeshInkStorageFile root=meshink_storage_open("/");
                 readable=root&&root.isDirectory();
                 if(root)root.close();
             }
@@ -210,7 +213,7 @@ bool media_ready(bool probe=true) {
 // Prefer the usual .pmtiles suffix, but also recognise a v3 PMTiles header so
 // oddly named/truncated files from FAT/SD tooling are still usable.
 bool has_pmtiles_magic(const char* path) {
-    File probe=SD.open(path,FILE_READ);
+    MeshInkStorageFile probe=meshink_storage_open(path);
     if(!probe||probe.isDirectory()){if(probe)probe.close();return false;}
     uint8_t magic[8]{};
     const bool ok=probe.read(magic,sizeof(magic))==sizeof(magic)&&
@@ -244,13 +247,13 @@ bool is_zoom_folder(const char* name) {
 }
 void discover_archives() {
     if(archives_discovered)return;
-    File directory=SD.open("/maps");
+    MeshInkStorageFile directory=meshink_storage_open("/maps");
     if(!directory||!directory.isDirectory()) {
         if(directory)directory.close();
         return;
     }
     archives_discovered=true;
-    File candidate=directory.openNextFile();
+    MeshInkStorageFile candidate=directory.openNextFile();
     while(candidate) {
         const char* entry_name=candidate.name();
         const char* basename=entry_name?strrchr(entry_name,'/'):nullptr;
@@ -270,9 +273,9 @@ void discover_archives() {
             if(written>0&&written<int(sizeof(folder))) {
                 // Keep folder scanning shallow: loose XYZ tile directories
                 // can contain tens of thousands of PNG files.
-                File subdir=SD.open(folder);
+                MeshInkStorageFile subdir=meshink_storage_open(folder);
                 if(subdir&&subdir.isDirectory()) {
-                    File nested=subdir.openNextFile();
+                    MeshInkStorageFile nested=subdir.openNextFile();
                     while(nested&&archive_count<MAX_ARCHIVES) {
                         T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] archive-scan nested=%s dir=%u\n",
                                       nested.name()?nested.name():"(null)",
@@ -310,7 +313,7 @@ void* png_open(const char* name,int32_t* size) {
     png_file=png_range_active ? pmtiles_frame_file(name)
                               : (file ? &file : nullptr);
     if(!png_file) {
-        file=SD.open(name,FILE_READ);
+        file=meshink_storage_open(name);
         if(!file){
             Serial.printf("[T5-MAP] tile file open failed: %s range=%u\n",
                           name,(unsigned)png_range_active);
@@ -441,10 +444,12 @@ uint8_t tile_level(const Tile& tile,int sx,int sy) {
     return (offset&1U)?(uint8_t)(packed&0x0FU):(uint8_t)(packed>>4);
 }
 void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
-    const int left=max(0,x0),top=max(48,y0);
-    const int right=min(540,x1),bottom=min(900,y1);
+    const int left=max(render_clip.x,x0),top=max(render_clip.y,y0);
+    const int clip_right=render_clip.x+render_clip.width;
+    const int clip_bottom=render_clip.y+render_clip.height;
+    const int right=min(clip_right,x1),bottom=min(clip_bottom,y1);
     if(left<right&&top<bottom)
-        epd_fill_rect({left,top,right-left,bottom-top},colour,target);
+        meshink_display_fill_rect({left,top,right-left,bottom-top},colour,target);
 }
 // PNG callbacks keep source luminance in PSRAM. If allocation fails,
 // decode directly to the framebuffer with the SAME monochrome map palette.
@@ -523,19 +528,19 @@ int png_draw(PNGDRAW* row) {
     // Rare low-PSRAM fallback: draw the same per-DISPLAY-pixel world-anchored
     // pattern as the cached path, rather than duplicating one dither sample
     // across an enlarged source pixel.
-    const int y0=max(48,ctx.dy+
+    const int y0=max(render_clip.y,ctx.dy+
         (row->y-ctx.crop_y)*TILE_SIZE/ctx.crop_size);
-    const int y1=min(900,ctx.dy+
+    const int y1=min(render_clip.y+render_clip.height,ctx.dy+
         (row->y-ctx.crop_y+1)*TILE_SIZE/ctx.crop_size);
     for(int py=y0;py<y1;++py) {
         for(int sx=ctx.crop_x;sx<ctx.crop_x+ctx.crop_size;++sx) {
             const uint8_t level=gray_level(pixels[sx]);
-            const int x0=max(0,ctx.dx+
+            const int x0=max(render_clip.x,ctx.dx+
                 (sx-ctx.crop_x)*TILE_SIZE/ctx.crop_size);
-            const int x1=min(540,ctx.dx+
+            const int x1=min(render_clip.x+render_clip.width,ctx.dx+
                 (sx-ctx.crop_x+1)*TILE_SIZE/ctx.crop_size);
             for(int px=x0;px<x1;++px)
-                epd_fill_rect({px,py,1,1},
+                meshink_display_fill_rect({px,py,1,1},
                     map_black(level,ctx.tile_x*TILE_SIZE+px-ctx.dx,
                                    ctx.tile_y*TILE_SIZE+py-ctx.dy)?0x00:0xFF,
                     target);
@@ -604,7 +609,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(z>=0&&z<25&&!zoom_folder_known[z]) {
         char folder[24];
         snprintf(folder,sizeof(folder),"/maps/%d",z);
-        zoom_folder_present[z]=SD.exists(folder);
+        zoom_folder_present[z]=meshink_storage_exists(folder);
         zoom_folder_known[z]=true;
         ++result.sd_checks;
     }
@@ -613,7 +618,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(z>=0&&z<25&&zoom_folder_present[z]){
         // Opening the file is itself a complete presence check. If present,
         // PNGdec reuses this handle instead of opening the same path again.
-        file=SD.open(path,FILE_READ);
+        file=meshink_storage_open(path);
         loose_present=(bool)file;
         if(loose_present&&file.isDirectory()){
             file.close();
@@ -646,7 +651,7 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     }
     bool pmt_preloaded=false;
     if(selected_pmtiles&&range.length) {
-        File* archive=pmtiles_frame_file(path);
+        MeshInkStorageFile* archive=pmtiles_frame_file(path);
         if(archive&&ensure_pmt_png_buffer(range.length)) {
             if(!preload_pmt_png(archive,range.offset,range.length))return false;
             pmt_preloaded=true;
@@ -701,94 +706,18 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     } else direct=true;
     return true;
 }
-void draw_cached_epdiy(const Tile& tile,const DrawContext& draw) {
-    // Generic fallback preserving EPDiy's own rotation/pixel handling.
-    const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
-    const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
-    if(x0>=x1||y0>=y1)return;
-    unsigned shift=0;
-    while((TILE_SIZE>>shift)>draw.crop_size)++shift;
-    const uint16_t* masks=map_black_masks();
-    const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
-    for(int py=y0;py<y1;++py) {
-        const int sy=draw.crop_y+((py-draw.dy)>>shift);
-        const uint8_t* source_row=tile.bits+(size_t)sy*(TILE_SIZE/2);
-        const int world_y=draw.tile_y*TILE_SIZE+py-draw.dy;
-        const unsigned row_phase=((unsigned)world_y&3U)<<2;
-        const auto is_black=[&](int px)->bool {
-            const int sx=draw.crop_x+((px-draw.dx)>>shift);
-            const uint8_t packed=source_row[sx>>1];
-            const unsigned level=(sx&1)?(packed&0x0FU):(packed>>4);
-            const unsigned phase=row_phase|
-                                 ((unsigned)(world_x_base+px)&3U);
-            return (masks[level]&(1U<<phase))!=0;
-        };
-        int run_x=x0;
-        bool black=is_black(x0);
-        for(int px=x0+1;px<x1;++px) {
-            const bool next_black=is_black(px);
-            if(next_black!=black) {
-                epd_fill_rect({run_x,py,px-run_x,1},
-                              black?0x00:0xFF,target);
-                run_x=px;
-                black=next_black;
-            }
-        }
-        epd_fill_rect({run_x,py,x1-run_x,1},black?0x00:0xFF,target);
-    }
-}
-
 void draw_cached(const Tile& tile,const DrawContext& draw) {
-    // Maps is portrait-only. EPDiy stores two 4-bit physical pixels per byte;
-    // inverted portrait maps logical (x,y) -> physical (y, H-1-x). Writing the
-    // packed framebuffer directly avoids ~460k calls through epd_draw_pixel()
-    // per viewport while preserving exactly the same world-anchored dither.
-    if(epd_get_rotation()!=EPD_ROT_INVERTED_PORTRAIT) {
-        draw_cached_epdiy(tile,draw);
-        return;
-    }
-    const int x0=max(0,draw.dx),x1=min(540,draw.dx+TILE_SIZE);
-    const int y0=max(48,draw.dy),y1=min(900,draw.dy+TILE_SIZE);
-    if(x0>=x1||y0>=y1)return;
-    unsigned shift=0;
-    while((TILE_SIZE>>shift)>draw.crop_size)++shift;
-    const uint16_t* masks=map_black_masks();
-    const int world_x_base=draw.tile_x*TILE_SIZE-draw.dx;
-    const int physical_width=epd_width();
-    const int physical_height=epd_height();
-    const size_t row_bytes=(size_t)physical_width/2U;
-
-    for(int px=x0;px<x1;++px) {
-        const int sx=draw.crop_x+((px-draw.dx)>>shift);
-        const unsigned x_phase=(unsigned)(world_x_base+px)&3U;
-        const int physical_y=physical_height-px-1;
-        uint8_t* out_row=target+(size_t)physical_y*row_bytes;
-        const auto black_at=[&](int py)->bool {
-            const int sy=draw.crop_y+((py-draw.dy)>>shift);
-            const uint8_t packed=
-                tile.bits[(size_t)sy*(TILE_SIZE/2)+(sx>>1)];
-            const unsigned level=(sx&1)?(packed&0x0FU):(packed>>4);
-            const int world_y=draw.tile_y*TILE_SIZE+py-draw.dy;
-            const unsigned phase=(((unsigned)world_y&3U)<<2)|x_phase;
-            return (masks[level]&(1U<<phase))!=0;
-        };
-
-        int py=y0;
-        if(py&1) {
-            uint8_t& out=out_row[(unsigned)py>>1];
-            out=(uint8_t)((out&0x0FU)|(black_at(py)?0x00U:0xF0U));
-            ++py;
-        }
-        for(;py+1<y1;py+=2) {
-            const uint8_t low=black_at(py)?0x00U:0x0FU;
-            const uint8_t high=black_at(py+1)?0x00U:0xF0U;
-            out_row[(unsigned)py>>1]=(uint8_t)(low|high);
-        }
-        if(py<y1) {
-            uint8_t& out=out_row[(unsigned)py>>1];
-            out=(uint8_t)((out&0xF0U)|(black_at(py)?0x00U:0x0FU));
-        }
-    }
+    const MeshInkGray4DitherBlit blit={
+        tile.bits,
+        TILE_SIZE,
+        {draw.crop_x,draw.crop_y,draw.crop_size,draw.crop_size},
+        {draw.dx,draw.dy,TILE_SIZE,TILE_SIZE},
+        render_clip,
+        draw.tile_x*TILE_SIZE,
+        draw.tile_y*TILE_SIZE,
+        map_black_masks()
+    };
+    meshink_display_blit_gray4_dithered(target,blit);
 }
 bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
     const int n=1<<zoom;
@@ -819,10 +748,10 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
             ++result.reused;
             if(from_pmtiles)++result.parent_pmtiles;
             else ++result.parent_loose;
-            const int visible_x0=max(0,dx);
-            const int visible_y0=max(48,dy);
-            const int visible_x1=min(540,dx+TILE_SIZE);
-            const int visible_y1=min(900,dy+TILE_SIZE);
+            const int visible_x0=max(render_clip.x,dx);
+            const int visible_y0=max(render_clip.y,dy);
+            const int visible_x1=min(render_clip.x+render_clip.width,dx+TILE_SIZE);
+            const int visible_y1=min(render_clip.y+render_clip.height,dy+TILE_SIZE);
             const int visible_w=max(0,visible_x1-visible_x0);
             const int visible_h=max(0,visible_y1-visible_y0);
             result.parent_visible_pixels+=(uint32_t)visible_w*(uint32_t)visible_h;
@@ -883,6 +812,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     map_io_failed=false;
     pmtiles_begin_frame();
     target=framebuffer;
+    render_clip={x,y,width,height};
     lat=max(-85.0511,min(85.0511,lat));
     const double world=256.0*(1<<zoom);
     const double centre_x=(lon+180.0)/360.0*world;

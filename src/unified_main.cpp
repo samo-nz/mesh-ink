@@ -4,6 +4,9 @@
 #include "companion_runtime.h"
 #include "t5_timing.h"
 #include "map_tiles.h"
+#include "hardware/wireless.h"
+#include "hardware/buttons.h"
+#include "hardware/board.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -11,7 +14,24 @@
 
 static bool companion_mode = false;
 static bool cache64_psram_blocked = false;
-static constexpr uint8_t BOOT_BUTTON = 0;
+
+static void check_local_wireless_state(const char* phase,const MeshInkWirelessState& state) {
+    if(meshink_wireless_local_radios_off(state))return;
+    Serial.printf("[T5-ERROR] local wireless shutdown failed phase=%s wifi=%s bt-controller=%s bt-host=%s\n",
+                  phase,
+                  state.wifi_off?"off":"ON",
+                  state.bluetooth_controller_off?"off":"ON",
+                  state.bluetooth_host_off?"off":"ON");
+}
+
+static void check_companion_wireless_state(const char* phase,const MeshInkWirelessState& state) {
+    if(meshink_wireless_companion_radios_ready(state))return;
+    Serial.printf("[T5-ERROR] companion wireless state invalid phase=%s wifi=%s bt-controller=%s bt-host=%s\n",
+                  phase,
+                  state.wifi_off?"off":"ON",
+                  state.bluetooth_controller_off?"off":"ON",
+                  state.bluetooth_host_off?"off":"ON");
+}
 
 void request_companion_mode() {
     Preferences mode;
@@ -19,7 +39,6 @@ void request_companion_mode() {
         mode.putBool("companion_once", true);
         mode.end();
     }
-    Serial.println("[T5-BOOT] one-shot companion mode saved; restarting");
     delay(150);
     ESP.restart();
 }
@@ -35,11 +54,11 @@ static bool consume_companion_request() {
 
 static void companion_exit_button() {
     static uint32_t pressed_at = 0;
-    const bool pressed = digitalRead(BOOT_BUTTON) == LOW;
+    const bool pressed = meshink_primary_button_pressed();
     if (pressed && pressed_at == 0) pressed_at = millis();
     if (pressed && pressed_at != 0 && millis() - pressed_at >= 2000) {
-        Serial.println("[T5-BOOT] companion exit requested; returning to local UI now");
-        delay(100);
+        companion_prepare_exit();
+        delay(50);
         ESP.restart();
     }
     if (!pressed) pressed_at = 0;
@@ -47,31 +66,52 @@ static void companion_exit_button() {
 
 void setup() {
     Serial.begin(115200);
-    pinMode(BOOT_BUTTON, INPUT_PULLUP);
+    meshink_buttons_begin();
     companion_mode = consume_companion_request();
-    Serial.printf("[T5-BOOT] firmware=%s mode=%s\n", T5_FIRMWARE_VERSION,
-                  companion_mode ? "BT companion" : "local UI");
+    Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=%s\n",
+                  T5_FIRMWARE_VERSION,meshink_board_name(),
+                  companion_mode?"companion":"local");
 #if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
-    Serial.printf("[T5-BOOT] data-cache-line=%dB cache64-experiment=%d\n",
-                  CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, T5_CACHE64_EXPERIMENT);
+    Serial.printf("[T5-BOOT] cache-line=%dB\n",CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE);
 #endif
 #if T5_CACHE64_EXPERIMENT
     const bool psram_ok=psramFound();
-    Serial.printf("[T5-BOOT] psram-found=%d size=%lu free=%lu\n",
-                  psram_ok?1:0,(unsigned long)ESP.getPsramSize(),
-                  (unsigned long)ESP.getFreePsram());
     if(!psram_ok){
         cache64_psram_blocked=true;
-        Serial.println("[T5-BOOT] FATAL cache64 PSRAM unavailable; UI start blocked to prevent EPDiy reboot loop");
+        Serial.println("[T5-ERROR] cache64 PSRAM unavailable; UI start blocked");
         return;
     }
+    Serial.println("[T5-INIT] psram=OK");
 #endif
-    if (companion_mode) companion_setup();
-    else {
+    if (companion_mode) {
+        // Wi-Fi is never used, even in Bluetooth Companion Mode. Keep its
+        // driver deinitialized while allowing the BLE controller/host to start.
+        const MeshInkWirelessState before=meshink_wireless_force_wifi_off();
+        if(!before.wifi_off)
+            Serial.println("[T5-ERROR] companion startup could not disable Wi-Fi");
+        companion_setup();
+        const MeshInkWirelessState companion_ready=meshink_wireless_read_state();
+        check_companion_wireless_state("companion-ready",companion_ready);
+        if(meshink_wireless_companion_radios_ready(companion_ready))
+            Serial.println("[T5-INIT] wifi-bt=OK wifi=off bt=ready");
+        Serial.println("[T5-INIT] companion=READY");
+    } else {
+        // Standalone UI never uses the ESP32-S3 2.4 GHz radios. Explicitly
+        // stop/deinitialize both stacks before local startup, then enforce and
+        // verify the policy again after MeshCore setup in case a dependency
+        // changes in a future build. Returning from companion mode always
+        // reboots through this same path.
+        check_local_wireless_state("local-pre",
+            meshink_wireless_force_local_radios_off());
         ui_setup();           // show boot logo while storage/radio initialize
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
+        check_local_wireless_state("local-post-mesh",local_ready);
+        if(meshink_wireless_local_radios_off(local_ready))
+            Serial.println("[T5-INIT] wifi-bt=OK wifi=off bt=off");
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
         ui_finish_startup();  // only now show a tappable setup/home screen
+        if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
     }
 }
 

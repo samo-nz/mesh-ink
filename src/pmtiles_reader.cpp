@@ -2,7 +2,6 @@
 #include "t5_logging.h"
 
 #include <Arduino.h>
-#include <SD.h>
 #include <esp_heap_caps.h>
 #ifdef ESP32
 #include <esp_timer.h>
@@ -29,6 +28,10 @@ namespace {
 constexpr size_t MAX_DIRECTORY_BYTES = 512 * 1024;
 constexpr uint32_t MAX_ROOT_BYTES = 16384;
 constexpr uint32_t MAX_DIRECTORY_HOPS = 4;
+// A supported source tile is a single 256x256 PNG. Four MiB is deliberately
+// far above any legitimate raster tile while bounding corrupt removable-media
+// metadata before it reaches allocation/PNG decoding.
+constexpr uint32_t MAX_PNG_TILE_BYTES = 4U*1024U*1024U;
 struct Entry {
     uint64_t id;
     uint64_t offset;
@@ -65,7 +68,7 @@ char cached_path[160]{};
 bool prepared = false;
 // A map render keeps one archive file open for its repeated tile lookups.
 bool frame_active = false, io_failed = false;
-File frame_file;
+MeshInkStorageFile frame_file;
 char frame_path[160]{};
 PmtilesPerfStats perf{};
 uint32_t perf_now_us() {
@@ -101,7 +104,7 @@ void clear_leaves() {
 }
 void close_frame_file() {
     if (frame_file) frame_file.close();
-    frame_file = File();
+    frame_file = MeshInkStorageFile();
     frame_path[0] = 0;
 }
 bool within(uint64_t start, uint64_t length, uint64_t total) {
@@ -109,7 +112,7 @@ bool within(uint64_t start, uint64_t length, uint64_t total) {
 }
 // Stage SD reads in bounded, aligned internal RAM rather than passing
 // potentially unaligned PSRAM allocations directly to the SD driver.
-bool read_at(File& file, uint64_t start, uint8_t* dst, size_t n) {
+bool read_at(MeshInkStorageFile& file, uint64_t start, uint8_t* dst, size_t n) {
     if (!dst || start > UINT32_MAX) return false;
     const uint32_t seek_started=perf_now_us();
     const bool seek_ok=file.seek((uint32_t)start);
@@ -233,7 +236,7 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     }
     return true;
 }
-bool parse_directory(File& file, uint64_t start, uint64_t size,
+bool parse_directory(MeshInkStorageFile& file, uint64_t start, uint64_t size,
                      Directory& output) {
     clear_directory(output);
     if (!size || size > MAX_DIRECTORY_BYTES ||
@@ -310,7 +313,7 @@ bool parse_directory(File& file, uint64_t start, uint64_t size,
     perf.index_parse_us+=(uint32_t)(perf_now_us()-parse_started);
     return true;
 }
-bool prepare(File& file, const char* path) {
+bool prepare(MeshInkStorageFile& file, const char* path) {
     if (strlen(path) >= sizeof(cached_path)) return false;
     if (strcmp(path, cached_path) == 0 && prepared) return archive.supported;
     clear_directory(root);
@@ -397,7 +400,7 @@ bool pmtiles_warm_archive(const char* path) {
     if(!frame_file||strcmp(frame_path,path)) {
         close_frame_file();
         const uint32_t open_started=perf_now_us();
-        frame_file=SD.open(path,FILE_READ);
+        frame_file=meshink_storage_open(path);
         perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
         if(!frame_file){io_failed=true;return false;}
         strncpy(frame_path,path,sizeof(frame_path)-1);
@@ -420,7 +423,7 @@ bool pmtiles_warm_archive(const char* path) {
     return ok;
 }
 
-File* pmtiles_frame_file(const char* path) {
+MeshInkStorageFile* pmtiles_frame_file(const char* path) {
     // Only lend the handle for the same archive that was just indexed.
     // Never reopen, reassign or close it while PNGdec is using it.
     return frame_active && frame_file && path &&
@@ -448,13 +451,13 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
     if (!path || zoom < 0 || zoom > 24 ||
         x < 0 || y < 0 || (uint32_t)x >= (1U << zoom) ||
         (uint32_t)y >= (1U << zoom)) return false;
-    File local_file;
-    File* file = nullptr;
+    MeshInkStorageFile local_file;
+    MeshInkStorageFile* file = nullptr;
     if (frame_active) {
         if (!frame_file || strcmp(frame_path, path)) {
             close_frame_file();
             const uint32_t open_started=perf_now_us();
-            frame_file = SD.open(path, FILE_READ);
+            frame_file = meshink_storage_open(path);
             perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
             if (!frame_file) { io_failed = true; return false; }
             strncpy(frame_path, path, sizeof(frame_path) - 1);
@@ -462,7 +465,7 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
         }
         file = &frame_file;
     } else {
-        local_file = SD.open(path, FILE_READ);
+        local_file = meshink_storage_open(path);
         if (!local_file) { io_failed = true; return false; }
         file = &local_file;
     }
@@ -481,6 +484,12 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
         const Entry* entry = select_entry(*directory, id);
         if (!entry) break;
         if (entry->run) {
+            if(entry->length>MAX_PNG_TILE_BYTES) {
+                T5_DEBUGF(T5_LOG_MAP,
+                    "[T5-PMT] rejected oversized PNG range bytes=%lu limit=%lu\n",
+                    (unsigned long)entry->length,(unsigned long)MAX_PNG_TILE_BYTES);
+                break;
+            }
             if (id >= entry->id && id - entry->id < entry->run &&
                 within(entry->offset, entry->length, archive.tile_length)) {
                 const uint64_t absolute = archive.tile_offset + entry->offset;

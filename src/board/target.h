@@ -4,6 +4,8 @@
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
 #include <SPI.h>
+#include "board_profile.h"
+#include "../hardware/radio_types.h"
 
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
@@ -23,18 +25,15 @@ public:
     void beginLocal();
     bool enableRadioGpsRail();
     uint16_t getBattMilliVolts() override;
-    const char* getManufacturerName() const override { return "LILYGO T5 E-Paper S3 Pro"; }
+    const char* getManufacturerName() const override { return T5_BOARD_H752_01 ? "LILYGO T5 E-Paper S3 Pro (H752-01)" : "LILYGO T5 E-Paper S3 Pro (H752)"; }
 };
 
 extern T5Board board;
 extern CustomSX1262Wrapper radio_driver;
-extern T5RTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;
 SPIClass& t5_shared_spi();
-void t5_gps_power_probe_tick();
-uint8_t t5_gps_constellation_mode(); // 0 = leave receiver configuration unchanged
-bool t5_gps_set_constellation_mode(uint8_t mode);
 
 
 bool radio_init();
+MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();

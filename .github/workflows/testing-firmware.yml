@@ -1,6 +1,9 @@
 name: MeshInk testing firmware
 
 on:
+  push:
+    branches:
+      - testing
   pull_request:
     paths:
       - 'src/pmtiles_reader.*'
@@ -8,8 +11,46 @@ on:
       - 'src/ui_onboarding.cpp'
       - 'src/ui_data.h'
       - 'src/local_mesh_runtime.cpp'
+      - 'src/companion_notice.cpp'
+      - 'src/companion_notice.h'
       - 'src/map_gestures.h'
+      - 'src/ui_layout.h'
+      - 'src/hardware/touch.h'
+      - 'src/hardware/rtc.h'
+      - 'src/board/t5_rtc_backend.h'
+      - 'tests/test_rtc_contract.cpp'
+      - 'tests/rtc_mock_backend.h'
+      - 'src/hardware/touch_types.h'
+      - 'src/hardware/orientation.h'
+      - 'src/hardware/wireless.h'
+      - 'src/hardware/wireless_types.h'
+      - 'src/board/t5_wireless_backend.h'
+      - 'src/hardware/power.h'
+      - 'src/hardware/power_types.h'
+      - 'src/board/t5_power_backend.h'
+      - 'src/board/t5_power_backend.cpp'
+      - 'src/hardware/buttons.h'
+      - 'src/board/t5_buttons_backend.h'
+      - 'src/board/t5_buttons_backend.cpp'
+      - 'src/hardware/radio.h'
+      - 'src/hardware/radio_types.h'
+      - 'src/board/t5_radio_backend.h'
+      - 'src/board/t5_radio_backend.cpp'
+      - 'src/hardware/storage.h'
+      - 'src/board/t5_storage_backend.h'
+      - 'src/board/t5_storage_backend.cpp'
+      - 'tests/pmtiles_stubs/storage_backend.h'
+      - 'src/hardware/board.h'
+      - 'tests/test_board_contract.cpp'
+      - 'tests/board_mock_backend.h'
+      - 'src/board/t5_board_backend.h'
+      - 'src/board/t5_touch_backend.h'
       - 'tests/test_map_gestures.cpp'
+      - 'tests/test_ui_layout.cpp'
+      - 'tests/test_touch_contract.cpp'
+      - 'tests/test_t5_touch_backend.cpp'
+      - 'tests/touch_mock_backend.h'
+      - 'tests/touch_backend_stubs/**'
       - 'src/map_gray.h'
       - 'tests/test_map_gray.cpp'
       - 'platformio.ini'
@@ -47,6 +88,7 @@ jobs:
       - name: Host map archive reader tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
+            '-DMESHINK_STORAGE_BACKEND_HEADER="storage_backend.h"' \
             src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
             -lz -o /tmp/map-archive-test
           /tmp/map-archive-test
@@ -55,6 +97,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_map_gestures.cpp -o /tmp/map-gestures-test
           /tmp/map-gestures-test
+      - name: Shared UI drawing and touch geometry regression
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
+            tests/test_ui_layout.cpp -o /tmp/ui-layout-test
+          /tmp/ui-layout-test
       - name: Map grayscale equivalence regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
@@ -67,6 +114,33 @@ jobs:
           g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
             tools/test_keyboard_geometry.cpp -o /tmp/meshink-keyboard-test
           /tmp/meshink-keyboard-test
+      - name: Board-independent touch backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_touch_contract.cpp -o /tmp/meshink-touch-contract-test
+          /tmp/meshink-touch-contract-test
+      - name: Board-independent GPS backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_gps_contract.cpp -o /tmp/meshink-gps-contract-test
+          /tmp/meshink-gps-contract-test
+      - name: Board-independent board lifecycle contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_board_contract.cpp -o /tmp/meshink-board-contract-test
+          /tmp/meshink-board-contract-test
+      - name: Board-independent RTC backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_rtc_contract.cpp -o /tmp/meshink-rtc-contract-test
+          /tmp/meshink-rtc-contract-test
+      - name: T5 GT911 backend state regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -DMESHINK_TOUCH_DIAGNOSTICS=1 \
+            -Itests/touch_backend_stubs -Isrc \
+            tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
+          /tmp/meshink-t5-touch-backend-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
       - name: Verify cache64 SDK config
@@ -96,6 +170,18 @@ jobs:
           test -s .pio/build/t5-unified-cache64/firmware.bin
           cp .pio/build/t5-unified-cache64/firmware.bin meshink-testing-update.bin
           sha256sum meshink-testing-update.bin > meshink-testing-SHA256.txt
+      - name: Verify testing version is embedded
+        run: |
+          VERSION=$(python - <<'PY'
+          import pathlib, re
+          source = pathlib.Path("platformio.ini").read_text(encoding="utf-8")
+          match = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", source)
+          assert match, "T5_FIRMWARE_VERSION missing"
+          print(match.group(1))
+          PY
+          )
+          echo "Expected embedded firmware version: $VERSION"
+          grep -aFq "$VERSION" meshink-testing-update.bin
       - name: Downloadable testing firmware
         uses: actions/upload-artifact@v4
         with:

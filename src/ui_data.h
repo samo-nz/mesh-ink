@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Failed, Retrying1, Retrying2, Retrying3, Retrying4, Retrying5 };
-enum class UiNodeInfoRequest : uint8_t { Status=0, Telemetry=1, Path=2, None=255 };
+enum class UiNodeInfoRequest : uint8_t { Status=0, Telemetry=1, Path=2, Trace=3, None=255 };
 enum class UiNodeRole : uint8_t { Unknown=0, Chat=1, Repeater=2, Room=3, Sensor=4 };
 
 struct UiListEntry {
@@ -19,6 +19,7 @@ struct UiMessage {
     const char* time;
     bool outgoing;
     UiMessageState state;
+    const char* network; // transient RF/route metadata; message-store format is unchanged
 };
 
 struct UiNodeDetails {
@@ -30,6 +31,7 @@ struct UiNodeDetails {
     const char* status;
     const char* telemetry;
     const char* path;
+    const char* trace;
     int32_t latitude;
     int32_t longitude;
     bool request_active;

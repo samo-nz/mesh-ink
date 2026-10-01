@@ -14,16 +14,17 @@ static double world_x(double lon,int zoom) {
     return (lon+180.0)/360.0*(256.0*(1u<<zoom));
 }
 static void check_anchor(double lat,double lon,int old_zoom,int new_zoom,
-                         int sx,int sy) {
+                         int sx,int sy,const MeshInkUiLayout& layout) {
     const double old_world=256.0*(1u<<old_zoom);
     const double new_world=256.0*(1u<<new_zoom);
     const double scale=new_world/old_world;
-    const Centre centre=zoom_about(lat,lon,old_zoom,new_zoom,sx,sy);
+    const Centre centre=zoom_about(lat,lon,old_zoom,new_zoom,sx,sy,layout);
     assert(std::isfinite(centre.latitude));
     assert(std::isfinite(centre.longitude));
     assert(centre.longitude>=-180.0&&centre.longitude<180.0);
     assert(centre.latitude>=-85.0512&&centre.latitude<=85.0512);
-    const double dx=sx-270.0,dy=sy-MAP_CENTRE_Y;
+    const double dx=sx-layout.map_centre_x;
+    const double dy=sy-layout.map_centre_y;
     const double wanted_x=(world_x(lon,old_zoom)+dx)*scale;
     const double actual_x=world_x(centre.longitude,new_zoom)+dx;
     const double wrapped=std::remainder(actual_x-wanted_x,new_world);
@@ -33,14 +34,45 @@ static void check_anchor(double lat,double lon,int old_zoom,int new_zoom,
     assert(std::fabs(actual_y-wanted_y)<0.0001);
 }
 int main() {
+    const MeshInkUiLayout& t5=MESHINK_T5_REFERENCE_LAYOUT;
+
     // Gestures are strictly map-viewport only, not status, nav or controls.
-    assert(terrain_point(100,100));
-    assert(terrain_point(270,MAP_CENTRE_Y));
-    assert(terrain_point(500,300));
-    assert(!terrain_point(470,100)); // +, -, GPS target
-    assert(!terrain_point(100,47));
-    assert(!terrain_point(100,900));
-    assert(!terrain_point(540,500));
+    assert(terrain_point(100,100,t5));
+    assert(terrain_point(t5.map_centre_x,t5.map_centre_y,t5));
+    assert(terrain_point(500,300,t5));
+    assert(!terrain_point(470,100,t5)); // +, -, GPS target
+    assert(!terrain_point(100,t5.map_top-1,t5));
+    assert(!terrain_point(100,t5.map_bottom,t5));
+    assert(!terrain_point(t5.width,500,t5));
+
+    // Prove the gesture geometry itself is not tied to 540x960. This is only a
+    // host geometry test, not a claim of support for any particular 480x800
+    // hardware.
+    constexpr MeshInkUiLayout compact=meshink_make_ui_layout(480,800);
+    static_assert(compact.bottom_nav_top==750,"compact nav edge");
+    static_assert(compact.map_centre_x==240,"compact horizontal centre");
+    static_assert(compact.map_centre_y==395,"compact vertical centre");
+    static_assert(compact.tab_width==120,"compact tab width");
+    static_assert(compact.outer_width==458,"compact outer card width");
+    static_assert(compact.section_width==438,"compact section width");
+    static_assert(compact.content_text_x==25,"compact text inset");
+    static_assert(compact.header_action_x==418,"compact header action position");
+    static_assert(compact.form_width==426,"compact setup form width");
+    static_assert(compact.detail_value_x==204,"compact detail value column");
+    static_assert(meshink_form_pair_width(compact)==195,"compact confirmation button width");
+    static_assert(meshink_form_pair_right(compact)==258,"compact confirmation right button");
+    static_assert(meshink_section_pair_width(compact)==196,"compact section pair width");
+    static_assert(meshink_section_pair_right(compact)==263,"compact section pair right button");
+    static_assert(meshink_pager_button_width(compact)==160,"compact pager width");
+    static_assert(meshink_pager_right(compact)==299,"compact pager right button");
+    static_assert(meshink_slider_left(compact)==55,"compact slider left");
+    static_assert(meshink_slider_width(compact)==370,"compact slider width");
+    assert(controls_left(compact)==406);
+    assert(controls_bottom(compact)==234);
+    assert(terrain_point(100,100,compact));
+    assert(terrain_point(350,300,compact));
+    assert(!terrain_point(410,100,compact));
+    assert(!terrain_point(100,compact.map_bottom,compact));
 
     assert(tap_candidate(0,0,40));
     assert(tap_candidate(16,-16,260));
@@ -66,11 +98,13 @@ int main() {
     assert(pinch_zoom_steps(20*20,200*200)==0);
 
     for(int z=3;z<=17;++z) {
-        check_anchor(-41.2,174.7,z,z+1,130,690);
-        check_anchor(-41.2,174.7,z,z+1,270,MAP_CENTRE_Y);
-        check_anchor(-41.2,174.7,z,z-1,450,350);
-        check_anchor(0.5,179.999,z,z+1,480,500);
-        check_anchor(-0.5,-179.999,z,z-1,80,500);
+        check_anchor(-41.2,174.7,z,z+1,130,690,t5);
+        check_anchor(-41.2,174.7,z,z+1,t5.map_centre_x,t5.map_centre_y,t5);
+        check_anchor(-41.2,174.7,z,z-1,450,350,t5);
+        check_anchor(0.5,179.999,z,z+1,480,500,t5);
+        check_anchor(-0.5,-179.999,z,z-1,80,500,t5);
+        check_anchor(-41.2,174.7,z,z+1,compact.map_centre_x,
+                     compact.map_centre_y,compact);
     }
-    std::puts("Map pinch/tap and Mercator anchor host tests passed");
+    std::puts("Map pinch/tap and logical-layout anchor host tests passed");
 }

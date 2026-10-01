@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "ui_data.h"
+#include "hardware/gps_types.h"
+
 
 void local_mesh_setup();
 void local_mesh_runtime_begin();
@@ -19,9 +21,11 @@ bool local_mesh_gps_enabled();
 bool local_mesh_gps_fix();
 uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();
+bool local_mesh_my_location(long& latitude, long& longitude);
 void local_mesh_cycle_gps_interval();
-uint8_t local_mesh_gps_constellation_mode();
-bool local_mesh_gps_set_constellation_mode(uint8_t mode);
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode();
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode);
+const char* local_mesh_gps_tuning_note();
 
 void local_mesh_toggle_gps_advert_location();
 uint32_t local_mesh_current_time();
@@ -35,3 +39,9 @@ uint8_t local_mesh_path_hash_mode();
 void local_mesh_prepare_shutdown();
 uint16_t local_mesh_direct_unread_total();
 uint16_t local_mesh_channel_unread_total();
+
+bool local_mesh_request_diagnostics();
+bool local_mesh_diagnostics_busy();
+const char* local_mesh_diagnostics_core();
+const char* local_mesh_diagnostics_radio();
+const char* local_mesh_diagnostics_packets();

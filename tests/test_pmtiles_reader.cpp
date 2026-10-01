@@ -1,5 +1,4 @@
 #include "pmtiles_reader.h"
-#include <SD.h>
 #include <zlib.h>
 #include <assert.h>
 #include <iostream>
@@ -8,7 +7,6 @@
 #include <map>
 
 std::map<std::string, std::vector<uint8_t>> mock_sd;
-MockSD SD;
 using Bytes = std::vector<uint8_t>;
 void varint(Bytes& b, uint64_t value) {
     while (value >= 128) { b.push_back((uint8_t)value | 128); value >>= 7; }
@@ -38,8 +36,11 @@ Bytes gzip(const Bytes& raw) {
     return b;
 }
 Bytes make_archive(bool compressed, bool leaf, uint8_t type=2,
-                   uint8_t tile_compression=1) {
-    const Bytes tile{0x89, 'P', 'N', 'G', 13, 10, 26, 10};
+                   uint8_t tile_compression=1, size_t tile_bytes=8) {
+    if(tile_bytes<8)tile_bytes=8;
+    Bytes tile(tile_bytes,0x5A);
+    const uint8_t signature[8]={0x89, 'P', 'N', 'G', 13, 10, 26, 10};
+    for(size_t i=0;i<sizeof(signature);++i)tile[i]=signature[i];
     Bytes leaf_dir = leaf ? directory(1, (uint32_t)tile.size(), 4) : Bytes{};
     if (compressed && leaf) leaf_dir = gzip(leaf_dir);
     Bytes root = directory(1, leaf ? (uint32_t)leaf_dir.size()
@@ -76,6 +77,8 @@ int main() {
     mock_sd["/maps/gzip.pmtiles"] = make_archive(true,true);
     mock_sd["/maps/vector.pmtiles"] = make_archive(true,false,1);
     mock_sd["/maps/wrapped.pmtiles"] = make_archive(true,false,2,2);
+    mock_sd["/maps/oversized.pmtiles"] =
+        make_archive(false,false,2,1,4U*1024U*1024U+1U);
     assert_range("/maps/plain.pmtiles",1,0,0); // PMTiles ID 1
     assert_range("/maps/plain.pmtiles",1,0,1); // PMTiles ID 2
     assert_range("/maps/plain.pmtiles",1,1,1); // PMTiles ID 3
@@ -87,13 +90,14 @@ int main() {
     assert(!pmtiles_find_png("/maps/gzip.pmtiles",2,0,0,range));
     assert(!pmtiles_find_png("/maps/vector.pmtiles",1,0,0,range));
     assert(!pmtiles_find_png("/maps/wrapped.pmtiles",1,0,0,range));
+    assert(!pmtiles_find_png("/maps/oversized.pmtiles",1,0,0,range));
     assert_range("/maps/plain.pmtiles",1,1,0); // archive cache switching
     // One map frame reuses an open archive while alternating nearby tile
     // lookups, and a removed/missing archive must be reported as I/O failure.
     pmtiles_begin_frame();
     PmtilesPngRange shared{};
     assert(pmtiles_find_png("/maps/gzip.pmtiles",1,1,0,shared));
-    File* archive_file=pmtiles_frame_file("/maps/gzip.pmtiles");
+    MeshInkStorageFile* archive_file=pmtiles_frame_file("/maps/gzip.pmtiles");
     assert(archive_file);
     assert(!pmtiles_frame_file("/maps/plain.pmtiles"));
     assert(archive_file->seek(shared.offset));
@@ -113,5 +117,5 @@ int main() {
     pmtiles_reset();
     assert_range("/maps/gzip.pmtiles",1,1,0); // directory rebuilt after remount
     std::cout << "PMTiles plain/gzip root+leaf, run ranges, omissions,"
-                 " unsupported formats and archive switching: PASS\n";
+                 " unsupported/oversized formats and archive switching: PASS\n";
 }

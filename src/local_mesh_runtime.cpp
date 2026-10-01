@@ -1,12 +1,15 @@
 #include <Arduino.h>
 #include <Mesh.h>
+#include <Utils.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
 #include <time.h>
 #include "local_mesh_runtime.h"
 #include "companion_runtime.h"
 #include "ui_onboarding.h"
-#include "board/target.h"
+#include "hardware/gps.h"
+#include "hardware/rtc.h"
+#include "hardware/radio.h"
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
@@ -58,9 +61,7 @@ static bool clear_saved_password(const uint8_t* key){
 
 // gps_interval in upstream MeshCore controls how often coordinates are copied,
 // not receiver power. Timed modes here pause the SOFTWARE GPS provider after
-// a fix; the L76K stays powered because LoRa shares its supply. No physical
-// GNSS standby is implemented or claimed. Opt-in PCAS03/04 receiver tuning
-// is independent of this historical software-only duty cycle.
+// a fix; board-specific receiver power and tuning remain behind hardware/gps.h.
 static bool gps_duty_sleeping=false;
 static uint32_t gps_duty_next_wake=0;
 static uint32_t gps_duty_awake_since=0;
@@ -78,9 +79,24 @@ enum class MessageKind:uint8_t{Direct=0,Channel=1};
 struct StoreHeader{uint32_t magic;uint16_t version;uint16_t capacity;uint16_t head;uint16_t count;uint32_t sequence;};
 struct StoredMessage{uint32_t sequence;uint32_t timestamp;uint32_t ack;uint8_t kind;uint8_t state;uint8_t key[7];char text[145];};
 struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char time[10]{};uint8_t key[7]{};uint8_t channel_index=0;};
-struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};};
+struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};char network[52]{};};
+struct MessageRfMeta{
+    uint32_t sequence=0;
+    int8_t snr_q4=0;
+    int8_t repeat_snr_q4=0;
+    uint8_t path_len=0xFF;
+    uint8_t repeats=0;
+    bool has_rx=false;
+    bool route_known=false;
+    bool route_flood=false;
+};
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
-struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[192]{};uint8_t len=0;};
+constexpr size_t DISCOVERED_CONTACT_CACHE_BYTES=192;
+struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[DISCOVERED_CONTACT_CACHE_BYTES]{};uint8_t len=0;};
+constexpr size_t DISCOVERED_CONTACT_BASE_LEN=
+    1+PUB_KEY_SIZE+3+MAX_PATH_SIZE+32+4; // through last_advert_timestamp
+static_assert(DISCOVERED_CONTACT_BASE_LEN<=DISCOVERED_CONTACT_CACHE_BYTES,
+              "discovered contact base frame must fit cache");
 
 static void format_time(uint32_t timestamp,char out[10]){
     time_t raw=timestamp?(time_t)timestamp:time(nullptr);struct tm value{};localtime_r(&raw,&value);
@@ -116,20 +132,70 @@ static void format_last_seen(uint32_t timestamp,char out[72]){
 class MessageStore{
     StoreHeader header_{STORE_MAGIC,STORE_VERSION,MAX_STORED_MESSAGES,0,0,0};
     StoredMessage records_[MAX_STORED_MESSAGES]{};
-    void write_header(){File f=SPIFFS.open(STORE_PATH,"r+");if(!f)return;f.seek(0);f.write((uint8_t*)&header_,sizeof(header_));f.close();}
-    void write_record(uint16_t physical){File f=SPIFFS.open(STORE_PATH,"r+");if(!f)return;f.seek(sizeof(StoreHeader)+physical*sizeof(StoredMessage));f.write((uint8_t*)&records_[physical],sizeof(StoredMessage));f.close();}
+    void write_header(){
+        File f=SPIFFS.open(STORE_PATH,"r+");
+        if(!f){Serial.println("[T5-STORE] ERROR opening message header for write");return;}
+        const bool seek_ok=f.seek(0);
+        const size_t written=seek_ok?f.write((uint8_t*)&header_,sizeof(header_)):0;
+        f.close();
+        if(!seek_ok||written!=sizeof(header_))
+            Serial.printf("[T5-STORE] ERROR writing message header seek=%u bytes=%u/%u\n",
+                          seek_ok?1U:0U,(unsigned)written,(unsigned)sizeof(header_));
+    }
+    void write_record(uint16_t physical){
+        if(physical>=MAX_STORED_MESSAGES){
+            Serial.printf("[T5-STORE] ERROR invalid record index=%u\n",(unsigned)physical);
+            return;
+        }
+        File f=SPIFFS.open(STORE_PATH,"r+");
+        if(!f){Serial.println("[T5-STORE] ERROR opening message record for write");return;}
+        const size_t offset=sizeof(StoreHeader)+physical*sizeof(StoredMessage);
+        const bool seek_ok=f.seek(offset);
+        const size_t written=seek_ok?f.write((uint8_t*)&records_[physical],sizeof(StoredMessage)):0;
+        f.close();
+        if(!seek_ok||written!=sizeof(StoredMessage))
+            Serial.printf("[T5-STORE] ERROR writing record=%u seek=%u bytes=%u/%u\n",
+                          (unsigned)physical,seek_ok?1U:0U,
+                          (unsigned)written,(unsigned)sizeof(StoredMessage));
+    }
     void create(){
         header_={STORE_MAGIC,STORE_VERSION,MAX_STORED_MESSAGES,0,0,0};memset(records_,0,sizeof(records_));
-        File f=SPIFFS.open(STORE_PATH,"w");if(!f){Serial.println("[T5-STORE] unable to create message store");return;}
-        f.write((uint8_t*)&header_,sizeof(header_));f.write((uint8_t*)records_,sizeof(records_));f.close();
-        Serial.printf("[T5-STORE] created fixed store: %u messages, %u bytes\n",(unsigned)MAX_STORED_MESSAGES,(unsigned)(sizeof(header_)+sizeof(records_)));
+        File f=SPIFFS.open(STORE_PATH,"w");if(!f){Serial.println("[T5-STORE] ERROR unable to create message store");return;}
+        const size_t header_written=f.write((uint8_t*)&header_,sizeof(header_));
+        const size_t records_written=f.write((uint8_t*)records_,sizeof(records_));
+        f.close();
+        if(header_written!=sizeof(header_)||records_written!=sizeof(records_)){
+            Serial.printf("[T5-STORE] ERROR creating store header=%u/%u records=%u/%u\n",
+                          (unsigned)header_written,(unsigned)sizeof(header_),
+                          (unsigned)records_written,(unsigned)sizeof(records_));
+            return;
+        }
+        T5_DEBUGF(T5_LOG_MESH,"[T5-STORE] created fixed store: %u messages, %u bytes\n",(unsigned)MAX_STORED_MESSAGES,(unsigned)(sizeof(header_)+sizeof(records_)));
     }
 public:
     void begin(){
         File f=SPIFFS.open(STORE_PATH,"r");
-        if(!f||f.size()!=(int)(sizeof(header_)+sizeof(records_))){if(f)f.close();create();return;}
-        f.read((uint8_t*)&header_,sizeof(header_));f.read((uint8_t*)records_,sizeof(records_));f.close();
-        if(header_.magic!=STORE_MAGIC||header_.version!=STORE_VERSION||header_.capacity!=MAX_STORED_MESSAGES||header_.head>=MAX_STORED_MESSAGES||header_.count>MAX_STORED_MESSAGES){create();return;}
+        if(!f||f.size()!=(int)(sizeof(header_)+sizeof(records_))){
+            if(f)f.close();
+            T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] message store missing/size mismatch; recreating");
+            create();return;
+        }
+        const size_t header_read=f.read((uint8_t*)&header_,sizeof(header_));
+        const size_t records_read=f.read((uint8_t*)records_,sizeof(records_));
+        f.close();
+        if(header_read!=sizeof(header_)||records_read!=sizeof(records_)){
+            Serial.printf("[T5-STORE] ERROR short read header=%u/%u records=%u/%u; recreating\n",
+                          (unsigned)header_read,(unsigned)sizeof(header_),
+                          (unsigned)records_read,(unsigned)sizeof(records_));
+            create();return;
+        }
+        if(header_.magic!=STORE_MAGIC||header_.version!=STORE_VERSION||header_.capacity!=MAX_STORED_MESSAGES||header_.head>=MAX_STORED_MESSAGES||header_.count>MAX_STORED_MESSAGES){
+            Serial.printf("[T5-STORE] invalid header magic=%08lx version=%u capacity=%u head=%u count=%u; recreating\n",
+                          (unsigned long)header_.magic,(unsigned)header_.version,
+                          (unsigned)header_.capacity,(unsigned)header_.head,
+                          (unsigned)header_.count);
+            create();return;
+        }
         T5_DEBUGF(T5_LOG_MESH,"[T5-STORE] loaded %u/%u messages; oldest records evicted at capacity\n",header_.count,header_.capacity);
     }
     size_t count()const{return header_.count;}
@@ -150,6 +216,7 @@ public:
 class MeshCoreUiProvider final:public UiDataProvider{
     ListStorage contacts_[MAX_UI_CONTACTS]{},channels_[MAX_UI_CHANNELS]{},conversations_[MAX_UI_CONTACTS+MAX_UI_CHANNELS]{},adverts_[MAX_UI_ADVERTS]{};
     MessageView active_messages_[MAX_STORED_MESSAGES]{};
+    MessageRfMeta message_meta_[MAX_STORED_MESSAGES]{};
     UiMapNode map_nodes_[MAX_MAP_NODES]{};
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
@@ -171,7 +238,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     char detail_identity_[24]{},detail_seen_[72]{},detail_advert_age_[72]{};
     char detail_position_source_[72]{},detail_route_[40]{},detail_position_[64]{};
     char detail_access_[20]="NOT LOGGED IN";
-    char detail_status_[320]="NOT REQUESTED",detail_telemetry_[120]="NOT REQUESTED",detail_path_[64]="NOT REQUESTED";
+    char detail_status_[320]="NOT REQUESTED",detail_telemetry_[120]="NOT REQUESTED",detail_path_[64]="NOT REQUESTED",detail_trace_[240]="NOT REQUESTED";
     bool detail_request_active_=false,detail_login_active_=false,detail_authenticated_=false,request_gps_received_=false;
     UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
     uint8_t detail_frame_[192]{};uint8_t detail_frame_len_=0;
@@ -183,7 +250,39 @@ class MeshCoreUiProvider final:public UiDataProvider{
         else if(seconds<86400)snprintf(out,len,"%luH AGO",(unsigned long)(seconds/3600));
         else snprintf(out,len,"%luD AGO",(unsigned long)(seconds/86400));
     }
-    static void bind(MessageView& item){item.entry.text=item.text;item.entry.time=item.time;}
+    static void bind(MessageView& item){item.entry.text=item.text;item.entry.time=item.time;item.entry.network=item.network;}
+    MessageRfMeta& meta_for(uint32_t sequence){
+        auto& meta=message_meta_[sequence%MAX_STORED_MESSAGES];
+        if(meta.sequence!=sequence){meta=MessageRfMeta{};meta.sequence=sequence;}
+        return meta;
+    }
+    const MessageRfMeta* find_meta(uint32_t sequence)const{
+        const auto& meta=message_meta_[sequence%MAX_STORED_MESSAGES];
+        return meta.sequence==sequence?&meta:nullptr;
+    }
+    void format_message_network(const StoredMessage& stored,char* out,size_t len)const{
+        if(!out||!len)return;out[0]=0;
+        const UiMessageState state=(UiMessageState)stored.state;
+        const MessageRfMeta* meta=find_meta(stored.sequence);
+        if(state!=UiMessageState::Received){
+            if(stored.kind==(uint8_t)MessageKind::Channel&&meta&&meta->repeats){
+                snprintf(out,len,"HEARD %u REPEAT%s",(unsigned)meta->repeats,meta->repeats==1?"":"S");
+                return;
+            }
+            const char* base=state_text(state);
+            if(meta&&meta->route_known&&base[0]&&state!=UiMessageState::Sending&&state!=UiMessageState::Failed)
+                snprintf(out,len,"%s %s",base,meta->route_flood?"FLOOD":"DIRECT");
+            else if(base[0]){strncpy(out,base,len-1);out[len-1]=0;}
+            return;
+        }
+        if(meta&&meta->has_rx){
+            const uint8_t hops=meta->path_len&0x3F;
+            if(meta->path_len==OUT_PATH_UNKNOWN)
+                snprintf(out,len,"SNR %.1f DB  DIRECT",meta->snr_q4/4.0f);
+            else
+                snprintf(out,len,"SNR %.1f DB  %u HOP%s",meta->snr_q4/4.0f,(unsigned)hops,hops==1?"":"S");
+        }
+    }
     bool matches(const StoredMessage& m)const{return m.kind==(uint8_t)(active_channel_?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,active_key_,active_channel_?1:6)==0;}
     bool has_recent_info(const uint8_t* full_key)const {
         return recent_info_.heard&&memcmp(recent_info_.key,full_key,PUB_KEY_SIZE)==0;
@@ -211,9 +310,10 @@ class MeshCoreUiProvider final:public UiDataProvider{
         for(size_t i=0;i<store_.count()&&active_count_<MAX_STORED_MESSAGES;++i){const auto& m=store_.at(i);if(!matches(m))continue;
             auto& view=active_messages_[active_count_++];memset(&view,0,sizeof(view));bind(view);strncpy(view.text,m.text,sizeof(view.text)-1);format_time(m.timestamp,view.time);
             view.entry.outgoing=m.state!=(uint8_t)UiMessageState::Received;view.entry.state=(UiMessageState)m.state;
+            format_message_network(m,view.network,sizeof(view.network));
         }
     }
-    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
+    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
     MeshCoreUiProvider(){for(auto& i:contacts_)bind(i);for(auto& i:channels_)bind(i);for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);for(auto& i:active_messages_)bind(i);}
     void begin(){store_.begin();refresh(true);}
@@ -221,9 +321,6 @@ public:
         const uint32_t interval=ui_is_standby()?60000:10000;
         if(!force&&millis()-refreshed_at_<interval)return;
         refreshed_at_=millis();
-#if T5_LOG_POWER
-        const uint32_t started=micros();
-#endif
         contact_count_=channel_count_=conversation_count_=advert_count_=0;
         ContactInfo contact{};auto iterator=t5_mesh().startContactsIterator();
         while(contact_count_<MAX_UI_CONTACTS&&iterator.hasNext(&t5_mesh(),contact)){
@@ -279,16 +376,30 @@ public:
             }
         }
         rebuild_active();
-#if T5_LOG_POWER
-        static uint32_t last_report=0;
-        if(force||millis()-last_report>=60000){last_report=millis();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] model refresh=%luus interval=%lums contacts=%u channels=%u adverts=%u standby=%d\n",(unsigned long)(micros()-started),(unsigned long)interval,(unsigned)contact_count_,(unsigned)channel_count_,(unsigned)advert_count_,ui_is_standby());}
-#endif
     }
-    void received_direct(const uint8_t* key,uint32_t timestamp,const char* text){auto& unread=direct_unread(key);if(unread<255)unread++;store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);refresh(true);ui_notify_message_received(false);}
-    void received_channel(uint8_t channel,uint32_t timestamp,const char* text){if(channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);refresh(true);ui_notify_message_received(true);}
+    void received_direct(const uint8_t* key,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
+        const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
+        if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
+        auto* stored=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
+        if(has_rf){auto& meta=meta_for(stored->sequence);meta.has_rx=true;meta.snr_q4=snr_q4;meta.path_len=path_len;}
+        refresh(true);ui_notify_message_received(false);
+    }
+    void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
+        const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
+        if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
+        auto* stored=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
+        if(has_rf){auto& meta=meta_for(stored->sequence);meta.has_rx=true;meta.snr_q4=snr_q4;meta.path_len=path_len;}
+        refresh(true);ui_notify_message_received(true);
+    }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){auto* m=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return m->sequence;}
     uint32_t queue_direct(const char* text,uint32_t timestamp){auto* m=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return m->sequence;}
     void update_message(uint32_t sequence,UiMessageState state){store_.update_state(sequence,state);rebuild_active();ui_request_data_refresh("message-state");}
+    void note_direct_route(uint32_t sequence,bool flood){
+        auto& meta=meta_for(sequence);meta.route_known=true;meta.route_flood=flood;rebuild_active();ui_request_data_refresh("message-route");
+    }
+    void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
+        auto& meta=meta_for(sequence);meta.repeats=repeats;meta.repeat_snr_q4=snr_q4;rebuild_active();ui_request_data_refresh("channel-repeat");
+    }
     size_t map_node_count() const override {return map_node_count_;}
     bool map_node(size_t index,UiMapNode& out) const override {
         if(index>=map_node_count_)return false;
@@ -313,16 +424,33 @@ public:
     size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;direct_unread(contacts_[i].key)=0;contacts_[i].entry.unread=0;return activate(contacts_[i],false);}
     size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;if(channels_[i].channel_index<MAX_UI_CHANNELS)channel_unread_[channels_[i].channel_index]=0;channels_[i].entry.unread=0;return activate(channels_[i],true);}
     size_t advert_count()const override{return advert_count_;}const UiListEntry& advert(size_t i)const override{return adverts_[i].entry;}
-    void cache_discovered(const uint8_t* frame,size_t len){
-        if(!frame||len<36||len>sizeof(discovered_[0].frame))return;DiscoveredContact* slot=nullptr;
+    bool cache_discovered(const uint8_t* frame,size_t len){
+        if(!frame||len<DISCOVERED_CONTACT_BASE_LEN||len>sizeof(discovered_[0].frame)){
+            Serial.printf("[T5-MESH] rejected malformed new-advert frame bytes=%u expected=%u..%u\n",
+                          (unsigned)len,(unsigned)DISCOVERED_CONTACT_BASE_LEN,
+                          (unsigned)sizeof(discovered_[0].frame));
+            return false;
+        }
+        DiscoveredContact* slot=nullptr;
         for(auto& item:discovered_)if(item.len&&!memcmp(item.prefix,frame+1,7)){slot=&item;break;}
-        if(!slot)for(auto& item:discovered_)if(!item.len){slot=&item;break;}if(!slot)slot=&discovered_[0];
-        memcpy(slot->prefix,frame+1,7);memcpy(slot->frame,frame,len);slot->len=(uint8_t)len;
+        if(!slot)for(auto& item:discovered_)if(!item.len){slot=&item;break;}
+        if(!slot)slot=&discovered_[0];
+        *slot=DiscoveredContact{};
+        memcpy(slot->prefix,frame+1,7);
+        memcpy(slot->frame,frame,len);
+        slot->len=(uint8_t)len;
+        return true;
     }
     bool open_advert(size_t i)override{
         if(i>=advert_count_)return false;detail_valid_=false;detail_saved_=false;detail_frame_len_=0;
         if(auto* saved=t5_mesh().lookupContactByPubKey(adverts_[i].key,7)){detail_contact_=*saved;detail_valid_=detail_saved_=true;return true;}
         for(const auto& item:discovered_)if(item.len&&!memcmp(item.prefix,adverts_[i].key,7)){
+            if(item.len<DISCOVERED_CONTACT_BASE_LEN){
+                Serial.printf("[T5-MESH] cached advert rejected at open bytes=%u expected>=%u\n",
+                              (unsigned)item.len,(unsigned)DISCOVERED_CONTACT_BASE_LEN);
+                return false;
+            }
+            memset(&detail_contact_,0,sizeof(detail_contact_));
             memcpy(detail_frame_,item.frame,item.len);detail_frame_len_=item.len;size_t p=1;
             memcpy(detail_contact_.id.pub_key,item.frame+p,PUB_KEY_SIZE);p+=PUB_KEY_SIZE;detail_contact_.type=item.frame[p++];detail_contact_.flags=item.frame[p++];detail_contact_.out_path_len=item.frame[p++];
             memcpy(detail_contact_.out_path,item.frame+p,MAX_PATH_SIZE);p+=MAX_PATH_SIZE;memcpy(detail_contact_.name,item.frame+p,32);detail_contact_.name[31]=0;p+=32;
@@ -387,7 +515,7 @@ public:
         }
         out={detail_contact_.name,self->detail_identity_,self->detail_seen_,
              self->detail_route_,self->detail_position_,self->detail_status_,
-             self->detail_telemetry_,self->detail_path_,self->detail_lat_,
+             self->detail_telemetry_,self->detail_path_,self->detail_trace_,self->detail_lat_,
              self->detail_lon_,detail_request_active_,detail_request_type_,
              detail_login_active_,detail_authenticated_,self->detail_access_,detail_contact_.type,detail_saved_,
              self->detail_advert_age_,self->detail_position_source_};
@@ -401,7 +529,9 @@ public:
     const uint8_t* detail_key()const{return detail_contact_.id.pub_key;}
     void request_state(bool active,UiNodeInfoRequest request=UiNodeInfoRequest::None){detail_request_active_=active;detail_request_type_=active?request:UiNodeInfoRequest::None;ui_request_data_refresh("node-info");}
     void request_timeout(UiNodeInfoRequest request){
-        char* out=request==UiNodeInfoRequest::Status?detail_status_:request==UiNodeInfoRequest::Telemetry?detail_telemetry_:detail_path_;
+        char* out=request==UiNodeInfoRequest::Status?detail_status_:
+                  request==UiNodeInfoRequest::Telemetry?detail_telemetry_:
+                  request==UiNodeInfoRequest::Trace?detail_trace_:detail_path_;
         strcpy(out,"NO RESPONSE / NOT ALLOWED");
         if(request==UiNodeInfoRequest::Telemetry)ui_notify_node_position_unavailable();
     }
@@ -453,6 +583,30 @@ public:
         T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] node info: status reply received bytes=%u type=%u\n",(unsigned)len,detail_contact_.type);
     }
     void path_response(const uint8_t* data,size_t len){note_info_reply();if(!len){strcpy(detail_path_,"NO PATH DATA");return;}const uint8_t hops=data[0]&0x3F;snprintf(detail_path_,sizeof(detail_path_),hops?"OUTBOUND %u HOP%s":"DIRECT / ZERO HOP",hops,hops==1?"":"S");T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] node info: path reply received");}
+    void trace_response(const uint8_t* frame,size_t len){
+        note_info_reply();
+        if(!frame||len<13){strcpy(detail_trace_,"INVALID TRACE RESPONSE");return;}
+        const uint8_t path_bytes=frame[2],shift=frame[3]&0x03;
+        const uint8_t hash_size=1U<<shift;
+        if(!hash_size||path_bytes%hash_size){strcpy(detail_trace_,"INVALID TRACE PATH");return;}
+        const uint8_t hops=path_bytes>>shift;
+        const size_t needed=12U+path_bytes+hops+1U;
+        if(len<needed){strcpy(detail_trace_,"SHORT TRACE RESPONSE");return;}
+        const uint8_t* hashes=frame+12;
+        const int8_t* snrs=(const int8_t*)(frame+12+path_bytes);
+        char* cursor=detail_trace_;size_t left=sizeof(detail_trace_);cursor[0]=0;
+        int n=snprintf(cursor,left,"TRACE %u HOP%s",(unsigned)hops,hops==1?"":"S");
+        if(n<0||(size_t)n>=left)return;cursor+=n;left-=n;
+        for(uint8_t i=0;i<hops&&left>24;++i){
+            char hash[18]{};char* hp=hash;
+            for(uint8_t j=0;j<hash_size&&j<8;++j){snprintf(hp,3,"%02X",hashes[i*hash_size+j]);hp+=2;}
+            n=snprintf(cursor,left,"\n%u %s  %.1f DB",(unsigned)(i+1),hash,snrs[i]/4.0f);
+            if(n<0||(size_t)n>=left)break;cursor+=n;left-=n;
+        }
+        const int8_t final_snr=snrs[hops];
+        if(left>20)snprintf(cursor,left,"\nDEST  %.1f DB",final_snr/4.0f);
+        ui_request_data_refresh("trace-result");
+    }
     void telemetry_response(const uint8_t* data,size_t len){
         note_info_reply();
         LPPReader reader(data,(uint8_t)min(len,(size_t)255));uint8_t channel=0,type=0;char* cursor=detail_telemetry_;size_t left=sizeof(detail_telemetry_);cursor[0]=0;
@@ -475,6 +629,7 @@ public:
     }
     const char* active_title()const override{return active_title_;}bool active_is_channel()const override{return active_channel_;}size_t active_message_count()const override{return active_count_;}const UiMessage& active_message(size_t i)const override{return active_messages_[i].entry;}
     bool active_contact(ContactInfo& out)const{if(active_channel_)return false;auto* found=t5_mesh().lookupContactByPubKey(active_key_,6);if(!found)return false;out=*found;return true;}
+    uint8_t active_channel_index()const{return active_key_[0];}
     bool active_channel(ChannelDetails& out)const{return active_channel_&&t5_mesh().getChannel(active_key_[0],out);}
     uint16_t direct_unread_total()const{uint16_t total=0;for(const auto& item:direct_unread_)total+=item.count;return total;}
     uint16_t channel_unread_total()const{uint16_t total=0;for(const auto count:channel_unread_)total+=count;return total;}
@@ -482,23 +637,116 @@ public:
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
 struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,ack=0,deadline=0;uint8_t key[6]{};char text[145]{};} pending_direct;
-struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
+struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
+struct RecentChannelSend{
+    bool active=false;
+    uint8_t channel=0,repeats=0;
+    uint32_t sequence=0,timestamp=0,expires=0;
+    char wire_text[MAX_TEXT_LEN+1]{};
+};
+constexpr size_t MAX_RECENT_CHANNEL_SENDS=4;
+RecentChannelSend recent_channel_sends[MAX_RECENT_CHANNEL_SENDS]{};
+struct PendingStats{bool active=false;uint8_t type=0;uint32_t deadline=0;} pending_stats;
+char diagnostics_core[160]="NOT REQUESTED";
+char diagnostics_radio[160]="NOT REQUESTED";
+char diagnostics_packets[200]="NOT REQUESTED";
 int8_t pending_advert=-1;
 static bool enqueue_direct_attempt(){
     uint8_t frame[MAX_FRAME_SIZE+1]{};size_t p=0;frame[p++]=2;frame[p++]=0;frame[p++]=pending_direct.retry;memcpy(frame+p,&pending_direct.timestamp,4);p+=4;memcpy(frame+p,pending_direct.key,6);p+=6;const size_t n=min(strlen(pending_direct.text),(size_t)MAX_TEXT_LEN);memcpy(frame+p,pending_direct.text,n);p+=n;
     if(!local_mesh_enqueue_command(frame,p))return false;pending_direct.waiting_response=true;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u queued sequence=%lu\n",pending_direct.retry,(unsigned long)pending_direct.sequence);return true;
 }
 static bool enqueue_info_request(){
-    uint8_t frame[4+PUB_KEY_SIZE]{};size_t len=0;
+    uint8_t frame[MAX_FRAME_SIZE+1]{};size_t len=0;
     if(pending_info.request==UiNodeInfoRequest::Status){frame[0]=27;memcpy(frame+1,pending_info.key,PUB_KEY_SIZE);len=1+PUB_KEY_SIZE;}
     else if(pending_info.request==UiNodeInfoRequest::Telemetry){frame[0]=39;memcpy(frame+4,pending_info.key,PUB_KEY_SIZE);len=4+PUB_KEY_SIZE;}
     else if(pending_info.request==UiNodeInfoRequest::Path){frame[0]=52;frame[1]=0;memcpy(frame+2,pending_info.key,PUB_KEY_SIZE);len=2+PUB_KEY_SIZE;}
-    else return false;
+    else if(pending_info.request==UiNodeInfoRequest::Trace){
+        ContactInfo* contact=t5_mesh().lookupContactByPubKey(pending_info.key,PUB_KEY_SIZE);
+        if(!contact||contact->out_path_len==OUT_PATH_UNKNOWN)return false;
+        const uint8_t hash_size=(contact->out_path_len>>6)+1;
+        const uint8_t hash_count=contact->out_path_len&0x3F;
+        if(hash_size>2||!hash_count)return false; // upstream TRACE command supports 1/2-byte saved paths here
+        const uint8_t path_bytes=hash_count*hash_size;
+        uint32_t tag=millis()^0x4D495348UL;
+        for(uint8_t i=0;i<4;++i)tag^=((uint32_t)pending_info.key[i])<<(i*8);
+        const uint32_t auth=0;
+        frame[0]=36;memcpy(frame+1,&tag,4);memcpy(frame+5,&auth,4);
+        frame[9]=hash_size==2?1:0;
+        memcpy(frame+10,contact->out_path,path_bytes);len=10+path_bytes;
+        pending_info.tag=tag;
+    }else return false;
     if(!local_mesh_enqueue_command(frame,len))return false;
     pending_info.waiting_sent=true;pending_info.deadline=millis()+30000;return true;
 }
 static void finish_info(){pending_info.active=false;pending_info.waiting_sent=false;pending_info.request=UiNodeInfoRequest::None;provider.request_state(false);}
+
+static void build_channel_wire_text(char* out,size_t len,const char* node_name,const char* text){
+    if(!out||!len)return;out[0]=0;
+    const int prefix=snprintf(out,len,"%s: ",node_name?node_name:"");
+    if(prefix<0||(size_t)prefix>=len)return;
+    const size_t max_total=min((size_t)MAX_TEXT_LEN,len-1);
+    const size_t used=min((size_t)prefix,max_total);
+    const size_t copy=max_total-used;
+    strncat(out,text?text:"",copy);
+    out[max_total]=0;
+}
+static void track_channel_send(uint8_t channel,uint32_t timestamp,uint32_t sequence,const char* text){
+    const uint32_t now=millis();RecentChannelSend* slot=nullptr;
+    for(auto& item:recent_channel_sends)if(!item.active||(int32_t)(now-item.expires)>=0){slot=&item;break;}
+    if(!slot){slot=&recent_channel_sends[0];for(auto& item:recent_channel_sends)if((int32_t)(item.expires-slot->expires)<0)slot=&item;}
+    *slot=RecentChannelSend{};slot->active=true;slot->channel=channel;slot->timestamp=timestamp;slot->sequence=sequence;slot->expires=now+120000UL;
+    build_channel_wire_text(slot->wire_text,sizeof(slot->wire_text),t5_mesh().getNodeName(),text);
+}
+static void handle_raw_repeat(const uint8_t* frame,size_t len){
+    if(!frame||len<=3)return;
+    const uint32_t now=millis();bool any=false;
+    for(auto& item:recent_channel_sends){if(item.active&&(int32_t)(now-item.expires)>=0)item.active=false;if(item.active)any=true;}
+    if(!any)return;
+    mesh::Packet packet;
+    const size_t raw_len=len-3;if(raw_len>255||!packet.readFrom(frame+3,(uint8_t)raw_len)||packet.getPayloadType()!=PAYLOAD_TYPE_GRP_TXT||packet.payload_len<4)return;
+    for(auto& item:recent_channel_sends){
+        if(!item.active)continue;ChannelDetails channel{};
+        if(!t5_mesh().getChannel(item.channel,channel)||channel.channel.hash[0]!=packet.payload[0])continue;
+        uint8_t data[MAX_PACKET_PAYLOAD+1]{};
+        const int plain=mesh::Utils::MACThenDecrypt(channel.channel.secret,data,&packet.payload[1],packet.payload_len-1);
+        if(plain<5)continue;data[min(plain,(int)MAX_PACKET_PAYLOAD)]=0;
+        uint32_t timestamp=0;memcpy(&timestamp,data,4);
+        if(timestamp!=item.timestamp||data[4]!=0||strcmp((char*)&data[5],item.wire_text))continue;
+        if(item.repeats<255)++item.repeats;
+        provider.note_channel_repeat(item.sequence,item.repeats,(int8_t)frame[1]);
+        break;
+    }
+}
+static bool enqueue_stats_request(uint8_t type){
+    const uint8_t frame[2]={56,type};
+    if(!local_mesh_enqueue_command(frame,sizeof(frame)))return false;
+    pending_stats.active=true;pending_stats.type=type;pending_stats.deadline=millis()+5000UL;return true;
+}
+static void finish_stats(bool failed=false){
+    if(failed){
+        if(pending_stats.type==0)strcpy(diagnostics_core,"REQUEST FAILED");
+        else if(pending_stats.type==1)strcpy(diagnostics_radio,"REQUEST FAILED");
+        else strcpy(diagnostics_packets,"REQUEST FAILED");
+    }
+    pending_stats.active=false;ui_request_data_refresh("mesh-stats");
+}
+static void handle_stats_response(const uint8_t* frame,size_t len){
+    if(!pending_stats.active||!frame||len<2||frame[0]!=24||frame[1]!=pending_stats.type)return;
+    const uint8_t type=frame[1];
+    if(type==0&&len>=11){
+        uint16_t batt=0,errors=0;uint32_t uptime=0;memcpy(&batt,frame+2,2);memcpy(&uptime,frame+4,4);memcpy(&errors,frame+8,2);const uint8_t queue=frame[10];
+        snprintf(diagnostics_core,sizeof(diagnostics_core),"BATTERY %.2f V\nUPTIME %luD %luH\nTX QUEUE %u\nERROR FLAGS 0X%04X",batt/1000.0f,(unsigned long)(uptime/86400U),(unsigned long)((uptime%86400U)/3600U),(unsigned)queue,(unsigned)errors);
+    }else if(type==1&&len>=14){
+        int16_t noise=0;memcpy(&noise,frame+2,2);const int8_t rssi=(int8_t)frame[4],snr4=(int8_t)frame[5];uint32_t txair=0,rxair=0;memcpy(&txair,frame+6,4);memcpy(&rxair,frame+10,4);
+        snprintf(diagnostics_radio,sizeof(diagnostics_radio),"NOISE %d DBM\nLAST RSSI %d DBM\nLAST SNR %.1f DB\nAIRTIME TX/RX %lu / %lu S",(int)noise,(int)rssi,snr4/4.0f,(unsigned long)txair,(unsigned long)rxair);
+    }else if(type==2&&len>=30){
+        uint32_t rx=0,tx=0,sf=0,sd=0,rf=0,rd=0,err=0;memcpy(&rx,frame+2,4);memcpy(&tx,frame+6,4);memcpy(&sf,frame+10,4);memcpy(&sd,frame+14,4);memcpy(&rf,frame+18,4);memcpy(&rd,frame+22,4);memcpy(&err,frame+26,4);
+        snprintf(diagnostics_packets,sizeof(diagnostics_packets),"PACKETS RX/TX %lu / %lu\nFLOOD RX/TX %lu / %lu\nDIRECT RX/TX %lu / %lu\nRX ERRORS %lu",(unsigned long)rx,(unsigned long)tx,(unsigned long)rf,(unsigned long)sf,(unsigned long)rd,(unsigned long)sd,(unsigned long)err);
+    }else{finish_stats(true);return;}
+    if(type<2){if(!enqueue_stats_request(type+1))finish_stats(true);}
+    else finish_stats(false);
+}
 
 bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
     if(active_channel_||pending_info.active||pending_login.active||pending_direct.active||request==UiNodeInfoRequest::None)return false;
@@ -506,10 +754,18 @@ bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
     const bool protected_server=contact.type==ADV_TYPE_REPEATER||contact.type==ADV_TYPE_ROOM;
     if(request==UiNodeInfoRequest::Status&&(!protected_server||!detail_authenticated_))return false;
     if(request==UiNodeInfoRequest::Telemetry&&protected_server&&!detail_authenticated_)return false;
+    if(request==UiNodeInfoRequest::Trace){
+        if(contact.out_path_len==OUT_PATH_UNKNOWN){strcpy(detail_trace_,"NO SAVED ROUTE\nREQUEST PATH FIRST");ui_request_data_refresh("trace-no-route");return true;}
+        const uint8_t hash_size=(contact.out_path_len>>6)+1,hops=contact.out_path_len&0x3F;
+        if(!hops){strcpy(detail_trace_,"DIRECT / ZERO HOP\nNO REPEATERS TO TRACE");ui_request_data_refresh("trace-direct");return true;}
+        if(hash_size>2){strcpy(detail_trace_,"TRACE UNAVAILABLE FOR\n3-BYTE PATH HASHES");ui_request_data_refresh("trace-hash-size");return true;}
+    }
     pending_info={};pending_info.active=true;pending_info.request=request;
     memcpy(pending_info.key,contact.id.pub_key,PUB_KEY_SIZE);
     if(request==UiNodeInfoRequest::Telemetry)request_gps_received_=false;
-    char* target=request==UiNodeInfoRequest::Status?detail_status_:request==UiNodeInfoRequest::Telemetry?detail_telemetry_:detail_path_;
+    char* target=request==UiNodeInfoRequest::Status?detail_status_:
+                 request==UiNodeInfoRequest::Telemetry?detail_telemetry_:
+                 request==UiNodeInfoRequest::Trace?detail_trace_:detail_path_;
     strcpy(target,"REQUESTING");
     request_state(true,request);
     if(!enqueue_info_request()){finish_info();strcpy(target,"REQUEST FAILED");return false;}
@@ -531,7 +787,16 @@ bool MeshCoreUiProvider::login_active_node(const char* password,bool save_passwo
 UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
     if(!frame||!len)return;char message[150]{};
-    if(frame[0]==0x8A){provider.cache_discovered(frame,len);provider.refresh(true);ui_request_data_refresh("new-advert");T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] discovered advert cached with full MeshCore identity");}
+    if(frame[0]==0x88){handle_raw_repeat(frame,len);return;}
+    if(frame[0]==24&&pending_stats.active){handle_stats_response(frame,len);return;}
+    if(frame[0]==0x81&&len>=1+PUB_KEY_SIZE){provider.refresh(true);ui_request_data_refresh("route-updated");return;}
+    if(frame[0]==0x8A){
+        if(provider.cache_discovered(frame,len)){
+            provider.refresh(true);
+            ui_request_data_refresh("new-advert");
+            T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] discovered advert cached with full MeshCore identity");
+        }
+    }
     else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x85){
         PendingLogin completed=pending_login;pending_login={};
         const bool role_known=len>=13;const uint8_t permissions=role_known?frame[12]:(frame[1]?3:0);
@@ -543,94 +808,139 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){provider.status_response(frame+8,len-8);finish_info();}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Telemetry&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8B){provider.telemetry_response(frame+8,len-8);finish_info();}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Path&&len>=9&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8D){provider.path_response(frame+8,len-8);finish_info();}
+    else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Trace&&frame[0]==0x89&&len>=13){
+        uint32_t tag=0;memcpy(&tag,frame+4,4);if(tag==pending_info.tag){provider.trace_response(frame,len);finish_info();}
+    }
     else if(frame[0]==6&&len>=10&&pending_login.active&&pending_login.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_login.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_login.waiting_sent=false;}
     else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
-    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u transmitted ack=%08lx timeout=%lu\n",pending_direct.retry,(unsigned long)pending_direct.ack,(unsigned long)timeout);}
+    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.note_direct_route(pending_direct.sequence,frame[1]!=0);provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
     else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
     else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct command failed error=%u\n",len>1?frame[1]:0);}
+    else if(frame[0]==1&&pending_stats.active){finish_stats(true);}
     else if((frame[0]==0||frame[0]==1)&&pending_advert>=0){const bool flood=pending_advert==1;ui_notify_advert_result(flood,frame[0]==0);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] %s advert action result=%s\n",flood?"flood":"zero-hop",frame[0]==0?"OK":"FAILED");pending_advert=-1;}
-    else if((frame[0]==7||frame[0]==16)&&len>13){uint32_t timestamp=0;memcpy(&timestamp,&frame[9],4);const size_t start=frame[8]==2?17:13;if(len<=start)return;memcpy(message,&frame[start],min(sizeof(message)-1,len-start));provider.received_direct(&frame[1],timestamp,message);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct message received bytes=%u\n",(unsigned)(len-start));}
-    else if((frame[0]==8||frame[0]==17)&&len>8){uint32_t timestamp=0;memcpy(&timestamp,&frame[4],4);memcpy(message,&frame[8],min(sizeof(message)-1,len-8));provider.received_channel(frame[1],timestamp,message);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel %u message received\n",frame[1]);}
+    else if(frame[0]==7&&len>=13){
+        const uint8_t* key=frame+1;const uint8_t path_len=frame[7],txt_type=frame[8];uint32_t timestamp=0;memcpy(&timestamp,frame+9,4);
+        const size_t start=txt_type==2?17:13;if(len<=start)return;memcpy(message,frame+start,min(sizeof(message)-1,len-start));
+        provider.received_direct(key,timestamp,message,false,0,path_len);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct legacy message received bytes=%u\n",(unsigned)(len-start));
+    }
+    else if(frame[0]==16&&len>=16){
+        const int8_t snr_q4=(int8_t)frame[1];const uint8_t* key=frame+4;const uint8_t path_len=frame[10],txt_type=frame[11];uint32_t timestamp=0;memcpy(&timestamp,frame+12,4);
+        const size_t start=txt_type==2?20:16;if(len<=start)return;memcpy(message,frame+start,min(sizeof(message)-1,len-start));
+        provider.received_direct(key,timestamp,message,true,snr_q4,path_len);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct v3 message snr=%.1f path=0x%02x\n",snr_q4/4.0f,path_len);
+    }
+    else if(frame[0]==8&&len>=8){
+        const uint8_t channel=frame[1],path_len=frame[2];uint32_t timestamp=0;memcpy(&timestamp,frame+4,4);
+        if(len<=8)return;memcpy(message,frame+8,min(sizeof(message)-1,len-8));provider.received_channel(channel,timestamp,message,false,0,path_len);
+    }
+    else if(frame[0]==17&&len>=11){
+        const int8_t snr_q4=(int8_t)frame[1];const uint8_t channel=frame[4],path_len=frame[5];uint32_t timestamp=0;memcpy(&timestamp,frame+7,4);
+        if(len<=11)return;memcpy(message,frame+11,min(sizeof(message)-1,len-11));provider.received_channel(channel,timestamp,message,true,snr_q4,path_len);
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel %u v3 message snr=%.1f path=0x%02x\n",channel,snr_q4/4.0f,path_len);
+    }
 }
 void local_mesh_runtime_begin(){provider.begin();}
 void local_mesh_loop(){
     t5_mesh().loop();provider.refresh();
+#if ENV_INCLUDE_GPS == 1
     const uint32_t gps_now=millis();
     const bool gps_enabled=t5_mesh().getNodePrefs()->gps_enabled!=0;
     const uint32_t gps_interval=t5_mesh().getNodePrefs()->gps_interval;
-    auto* gps_location=sensors.getLocationProvider();
+    const MeshInkGpsStatus gps_location=meshink_gps_read_status();
 
     if(gps_duty_reset){
         gps_duty_reset=false;
         gps_duty_next_wake=0;
         if(gps_enabled&&gps_duty_sleeping){
-            sensors.setSettingValue("gps","1");gps_duty_sleeping=false;
+            meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;
         }
     }
     if(!gps_enabled){
-        if(!gps_duty_sleeping){sensors.setSettingValue("gps","0");gps_duty_sleeping=true;}
+        if(!gps_duty_sleeping){meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;}
     }else if(gps_interval==0){
-        if(gps_duty_sleeping){sensors.setSettingValue("gps","1");gps_duty_sleeping=false;}
+        if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
     }else if(gps_duty_sleeping){
         if((int32_t)(gps_now-gps_duty_next_wake)>=0){
-            gps_duty_wake_stamp=gps_location?(uint32_t)gps_location->getTimestamp():0;
-            sensors.setSettingValue("gps","1");gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
+            gps_duty_wake_stamp=gps_location.available?gps_location.timestamp:0;
+            meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
             T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty wake interval=%lus previous_stamp=%lu\n",(unsigned long)gps_interval,(unsigned long)gps_duty_wake_stamp);
         }
-    }else if(gps_location&&gps_location->isValid()&&
+    }else if(gps_location.valid&&
              (!gps_duty_awake_since||
               (gps_now-gps_duty_awake_since>=1000&&
-               (uint32_t)gps_location->getTimestamp()!=gps_duty_wake_stamp))){
+               gps_location.timestamp!=gps_duty_wake_stamp))){
         // Require a newly observed GPS timestamp after a scheduled wake so a
         // cached fix cannot immediately put the receiver back to sleep.
         gps_duty_next_wake=gps_now+gps_interval*1000UL;
         gps_duty_awake_since=0;gps_duty_wake_stamp=0;
-        sensors.setSettingValue("gps","0");gps_duty_sleeping=true;
+        meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;
         T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
     }
-    sensors.loop();
-    t5_gps_power_probe_tick(); // executes even when MeshCore has stopped the GPS provider
-    rtc_clock.tick();
+#endif
+    meshink_gps_service_loop();
+#if ENV_INCLUDE_GPS == 1
+    meshink_gps_background_tick(); // executes even when MeshCore has stopped the GPS provider
+#endif
+    meshink_rtc_tick();
     if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
+    if(pending_stats.active&&(int32_t)(millis()-pending_stats.deadline)>=0)finish_stats(true);
     if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
         if(pending_direct.retry>=5){provider.update_message(pending_direct.sequence,UiMessageState::Failed);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct failed after 5 retries sequence=%lu\n",(unsigned long)pending_direct.sequence);pending_direct.active=false;}
         else{pending_direct.retry++;provider.update_message(pending_direct.sequence,(UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;}}
     }
-    auto* location=sensors.getLocationProvider();
-    static uint32_t next_ui_gps=0,candidate_since=0;static bool stable_fix=false,candidate_fix=false;static int stable_sats=0;static long stable_lat=0,stable_lon=0;static uint32_t stable_stamp=0;const uint32_t now=millis();if((int32_t)(now-next_ui_gps)>=0){next_ui_gps=now+(ui_is_standby()?10000:1000);const bool enabled=local_mesh_gps_enabled();const bool raw_fix=location&&location->isValid();if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}if(raw_fix==stable_fix||now-candidate_since>=3000){stable_fix=raw_fix;if(raw_fix){stable_sats=(int)location->satellitesCount();stable_lat=location->getLatitude();stable_lon=location->getLongitude();stable_stamp=(uint32_t)location->getTimestamp();}}ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp);}
+#if ENV_INCLUDE_GPS == 1
+    const MeshInkGpsStatus location=meshink_gps_read_status();
+    static uint32_t next_ui_gps=0,candidate_since=0;static bool stable_fix=false,candidate_fix=false;static int stable_sats=0;static long stable_lat=0,stable_lon=0;static uint32_t stable_stamp=0;const uint32_t now=millis();if((int32_t)(now-next_ui_gps)>=0){next_ui_gps=now+(ui_is_standby()?10000:1000);const bool enabled=local_mesh_gps_enabled();const bool raw_fix=location.valid;if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}if(raw_fix==stable_fix||now-candidate_since>=3000){stable_fix=raw_fix;if(raw_fix){stable_sats=(int)location.satellites;stable_lat=location.latitude;stable_lon=location.longitude;stable_stamp=location.timestamp;}}ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp);}
 #if T5_LOG_GPS
     static bool was_waiting=true;
-    if(location){const bool waiting=location->waitingTimeSync();if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location->getTimestamp());was_waiting=waiting;}
+    if(location.available){const bool waiting=location.waiting_time_sync;if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location.timestamp);was_waiting=waiting;}
 #endif
-#if T5_LOG_POWER
-    static uint32_t radio_report_at=0;
-    if(millis()-radio_report_at>=60000){radio_report_at=millis();T5_DEBUGF(T5_LOG_POWER,"[T5-POWER] radio continuous-rx=%d received=%lu errors=%lu sent=%lu boosted=%d (duty cycle intentionally disabled)\n",radio_driver.isInRecvMode(),(unsigned long)radio_driver.getPacketsRecv(),(unsigned long)radio_driver.getPacketsRecvErrors(),(unsigned long)radio_driver.getPacketsSent(),radio_driver.getRxBoostedGainMode());}
 #endif
 }
 bool local_mesh_send_active(const char* text){
     if(!text||!text[0])return false;const uint32_t now=time(nullptr);
-    if(provider.active_is_channel()){ChannelDetails channel{};if(!provider.active_channel(channel))return false;const bool ok=t5_mesh().sendGroupMessage(now,channel.channel,t5_mesh().getNodeName(),text,strlen(text));if(ok)provider.sent(text,now,0);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel send result=%d\n",ok);return ok;}
+    if(provider.active_is_channel()){ChannelDetails channel{};if(!provider.active_channel(channel))return false;const bool ok=t5_mesh().sendGroupMessage(now,channel.channel,t5_mesh().getNodeName(),text,strlen(text));if(ok){const uint32_t sequence=provider.sent(text,now,0);track_channel_send(provider.active_channel_index(),now,sequence,text);}T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel send result=%d\n",ok);return ok;}
     ContactInfo contact{};if(!provider.active_contact(contact)||pending_direct.active)return false;pending_direct={};pending_direct.active=true;pending_direct.timestamp=now;memcpy(pending_direct.key,contact.id.pub_key,6);strncpy(pending_direct.text,text,sizeof(pending_direct.text)-1);pending_direct.sequence=provider.queue_direct(text,now);if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;return false;}return true;
 }
 bool local_mesh_send_direct(size_t index,const char* text){if(!provider.open_contact(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_channel(size_t index,const char* text){if(!provider.open_channel(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_advert(bool flood){if(pending_advert>=0)return false;const uint8_t command[2]={7,(uint8_t)(flood?1:0)};if(!local_mesh_enqueue_command(command,sizeof(command)))return false;pending_advert=flood?1:0;return true;}
-bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=t5_mesh().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);t5_mesh().savePrefs();radio_driver.setParams(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
+bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=t5_mesh().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);t5_mesh().savePrefs();meshink_radio_apply_params(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=t5_mesh().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;t5_mesh().savePrefs();}
+#if ENV_INCLUDE_GPS == 1
 void local_mesh_apply_gps(bool enabled){auto* p=t5_mesh().getNodePrefs();p->gps_enabled=enabled?1:0;t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=!enabled;reset_gps_duty_cycle();}
-bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}bool local_mesh_gps_fix(){auto* location=sensors.getLocationProvider();return location&&location->isValid();}
+bool local_mesh_gps_enabled(){return t5_mesh().getNodePrefs()->gps_enabled!=0;}
+bool local_mesh_gps_fix(){return meshink_gps_read_status().valid;}
 uint32_t local_mesh_gps_interval(){return t5_mesh().getNodePrefs()->gps_interval;}
-bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
-uint8_t local_mesh_gps_constellation_mode(){return t5_gps_constellation_mode();}
-bool local_mesh_gps_set_constellation_mode(uint8_t mode){return t5_gps_set_constellation_mode(mode);}
-
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_gps_constellation_mode();}
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){return meshink_gps_set_constellation_mode(mode);}
+const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=t5_mesh().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];t5_mesh().savePrefs();t5_mesh().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
+#else
+void local_mesh_apply_gps(bool){}
+bool local_mesh_gps_enabled(){return false;}
+bool local_mesh_gps_fix(){return false;}
+uint32_t local_mesh_gps_interval(){return 0;}
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return MeshInkGpsConstellationMode::Unchanged;}
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode){return false;}
+const char* local_mesh_gps_tuning_note(){return "";}
+void local_mesh_cycle_gps_interval(){}
+#endif
+bool local_mesh_gps_advert_location(){return t5_mesh().getNodePrefs()->advert_loc_policy!=0;}
+bool local_mesh_my_location(long& latitude,long& longitude){
+    const auto* p=t5_mesh().getNodePrefs();
+    if(!p||!isfinite(p->node_lat)||!isfinite(p->node_lon)||
+       p->node_lat<-85.0511||p->node_lat>85.0511||p->node_lon<-180.0||p->node_lon>180.0||
+       (fabs(p->node_lat)<0.0000005&&fabs(p->node_lon)<0.0000005))return false;
+    latitude=(long)llround(p->node_lat*1000000.0);
+    longitude=(long)llround(p->node_lon*1000000.0);
+    return true;
+}
 void local_mesh_toggle_gps_advert_location(){auto* p=t5_mesh().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;t5_mesh().savePrefs();}
-uint32_t local_mesh_current_time(){return rtc_clock.getCurrentTime();}
-bool local_mesh_time_valid(){return rtc_clock.isValid();}
+uint32_t local_mesh_current_time(){return meshink_rtc_current_time();}
+bool local_mesh_time_valid(){return meshink_rtc_valid();}
 const char* local_mesh_node_name(){return t5_mesh().getNodeName();}
 const char* local_mesh_radio_summary(){auto* p=t5_mesh().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f SF%u BW%.1f CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
 const char* local_mesh_privacy_value(uint8_t item){auto* p=t5_mesh().getNodePrefs();switch(item){case 0:return p->autoadd_config?"ENABLED":"DISABLED";case 1:if(!p->autoadd_max_hops)return "NO LIMIT";if(p->autoadd_max_hops==1)return "DIRECT ONLY";snprintf(setting_value,sizeof(setting_value),"UP TO %u HOPS",p->autoadd_max_hops-1);return setting_value;case 2:return p->advert_loc_policy?"SHARE":"HIDDEN";case 3:return p->telemetry_mode_base==0?"DENY":p->telemetry_mode_base==1?"CONTACT FLAGS":"ALLOW ALL";case 4:return p->telemetry_mode_loc==0?"DENY":p->telemetry_mode_loc==1?"CONTACT FLAGS":"ALLOW ALL";default:return p->isRepeatEn()?"ENABLED":"DISABLED";}}
@@ -639,10 +949,22 @@ void local_mesh_cycle_path_hash(){auto* p=t5_mesh().getNodePrefs();p->path_hash_
 uint8_t local_mesh_path_hash_mode(){return min((uint8_t)2,t5_mesh().getNodePrefs()->path_hash_mode);}
 void local_mesh_prepare_shutdown(){
     T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] stopping MeshCore peripherals");
-    radio_driver.powerOff();
-    if(auto* location=sensors.getLocationProvider())location->stop();
-    Serial1.end();
-    Serial.println("[T5-SHUTDOWN] SX1262 sleep requested; GPS stopped");
+    meshink_radio_power_off();
+#if ENV_INCLUDE_GPS == 1
+    meshink_gps_shutdown();
+#endif
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] LoRa radio sleep requested");
 }
 uint16_t local_mesh_direct_unread_total(){return provider.direct_unread_total();}
 uint16_t local_mesh_channel_unread_total(){return provider.channel_unread_total();}
+
+bool local_mesh_request_diagnostics(){
+    if(pending_stats.active||pending_info.active||pending_login.active||pending_direct.active||pending_advert>=0)return false;
+    strcpy(diagnostics_core,"REQUESTING");strcpy(diagnostics_radio,"WAITING");strcpy(diagnostics_packets,"WAITING");
+    if(!enqueue_stats_request(0)){strcpy(diagnostics_core,"REQUEST BUSY");return false;}
+    ui_request_data_refresh("mesh-stats");return true;
+}
+bool local_mesh_diagnostics_busy(){return pending_stats.active;}
+const char* local_mesh_diagnostics_core(){return diagnostics_core;}
+const char* local_mesh_diagnostics_radio(){return diagnostics_radio;}
+const char* local_mesh_diagnostics_packets(){return diagnostics_packets;}
