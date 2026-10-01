@@ -260,7 +260,7 @@ contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home 
 contains("static constexpr size_t LIST_ITEMS_PER_PAGE = 5;", "contacts/channels use paged list rows")
 contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering address later pages")
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
-contains("(screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60", "Contacts/Channels vertical swipe changes pages")
+contains("(screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&", "Contacts/Channels/Discovery vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
 contains("rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,", "list cards use shared logical interior width with rounded treatment")
 contains("row*portrait_layout().list_row_stride", "list drawing/touch use shared row stride")
@@ -269,7 +269,7 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
-contains("chat_page_bounds_lazy(count,available,chat_page,first,end,has_older);", "conversation history discovers only the requested fixed-height page")
+contains("chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);", "conversation history discovers only the requested fixed-height page")
 contains("draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));", "conversation history page indicator follows scaled geometry without requiring total-page scan")
 assert "chat_page_bounds(" not in source, "conversation drawing must not rescan all historical pages to calculate a total"
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
@@ -549,7 +549,7 @@ assert "0x2C" not in source and "0x08" not in source, "UI must not know fuel-gau
 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
-contains("const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);", "zoom label backing tracks rendered text width")
+contains("const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);", "zoom label backing tracks proportional rendered text width")
 contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
 
