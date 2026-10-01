@@ -1056,7 +1056,7 @@ assert "const int natural=ui_text_width(message,scale)+ui_w(48);" in source and 
 assert "const int width=ui_text_width(value,scale);" in source[source.index("static void standby_centred"):], "standby labels use proportional centering"
 assert "for (const auto& g : FONT) if (g.c == '?') return g.r;" in source, "unsupported text is visible rather than silently blank"
 assert "ui_text_width(start,3)" in source and "ui_text_width(end,3)" in source, "Night Schedule time values are measured and right-aligned"
-assert "ui_y(448)" in source[source.index("NodeInfoPage::Overview"):source.index("NodeInfoPage::Status")], "two-line Overview position stays clear of its source label"
+assert "ui_text_fit(node.position_source,layout.detail_value_x,ui_y(448)," in source, "two-line Overview position stays clear of its source label"
 assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
 assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
