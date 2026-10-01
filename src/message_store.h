@@ -43,8 +43,13 @@ struct MeshInkMessageStoreHeader {
 
 class MeshInkMessageStore {
     MeshInkMessageStoreHeader header_{};
-    MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]{};
+    MeshInkStoredMessage* records_=nullptr;
     bool initialized_=false;
+
+    static constexpr size_t records_bytes(){
+        return MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+    }
+    bool ensure_storage();
 
     bool create_empty();
     bool write_full(const char* path);
