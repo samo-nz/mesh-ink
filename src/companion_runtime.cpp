@@ -124,12 +124,11 @@ protected:
     void onMessageRecv(const ContactInfo& from,mesh::Packet* pkt,
                        uint32_t sender_timestamp,const char* text) override {
         if(companion_mode_active){
-            const uint32_t sequence=meshink_message_store().append(
+            meshink_message_store().append(
                 MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
-                UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
-            if(sequence&&pkt)meshink_message_store().update_rx(
-                sequence,(int8_t)(pkt->getSNR()*4.0f),
-                pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+                UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
+                pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
+                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
         }
         MyMesh::onMessageRecv(from,pkt,sender_timestamp,text);
     }
@@ -138,12 +137,11 @@ protected:
                              uint32_t sender_timestamp,const uint8_t* sender_prefix,
                              const char* text) override {
         if(companion_mode_active){
-            const uint32_t sequence=meshink_message_store().append(
+            meshink_message_store().append(
                 MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
-                UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
-            if(sequence&&pkt)meshink_message_store().update_rx(
-                sequence,(int8_t)(pkt->getSNR()*4.0f),
-                pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+                UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
+                pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
+                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
         }
         MyMesh::onSignedMessageRecv(from,pkt,sender_timestamp,sender_prefix,text);
     }
@@ -154,12 +152,11 @@ protected:
             const int index=findChannelIdx(channel);
             if(index>=0&&index<MAX_GROUP_CHANNELS){
                 const uint8_t key=(uint8_t)index;
-                const uint32_t sequence=meshink_message_store().append(
+                meshink_message_store().append(
                     MeshInkMessageKind::Channel,&key,1,text,timestamp,
-                    UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
-                if(sequence&&pkt)meshink_message_store().update_rx(
-                    sequence,(int8_t)(pkt->getSNR()*4.0f),
-                    pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+                    UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
+                    pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
+                    (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
             }
         }
         MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);
