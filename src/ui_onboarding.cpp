@@ -1624,9 +1624,8 @@ static int message_bubble_height(const UiMessage& message){
     return message_bubble_geometry(message).height;
 }
 
-static void draw_message_bubble(const UiMessage& message,int y,int h) {
-    MessageBubbleGeometry geometry=message_bubble_geometry(message);
-    geometry.height=h; // paging and drawing share the exact measured height.
+static void draw_message_bubble(const UiMessage& message,int y,
+                                const MessageBubbleGeometry& geometry) {
     const int radius=max(ui_w(14),ui_h(14));
     rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing);
     const uint8_t color=message.outgoing?0xFF:0;
@@ -1732,9 +1731,9 @@ static void draw_chat(bool channel) {
         int y=ui_y(126);
         for(size_t i=first;i<end;++i){
             const UiMessage& message=ui_data->active_message(i);
-            const int h=message_bubble_height(message);
-            draw_message_bubble(message,y,h);
-            y+=h+ui_h(8);
+            const MessageBubbleGeometry geometry=message_bubble_geometry(message);
+            draw_message_bubble(message,y,geometry);
+            y+=geometry.height+ui_h(8);
         }
     }
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
