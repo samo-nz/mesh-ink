@@ -11,6 +11,7 @@
 #include "companion_runtime.h"
 #include "companion_notice.h"
 #include "local_mesh_runtime.h"
+#include "message_store.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
 #include "hardware/board.h"
@@ -18,10 +19,150 @@
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
 
-// Device-owned composition root for the unmodified upstream MeshCore companion
-// classes. This is deliberately small so upstream updates remain easy to diff.
+// Device-owned composition root around the upstream MeshCore companion
+// classes. MeshInk adds persistence hooks without changing the phone protocol.
+static bool companion_mode_active=false;
+
+struct PendingCompanionSend {
+    bool active=false;
+    MeshInkMessageKind kind=MeshInkMessageKind::Direct;
+    uint8_t key[7]{};
+    size_t key_len=0;
+    uint32_t timestamp=0;
+    char text[145]{};
+};
+
+class MeshInkBLEInterface final : public SerialBLEInterface {
+    PendingCompanionSend pending_{};
+
+    void remember_app_send(const uint8_t* frame,size_t len){
+        pending_={};
+        if(!companion_mode_active||!frame||!len)return;
+        if(frame[0]==2&&len>=14&&frame[1]==TXT_TYPE_PLAIN){
+            pending_.active=true;
+            pending_.kind=MeshInkMessageKind::Direct;
+            pending_.key_len=6;
+            memcpy(&pending_.timestamp,frame+3,4);
+            memcpy(pending_.key,frame+7,6);
+            const size_t text_len=min(sizeof(pending_.text)-1,len-(size_t)13);
+            memcpy(pending_.text,frame+13,text_len);
+            pending_.text[text_len]=0;
+        }else if(frame[0]==3&&len>=8&&frame[1]==TXT_TYPE_PLAIN){
+            pending_.active=true;
+            pending_.kind=MeshInkMessageKind::Channel;
+            pending_.key_len=1;
+            pending_.key[0]=frame[2];
+            memcpy(&pending_.timestamp,frame+3,4);
+            const size_t text_len=min(sizeof(pending_.text)-1,len-(size_t)7);
+            memcpy(pending_.text,frame+7,text_len);
+            pending_.text[text_len]=0;
+        }
+    }
+
+    uint32_t commit_pending(UiMessageState state,uint32_t ack=0){
+        if(!pending_.active)return 0;
+        auto& journal=meshink_message_store();
+        uint32_t sequence=journal.find_matching_outgoing(
+            pending_.kind,pending_.key,pending_.key_len,pending_.timestamp,pending_.text);
+        if(!sequence){
+            if(auto* stored=journal.append(
+                    pending_.kind,pending_.key,pending_.key_len,pending_.text,
+                    pending_.timestamp,state,ack,MeshInkMessageOrigin::CompanionApp))
+                sequence=stored->sequence;
+        }else{
+            journal.update_state(sequence,state);
+            if(ack)journal.update_ack(sequence,ack);
+        }
+        return sequence;
+    }
+
+    void observe_mesh_response(const uint8_t* frame,size_t len){
+        if(!companion_mode_active||!frame||!len)return;
+
+        // End-to-end ACKs can arrive long after the original app command.
+        if(frame[0]==0x82&&len>=5){
+            uint32_t ack=0;memcpy(&ack,frame+1,4);
+            meshink_message_store().mark_delivered_by_ack(ack);
+        }
+
+        if(!pending_.active)return;
+        if(pending_.kind==MeshInkMessageKind::Direct&&frame[0]==6&&len>=10){
+            uint32_t ack=0;memcpy(&ack,frame+2,4);
+            const uint32_t sequence=commit_pending(UiMessageState::Sent,ack);
+            if(sequence)meshink_message_store().update_route(sequence,frame[1]!=0);
+            pending_={};
+        }else if(pending_.kind==MeshInkMessageKind::Channel&&frame[0]==0){
+            commit_pending(UiMessageState::Sent);
+            pending_={};
+        }else if(frame[0]==1){
+            pending_={};
+        }
+    }
+
+public:
+    size_t checkRecvFrame(uint8_t* dest) override {
+        const size_t len=SerialBLEInterface::checkRecvFrame(dest);
+        if(len)remember_app_send(dest,len);
+        return len;
+    }
+    size_t writeFrame(const uint8_t* src,size_t len) override {
+        observe_mesh_response(src,len);
+        return SerialBLEInterface::writeFrame(src,len);
+    }
+};
+
+class MeshInkMesh final : public MyMesh {
+public:
+    using MyMesh::MyMesh;
+
+protected:
+    void onMessageRecv(const ContactInfo& from,mesh::Packet* pkt,
+                       uint32_t sender_timestamp,const char* text) override {
+        if(companion_mode_active){
+            auto* stored=meshink_message_store().append(
+                MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
+                UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
+            if(stored&&pkt)meshink_message_store().update_rx(
+                stored->sequence,(int8_t)(pkt->getSNR()*4.0f),
+                pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+        }
+        MyMesh::onMessageRecv(from,pkt,sender_timestamp,text);
+    }
+
+    void onSignedMessageRecv(const ContactInfo& from,mesh::Packet* pkt,
+                             uint32_t sender_timestamp,const uint8_t* sender_prefix,
+                             const char* text) override {
+        if(companion_mode_active){
+            auto* stored=meshink_message_store().append(
+                MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
+                UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
+            if(stored&&pkt)meshink_message_store().update_rx(
+                stored->sequence,(int8_t)(pkt->getSNR()*4.0f),
+                pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+        }
+        MyMesh::onSignedMessageRecv(from,pkt,sender_timestamp,sender_prefix,text);
+    }
+
+    void onChannelMessageRecv(const mesh::GroupChannel& channel,mesh::Packet* pkt,
+                              uint32_t timestamp,const char* text) override {
+        if(companion_mode_active){
+            const int index=findChannelIdx(channel);
+            if(index>=0&&index<MAX_GROUP_CHANNELS){
+                const uint8_t key=(uint8_t)index;
+                auto* stored=meshink_message_store().append(
+                    MeshInkMessageKind::Channel,&key,1,text,timestamp,
+                    UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
+                if(stored&&pkt)meshink_message_store().update_rx(
+                    stored->sequence,(int8_t)(pkt->getSNR()*4.0f),
+                    pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+            }
+        }
+        MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);
+    }
+};
+
 static MultiSerialInterface interface_manager;
-static SerialBLEInterface bluetooth_interface;
+static MeshInkBLEInterface bluetooth_interface;
 static DataStore store(SPIFFS, meshink_rtc_meshcore());
 static StdRNG fast_rng;
 static SimpleMeshTables tables;
@@ -76,7 +217,7 @@ static void companion_configure_ble_scan_response(const char* prefix,const char*
     BLEDevice::getAdvertising()->setScanResponseData(scan_response);
 }
 
-MyMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tables, store);
+MeshInkMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tables, store);
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
@@ -100,6 +241,7 @@ void local_mesh_flush_contacts_save_if_due() {
 }
 
 void companion_setup() {
+    companion_mode_active=true;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
     meshink_show_companion_notice();
     meshink_board_begin_companion();
@@ -111,6 +253,8 @@ void companion_setup() {
     const bool storage_mounted=SPIFFS.begin(true);
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
+    if(storage_mounted&&!meshink_message_store().begin())
+        Serial.println("[T5-ERROR] MeshInk message journal unavailable in companion mode");
     store.begin();
     the_mesh.begin(false);
     bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
@@ -191,6 +335,7 @@ void companion_prepare_exit() {
 }
 
 void local_mesh_setup() {
+    companion_mode_active=false;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     meshink_board_begin_local();
     const bool radio_ready=meshink_radio_initialize();
