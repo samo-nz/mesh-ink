@@ -4,6 +4,7 @@
 #include <SPIFFS.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_heap_caps.h>
 #include "local_mesh_runtime.h"
 #include "message_store.h"
 #include "companion_runtime.h"
@@ -118,7 +119,7 @@ static void format_last_heard(uint32_t timestamp,char out[72]){
 
 class MeshCoreUiProvider final:public UiDataProvider{
     ListStorage contacts_[MAX_UI_CONTACTS]{},channels_[MAX_UI_CHANNELS]{},conversations_[MAX_UI_CONTACTS+MAX_UI_CHANNELS]{},adverts_[MAX_UI_ADVERTS]{};
-    MessageView active_messages_[MAX_STORED_MESSAGES]{};
+    MessageView* active_messages_=nullptr;
     UiMapNode map_nodes_[MAX_MAP_NODES]{};
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
@@ -144,6 +145,22 @@ class MeshCoreUiProvider final:public UiDataProvider{
     UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
     uint8_t detail_frame_[192]{};uint8_t detail_frame_len_=0;
     MeshInkMessageStore& store_=meshink_message_store();
+    bool ensure_active_storage(){
+        if(active_messages_)return true;
+        active_messages_=(MessageView*)heap_caps_calloc(
+            MAX_STORED_MESSAGES,sizeof(MessageView),
+            MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!active_messages_){
+            Serial.printf("[T5-MESH] ERROR PSRAM message-view allocation failed bytes=%u\n",
+                          (unsigned)(MAX_STORED_MESSAGES*sizeof(MessageView)));
+            return false;
+        }
+        for(size_t i=0;i<MAX_STORED_MESSAGES;++i)bind(active_messages_[i]);
+        Serial.printf("[T5-MESH] message-view cache=PSRAM entries=%u bytes=%u\n",
+                      (unsigned)MAX_STORED_MESSAGES,
+                      (unsigned)(MAX_STORED_MESSAGES*sizeof(MessageView)));
+        return true;
+    }
     static void bind(ListStorage& item){item.entry.title=item.title;item.entry.subtitle=item.subtitle;item.entry.time=item.time;}
     static void format_short_age(uint32_t seconds,char* out,size_t len){
         if(seconds<60)snprintf(out,len,"JUST NOW");
@@ -212,6 +229,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     }
     void rebuild_active(){
         active_count_=0;
+        if(!active_messages_)return;
         for(size_t i=0;i<store_.count()&&active_count_<MAX_STORED_MESSAGES;++i){const auto& m=store_.at(i);if(!matches(m))continue;
             auto& view=active_messages_[active_count_++];memset(&view,0,sizeof(view));bind(view);strncpy(view.text,m.text,sizeof(view.text)-1);format_time(m.timestamp,view.time);
             view.entry.outgoing=m.state!=(uint8_t)UiMessageState::Received;view.entry.state=(UiMessageState)m.state;
@@ -220,8 +238,12 @@ class MeshCoreUiProvider final:public UiDataProvider{
     }
     bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
-    MeshCoreUiProvider(){for(auto& i:contacts_)bind(i);for(auto& i:channels_)bind(i);for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);for(auto& i:active_messages_)bind(i);}
-    void begin(){store_.begin();refresh(true);}
+    MeshCoreUiProvider(){for(auto& i:contacts_)bind(i);for(auto& i:channels_)bind(i);for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);}
+    void begin(){
+        if(!ensure_active_storage())return;
+        if(!store_.begin())return;
+        refresh(true);
+    }
     void heard(const uint8_t* key,size_t key_len){note_heard(key,key_len);}
     void refresh(bool force=false){
         const uint32_t interval=ui_is_standby()?60000:10000;
