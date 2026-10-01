@@ -58,6 +58,7 @@ class MeshInkMessageStore {
 public:
     bool begin();
     size_t count() const { return initialized_?header_.count:0; }
+    uint32_t revision() const { return initialized_?header_.sequence:0; }
     bool read(size_t logical,MeshInkStoredMessage& out) const;
 
     uint32_t append(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
