@@ -637,10 +637,15 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         while(*next==' ')++next;
         if(*next=='\n')++next;
         const bool truncated=(row==max_lines-1)&&*next;
-        if(truncated&&trim<sizeof(line_text)-4){
-            line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
-            line_text[trim]=0;
-            ui_text_fit(line_text,x,y+row*(7*scale+8),max_width,scale,color,bold);
+        if(truncated){
+            const int dots=ui_text_width("...",scale);
+            while(trim&&ui_text_width(line_text,scale)+dots>max_width)
+                line_text[--trim]=0;
+            if(trim<sizeof(line_text)-4){
+                line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
+                line_text[trim]=0;
+            }
+            ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
         }else{
             ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
         }
