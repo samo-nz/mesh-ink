@@ -938,16 +938,18 @@ assert "mark_delivered_by_ack(ack)" in companion_source, "later end-to-end BT de
 assert "meshink_message_store().begin()" in companion_source, "companion mode opens/migrates the same journal"
 
 
-# Test51: the 250-message expansion must not consume the internal DRAM that
-# epdiy needs for its waveform LUT before UI startup. Large history buffers
-# are allocated from PSRAM only after the display has initialized.
-assert "MeshInkStoredMessage* records_=nullptr;" in message_store_header, "250-record journal must not be a static DRAM array"
-assert "MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]" not in message_store_header, "large journal array must stay out of pre-display DRAM"
-assert "heap_caps_calloc(" in message_store_source and "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT" in message_store_source, "journal backing buffer is allocated explicitly from PSRAM"
-assert 'journal buffer=PSRAM bytes=%u' in message_store_source, "journal PSRAM allocation is visible in the hardware boot transcript"
-assert "MessageView* active_messages_=nullptr;" in runtime_source, "expanded 250-entry conversation cache must not be a static DRAM array"
-assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source, "conversation cache stays out of pre-display DRAM"
-assert "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT" in runtime_source, "conversation view cache is allocated from PSRAM"
-assert 'message-view cache=PSRAM entries=%u bytes=%u' in runtime_source, "conversation cache PSRAM allocation is visible in serial diagnostics"
-assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display initializes before local message-store startup"
-assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal allocation/migration remains after display initialization"
+# Test51: the 250-message journal is flash-authoritative. Neither the full
+# journal nor 250 rendered message bodies may be duplicated in RAM/PSRAM.
+assert "MeshInkStoredMessage* records_" not in message_store_header, "journal must not allocate a 250-record RAM/PSRAM backing array"
+assert "MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]" not in message_store_header, "journal records stay exclusively in SPIFFS"
+assert "bool read(size_t logical,MeshInkStoredMessage& out) const;" in message_store_header, "journal exposes fixed-record on-demand reads"
+assert "MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)" in message_store_source, "flash file retains all 250 fixed-size records"
+assert "RAM=%u-byte header only" in message_store_source, "boot transcript reports flash-authoritative journal memory model"
+assert "mutable File file_{};" in message_store_header, "one lightweight journal file handle is reused for record seeks"
+assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps only tiny journal-position indices"
+assert "mutable MessageView active_message_view_{};" in runtime_source, "UI keeps one scratch rendered message instead of 250"
+assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "full rendered history is never cached"
+assert "store_.read(active_indices_[i],item)" in runtime_source, "individual visible/measured messages are loaded from flash on demand"
+assert "heap_caps_calloc" not in message_store_source and "heap_caps_calloc" not in runtime_source, "message history no longer needs large PSRAM allocations"
+assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
+assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal migration remains after display initialization"
