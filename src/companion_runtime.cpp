@@ -71,10 +71,9 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
         uint32_t sequence=journal.find_matching_outgoing(
             pending_.kind,pending_.key,pending_.key_len,pending_.timestamp,pending_.text);
         if(!sequence){
-            if(auto* stored=journal.append(
-                    pending_.kind,pending_.key,pending_.key_len,pending_.text,
-                    pending_.timestamp,state,ack,MeshInkMessageOrigin::CompanionApp))
-                sequence=stored->sequence;
+            sequence=journal.append(
+                pending_.kind,pending_.key,pending_.key_len,pending_.text,
+                pending_.timestamp,state,ack,MeshInkMessageOrigin::CompanionApp);
         }else{
             journal.update_state(sequence,state);
             if(ack)journal.update_ack(sequence,ack);
@@ -125,11 +124,11 @@ protected:
     void onMessageRecv(const ContactInfo& from,mesh::Packet* pkt,
                        uint32_t sender_timestamp,const char* text) override {
         if(companion_mode_active){
-            auto* stored=meshink_message_store().append(
+            const uint32_t sequence=meshink_message_store().append(
                 MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
                 UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
-            if(stored&&pkt)meshink_message_store().update_rx(
-                stored->sequence,(int8_t)(pkt->getSNR()*4.0f),
+            if(sequence&&pkt)meshink_message_store().update_rx(
+                sequence,(int8_t)(pkt->getSNR()*4.0f),
                 pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
         }
         MyMesh::onMessageRecv(from,pkt,sender_timestamp,text);
@@ -139,11 +138,11 @@ protected:
                              uint32_t sender_timestamp,const uint8_t* sender_prefix,
                              const char* text) override {
         if(companion_mode_active){
-            auto* stored=meshink_message_store().append(
+            const uint32_t sequence=meshink_message_store().append(
                 MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
                 UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
-            if(stored&&pkt)meshink_message_store().update_rx(
-                stored->sequence,(int8_t)(pkt->getSNR()*4.0f),
+            if(sequence&&pkt)meshink_message_store().update_rx(
+                sequence,(int8_t)(pkt->getSNR()*4.0f),
                 pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
         }
         MyMesh::onSignedMessageRecv(from,pkt,sender_timestamp,sender_prefix,text);
@@ -155,11 +154,11 @@ protected:
             const int index=findChannelIdx(channel);
             if(index>=0&&index<MAX_GROUP_CHANNELS){
                 const uint8_t key=(uint8_t)index;
-                auto* stored=meshink_message_store().append(
+                const uint32_t sequence=meshink_message_store().append(
                     MeshInkMessageKind::Channel,&key,1,text,timestamp,
                     UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp);
-                if(stored&&pkt)meshink_message_store().update_rx(
-                    stored->sequence,(int8_t)(pkt->getSNR()*4.0f),
+                if(sequence&&pkt)meshink_message_store().update_rx(
+                    sequence,(int8_t)(pkt->getSNR()*4.0f),
                     pkt->isRouteFlood()?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
             }
         }
