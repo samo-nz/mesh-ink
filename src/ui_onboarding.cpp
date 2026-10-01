@@ -555,6 +555,40 @@ static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     ui_text(clipped,x,y,scale,color,bold);
 }
+static void ui_centred_fit(const char* value,int y,int max_width,int scale,
+                           uint8_t color=0,bool bold=false) {
+    if(!value||max_width<=0)return;
+    if(ui_text_width(value,scale)<=max_width){
+        ui_text(value,(meshink_display_logical_width()-ui_text_width(value,scale))/2,
+                y,scale,color,bold);
+        return;
+    }
+    char clipped[64]{};size_t out=0;int width=0;
+    const int dots=ui_text_width("...",scale);
+    while(value[out]&&out<sizeof(clipped)-4){
+        const int advance=ui_char_advance(value[out],scale);
+        if(width+advance+dots>max_width)break;
+        clipped[out]=value[out];width+=advance;++out;
+    }
+    clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
+    const int clipped_width=ui_text_width(clipped,scale);
+    ui_text(clipped,(meshink_display_logical_width()-clipped_width)/2,
+            y,scale,color,bold);
+}
+static int ui_text_max_line_width(const char* value,int scale) {
+    if(!value||!*value)return 0;
+    int widest=0,current=0;
+    for(const char* p=value;;++p){
+        if(!*p||*p=='\n'){
+            if(current>0)current-=scale; // remove final inter-character gap
+            widest=max(widest,current);current=0;
+            if(!*p)break;
+            continue;
+        }
+        current+=ui_char_advance(*p,scale);
+    }
+    return widest;
+}
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
     size_t count=0,last_space=0;int width=0;
@@ -1245,7 +1279,10 @@ static void draw_app_header(const char* title,bool back=false,const char* action
         rounded_box(back_rect,max(ui_w(10),ui_h(10)),true);
         ui_text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
     }
-    ui_centred(title,layout.header_title_y,4,0,true);
+    const int title_guard=back
+        ?2*(layout.header_back_x+layout.header_button_width+ui_w(12))
+        :2*ui_w(24);
+    ui_centred_fit(title,layout.header_title_y,layout.width-title_guard,4,0,true);
     if(action){
         const MeshInkUiRect action_rect=meshink_header_action_rect(layout);
         ui_action_button(action,action_rect,true);
@@ -1333,7 +1370,7 @@ static void draw_page_indicator(size_t page,size_t pages,int y) {
     if(pages<=1)return;
     char page_text[24];
     snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",(unsigned)(page+1),(unsigned)pages);
-    const int text_width=(int)strlen(page_text)*12;
+    const int text_width=ui_text_width(page_text,2);
     const int text_left=(meshink_display_logical_width()-text_width)/2;
     ui_centred(page_text,y,2,0,true);
     if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
@@ -1619,12 +1656,12 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int pad=ui_w(18);
     const int max_width=ui_w(456);
     const int min_width=ui_w(240);
-    const int body_natural=min(max_width-2*pad,ui_text_width(message.text,3));
+    const int body_natural=min(max_width-2*pad,ui_text_max_line_width(message.text,3));
     const int footer_natural=ui_text_width(footer,2);
     const int width=min(max_width,max(min_width,
         max(body_natural+2*pad,footer_natural+2*pad)));
     const int text_width=max(ui_w(80),width-2*pad);
-    const int lines=ui_wrapped_line_count(message.text,text_width,3);
+    const int lines=min(16,ui_wrapped_line_count(message.text,text_width,3));
     const int height=max(ui_h(96),lines*ui_h(29)+ui_h(58));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
@@ -1704,11 +1741,20 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
 
-static int chat_history_bottom_no_keyboard(){
+static int chat_compose_top(){
+    return portrait_layout().bottom_nav_top-ui_h(12);
+}
+static int chat_history_bottom_paged(){
     return portrait_layout().bottom_nav_top-ui_h(100);
 }
 static int chat_history_available(){
-    return chat_history_bottom_no_keyboard()-ui_h(126);
+    return chat_history_bottom_paged()-ui_h(126);
+}
+static int chat_history_available_unpaged(){
+    return chat_compose_top()-ui_h(12)-ui_h(126);
+}
+static bool chat_needs_paging(size_t count){
+    return count&&chat_fill_backwards(count,chat_history_available_unpaged())>0;
 }
 
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
@@ -1730,12 +1776,16 @@ static void draw_chat(bool channel) {
     const size_t count=ui_data?ui_data->active_message_count():0;
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
-    const int history_bottom=keyboard?keyboard_layout.history_bottom:chat_history_bottom_no_keyboard();
-    const int available=history_bottom-ui_h(126);
     size_t first=count,end=count;bool has_older=false;
     if(count){
-        if(keyboard)first=chat_fill_backwards(count,available);
-        else chat_page_bounds_lazy(count,available,chat_page,first,end,has_older);
+        if(keyboard){
+            first=chat_fill_backwards(count,keyboard_layout.history_bottom-ui_h(126));
+        }else if(!chat_needs_paging(count)){
+            if(chat_page)reset_chat_paging();
+            first=0;end=count;
+        }else{
+            chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);
+        }
     }
     if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
     else{
@@ -1754,7 +1804,7 @@ static void draw_chat(bool channel) {
         draw_keyboard();
     }else{
         const MeshInkUiLayout& layout=portrait_layout();
-        const int compose_y=layout.bottom_nav_top-ui_h(12);
+        const int compose_y=chat_compose_top();
         draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));
         rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
                     max(ui_w(12),ui_h(12)));
@@ -3035,7 +3085,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
-            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=layout.bottom_nav_top-12;
+            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top();
             if(hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
                 keyboard_message_mode=true;keyboard_visible=true;reset_chat_paging();
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
@@ -3625,7 +3675,8 @@ void ui_loop() {
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=ui_data?ui_data->active_message_count():0;
             size_t first=count,end=count;bool has_older=false;
-            if(count)chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);
+            if(chat_needs_paging(count))
+                chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);
             uint8_t next=chat_page;
             if(tap.dy<0){
                 if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
