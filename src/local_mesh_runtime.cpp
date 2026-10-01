@@ -513,9 +513,7 @@ public:
                                  age,sizeof(age));
                 snprintf(self->detail_position_source_,
                          sizeof(self->detail_position_source_),"GPS REPLY %s",age);
-            }else snprintf(self->detail_position_source_,
-                          sizeof(self->detail_position_source_),"SAVED ADVERT %s",
-                          self->detail_advert_age_);
+            }else strcpy(self->detail_position_source_,"SAVED POSITION");
         }else{
             strcpy(self->detail_position_,"NO SAVED POSITION");
             strcpy(self->detail_position_source_,"NO GPS REPORTED");
@@ -625,6 +623,17 @@ public:
                 recent_info_.gps_reply_millis=millis();
                 request_gps_received_=true;
                 detail_lat_=recent_info_.lat;detail_lon_=recent_info_.lon;
+                // A matched GPS telemetry response is the node's latest known
+                // position. Store it in MeshCore's ContactInfo so the same
+                // coordinates survive reboot and appear in Maps/Node Info.
+                if(ContactInfo* contact=t5_mesh().lookupContactByPubKey(
+                        detail_contact_.id.pub_key,PUB_KEY_SIZE)){
+                    contact->gps_lat=recent_info_.lat;
+                    contact->gps_lon=recent_info_.lon;
+                    detail_contact_.gps_lat=recent_info_.lat;
+                    detail_contact_.gps_lon=recent_info_.lon;
+                    local_mesh_schedule_contacts_save();
+                }
                 snprintf(item,sizeof(item),"GPS %.4f %.4f",lat,lon);
             }
         }break;}case LPP_VOLTAGE:reader.readVoltage(v);snprintf(item,sizeof(item),"%.2fV",v);break;case LPP_CURRENT:reader.readCurrent(v);snprintf(item,sizeof(item),"%.3fA",v);break;case LPP_TEMPERATURE:reader.readTemperature(v);snprintf(item,sizeof(item),"%.1fC",v);break;case LPP_RELATIVE_HUMIDITY:reader.readRelativeHumidity(v);snprintf(item,sizeof(item),"%.1f%% RH",v);break;case LPP_BAROMETRIC_PRESSURE:reader.readPressure(v);snprintf(item,sizeof(item),"%.1f HPA",v);break;default:reader.skipData(type);break;}if(item[0]){const int n=snprintf(cursor,left,"%s%s",cursor==detail_telemetry_?"":"  ",item);if(n<0||(size_t)n>=left)break;cursor+=n;left-=n;}}
