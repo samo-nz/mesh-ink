@@ -1228,13 +1228,13 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     const MeshInkUiLayout& layout=portrait_layout();
     if(back){
         const MeshInkUiRect back_rect=meshink_header_back_rect(layout);
-        box(back_rect,true);
+        rounded_box(back_rect,max(ui_w(10),ui_h(10)),true);
         text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
     }
     centred(title,layout.header_title_y,4,0,true);
     if(action){
         const MeshInkUiRect action_rect=meshink_header_action_rect(layout);
-        box(action_rect,true);
+        rounded_box(action_rect,max(ui_w(10),ui_h(10)),true);
         text(action,action_rect.x+
              (action_rect.width-(int)strlen(action)*18)/2,
              layout.header_text_y,3,0xFF,true);
@@ -1607,7 +1607,7 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int screen_width=meshink_display_logical_width();
     const int pad=ui_w(18);
     const int max_width=ui_w(456);
-    const int min_width=ui_w(210);
+    const int min_width=ui_w(240);
     const int body_natural=min(max_width-2*pad,ui_text_width(message.text,3));
     const int footer_natural=ui_text_width(footer,2);
     const int width=min(max_width,max(min_width,
@@ -1631,7 +1631,7 @@ static void draw_message_bubble(const UiMessage& message,int y,int h) {
     rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing);
     const uint8_t color=message.outgoing?0xFF:0;
     ui_draw_wrapped(message.text,geometry.x+ui_w(18),y+ui_h(14),
-                    geometry.text_width,3,color,false,8);
+                    geometry.text_width,3,color,false,16);
 
     char footer[72]{};message_footer_text(message,footer);
     const int footer_width=ui_text_width(footer,2);
