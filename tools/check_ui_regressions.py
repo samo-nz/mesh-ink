@@ -262,7 +262,7 @@ contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering addre
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
 contains("(screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60", "Contacts/Channels vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
-contains("box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);", "list cards use shared logical interior width")
+contains("rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,", "list cards use shared logical interior width with rounded treatment")
 contains("row*portrait_layout().list_row_stride", "list drawing/touch use shared row stride")
 contains("draw_list_page_footer(channels_page,count);", "Channels displays page count when multiple pages exist")
 contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page footer")
@@ -993,3 +993,21 @@ assert "item.ack=ack;" in message_store_source[message_store_source.index("void 
 assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
 assert "provider.confirm_direct_send(" in runtime_source, "local send response uses one persistent metadata update"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
+
+
+# Test54: chat/contact polish stays readable and lightweight. Reuse the tiny
+# built-in glyph bitmap instead of adding a font engine or full font asset.
+assert "static void ui_glyph_bounds(" in source and "const uint8_t* rows=glyph(c)" in source, "polished text reuses the existing compact glyph table"
+assert "static int ui_char_advance(char c,int scale)" in source and "static void ui_text(" in source, "chat/contact text uses lightweight proportional advances"
+assert "static void rounded_fill(" in source and "xx*xx+yy*yy<=r*r" in source, "rounded panels use an integer framebuffer primitive"
+assert "sqrt(" not in source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))], "rounded corners avoid floating-point geometry"
+assert "rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height" in source, "contacts/channels/discovery use rounded cards"
+assert "ui_draw_wrapped(item.subtitle" in source and "layout.outer_width-2*layout.text_inset,3" in source, "list body text is rendered at readable scale 3"
+assert "ui_text_fit(item.title" in source and "3,0,true" in source[source.index("ui_text_fit(item.title"):source.index("ui_draw_wrapped(item.subtitle")], "list titles remain large and clipped safely"
+assert "rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing)" in source, "chat bubbles use rounded incoming/outgoing surfaces"
+assert "const int min_width=ui_w(240);" in source and "const int max_width=ui_w(456);" in source, "chat bubbles stay compact without becoming too narrow to read"
+assert "ui_wrapped_line_count(message.text,text_width,3)" in source, "message paging measures the same proportional scale-3 body text that is drawn"
+assert "geometry.text_width,3,color,false,16" in source, "long messages remain readable instead of being clipped at the former eight-line draw limit"
+assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
+assert "rounded_box(back_rect" in source and "rounded_box(action_rect" in source, "chat header actions share the rounded visual language"
+assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "polished typography/rounding adds no dynamic memory"
