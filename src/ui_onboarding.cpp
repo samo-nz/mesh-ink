@@ -1150,22 +1150,25 @@ static void draw_welcome() {
     const MeshInkUiRect name_rect=meshink_welcome_name_rect(layout);
     const MeshInkUiRect preset_rect=meshink_welcome_preset_rect(layout);
     const MeshInkUiRect companion_rect=meshink_welcome_companion_rect(layout);
-    centred("MESHCORE",ui_y(62),6,0,true);
-    centred("SET UP YOUR T5",ui_y(116),3,0,true);
-    text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
-    box(name_rect);
-    text(node_name,layout.form_text_x,name_rect.y+ui_h(19),3);
-    text("RADIO PRESET",layout.form_margin,ui_y(268),2,0,true);
-    box(preset_rect);
-    text(PRESETS[selected_preset].title,preset_rect.x+ui_w(14),preset_rect.y+ui_h(11),3,0,true);
-    text(PRESETS[selected_preset].detail,preset_rect.x+ui_w(14),preset_rect.y+ui_h(52),2);
-    text(">",preset_rect.x+preset_rect.width-ui_w(30),preset_rect.y+ui_h(27),3,0,true);
-    box(companion_rect);
-    centred("BLUETOOTH COMPANION MODE",companion_rect.y+ui_h(16),2,0,true);
-    if(keyboard_visible){centred("ENTER A NAME",ui_y(586),2,0,true);draw_keyboard();}
+    ui_centred("MESHCORE",ui_y(62),6,0,true);
+    ui_centred("Set up your T5",ui_y(116),3,0,true);
+    ui_text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
+    ui_section_card(name_rect);
+    ui_text_fit(node_name,layout.form_text_x,name_rect.y+ui_h(18),
+                name_rect.width-ui_w(36),3,0,false);
+    ui_text("RADIO PRESET",layout.form_margin,ui_y(268),2,0,true);
+    ui_section_card(preset_rect);
+    ui_text_fit(PRESETS[selected_preset].title,preset_rect.x+ui_w(14),preset_rect.y+ui_h(10),
+                preset_rect.width-ui_w(58),3,0,true);
+    ui_text_fit(PRESETS[selected_preset].detail,preset_rect.x+ui_w(14),preset_rect.y+ui_h(51),
+                preset_rect.width-ui_w(58),2,0,false);
+    ui_text(">",preset_rect.x+preset_rect.width-ui_w(30),preset_rect.y+ui_h(27),3,0,true);
+    ui_section_card(companion_rect);
+    ui_centred("Bluetooth companion mode",companion_rect.y+ui_h(15),2,0,true);
+    if(keyboard_visible){ui_centred("Enter a name",ui_y(586),2,0,true);draw_keyboard();}
     else {
         const MeshInkUiRect show_rect=meshink_welcome_show_keyboard_rect(layout);
-        box(show_rect);centred("SHOW KEYBOARD",show_rect.y+ui_h(21),3,0,true);
+        ui_action_button("SHOW KEYBOARD",show_rect,true);
     }
 }
 
@@ -1180,18 +1183,18 @@ static void draw_presets() {
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
         const MeshInkUiRect row_rect=meshink_preset_row_rect(layout,row);
-        box(row_rect,index==selected_preset);
+        rounded_box(row_rect,max(ui_w(13),ui_h(13)),index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
-        text(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(12),3,color,true);
-        text(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(60),2,color,true);
+        ui_text_fit(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(11),
+                    row_rect.width-ui_w(32),3,color,true);
+        ui_text_fit(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(57),
+                    row_rect.width-ui_w(32),3,color,false);
     }
     const MeshInkUiRect prev_rect=meshink_preset_prev_rect(layout);
     const MeshInkUiRect next_rect=meshink_preset_next_rect(layout);
-    box(prev_rect,preset_page==0);
-    text("PREV",prev_rect.x+(prev_rect.width-4*12)/2,prev_rect.y+ui_h(21),2,preset_page==0?0xFF:0,true);
+    ui_action_button("PREV",prev_rect,preset_page==0);
     const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-    box(next_rect,preset_page+1>=page_count);
-    text("NEXT",next_rect.x+(next_rect.width-4*12)/2,next_rect.y+ui_h(21),2,preset_page+1>=page_count?0xFF:0,true);
+    ui_action_button("NEXT",next_rect,preset_page+1>=page_count);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
     centred(page_text,ui_y(890),2,0,true);
 }
@@ -1203,8 +1206,8 @@ static void draw_companion_confirm() {
     const MeshInkUiRect start=meshink_confirm_right_rect(layout,500);
     centred("BLUETOOTH",ui_y(120),5,0,true);centred("COMPANION MODE",ui_y(180),4,0,true);
     centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
-    box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
-    box(start,true);text("START",start.x+ui_w(48),start.y+ui_h(24),3,0xFF,true);
+    ui_action_button("CANCEL",cancel,false);
+    ui_action_button("START",start,true);
 }
 
 static void draw_shutdown_confirm() {
@@ -1219,24 +1222,31 @@ static void draw_shutdown_confirm() {
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
     centred(wake.confirm_battery,ui_y(445),3,0,true);
     centred(wake.confirm_external,ui_y(500),3,0,true);
-    box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
-    box(shutdown,true);text("SHUT DOWN",shutdown.x+ui_w(21),shutdown.y+ui_h(24),3,0xFF,true);
+    ui_action_button("CANCEL",cancel,false);
+    ui_action_button("SHUT DOWN",shutdown,true);
 }
 
 static void draw_bottom_nav(int selected) {
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
     const MeshInkUiLayout& layout=portrait_layout();
+    meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,layout.bottom_nav_height},0xFF,fb);
+    meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,ui_h(2)},0,fb);
     for(int i=0;i<4;++i){
         const int left=i*layout.tab_width;
-        box(left,layout.bottom_nav_top,layout.tab_width,layout.bottom_nav_height,
-            i==selected);
-        const uint8_t color=i==selected?0xFF:0;
-        text(labels[i],left+(layout.tab_width-(int)strlen(labels[i])*12)/2,
-             layout.bottom_nav_top+ui_h(20),2,color,true);
+        const MeshInkUiRect tab={left+ui_w(5),layout.bottom_nav_top+ui_h(7),
+                                 layout.tab_width-ui_w(10),layout.bottom_nav_height-ui_h(13)};
+        const bool active=i==selected;
+        if(active)rounded_box(tab,max(ui_w(11),ui_h(11)),true);
+        const uint8_t color=active?0xFF:0;
+        const int width=ui_text_width(labels[i],2);
+        ui_text(labels[i],left+(layout.tab_width-width)/2,
+                layout.bottom_nav_top+ui_h(21),2,color,true);
         const bool unread=(i==0&&status_unread)||(i==1&&status_channel_unread);
-        if(unread)meshink_display_fill_rect(
-            {left+layout.tab_width-ui_w(17),layout.bottom_nav_top+ui_h(8),
-             ui_w(11),ui_h(11)},color,fb);
+        if(unread){
+            const int d=ui_w(10);
+            rounded_fill(left+layout.tab_width-ui_w(18),layout.bottom_nav_top+ui_h(10),
+                         d,d,d/2,color);
+        }
     }
 }
 
@@ -1248,13 +1258,10 @@ static void draw_app_header(const char* title,bool back=false,const char* action
         rounded_box(back_rect,max(ui_w(10),ui_h(10)),true);
         text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
     }
-    centred(title,layout.header_title_y,4,0,true);
+    ui_centred(title,layout.header_title_y,4,0,true);
     if(action){
         const MeshInkUiRect action_rect=meshink_header_action_rect(layout);
-        rounded_box(action_rect,max(ui_w(10),ui_h(10)),true);
-        text(action,action_rect.x+
-             (action_rect.width-(int)strlen(action)*18)/2,
-             layout.header_text_y,3,0xFF,true);
+        ui_action_button(action,action_rect,true);
     }
 }
 
@@ -1921,10 +1928,12 @@ static void draw_advert_menu() {
 static void settings_row(const char* title,const char* subtitle,int reference_y) {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
-    box(row);
-    text(title,layout.content_text_x,row.y+ui_h(14),3,0,true);
-    text(subtitle,layout.content_text_x,row.y+ui_h(58),2);
-    text(">",layout.settings_arrow_x,row.y+ui_h(42),3,0,true);
+    ui_section_card(row);
+    ui_text_fit(title,layout.content_text_x,row.y+ui_h(13),
+                row.width-ui_w(76),3,0,true);
+    ui_text_fit(subtitle,layout.content_text_x,row.y+ui_h(55),
+                row.width-ui_w(76),3,0,false);
+    ui_text(">",layout.settings_arrow_x,row.y+ui_h(39),3,0,true);
 }
 
 static void draw_settings() {
