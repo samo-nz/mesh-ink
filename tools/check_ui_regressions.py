@@ -314,7 +314,7 @@ assert source.count("active_node_saved_password(remote_password,sizeof(remote_pa
 
 contains('meshink_display_fill_rect({0,metrics.clear_top,layout.width,', "password keyboard clear area follows shared geometry")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
-contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
+contains('ui_text_fit(remote_password[0]?remote_password:"Remote password"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
 assert "char masked[16]" not in source, "password entry must not mask typed text on-device"
 
@@ -786,7 +786,7 @@ assert "hit(x,y,40,420,460,100)" not in source, "brightness slider touch must de
 
 # Night Timer schedule editing lives inside the MODE row, not below Map Scale.
 assert "meshink_settings_inline_action_rect" in ui_layout_source, "inline settings action rectangle missing"
-contains('text("EDIT TIMES",action.x+ui_w(17),action.y+ui_h(20),2,0xFF,true);', "Night Timer MODE row shows Edit Times")
+contains('ui_action_button("EDIT TIMES",action,true);', "Night Timer MODE row shows Edit Times")
 contains("hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),118))", "Edit Times touch uses the same inline geometry")
 contains("open_screen(Screen::NightSchedule);return true;", "Edit Times opens Night Schedule")
 assert "meshink_night_schedule_top" not in ui_layout_source, "abandoned bottom Night Schedule geometry must be removed"
@@ -841,7 +841,7 @@ assert "draw_standby_envelope_icon" in source, "standby provides a dedicated lar
 assert "draw_standby_channel_icon" in source, "standby provides a dedicated large channel people icon"
 assert "standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11)" in source, "private unread count is oversized"
 assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in source, "channel unread count is oversized"
-assert "const int border=max(ui_w(5),ui_h(5));" in source, "standby card outlines are substantially thicker"
+assert "rounded_box(rect,max(ui_w(22),ui_h(22)),false);" in source, "standby summary cards use the shared rounded visual language"
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
 assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "standby retains the lower wake instruction separator"
 
@@ -1009,6 +1009,23 @@ assert "const int min_width=ui_w(240);" in source and "const int max_width=ui_w(
 assert "ui_wrapped_line_count(message.text,text_width,3)" in source, "message paging measures the same proportional scale-3 body text that is drawn"
 assert "geometry.text_width,3,color,false,16" in source, "long messages remain readable instead of being clipped at the former eight-line draw limit"
 assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
-assert "rounded_box(back_rect" in source and "rounded_box(action_rect" in source, "chat header actions share the rounded visual language"
+assert "rounded_box(back_rect" in source and "ui_action_button(action,action_rect,true)" in source, "chat header actions share the rounded visual language"
 assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "polished typography/rounding adds no dynamic memory"
 assert "const MessageBubbleGeometry geometry=message_bubble_geometry(message);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse one geometry measurement for drawing"
+
+
+# Test55: the chat/contact visual language extends across the rest of the UI
+# without changing touch geometry or adding heavyweight rendering state.
+render_body = source[source.index("static void draw_welcome()"):]
+assert "ui_section_card(row);" in source[source.index("static void settings_row"):], "settings use shared rounded cards"
+assert "ui_action_button(" in source, "screens share one rounded action-button treatment"
+assert "rounded_box(rect.x,rect.y,rect.width,rect.height" in source[source.index("static void key("):source.index("static void draw_keyboard")], "portrait keyboard keys are rounded without changing key rectangles"
+assert "rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height" in source, "landscape keyboard entry uses the polished rounded field"
+assert "rounded_box(zoom_in" in source and "rounded_box(zoom_out" in source and "rounded_box(locate" in source, "map controls use the same rounded style"
+assert "ui_section_card(core);ui_section_card(radio);ui_section_card(packets);" in source, "diagnostics is grouped into readable cards"
+assert "ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard);" in source, "Help uses readable grouped cards"
+assert "ui_action_button(\"ADVERT FLOOD\",advert_button,true);" in source and "ui_action_button(\"POWER OFF\",power_button,false);" in source, "Quick Settings actions use shared polished buttons"
+assert "rounded_box(start_rect" in source and "ui_action_button(\"SAVE SCHEDULE\",save_rect,true);" in source, "Night Schedule uses rounded selected fields and action"
+assert "ui_section_card(info);" in source[source.index("static void draw_about"):], "About metadata is grouped into a rounded card"
+assert "static void box(int x" in source and "box(" not in render_body.replace("rounded_box(", ""), "legacy square box helper is no longer used by screen rendering"
+assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "full visual polish still adds no dynamic memory"
