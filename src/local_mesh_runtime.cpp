@@ -293,6 +293,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         const uint32_t heard=meshink_rtc_current_time();
         if(!heard)return;
         contact->lastmod=heard; // our clock: this T5 positively heard this contact
+        local_mesh_schedule_contacts_save();
         if(detail_valid_&&!memcmp(detail_contact_.id.pub_key,contact->id.pub_key,PUB_KEY_SIZE))
             detail_contact_.lastmod=heard;
     }
@@ -848,7 +849,9 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
 }
 void local_mesh_runtime_begin(){provider.begin();}
 void local_mesh_loop(){
-    t5_mesh().loop();provider.refresh();
+    t5_mesh().loop();
+    local_mesh_flush_contacts_save_if_due();
+    provider.refresh();
 #if ENV_INCLUDE_GPS == 1
     const uint32_t gps_now=millis();
     const bool gps_enabled=t5_mesh().getNodePrefs()->gps_enabled!=0;
