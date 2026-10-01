@@ -498,6 +498,139 @@ static void centred(const char* s, int y, int scale, uint8_t color = 0, bool bol
     text(s, (meshink_display_logical_width() - (int)strlen(s)*6*scale)/2, y, scale, color, bold);
 }
 
+// Chat/contact typography stays deliberately tiny in code size: reuse the
+// proven 5x7 glyph bitmap, but crop empty side columns and advance
+// proportionally. At scale 3 this reads much more like a compact e-reader sans
+// face without embedding another font or allocating a font cache.
+static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
+    left=5;right=-1;
+    for(int rx=0;rx<5;++rx){
+        const uint8_t mask=(uint8_t)(1U<<(4-rx));
+        for(int ry=0;ry<7;++ry)if(rows[ry]&mask){
+            left=min(left,rx);right=max(right,rx);break;
+        }
+    }
+}
+static int ui_char_advance(char c,int scale) {
+    if(c==' ')return 3*scale;
+    const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
+    const int pixels=right>=left?(right-left+1):3;
+    return pixels*scale+scale;
+}
+static int ui_text_width_n(const char* s,size_t n,int scale) {
+    if(!s||!n)return 0;int width=0;
+    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
+    return width?width-scale:0;
+}
+static int ui_text_width(const char* s,int scale) {
+    return s?ui_text_width_n(s,strlen(s),scale):0;
+}
+static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
+    if(!s)return;
+    while(*s&&*s!='\n'){
+        const char c=*s++;
+        if(c==' '){x+=3*scale;continue;}
+        const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
+        if(right<left){x+=3*scale;continue;}
+        for(int ry=0;ry<7;++ry)for(int rx=left;rx<=right;++rx)
+            if(rows[ry]&(1U<<(4-rx)))
+                for(int dy=0;dy<scale;++dy)for(int dx=0;dx<scale;++dx){
+                    meshink_display_draw_pixel(x+(rx-left)*scale+dx,y+ry*scale+dy,color,fb);
+                    if(bold)meshink_display_draw_pixel(x+(rx-left)*scale+dx+1,y+ry*scale+dy,color,fb);
+                }
+        x+=(right-left+1)*scale+scale;
+    }
+}
+static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
+                        uint8_t color=0,bool bold=false) {
+    if(!value||max_width<=0)return;
+    if(ui_text_width(value,scale)<=max_width){ui_text(value,x,y,scale,color,bold);return;}
+    char clipped[64]{};size_t out=0;int width=0;
+    const int dots=ui_text_width("...",scale);
+    while(value[out]&&out<sizeof(clipped)-4){
+        const int advance=ui_char_advance(value[out],scale);
+        if(width+advance+dots>max_width)break;
+        clipped[out]=value[out];width+=advance;++out;
+    }
+    clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
+    ui_text(clipped,x,y,scale,color,bold);
+}
+static size_t ui_wrap_take(const char* value,int max_width,int scale) {
+    if(!value||!*value)return 0;
+    size_t count=0,last_space=0;int width=0;
+    while(value[count]&&value[count]!='\n'){
+        const int advance=ui_char_advance(value[count],scale);
+        if(count&&width+advance>max_width)break;
+        if(!count&&advance>max_width)return 1;
+        width+=advance;
+        if(value[count]==' ')last_space=count;
+        ++count;
+    }
+    if(!value[count]||value[count]=='\n')return count;
+    return last_space?last_space:count;
+}
+static int ui_wrapped_line_count(const char* value,int max_width,int scale) {
+    if(!value||!*value)return 1;
+    int lines=0;const char* cursor=value;
+    while(*cursor){
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n'){++cursor;++lines;continue;}
+        if(!*cursor)break;
+        size_t take=ui_wrap_take(cursor,max_width,scale);
+        if(!take)take=1;
+        cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+        ++lines;
+    }
+    return max(1,lines);
+}
+static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scale,
+                            uint8_t color,bool bold,int max_lines) {
+    if(!value)return;
+    const char* cursor=value;
+    for(int row=0;row<max_lines&&*cursor;++row){
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n'){++cursor;continue;}
+        size_t take=ui_wrap_take(cursor,max_width,scale);
+        if(!take)take=1;
+        char line_text[64]{};const size_t copy=min(take,sizeof(line_text)-1);
+        memcpy(line_text,cursor,copy);
+        while(copy&&line_text[strlen(line_text)-1]==' ')line_text[strlen(line_text)-1]=0;
+        ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
+        cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+    }
+}
+
+// Integer-only rounded panel primitive. It uses the existing framebuffer
+// rectangles and a small corner inset calculation, so there is no image asset,
+// antialiasing buffer or extra display dependency.
+static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
+    if(w<=0||h<=0)return;
+    const int r=max(0,min(radius,min(w,h)/2));
+    if(!r){meshink_display_fill_rect({x,y,w,h},color,fb);return;}
+    meshink_display_fill_rect({x,y+r,w,h-2*r},color,fb);
+    for(int row=0;row<r;++row){
+        const int yy=r-1-row;int inset=0;
+        while(inset<r){
+            const int xx=r-inset;
+            if(xx*xx+yy*yy<=r*r)break;
+            ++inset;
+        }
+        const int span=max(1,w-2*inset);
+        meshink_display_fill_rect({x+inset,y+row,span,1},color,fb);
+        meshink_display_fill_rect({x+inset,y+h-1-row,span,1},color,fb);
+    }
+}
+static void rounded_box(int x,int y,int w,int h,int radius,bool selected=false) {
+    if(selected){rounded_fill(x,y,w,h,radius,0);return;}
+    rounded_fill(x,y,w,h,radius,0);
+    const int border=max(2,ui_w(2));
+    rounded_fill(x+border,y+border,w-2*border,h-2*border,
+                 max(1,radius-border),0xFF);
+}
+static void rounded_box(const MeshInkUiRect& rect,int radius,bool selected=false) {
+    rounded_box(rect.x,rect.y,rect.width,rect.height,radius,selected);
+}
+
 static void box(int x, int y, int w, int h, bool selected=false) {
     MeshInkRect r = {x,y,w,h};
     if (selected) meshink_display_fill_rect(r, 0, fb);
