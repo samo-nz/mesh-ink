@@ -42,8 +42,9 @@ struct MeshInkMessageStoreHeader {
     uint32_t sequence;
 };
 
-// Flash is authoritative. Only the 16-byte journal header lives permanently
-// in RAM; message records are read from SPIFFS into caller-owned scratch space.
+// Flash is authoritative. No message-record cache lives in RAM/PSRAM; only
+// the small journal header/file handle remain resident, while records are read
+// from SPIFFS into caller-owned scratch space.
 class MeshInkMessageStore {
     MeshInkMessageStoreHeader header_{};
     mutable File file_{};
