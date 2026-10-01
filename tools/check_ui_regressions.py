@@ -883,3 +883,14 @@ assert "note_heard(key,6); // includes CLI/direct payloads" in runtime_source, "
 assert "note_heard(detail_contact_.id.pub_key,PUB_KEY_SIZE);" in runtime_source, "matched status/telemetry/path/trace replies advance LAST HEARD"
 assert "provider.heard(pending_direct.key,6)" in runtime_source, "valid end-to-end delivery ACK advances LAST HEARD"
 assert "memcpy(&detail_contact_.lastmod,item.frame+p,4)" in runtime_source, "discovered-contact details retain MeshCore lastmod when supplied"
+
+
+# Test48: Last Heard persistence. MeshInk-added lastmod updates must survive
+# reboot without abusing LAST ADVERT or forcing a flash write per packet.
+assert "local_mesh_schedule_contacts_save();" in runtime_source, "advancing Last Heard schedules contact persistence"
+assert "local_mesh_flush_contacts_save_if_due();" in runtime_source, "local mesh loop services deferred contact persistence"
+assert "local_contacts_save_due=millis()+5000UL;" in companion_source, "Last Heard persistence coalesces writes on MeshCore's five-second cadence"
+assert "store.saveContacts(&the_mesh,local_persist_contact);" in companion_source, "deferred save persists MeshCore ContactInfo including lastmod"
+assert "return contact.type!=ADV_TYPE_NONE;" in companion_source, "transient anonymous contacts are not persisted by Last Heard saves"
+assert "if(local_mesh_is_running())local_mesh_flush_contacts_save_now();" in unified_source, "deliberate local reboot flushes pending Last Heard timestamps first"
+assert "last_advert_timestamp=heard" not in runtime_source, "Last Heard persistence must never rewrite Last Advert"
