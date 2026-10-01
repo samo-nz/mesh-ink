@@ -270,7 +270,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         active_count_=0;
         StoredMessage item{};
         for(size_t i=0;i<store_.count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
-            if(!store_.read(i,item)||!matches(item))continue;
+            if(!store_.read(i,item)||item.sequence==0||!matches(item))continue;
             active_indices_[active_count_++]=(uint16_t)i;
         }
     }
@@ -355,7 +355,7 @@ public:
         const uint32_t sequence=store_.append(
             MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received,0,
             MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
-        if(sequence)rebuild_active();
+        if(sequence&&!active_channel_&&!memcmp(active_key_,key,6))rebuild_active();
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
@@ -364,7 +364,7 @@ public:
         const uint32_t sequence=store_.append(
             MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received,0,
             MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
-        if(sequence)rebuild_active();
+        if(sequence&&active_channel_&&active_key_[0]==channel)rebuild_active();
         refresh(true);ui_notify_message_received(true);
     }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
