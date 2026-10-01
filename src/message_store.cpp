@@ -308,7 +308,8 @@ bool MeshInkMessageStore::find_physical(uint32_t sequence,uint16_t& physical) co
 uint32_t MeshInkMessageStore::append(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
         const char* text,uint32_t timestamp,UiMessageState state,
-        uint32_t ack,MeshInkMessageOrigin origin){
+        uint32_t ack,MeshInkMessageOrigin origin,
+        bool has_rx,int8_t snr_q4,uint8_t path_len){
     if(!initialized_&&!begin())return 0;
 
     uint16_t physical;
@@ -329,8 +330,12 @@ uint32_t MeshInkMessageStore::append(
     item.state=(uint8_t)state;
     if(key&&key_len)memcpy(item.key,key,min(key_len,sizeof(item.key)));
     if(text)strncpy(item.text,text,sizeof(item.text)-1);
-    item.path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
+    item.path_len=has_rx?path_len:MESHINK_MESSAGE_PATH_UNKNOWN;
     item.origin=(uint8_t)origin;
+    if(has_rx){
+        item.snr_q4=snr_q4;
+        item.flags|=MESHINK_MESSAGE_HAS_RX;
+    }
 
     if(!file_)return 0;
     const bool record_ok=write_record_to(file_,physical,item);
@@ -384,6 +389,21 @@ void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t
     if(read_record(file_,p,item)){
         item.repeats=repeats;item.repeat_snr_q4=snr_q4;
         write_record_to(file_,p,item);file_.flush();
+    }
+}
+
+void MeshInkMessageStore::update_outgoing(
+        uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood){
+    uint16_t p;if(!find_physical(sequence,p)||!file_)return;
+    MeshInkStoredMessage item{};
+    if(read_record(file_,p,item)){
+        item.state=(uint8_t)state;
+        item.ack=ack;
+        item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+        if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+        else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+        write_record_to(file_,p,item);
+        file_.flush();
     }
 }
 
