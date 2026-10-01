@@ -894,3 +894,13 @@ assert "store.saveContacts(&the_mesh,local_persist_contact);" in companion_sourc
 assert "return contact.type!=ADV_TYPE_NONE;" in companion_source, "transient anonymous contacts are not persisted by Last Heard saves"
 assert "if(local_mesh_is_running())local_mesh_flush_contacts_save_now();" in unified_source, "deliberate local reboot flushes pending Last Heard timestamps first"
 assert "last_advert_timestamp=heard" not in runtime_source, "Last Heard persistence must never rewrite Last Advert"
+
+
+# Test49: GPS telemetry updates the saved MeshCore contact position so Node Info
+# and Maps keep the latest known coordinates after reboot.
+assert "contact->gps_lat=recent_info_.lat;" in runtime_source, "GPS telemetry persists latitude into ContactInfo"
+assert "contact->gps_lon=recent_info_.lon;" in runtime_source, "GPS telemetry persists longitude into ContactInfo"
+assert "detail_contact_.gps_lat=recent_info_.lat;" in runtime_source and "detail_contact_.gps_lon=recent_info_.lon;" in runtime_source, "open Node Info immediately reflects the persisted contact coordinates"
+assert "local_mesh_schedule_contacts_save();" in runtime_source, "GPS position changes use the deferred contact persistence path"
+assert 'strcpy(self->detail_position_source_,"SAVED POSITION")' in runtime_source, "reloaded telemetry-derived coordinates use a provenance-neutral saved-position label"
+assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinates must not be mislabelled as advert-derived"
