@@ -120,13 +120,13 @@ static const char* state_text(UiMessageState state){
         case UiMessageState::Retrying3:return "RETRYING 3/5";case UiMessageState::Retrying4:return "RETRYING 4/5";
         case UiMessageState::Retrying5:return "RETRYING 5/5";default:return "";}
 }
-static void format_last_seen(uint32_t timestamp,char out[72]){
-    if(!timestamp){strcpy(out,"LAST SEEN UNKNOWN");return;}
-    const uint32_t now=(uint32_t)time(nullptr),age=now>timestamp?now-timestamp:0;
-    if(age<60)strcpy(out,"LAST SEEN JUST NOW");
-    else if(age<3600)snprintf(out,72,"LAST SEEN %lu MIN AGO",(unsigned long)(age/60));
-    else if(age<86400)snprintf(out,72,"LAST SEEN %lu HOUR%s AGO",(unsigned long)(age/3600),age/3600==1?"":"S");
-    else snprintf(out,72,"LAST SEEN %lu DAY%s AGO",(unsigned long)(age/86400),age/86400==1?"":"S");
+static void format_last_heard(uint32_t timestamp,char out[72]){
+    if(!timestamp){strcpy(out,"UNKNOWN");return;}
+    const uint32_t now=meshink_rtc_current_time(),age=now>timestamp?now-timestamp:0;
+    if(age<60)strcpy(out,"JUST NOW");
+    else if(age<3600)snprintf(out,72,"%lu MIN AGO",(unsigned long)(age/60));
+    else if(age<86400)snprintf(out,72,"%lu HOUR%s AGO",(unsigned long)(age/3600),age/3600==1?"":"S");
+    else snprintf(out,72,"%lu DAY%s AGO",(unsigned long)(age/86400),age/86400==1?"":"S");
 }
 
 class MessageStore{
@@ -225,12 +225,11 @@ class MeshCoreUiProvider final:public UiDataProvider{
     uint8_t channel_unread_[MAX_UI_CHANNELS]{};
     DiscoveredContact discovered_[MAX_UI_ADVERTS]{};
     ContactInfo detail_contact_{};bool detail_valid_=false;bool detail_saved_=false;
-    // Successful info replies are live observations, not new adverts.
-    // Keep their timestamp and optional GPS in RAM without rewriting MeshCore
-    // contact storage or falsely updating last_advert_timestamp.
+    // Keep transient GPS telemetry provenance separate from MeshCore's contact
+    // timestamps. LAST HEARD comes from ContactInfo::lastmod; LAST ADVERT stays
+    // ContactInfo::last_advert_timestamp.
     struct RecentInfo {
         uint8_t key[PUB_KEY_SIZE]{};
-        uint32_t reply_millis=0;
         uint32_t gps_reply_millis=0; // local receipt, not the remote fix time
         int32_t lat=0,lon=0;
         bool heard=false,has_gps=false;
@@ -287,15 +286,25 @@ class MeshCoreUiProvider final:public UiDataProvider{
     bool has_recent_info(const uint8_t* full_key)const {
         return recent_info_.heard&&memcmp(recent_info_.key,full_key,PUB_KEY_SIZE)==0;
     }
+    void note_heard(const uint8_t* key,size_t key_len) {
+        if(!key||!key_len)return;
+        ContactInfo* contact=t5_mesh().lookupContactByPubKey(key,key_len);
+        if(!contact)return;
+        const uint32_t heard=meshink_rtc_current_time();
+        if(!heard)return;
+        contact->lastmod=heard; // our clock: this T5 positively heard this contact
+        if(detail_valid_&&!memcmp(detail_contact_.id.pub_key,contact->id.pub_key,PUB_KEY_SIZE))
+            detail_contact_.lastmod=heard;
+    }
     void note_info_reply() {
-        // Only a matched reply (not a request, send acknowledgement or timeout)
-        // establishes that the remote node was heard.
+        // Only a matched response proves that this node transmitted back to us.
+        // Mirror MeshCore's lastmod semantics without touching LAST ADVERT.
+        note_heard(detail_contact_.id.pub_key,PUB_KEY_SIZE);
         if(!has_recent_info(detail_contact_.id.pub_key)){
             recent_info_={};
             memcpy(recent_info_.key,detail_contact_.id.pub_key,PUB_KEY_SIZE);
         }
         recent_info_.heard=true;
-        recent_info_.reply_millis=millis();
     }
     const StoredMessage* last_for(const uint8_t* key,bool channel)const{
         for(size_t n=store_.count();n>0;--n){const auto& m=store_.at(n-1);if(m.kind==(uint8_t)(channel?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,key,channel?1:6)==0)return &m;}return nullptr;
@@ -325,8 +334,8 @@ public:
         ContactInfo contact{};auto iterator=t5_mesh().startContactsIterator();
         while(contact_count_<MAX_UI_CONTACTS&&iterator.hasNext(&t5_mesh(),contact)){
             auto& item=contacts_[contact_count_++];memset(&item,0,sizeof(item));bind(item);strncpy(item.title,contact.name[0]?contact.name:"UNNAMED NODE",sizeof(item.title)-1);
-            char role[20]{},seen[72]{};format_node_role(contact.type,role,sizeof(role));format_last_seen(contact.last_advert_timestamp,seen);
-            snprintf(item.subtitle,sizeof(item.subtitle),"%s  %s",role,seen);format_time(contact.last_advert_timestamp,item.time);memcpy(item.key,contact.id.pub_key,7);item.entry.unread=direct_unread(item.key);item.entry.node_type=contact.type;
+            char role[20]{},heard[72]{};format_node_role(contact.type,role,sizeof(role));format_last_heard(contact.lastmod,heard);
+            snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard);if(contact.lastmod)format_time(contact.lastmod,item.time);else strcpy(item.time,"--:--");memcpy(item.key,contact.id.pub_key,7);item.entry.unread=direct_unread(item.key);item.entry.node_type=contact.type;
             if(const auto* last=last_for(item.key,false)){auto& c=conversations_[conversation_count_++];memset(&c,0,sizeof(c));bind(c);strncpy(c.title,item.title,sizeof(c.title)-1);strncpy(c.subtitle,last->text,sizeof(c.subtitle)-1);format_time(last->timestamp,c.time);memcpy(c.key,item.key,7);c.entry.unread=direct_unread(item.key);c.entry.node_type=contact.type;}
         }
         for(int i=0;i<MAX_GROUP_CHANNELS&&channel_count_<MAX_UI_CHANNELS;++i){ChannelDetails ch{};if(!t5_mesh().getChannel(i,ch)||!ch.name[0])continue;
@@ -378,6 +387,7 @@ public:
         rebuild_active();
     }
     void received_direct(const uint8_t* key,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
+        note_heard(key,6); // includes CLI/direct payloads that upstream does not bump
         const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
         if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
         auto* stored=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
@@ -454,13 +464,15 @@ public:
             memcpy(detail_frame_,item.frame,item.len);detail_frame_len_=item.len;size_t p=1;
             memcpy(detail_contact_.id.pub_key,item.frame+p,PUB_KEY_SIZE);p+=PUB_KEY_SIZE;detail_contact_.type=item.frame[p++];detail_contact_.flags=item.frame[p++];detail_contact_.out_path_len=item.frame[p++];
             memcpy(detail_contact_.out_path,item.frame+p,MAX_PATH_SIZE);p+=MAX_PATH_SIZE;memcpy(detail_contact_.name,item.frame+p,32);detail_contact_.name[31]=0;p+=32;
-            memcpy(&detail_contact_.last_advert_timestamp,item.frame+p,4);p+=4;if(item.len>=p+8){memcpy(&detail_contact_.gps_lat,item.frame+p,4);p+=4;memcpy(&detail_contact_.gps_lon,item.frame+p,4);}detail_valid_=true;return true;
+            memcpy(&detail_contact_.last_advert_timestamp,item.frame+p,4);p+=4;
+            if(item.len>=p+8){memcpy(&detail_contact_.gps_lat,item.frame+p,4);p+=4;memcpy(&detail_contact_.gps_lon,item.frame+p,4);p+=4;if(item.len>=p+4)memcpy(&detail_contact_.lastmod,item.frame+p,4);}
+            detail_valid_=true;return true;
         }return false;
     }
     bool active_node_details(UiNodeDetails& out)const override{
         auto* self=const_cast<MeshCoreUiProvider*>(this);if(!detail_valid_){ContactInfo contact{};if(!active_contact(contact))return false;self->detail_contact_=contact;self->detail_valid_=self->detail_saved_=true;}
-        // Re-read the contact on each UI render: later advertisements may
-        // update its stored position and advert timestamp while Info is open.
+        // Re-read the contact on each UI render: adverts, messages, paths and
+        // matched replies may update its stored position/timestamps while Info is open.
         if(detail_saved_) {
             if(const ContactInfo* current=t5_mesh().lookupContactByPubKey(
                     detail_contact_.id.pub_key,PUB_KEY_SIZE))
@@ -475,15 +487,8 @@ public:
             format_short_age(advert_age,self->detail_advert_age_,
                              sizeof(self->detail_advert_age_));
         else strcpy(self->detail_advert_age_,"UNKNOWN");
-        format_last_seen(detail_contact_.last_advert_timestamp,self->detail_seen_);
+        format_last_heard(detail_contact_.lastmod,self->detail_seen_);
         const bool recent=has_recent_info(detail_contact_.id.pub_key);
-        if(recent){
-            char age[24];
-            format_short_age((uint32_t)(millis()-recent_info_.reply_millis)/1000U,
-                             age,sizeof(age));
-            snprintf(self->detail_seen_,sizeof(self->detail_seen_),
-                     "INFO REPLY %s",age);
-        }
         const uint8_t hops=detail_contact_.out_path_len&0x3F;
         if(detail_contact_.out_path_len==OUT_PATH_UNKNOWN)
             strcpy(self->detail_route_,"FLOOD / UNKNOWN");
@@ -816,7 +821,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.note_direct_route(pending_direct.sequence,frame[1]!=0);provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
-    else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
+    else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.note_heard(pending_direct.key,6);provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
     else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct command failed error=%u\n",len>1?frame[1]:0);}
     else if(frame[0]==1&&pending_stats.active){finish_stats(true);}
     else if((frame[0]==0||frame[0]==1)&&pending_advert>=0){const bool flood=pending_advert==1;ui_notify_advert_result(flood,frame[0]==0);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] %s advert action result=%s\n",flood?"flood":"zero-hop",frame[0]==0?"OK":"FAILED");pending_advert=-1;}
