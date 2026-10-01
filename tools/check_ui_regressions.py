@@ -1027,5 +1027,5 @@ assert "ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard)
 assert "ui_action_button(\"ADVERT FLOOD\",advert_button,true);" in source and "ui_action_button(\"POWER OFF\",power_button,false);" in source, "Quick Settings actions use shared polished buttons"
 assert "rounded_box(start_rect" in source and "ui_action_button(\"SAVE SCHEDULE\",save_rect,true);" in source, "Night Schedule uses rounded selected fields and action"
 assert "ui_section_card(info);" in source[source.index("static void draw_about"):], "About metadata is grouped into a rounded card"
-assert "static void box(int x" in source and "box(" not in render_body.replace("rounded_box(", ""), "legacy square box helper is no longer used by screen rendering"
+assert "static void box(int x" not in source and "box(" not in render_body.replace("rounded_box(", ""), "legacy square box primitive is fully removed from screen rendering"
 assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "full visual polish still adds no dynamic memory"
