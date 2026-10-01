@@ -65,12 +65,15 @@ public:
     uint32_t append(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                     const char* text,uint32_t timestamp,UiMessageState state,
                     uint32_t ack=0,
-                    MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi);
+                    MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi,
+                    bool has_rx=false,int8_t snr_q4=0,
+                    uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN);
     void update_state(uint32_t sequence,UiMessageState state);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
     void update_route(uint32_t sequence,bool flood);
     void update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4);
+    void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);
     bool mark_delivered_by_ack(uint32_t ack);
     uint32_t find_matching_outgoing(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                                     uint32_t timestamp,const char* text) const;
