@@ -1267,16 +1267,33 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
 }
 static void draw_list_entry(const UiListEntry& item,int y) {
     const MeshInkUiLayout& layout=portrait_layout();
-    box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);
+    rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,
+                max(ui_w(12),ui_h(12)));
     const bool typed=item.node_type!=0;
-    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+ui_h(12));
-    text(item.title,typed?layout.content_text_x+ui_w(42):layout.content_text_x,
-         y+ui_h(16),3,0,true);
-    text(item.time,layout.content_right-(int)strlen(item.time)*12-
-         layout.text_inset,y+ui_h(20),2,0,true);
-    draw_wrapped(item.subtitle,layout.content_text_x,y+ui_h(60),36,2,0,false,2);
+    const int title_x=typed?layout.content_text_x+ui_w(42):layout.content_text_x;
+    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+ui_h(15));
+
+    const int time_width=ui_text_width(item.time,2);
+    const int time_x=layout.content_right-layout.text_inset-time_width;
+    ui_text(item.time,time_x,y+ui_h(19),2,0,true);
+    ui_text_fit(item.title,title_x,y+ui_h(15),
+                max(ui_w(120),time_x-title_x-ui_w(16)),3,0,true);
+
+    // Body copy is deliberately scale 3 on the 540 px T5. Proportional
+    // advances keep two useful lines in the existing 142 px row without
+    // shrinking the text back to the old small metadata size.
+    ui_draw_wrapped(item.subtitle,layout.content_text_x,y+ui_h(57),
+                    layout.outer_width-2*layout.text_inset,3,0,false,2);
+
     if(item.unread){
-        meshink_display_fill_rect({layout.width-ui_w(58),y+ui_h(94),ui_w(20),ui_h(20)},0,fb);
+        char unread[5];snprintf(unread,sizeof(unread),"%u",(unsigned)item.unread);
+        const int badge_h=ui_h(26);
+        const int badge_w=max(ui_w(34),ui_text_width(unread,2)+ui_w(18));
+        const int badge_x=layout.content_right-layout.text_inset-badge_w;
+        const int badge_y=y+layout.list_row_height-ui_h(32);
+        rounded_box(badge_x,badge_y,badge_w,badge_h,badge_h/2,true);
+        ui_text(unread,badge_x+(badge_w-ui_text_width(unread,2))/2,
+                badge_y+ui_h(6),2,0xFF,true);
     }
 }
 
@@ -1564,25 +1581,62 @@ static void draw_maps() {
     draw_bottom_nav(2);
 }
 
-static int wrapped_line_count(const char* value,int chars_per_line) {
-    int lines=0;const char* cursor=value;
-    while(*cursor){while(*cursor==' ')++cursor;if(!*cursor)break;int remaining=strlen(cursor),take=min(chars_per_line,remaining);
-        if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}cursor+=max(1,take);++lines;}
-    return max(1,lines);
+static void message_footer_text(const UiMessage& message,char out[72]) {
+    const char* state=(message.network&&message.network[0])?message.network:"";
+    if(!state[0]&&message.outgoing){
+        switch(message.state){
+            case UiMessageState::Sending:state="SENDING";break;
+            case UiMessageState::Sent:state="SENT";break;
+            case UiMessageState::Delivered:state="DELIVERED";break;
+            case UiMessageState::Failed:state="FAILED";break;
+            case UiMessageState::Retrying1:state="RETRYING 1/5";break;
+            case UiMessageState::Retrying2:state="RETRYING 2/5";break;
+            case UiMessageState::Retrying3:state="RETRYING 3/5";break;
+            case UiMessageState::Retrying4:state="RETRYING 4/5";break;
+            case UiMessageState::Retrying5:state="RETRYING 5/5";break;
+            default:break;
+        }
+    }
+    snprintf(out,72,"%s%s%s",message.time,state[0]?"  ":"",state);
+}
+
+struct MessageBubbleGeometry { int x;int width;int height;int text_width; };
+
+static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
+    char footer[72]{};message_footer_text(message,footer);
+    const int screen_width=meshink_display_logical_width();
+    const int pad=ui_w(18);
+    const int max_width=ui_w(456);
+    const int min_width=ui_w(210);
+    const int body_natural=min(max_width-2*pad,ui_text_width(message.text,3));
+    const int footer_natural=ui_text_width(footer,2);
+    const int width=min(max_width,max(min_width,
+        max(body_natural+2*pad,footer_natural+2*pad)));
+    const int text_width=max(ui_w(80),width-2*pad);
+    const int lines=ui_wrapped_line_count(message.text,text_width,3);
+    const int height=max(ui_h(96),lines*ui_h(29)+ui_h(58));
+    const int margin=ui_x(12);
+    const int x=message.outgoing?screen_width-margin-width:margin;
+    return {x,width,height,text_width};
 }
 
 static int message_bubble_height(const UiMessage& message){
-    return max(ui_h(104),wrapped_line_count(message.text,23)*ui_h(29)+ui_h(48));
+    return message_bubble_geometry(message).height;
 }
 
 static void draw_message_bubble(const UiMessage& message,int y,int h) {
-    const int x=message.outgoing?ui_x(82):ui_x(12),w=ui_w(446);
-    box(x,y,w,h,message.outgoing);
-    draw_wrapped(message.text,x+ui_w(16),y+ui_h(12),23,3,message.outgoing?0xFF:0,true,8);
-    char footer[72];const char* state=(message.network&&message.network[0])?message.network:"";
-    if(!state[0]&&message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;case UiMessageState::Retrying1:state="RETRYING 1/5";break;case UiMessageState::Retrying2:state="RETRYING 2/5";break;case UiMessageState::Retrying3:state="RETRYING 3/5";break;case UiMessageState::Retrying4:state="RETRYING 4/5";break;case UiMessageState::Retrying5:state="RETRYING 5/5";break;default:break;}}
-    snprintf(footer,sizeof(footer),"%s%s%s",message.time,state[0]?"  ":"",state);
-    text(footer,x+w-(int)strlen(footer)*12-ui_w(12),y+h-ui_h(28),2,message.outgoing?0xFF:0,true);
+    MessageBubbleGeometry geometry=message_bubble_geometry(message);
+    geometry.height=h; // paging and drawing share the exact measured height.
+    const int radius=max(ui_w(14),ui_h(14));
+    rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing);
+    const uint8_t color=message.outgoing?0xFF:0;
+    ui_draw_wrapped(message.text,geometry.x+ui_w(18),y+ui_h(14),
+                    geometry.text_width,3,color,false,8);
+
+    char footer[72]{};message_footer_text(message,footer);
+    const int footer_width=ui_text_width(footer,2);
+    ui_text(footer,geometry.x+geometry.width-ui_w(14)-footer_width,
+            y+geometry.height-ui_h(27),2,color,true);
 }
 
 static size_t chat_fill_backwards(size_t end,int available){
@@ -1648,12 +1702,16 @@ static int chat_history_available(){
 }
 
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
-    box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
-    const int text_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,540);
+    rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
+                max(ui_w(12),ui_h(12)));
+    const int inset=meshink_keyboard::scale_axis(16,metrics.width,540);
+    const int text_x=metrics.entry.x+inset;
+    const int text_width=metrics.entry.width-2*inset;
     if(compose_text[0])
-        draw_wrapped(compose_text,text_x,metrics.entry.y+ui_h(8),25,3,0,true,2);
+        ui_draw_wrapped(compose_text,text_x,metrics.entry.y+ui_h(9),
+                        text_width,3,0,false,2);
     else
-        text("Enter text",text_x,metrics.entry.y+ui_h(24),2,0,false);
+        ui_text("Write a message...",text_x,metrics.entry.y+ui_h(18),3,0,false);
 }
 
 static void draw_chat(bool channel) {
@@ -1688,9 +1746,11 @@ static void draw_chat(bool channel) {
         const MeshInkUiLayout& layout=portrait_layout();
         const int compose_y=layout.bottom_nav_top-ui_h(12);
         draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));
-        box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height);
-        text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",
-             layout.content_text_x,compose_y+ui_h(20),2,0,true);
+        rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
+                    max(ui_w(12),ui_h(12)));
+        const char* prompt=compose_text[0]?compose_text:"Write a message...";
+        ui_text_fit(prompt,layout.content_text_x,compose_y+ui_h(17),
+                    layout.outer_width-2*layout.text_inset,3,0,compose_text[0]);
     }
     t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
