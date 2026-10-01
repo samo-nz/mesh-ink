@@ -80,6 +80,25 @@ MyMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tabl
 MyMesh& t5_mesh() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
+static uint32_t local_contacts_save_due=0;
+static bool local_persist_contact(const ContactInfo& contact) {
+    return contact.type!=ADV_TYPE_NONE;
+}
+void local_mesh_schedule_contacts_save() {
+    // Match upstream MeshCore's lazy contact-write cadence to coalesce bursts
+    // of messages/telemetry and avoid unnecessary flash writes.
+    local_contacts_save_due=millis()+5000UL;
+}
+void local_mesh_flush_contacts_save_now() {
+    if(!local_contacts_save_due)return;
+    store.saveContacts(&the_mesh,local_persist_contact);
+    local_contacts_save_due=0;
+}
+void local_mesh_flush_contacts_save_if_due() {
+    if(local_contacts_save_due&&(int32_t)(millis()-local_contacts_save_due)>=0)
+        local_mesh_flush_contacts_save_now();
+}
+
 void companion_setup() {
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
     meshink_show_companion_notice();
