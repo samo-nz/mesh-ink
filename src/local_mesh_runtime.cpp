@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <time.h>
 #include "local_mesh_runtime.h"
+#include "message_store.h"
 #include "companion_runtime.h"
 #include "ui_onboarding.h"
 #include "hardware/gps.h"
@@ -21,10 +22,7 @@ constexpr size_t MAX_UI_CONTACTS=16;
 constexpr size_t MAX_MAP_NODES=50;
 constexpr size_t MAX_UI_CHANNELS=8;
 constexpr size_t MAX_UI_ADVERTS=16;
-constexpr size_t MAX_STORED_MESSAGES=96;
-constexpr uint32_t STORE_MAGIC=0x354D3554; // T5M5
-constexpr uint16_t STORE_VERSION=1;
-constexpr char STORE_PATH[]="/ui_messages.bin";
+constexpr size_t MAX_STORED_MESSAGES=MESHINK_MESSAGE_CAPACITY;
 constexpr uint32_t CREDENTIAL_MAGIC=0x3143524D; // MRC1
 constexpr size_t MAX_SAVED_CREDENTIALS=16;
 struct SavedCredential{uint8_t key[PUB_KEY_SIZE]{};char password[16]{};bool valid=false;};
@@ -75,21 +73,8 @@ static void reset_gps_duty_cycle(){
     gps_duty_wake_stamp=0;
 }
 
-enum class MessageKind:uint8_t{Direct=0,Channel=1};
-struct StoreHeader{uint32_t magic;uint16_t version;uint16_t capacity;uint16_t head;uint16_t count;uint32_t sequence;};
-struct StoredMessage{uint32_t sequence;uint32_t timestamp;uint32_t ack;uint8_t kind;uint8_t state;uint8_t key[7];char text[145];};
-struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char time[10]{};uint8_t key[7]{};uint8_t channel_index=0;};
-struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};char network[52]{};};
-struct MessageRfMeta{
-    uint32_t sequence=0;
-    int8_t snr_q4=0;
-    int8_t repeat_snr_q4=0;
-    uint8_t path_len=0xFF;
-    uint8_t repeats=0;
-    bool has_rx=false;
-    bool route_known=false;
-    bool route_flood=false;
-};
+using MessageKind=MeshInkMessageKind;
+using StoredMessage=MeshInkStoredMessage;
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
 constexpr size_t DISCOVERED_CONTACT_CACHE_BYTES=192;
 struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[DISCOVERED_CONTACT_CACHE_BYTES]{};uint8_t len=0;};
@@ -129,94 +114,9 @@ static void format_last_heard(uint32_t timestamp,char out[72]){
     else snprintf(out,72,"%lu DAY%s AGO",(unsigned long)(age/86400),age/86400==1?"":"S");
 }
 
-class MessageStore{
-    StoreHeader header_{STORE_MAGIC,STORE_VERSION,MAX_STORED_MESSAGES,0,0,0};
-    StoredMessage records_[MAX_STORED_MESSAGES]{};
-    void write_header(){
-        File f=SPIFFS.open(STORE_PATH,"r+");
-        if(!f){Serial.println("[T5-STORE] ERROR opening message header for write");return;}
-        const bool seek_ok=f.seek(0);
-        const size_t written=seek_ok?f.write((uint8_t*)&header_,sizeof(header_)):0;
-        f.close();
-        if(!seek_ok||written!=sizeof(header_))
-            Serial.printf("[T5-STORE] ERROR writing message header seek=%u bytes=%u/%u\n",
-                          seek_ok?1U:0U,(unsigned)written,(unsigned)sizeof(header_));
-    }
-    void write_record(uint16_t physical){
-        if(physical>=MAX_STORED_MESSAGES){
-            Serial.printf("[T5-STORE] ERROR invalid record index=%u\n",(unsigned)physical);
-            return;
-        }
-        File f=SPIFFS.open(STORE_PATH,"r+");
-        if(!f){Serial.println("[T5-STORE] ERROR opening message record for write");return;}
-        const size_t offset=sizeof(StoreHeader)+physical*sizeof(StoredMessage);
-        const bool seek_ok=f.seek(offset);
-        const size_t written=seek_ok?f.write((uint8_t*)&records_[physical],sizeof(StoredMessage)):0;
-        f.close();
-        if(!seek_ok||written!=sizeof(StoredMessage))
-            Serial.printf("[T5-STORE] ERROR writing record=%u seek=%u bytes=%u/%u\n",
-                          (unsigned)physical,seek_ok?1U:0U,
-                          (unsigned)written,(unsigned)sizeof(StoredMessage));
-    }
-    void create(){
-        header_={STORE_MAGIC,STORE_VERSION,MAX_STORED_MESSAGES,0,0,0};memset(records_,0,sizeof(records_));
-        File f=SPIFFS.open(STORE_PATH,"w");if(!f){Serial.println("[T5-STORE] ERROR unable to create message store");return;}
-        const size_t header_written=f.write((uint8_t*)&header_,sizeof(header_));
-        const size_t records_written=f.write((uint8_t*)records_,sizeof(records_));
-        f.close();
-        if(header_written!=sizeof(header_)||records_written!=sizeof(records_)){
-            Serial.printf("[T5-STORE] ERROR creating store header=%u/%u records=%u/%u\n",
-                          (unsigned)header_written,(unsigned)sizeof(header_),
-                          (unsigned)records_written,(unsigned)sizeof(records_));
-            return;
-        }
-        T5_DEBUGF(T5_LOG_MESH,"[T5-STORE] created fixed store: %u messages, %u bytes\n",(unsigned)MAX_STORED_MESSAGES,(unsigned)(sizeof(header_)+sizeof(records_)));
-    }
-public:
-    void begin(){
-        File f=SPIFFS.open(STORE_PATH,"r");
-        if(!f||f.size()!=(int)(sizeof(header_)+sizeof(records_))){
-            if(f)f.close();
-            T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] message store missing/size mismatch; recreating");
-            create();return;
-        }
-        const size_t header_read=f.read((uint8_t*)&header_,sizeof(header_));
-        const size_t records_read=f.read((uint8_t*)records_,sizeof(records_));
-        f.close();
-        if(header_read!=sizeof(header_)||records_read!=sizeof(records_)){
-            Serial.printf("[T5-STORE] ERROR short read header=%u/%u records=%u/%u; recreating\n",
-                          (unsigned)header_read,(unsigned)sizeof(header_),
-                          (unsigned)records_read,(unsigned)sizeof(records_));
-            create();return;
-        }
-        if(header_.magic!=STORE_MAGIC||header_.version!=STORE_VERSION||header_.capacity!=MAX_STORED_MESSAGES||header_.head>=MAX_STORED_MESSAGES||header_.count>MAX_STORED_MESSAGES){
-            Serial.printf("[T5-STORE] invalid header magic=%08lx version=%u capacity=%u head=%u count=%u; recreating\n",
-                          (unsigned long)header_.magic,(unsigned)header_.version,
-                          (unsigned)header_.capacity,(unsigned)header_.head,
-                          (unsigned)header_.count);
-            create();return;
-        }
-        T5_DEBUGF(T5_LOG_MESH,"[T5-STORE] loaded %u/%u messages; oldest records evicted at capacity\n",header_.count,header_.capacity);
-    }
-    size_t count()const{return header_.count;}
-    const StoredMessage& at(size_t logical)const{return records_[(header_.head+logical)%MAX_STORED_MESSAGES];}
-    StoredMessage* append(MessageKind kind,const uint8_t* key,size_t key_len,const char* text,uint32_t timestamp,UiMessageState state,uint32_t ack=0){
-        uint16_t physical;
-        if(header_.count<MAX_STORED_MESSAGES){physical=(header_.head+header_.count)%MAX_STORED_MESSAGES;header_.count++;}
-        else{physical=header_.head;header_.head=(header_.head+1)%MAX_STORED_MESSAGES;T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] capacity reached; evicting oldest message");}
-        StoredMessage& item=records_[physical];memset(&item,0,sizeof(item));item.sequence=++header_.sequence;item.timestamp=timestamp;
-        item.ack=ack;item.kind=(uint8_t)kind;item.state=(uint8_t)state;memcpy(item.key,key,min(key_len,sizeof(item.key)));strncpy(item.text,text,sizeof(item.text)-1);
-        write_record(physical);write_header();return &item;
-    }
-    void update_state(uint32_t sequence,UiMessageState state){
-        for(size_t i=0;i<header_.count;++i){uint16_t p=(header_.head+i)%MAX_STORED_MESSAGES;if(records_[p].sequence==sequence){records_[p].state=(uint8_t)state;write_record(p);return;}}
-    }
-};
-
 class MeshCoreUiProvider final:public UiDataProvider{
     ListStorage contacts_[MAX_UI_CONTACTS]{},channels_[MAX_UI_CHANNELS]{},conversations_[MAX_UI_CONTACTS+MAX_UI_CHANNELS]{},adverts_[MAX_UI_ADVERTS]{};
     MessageView active_messages_[MAX_STORED_MESSAGES]{};
-    MessageRfMeta message_meta_[MAX_STORED_MESSAGES]{};
     UiMapNode map_nodes_[MAX_MAP_NODES]{};
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
@@ -241,7 +141,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     bool detail_request_active_=false,detail_login_active_=false,detail_authenticated_=false,request_gps_received_=false;
     UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
     uint8_t detail_frame_[192]{};uint8_t detail_frame_len_=0;
-    MessageStore store_;
+    MeshInkMessageStore& store_=meshink_message_store();
     static void bind(ListStorage& item){item.entry.title=item.title;item.entry.subtitle=item.subtitle;item.entry.time=item.time;}
     static void format_short_age(uint32_t seconds,char* out,size_t len){
         if(seconds<60)snprintf(out,len,"JUST NOW");
@@ -250,36 +150,29 @@ class MeshCoreUiProvider final:public UiDataProvider{
         else snprintf(out,len,"%luD AGO",(unsigned long)(seconds/86400));
     }
     static void bind(MessageView& item){item.entry.text=item.text;item.entry.time=item.time;item.entry.network=item.network;}
-    MessageRfMeta& meta_for(uint32_t sequence){
-        auto& meta=message_meta_[sequence%MAX_STORED_MESSAGES];
-        if(meta.sequence!=sequence){meta=MessageRfMeta{};meta.sequence=sequence;}
-        return meta;
-    }
-    const MessageRfMeta* find_meta(uint32_t sequence)const{
-        const auto& meta=message_meta_[sequence%MAX_STORED_MESSAGES];
-        return meta.sequence==sequence?&meta:nullptr;
-    }
     void format_message_network(const StoredMessage& stored,char* out,size_t len)const{
         if(!out||!len)return;out[0]=0;
         const UiMessageState state=(UiMessageState)stored.state;
-        const MessageRfMeta* meta=find_meta(stored.sequence);
         if(state!=UiMessageState::Received){
-            if(stored.kind==(uint8_t)MessageKind::Channel&&meta&&meta->repeats){
-                snprintf(out,len,"HEARD %u REPEAT%s",(unsigned)meta->repeats,meta->repeats==1?"":"S");
+            if(stored.kind==(uint8_t)MessageKind::Channel&&stored.repeats){
+                snprintf(out,len,"HEARD %u REPEAT%s",(unsigned)stored.repeats,stored.repeats==1?"":"S");
                 return;
             }
             const char* base=state_text(state);
-            if(meta&&meta->route_known&&base[0]&&state!=UiMessageState::Sending&&state!=UiMessageState::Failed)
-                snprintf(out,len,"%s %s",base,meta->route_flood?"FLOOD":"DIRECT");
+            if((stored.flags&MESHINK_MESSAGE_ROUTE_KNOWN)&&base[0]&&
+               state!=UiMessageState::Sending&&state!=UiMessageState::Failed)
+                snprintf(out,len,"%s %s",base,
+                         (stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)?"FLOOD":"DIRECT");
             else if(base[0]){strncpy(out,base,len-1);out[len-1]=0;}
             return;
         }
-        if(meta&&meta->has_rx){
-            const uint8_t hops=meta->path_len&0x3F;
-            if(meta->path_len==OUT_PATH_UNKNOWN)
-                snprintf(out,len,"SNR %.1f DB  DIRECT",meta->snr_q4/4.0f);
+        if(stored.flags&MESHINK_MESSAGE_HAS_RX){
+            const uint8_t hops=stored.path_len&0x3F;
+            if(stored.path_len==OUT_PATH_UNKNOWN)
+                snprintf(out,len,"SNR %.1f DB  DIRECT",stored.snr_q4/4.0f);
             else
-                snprintf(out,len,"SNR %.1f DB  %u HOP%s",meta->snr_q4/4.0f,(unsigned)hops,hops==1?"":"S");
+                snprintf(out,len,"SNR %.1f DB  %u HOP%s",stored.snr_q4/4.0f,
+                         (unsigned)hops,hops==1?"":"S");
         }
     }
     bool matches(const StoredMessage& m)const{return m.kind==(uint8_t)(active_channel_?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,active_key_,active_channel_?1:6)==0;}
@@ -393,24 +286,25 @@ public:
         const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
         if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
         auto* stored=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
-        if(has_rf){auto& meta=meta_for(stored->sequence);meta.has_rx=true;meta.snr_q4=snr_q4;meta.path_len=path_len;}
+        if(has_rf&&stored)store_.update_rx(stored->sequence,snr_q4,path_len);
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
         if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
         auto* stored=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
-        if(has_rf){auto& meta=meta_for(stored->sequence);meta.has_rx=true;meta.snr_q4=snr_q4;meta.path_len=path_len;}
+        if(has_rf&&stored)store_.update_rx(stored->sequence,snr_q4,path_len);
         refresh(true);ui_notify_message_received(true);
     }
-    uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){auto* m=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return m->sequence;}
-    uint32_t queue_direct(const char* text,uint32_t timestamp){auto* m=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return m->sequence;}
-    void update_message(uint32_t sequence,UiMessageState state){store_.update_state(sequence,state);rebuild_active();ui_request_data_refresh("message-state");}
+    uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){auto* m=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return m?m->sequence:0;}
+    uint32_t queue_direct(const char* text,uint32_t timestamp){auto* m=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return m?m->sequence:0;}
+    void update_message(uint32_t sequence,UiMessageState state){if(sequence)store_.update_state(sequence,state);rebuild_active();ui_request_data_refresh("message-state");}
+    void note_direct_ack(uint32_t sequence,uint32_t ack){if(sequence)store_.update_ack(sequence,ack);}
     void note_direct_route(uint32_t sequence,bool flood){
-        auto& meta=meta_for(sequence);meta.route_known=true;meta.route_flood=flood;rebuild_active();ui_request_data_refresh("message-route");
+        if(sequence)store_.update_route(sequence,flood);rebuild_active();ui_request_data_refresh("message-route");
     }
     void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
-        auto& meta=meta_for(sequence);meta.repeats=repeats;meta.repeat_snr_q4=snr_q4;rebuild_active();ui_request_data_refresh("channel-repeat");
+        if(sequence)store_.update_repeat(sequence,repeats,snr_q4);rebuild_active();ui_request_data_refresh("channel-repeat");
     }
     size_t map_node_count() const override {return map_node_count_;}
     bool map_node(size_t index,UiMapNode& out) const override {
@@ -831,7 +725,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
-    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.note_direct_route(pending_direct.sequence,frame[1]!=0);provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
+    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.note_direct_ack(pending_direct.sequence,pending_direct.ack);provider.note_direct_route(pending_direct.sequence,frame[1]!=0);provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
     else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.heard(pending_direct.key,6);provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
     else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct command failed error=%u\n",len>1?frame[1]:0);}
     else if(frame[0]==1&&pending_stats.active){finish_stats(true);}
