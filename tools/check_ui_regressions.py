@@ -302,10 +302,10 @@ contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbo
 contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
 contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use thicker line primitives")
 contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
-contains("ui_draw_wrapped(node.status,layout.section_margin,ui_y(294),layout.section_width,3,0,true,14);", "received status text is larger, proportional and scaled")
-contains("ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),layout.section_width,3,0,true,4);", "received telemetry text is larger, proportional and scaled")
+contains("const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;", "received status text keeps scale 3 when it fits and scale 2 for long counter lines")
+contains("ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2", "received telemetry uses the largest scale that preserves all four visible lines")
 contains("ui_draw_wrapped(node.path,layout.section_margin,ui_y(260),layout.section_width,3,0,true,3);", "received path text is larger, proportional and scaled")
-contains("ui_draw_wrapped(node.trace,layout.section_margin,ui_y(400),layout.section_width,2,0,true,7);", "trace results have a dedicated proportional readable area")
+contains("ui_draw_wrapped(node.trace,layout.section_margin,ui_y(400),layout.section_width,2,0,true,9);", "trace results use the available vertical space for up to nine readable lines")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
 contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
 contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry")
@@ -1058,6 +1058,9 @@ assert "const int natural=ui_text_width(message,scale)+ui_w(48);" in source and 
 assert "const int width=ui_text_width(value,scale);" in source[source.index("static void standby_centred"):], "standby labels use proportional centering"
 assert "for (const auto& g : FONT) if (g.c == '?') return g.r;" in source, "unsupported text is visible rather than silently blank"
 assert "ui_text_width(start,3)" in source and "ui_text_width(end,3)" in source, "Night Schedule time values are measured and right-aligned"
+assert "const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;" in source, "dense Node Status counters shrink before wrapping can hide later metrics"
+assert "ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2" in source, "dense telemetry shrinks only when needed to keep its allotted four lines"
+assert "layout.section_width,2,0,true,9" in source, "Trace Route uses the safe extra vertical room for two more lines"
 assert "ui_text_fit(node.position_source,layout.detail_value_x,ui_y(448)," in source, "two-line Overview position stays clear of its source label"
 assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
