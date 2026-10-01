@@ -19,7 +19,7 @@ struct UiMessage {
     const char* time;
     bool outgoing;
     UiMessageState state;
-    const char* network; // transient RF/route metadata; message-store format is unchanged
+    const char* network; // persisted RF/route metadata when available
 };
 
 struct UiNodeDetails {
