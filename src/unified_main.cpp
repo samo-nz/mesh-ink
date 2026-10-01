@@ -34,6 +34,7 @@ static void check_companion_wireless_state(const char* phase,const MeshInkWirele
 }
 
 void request_companion_mode() {
+    if(local_mesh_is_running())local_mesh_flush_contacts_save_now();
     Preferences mode;
     if (mode.begin("t5-boot", false)) {
         mode.putBool("companion_once", true);
