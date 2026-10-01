@@ -153,7 +153,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert re.fullmatch(r"1\.9\.1-test\.\d+", firmware_version.group(1)), "testing firmware version keeps the 1.9.1-test.N format"
+assert re.fullmatch(r"(?:1\.9\.1-test\.\d+|\d+\.\d+\.\d+)", firmware_version.group(1)), "firmware version must be a numbered test build or stable semantic version"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
 # standby retains the lower-power five-minute cadence. Event-driven redraws may
