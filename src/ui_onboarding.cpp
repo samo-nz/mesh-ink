@@ -1164,8 +1164,8 @@ static void draw_presets() {
     draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect back_rect=meshink_preset_back_rect(layout);
-    text("< BACK",back_rect.x+ui_w(12),back_rect.y+ui_h(14),2,0,true);
-    centred("RADIO PRESETS",ui_y(92),4,0,true);
+    ui_text("< BACK",back_rect.x+ui_w(12),back_rect.y+ui_h(14),2,0,true);
+    ui_centred("RADIO PRESETS",ui_y(92),4,0,true);
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
@@ -1183,7 +1183,7 @@ static void draw_presets() {
     const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
     ui_action_button("NEXT",next_rect,preset_page+1>=page_count);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
-    centred(page_text,ui_y(890),2,0,true);
+    ui_centred(page_text,ui_y(890),2,0,true);
 }
 
 static void draw_companion_confirm() {
@@ -1191,8 +1191,8 @@ static void draw_companion_confirm() {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect cancel=meshink_confirm_left_rect(layout,500);
     const MeshInkUiRect start=meshink_confirm_right_rect(layout,500);
-    centred("BLUETOOTH",ui_y(120),5,0,true);centred("COMPANION MODE",ui_y(180),4,0,true);
-    centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
+    ui_centred("BLUETOOTH",ui_y(120),5,0,true);ui_centred("COMPANION MODE",ui_y(180),4,0,true);
+    ui_centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);ui_centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
     ui_action_button("CANCEL",cancel,false);
     ui_action_button("START",start,true);
 }
@@ -1202,13 +1202,13 @@ static void draw_shutdown_confirm() {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect cancel=meshink_confirm_left_rect(layout,650);
     const MeshInkUiRect shutdown=meshink_confirm_right_rect(layout,650);
-    centred("SHUT DOWN",ui_y(120),5,0,true);
-    centred("FULL BATTERY POWER CUT",ui_y(245),3,0,true);
-    centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
-    centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
+    ui_centred("SHUT DOWN",ui_y(120),5,0,true);
+    ui_centred("FULL BATTERY POWER CUT",ui_y(245),3,0,true);
+    ui_centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
+    ui_centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
-    centred(wake.confirm_battery,ui_y(445),3,0,true);
-    centred(wake.confirm_external,ui_y(500),3,0,true);
+    ui_centred(wake.confirm_battery,ui_y(445),3,0,true);
+    ui_centred(wake.confirm_external,ui_y(500),3,0,true);
     ui_action_button("CANCEL",cancel,false);
     ui_action_button("SHUT DOWN",shutdown,true);
 }
@@ -1243,7 +1243,7 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     if(back){
         const MeshInkUiRect back_rect=meshink_header_back_rect(layout);
         rounded_box(back_rect,max(ui_w(10),ui_h(10)),true);
-        text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
+        ui_text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
     }
     ui_centred(title,layout.header_title_y,4,0,true);
     if(action){
@@ -1274,7 +1274,7 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
     else if(type==(uint8_t)UiNodeRole::Repeater){meshink_display_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);meshink_display_fill_rect({x+7,y+28,15,5},0,fb);}
     else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);meshink_display_fill_rect({x+8,y+8,5,5},0,fb);meshink_display_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
     else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
-    else {thick_rect(x+2,y+3,25,27);text("?",x+8,y+8,2,0,true);}
+    else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
 }
 static void draw_list_entry(const UiListEntry& item,int y) {
     const MeshInkUiLayout& layout=portrait_layout();
@@ -1335,7 +1335,7 @@ static void draw_page_indicator(size_t page,size_t pages,int y) {
     snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",(unsigned)(page+1),(unsigned)pages);
     const int text_width=(int)strlen(page_text)*12;
     const int text_left=(meshink_display_logical_width()-text_width)/2;
-    centred(page_text,y,2,0,true);
+    ui_centred(page_text,y,2,0,true);
     if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
     if(page+1<pages)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
@@ -1348,11 +1348,11 @@ static void draw_contacts() {
     draw_app_header("CONTACTS");
     // The model is fully populated before ui_use_data_provider() attaches it.
     // A missing provider means STARTUP, not a completed empty contact list.
-    if(!ui_data)centred("LOADING CONTACT INFO..",ui_y(300),3,0,true);
+    if(!ui_data)ui_centred("LOADING CONTACT INFO..",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->contact_count();
         clamp_list_page(contacts_page,count);
-        if(!count)centred("NO SAVED CONTACTS",ui_y(300),3,0,true);
+        if(!count)ui_centred("NO SAVED CONTACTS",ui_y(300),3,0,true);
         else {
             const size_t first=contacts_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
@@ -1365,11 +1365,11 @@ static void draw_contacts() {
 
 static void draw_channels() {
     draw_app_header("CHANNELS");
-    if(!ui_data)centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
+    if(!ui_data)ui_centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->channel_count();
         clamp_list_page(channels_page,count);
-        if(!count)centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
+        if(!count)ui_centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
         else {
             const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
@@ -1439,8 +1439,8 @@ static void draw_map_nodes() {
         if(!placed)continue; // Keep the true-position dot even if labels collide.
         occupied[occupied_count++]={(int16_t)lx,(int16_t)ly,(int16_t)w,34};
         meshink_display_fill_rect({lx,ly,w,34},0xFF,fb);
-        text(short_name,lx+4,ly+2,2,0,true);
-        text(age,lx+4,ly+18,2,0,true);
+        ui_text(short_name,lx+4,ly+2,2,0,true);
+        ui_text(age,lx+4,ly+18,2,0,true);
     }
     // Always draw position dots last so a neighbouring label cannot move or
     // obscure a marker. Each circle has a white halo for contrast.
@@ -1542,12 +1542,12 @@ static void draw_maps() {
     if(result.sd_ready&&!result.tiles) {
         const MeshInkUiRect missing=ui_rect(18,774,232,30);
         meshink_display_fill_rect({missing.x,missing.y,missing.width,missing.height},0xFF,fb);
-        text("NO MAP TILES HERE",ui_x(22),ui_y(778),2,0,true);
+        ui_text("NO MAP TILES HERE",ui_x(22),ui_y(778),2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
     const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);
     meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);
-    text(zoom,ui_x(22),ui_y(816),2,0,true);
+    ui_text(zoom,ui_x(22),ui_y(816),2,0,true);
 
     const MeshInkUiRect zoom_in=meshink_map_control_rect(layout,0);
     const MeshInkUiRect zoom_out=meshink_map_control_rect(layout,1);
@@ -1583,7 +1583,7 @@ static void draw_maps() {
     line(ui_x(26),ui_y(872),ui_x(26)+pixels,ui_y(872));
     line(ui_x(26),ui_y(866),ui_x(26),ui_y(878));
     line(ui_x(26)+pixels,ui_y(866),ui_x(26)+pixels,ui_y(878));
-    text(scale,ui_x(28),ui_y(850),2,0,true);
+    ui_text(scale,ui_x(28),ui_y(850),2,0,true);
     if(!result.sd_ready){
         const MeshInkUiRect warning=ui_rect(80,300,380,80);
         ui_section_card(warning);
@@ -1699,7 +1699,7 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     snprintf(page_text,sizeof(page_text),"PAGE %u",(unsigned)(page+1));
     const int text_width=(int)strlen(page_text)*12;
     const int text_left=(meshink_display_logical_width()-text_width)/2;
-    centred(page_text,y,2,0,true);
+    ui_centred(page_text,y,2,0,true);
     if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
     if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
@@ -1737,7 +1737,7 @@ static void draw_chat(bool channel) {
         if(keyboard)first=chat_fill_backwards(count,available);
         else chat_page_bounds_lazy(count,available,chat_page,first,end,has_older);
     }
-    if(!count)centred("NO MESSAGES YET",ui_y(300),3,0,true);
+    if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
     else{
         int y=ui_y(126);
         for(size_t i=first;i<end;++i){
@@ -1783,7 +1783,7 @@ static void draw_message_entry_fast() {
 
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
-    if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
+    if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.node_type,details_page);
     ui_centred(node.name,ui_y(126),4,0,true);
@@ -1804,7 +1804,7 @@ static void draw_contact_details() {
     const MeshInkUiRect right_action=meshink_node_right_action_rect(layout);
 
     if(page!=NodeInfoPage::Overview&&!node.saved_contact){
-        text("ADD CONTACT FIRST",layout.section_margin,ui_y(250),3,0,true);
+        ui_text("ADD CONTACT FIRST",layout.section_margin,ui_y(250),3,0,true);
         draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",layout.section_margin,ui_y(304),39,2,0,false,4);
         draw_page_indicator(details_page,pages,ui_y(770));
         return;
@@ -1833,35 +1833,35 @@ static void draw_contact_details() {
             action_button("DELETE",right_action);}
         else action_button("ADD CONTACT",full_action,true);
     } else if(page==NodeInfoPage::Status){
-        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,ui_y(220),3,0,true);
+        ui_text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,ui_y(220),3,0,true);
         if(!node.authenticated){
             draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",layout.section_margin,ui_y(282),39,2,0,false,5);
-            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
+            if(!strcmp(node.status,"LOGIN FAILED"))ui_text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
-            text(login_text,layout.section_margin,ui_y(258),2,0,true);
+            ui_text(login_text,layout.section_margin,ui_y(258),2,0,true);
             draw_wrapped(node.status,layout.section_margin,ui_y(294),27,3,0,true,14);
             action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),full_action,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
-        text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
+        ui_text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
         if(login_required&&!node.authenticated){
             draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",layout.section_margin,ui_y(282),39,2,0,false,3);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
             draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);
-            text("POSITION",layout.section_margin,ui_y(420),2,0,true);draw_wrapped(node.position,layout.section_margin,ui_y(454),27,3,0,true,2);
+            ui_text("POSITION",layout.section_margin,ui_y(420),2,0,true);draw_wrapped(node.position,layout.section_margin,ui_y(454),27,3,0,true,2);
             draw_wrapped(node.position_source,layout.section_margin,ui_y(522),39,2,0,false,1);
             if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
             action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
         }
     } else {
-        text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
+        ui_text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
         draw_wrapped(node.path,layout.section_margin,ui_y(260),27,3,0,true,3);
-        text("TRACE ROUTE",layout.section_margin,ui_y(360),3,0,true);
+        ui_text("TRACE ROUTE",layout.section_margin,ui_y(360),3,0,true);
         draw_wrapped(node.trace,layout.section_margin,ui_y(400),39,2,0,true,7);
-        text("SAVED ROUTE",layout.section_margin,ui_y(620),2,0,true);
+        ui_text("SAVED ROUTE",layout.section_margin,ui_y(620),2,0,true);
         draw_wrapped(node.route,layout.section_margin,ui_y(654),27,3,0,true,2);
         action_button(request_label(UiNodeInfoRequest::Path,"DISCOVER PATH"),left_action,true);
         action_button(request_label(UiNodeInfoRequest::Trace,"TRACE ROUTE"),right_action,true);
@@ -1890,7 +1890,7 @@ static void settings_row(const char* title,const char* subtitle,int y);
 
 static void draw_discovery() {
     draw_app_header("DISCOVERED",true);
-    if(!ui_data||!ui_data->advert_count()){centred("NO ADVERTS HEARD",ui_y(300),3,0,true);centred("SEND AN ADVERT OR WAIT",ui_y(350),2);}
+    if(!ui_data||!ui_data->advert_count()){ui_centred("NO ADVERTS HEARD",ui_y(300),3,0,true);ui_centred("SEND AN ADVERT OR WAIT",ui_y(350),2);}
     else for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)draw_list_entry(ui_data->advert(i),120+i*150);
 }
 
@@ -2045,8 +2045,8 @@ static void draw_display_settings() {
     meshink_display_fill_rect({slider.x,slider.y,slider.width,slider.height},0,fb);
     const int knob=slider.x+(frontlight_brightness*slider.width)/100;
     meshink_display_fill_rect({knob-ui_w(12),slider.y-ui_h(15),ui_w(24),ui_h(35)},0,fb);
-    text("-",layout.content_text_x,ui_y(452),3,0,true);
-    text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
+    ui_text("-",layout.content_text_x,ui_y(452),3,0,true);
+    ui_text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
@@ -2125,7 +2125,7 @@ static void draw_standby(){
     meshink_display_fill_rect({ui_x(24),ui_y(805),ui_w(492),ui_h(3)},0,fb);
     char wake_button[40];
     snprintf(wake_button,sizeof(wake_button),"HOLD %s FOR TWO SECONDS TO WAKE",meshink_primary_button_name());
-    centred(wake_button,ui_y(840),2,0,true);
+    ui_centred(wake_button,ui_y(840),2,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
@@ -2489,13 +2489,13 @@ static void request_hardware_shutdown() {
     T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
-    centred("POWERED OFF",ui_y(250),6,0,true);
+    ui_centred("POWERED OFF",ui_y(250),6,0,true);
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
-    centred(wake.off_battery_line1,ui_y(370),4,0,true);
-    centred(wake.off_battery_line2,ui_y(425),4,0,true);
-    centred(wake.off_external_line1,ui_y(560),3,0,true);
-    centred(wake.off_external_line2,ui_y(610),3,0,true);
-    centred(UI_VERSION,ui_y(900),2,0,true);
+    ui_centred(wake.off_battery_line1,ui_y(370),4,0,true);
+    ui_centred(wake.off_battery_line2,ui_y(425),4,0,true);
+    ui_centred(wake.off_external_line1,ui_y(560),3,0,true);
+    ui_centred(wake.off_external_line2,ui_y(610),3,0,true);
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);
     set_touch_power(false);
@@ -2517,19 +2517,19 @@ static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,
     frontlight_deadline=0;frontlight_drive(false);
 
     meshink_display_set_all_white(&display);
-    centred("LOW BATTERY",ui_y(230),6,0,true);
-    centred("POWERED DOWN",ui_y(340),5,0,true);
-    centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
+    ui_centred("LOW BATTERY",ui_y(230),6,0,true);
+    ui_centred("POWERED DOWN",ui_y(340),5,0,true);
+    ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
     if(critical.battery_mv_valid) {
         char voltage[20];
         snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
                  (unsigned)(critical.battery_mv/1000U),
                  (unsigned)((critical.battery_mv%1000U)/10U));
-        centred(voltage,ui_y(650),2,0,true);
+        ui_centred(voltage,ui_y(650),2,0,true);
     } else {
-        centred("BATTERY CRITICAL",ui_y(650),2,0,true);
+        ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
     }
-    centred(UI_VERSION,ui_y(900),2,0,true);
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
 
     set_touch_power(false);
@@ -3441,9 +3441,9 @@ void ui_setup() {
     // is normally already mounted, so use the generic boot status by default.
     // local_mesh_setup() changes it only if SPIFFS fails to mount and must
     // attempt first-time initialization/recovery.
-    centred("STARTING UP...",ui_y(716),3,0,true);
-    if(node_name[0])centred(node_name,ui_y(830),3,0,true);
-    centred(UI_VERSION,ui_y(885),2,0,true);
+    ui_centred("STARTING UP...",ui_y(716),3,0,true);
+    if(node_name[0])ui_centred(node_name,ui_y(830),3,0,true);
+    ui_centred(UI_VERSION,ui_y(885),2,0,true);
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
@@ -3452,7 +3452,7 @@ void ui_show_storage_initializing() {
     // Called only after a non-formatting mount fails. Update the existing
     // splash before SPIFFS.begin(true) may block while preparing storage.
     meshink_display_fill_rect({0,ui_y(704),portrait_layout().width,ui_h(65)},0xFF,fb);
-    centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
+    ui_centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
     refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
 }
@@ -3750,22 +3750,22 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
     if(failure==MeshInkRadioFailureClass::MissingHardwareVariant){
-        centred("MESHINK CANNOT START",ui_y(120),4,0,true);
-        centred("LORA AND GPS NOT FOUND",ui_y(190),4,0,true);
-        centred("BOARD VARIANT MAY OMIT RADIO",ui_y(290),3,0,true);
-        centred("LORA RADIO IS REQUIRED",ui_y(360),3,0,true);
-        centred("IF YOUR BOARD HAS A RADIO",ui_y(520),2,0,true);
-        centred("PLEASE REPORT THIS ERROR",ui_y(555),2,0,true);
-        centred("PRESS RST TO RETRY",ui_y(720),3,0,true);
+        ui_centred("MESHINK CANNOT START",ui_y(120),4,0,true);
+        ui_centred("LORA AND GPS NOT FOUND",ui_y(190),4,0,true);
+        ui_centred("BOARD VARIANT MAY OMIT RADIO",ui_y(290),3,0,true);
+        ui_centred("LORA RADIO IS REQUIRED",ui_y(360),3,0,true);
+        ui_centred("IF YOUR BOARD HAS A RADIO",ui_y(520),2,0,true);
+        ui_centred("PLEASE REPORT THIS ERROR",ui_y(555),2,0,true);
+        ui_centred("PRESS RST TO RETRY",ui_y(720),3,0,true);
     }else{
-        centred("RADIO STARTUP",ui_y(190),5,0,true);
-        centred("FAILED",ui_y(255),6,0,true);
-        centred("LORA RADIO NOT DETECTED",ui_y(390),4,0,true);
-        centred("CHECK BOARD RADIO HARDWARE",ui_y(475),2,0,true);
-        centred("PLEASE REPORT THIS ERROR",ui_y(510),2,0,true);
-        centred("PRESS RST TO RETRY",ui_y(600),3,0,true);
+        ui_centred("RADIO STARTUP",ui_y(190),5,0,true);
+        ui_centred("FAILED",ui_y(255),6,0,true);
+        ui_centred("LORA RADIO NOT DETECTED",ui_y(390),4,0,true);
+        ui_centred("CHECK BOARD RADIO HARDWARE",ui_y(475),2,0,true);
+        ui_centred("PLEASE REPORT THIS ERROR",ui_y(510),2,0,true);
+        ui_centred("PRESS RST TO RETRY",ui_y(600),3,0,true);
     }
-    centred(UI_VERSION,ui_y(900),2,0,true);
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
