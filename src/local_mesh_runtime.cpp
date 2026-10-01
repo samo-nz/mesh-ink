@@ -352,25 +352,27 @@ public:
         note_heard(key,6); // includes CLI/direct payloads that upstream does not bump
         const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
         if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
-        const uint32_t sequence=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
-        if(has_rf&&sequence)store_.update_rx(sequence,snr_q4,path_len);
+        const uint32_t sequence=store_.append(
+            MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received,0,
+            MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
         if(sequence)rebuild_active();
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
         if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
-        const uint32_t sequence=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
-        if(has_rf&&sequence)store_.update_rx(sequence,snr_q4,path_len);
+        const uint32_t sequence=store_.append(
+            MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received,0,
+            MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
         if(sequence)rebuild_active();
         refresh(true);ui_notify_message_received(true);
     }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
     uint32_t queue_direct(const char* text,uint32_t timestamp){const uint32_t sequence=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return sequence;}
     void update_message(uint32_t sequence,UiMessageState state){if(sequence)store_.update_state(sequence,state);ui_request_data_refresh("message-state");}
-    void note_direct_ack(uint32_t sequence,uint32_t ack){if(sequence)store_.update_ack(sequence,ack);}
-    void note_direct_route(uint32_t sequence,bool flood){
-        if(sequence)store_.update_route(sequence,flood);ui_request_data_refresh("message-route");
+    void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state){
+        if(sequence)store_.update_outgoing(sequence,state,ack,flood);
+        ui_request_data_refresh("message-route");
     }
     void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
         if(sequence)store_.update_repeat(sequence,repeats,snr_q4);ui_request_data_refresh("channel-repeat");
@@ -808,7 +810,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
-    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.note_direct_ack(pending_direct.sequence,pending_direct.ack);provider.note_direct_route(pending_direct.sequence,frame[1]!=0);provider.update_message(pending_direct.sequence,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
+    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.confirm_direct_send(pending_direct.sequence,pending_direct.ack,frame[1]!=0,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
     else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.heard(pending_direct.key,6);provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
     else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct command failed error=%u\n",len>1?frame[1]:0);}
     else if(frame[0]==1&&pending_stats.active){finish_stats(true);}
