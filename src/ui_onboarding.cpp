@@ -1244,8 +1244,8 @@ static void draw_shutdown_confirm() {
     ui_centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
     ui_centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
-    ui_centred(wake.confirm_battery,ui_y(445),3,0,true);
-    ui_centred(wake.confirm_external,ui_y(500),3,0,true);
+    ui_centred_fit(wake.confirm_battery,ui_y(445),layout.width-ui_w(32),3,0,true);
+    ui_centred_fit(wake.confirm_external,ui_y(500),layout.width-ui_w(32),3,0,true);
     ui_action_button("CANCEL",cancel,false);
     ui_action_button("SHUT DOWN",shutdown,true);
 }
@@ -1484,8 +1484,8 @@ static void draw_map_nodes() {
         if(!placed)continue; // Keep the true-position dot even if labels collide.
         occupied[occupied_count++]={(int16_t)lx,(int16_t)ly,(int16_t)w,34};
         meshink_display_fill_rect({lx,ly,w,34},0xFF,fb);
-        ui_text(short_name,lx+4,ly+2,2,0,true);
-        ui_text(age,lx+4,ly+18,2,0,true);
+        ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);
+        ui_text_fit(age,lx+4,ly+18,w-ui_w(8),2,0,true);
     }
     // Always draw position dots last so a neighbouring label cannot move or
     // obscure a marker. Each circle has a white halo for contrast.
@@ -2190,7 +2190,9 @@ static void draw_standby(){
     draw_standby_envelope_icon(
         direct_rect.x+(direct_rect.width-ui_w(120))/2,
         direct_rect.y+ui_h(28));
-    char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);
+    char direct[12];
+    if(status_unread>99)strcpy(direct,"99+");
+    else snprintf(direct,sizeof(direct),"%u",status_unread);
     standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11);
     standby_centred("PRIVATE",direct_rect,direct_rect.y+ui_h(224),3);
     standby_centred("MESSAGES",direct_rect,direct_rect.y+ui_h(260),3);
@@ -2199,7 +2201,9 @@ static void draw_standby(){
     draw_standby_channel_icon(
         channel_rect.x+(channel_rect.width-ui_w(126))/2,
         channel_rect.y+ui_h(22));
-    char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);
+    char channel[12];
+    if(status_channel_unread>99)strcpy(channel,"99+");
+    else snprintf(channel,sizeof(channel),"%u",status_channel_unread);
     standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11);
     standby_centred("CHANNEL",channel_rect,channel_rect.y+ui_h(224),3);
     standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
@@ -2267,7 +2271,7 @@ static void draw_about() {
     draw_meshink_logo(ui_y(118),true);
     ui_centred("Made by Samo",ui_y(506),3,0,true);
     ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
-    if(node_name[0])ui_centred(node_name,ui_y(600),3,0,true);
+    if(node_name[0])ui_centred_fit(node_name,ui_y(600),layout.width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(642),3,0,true);
     const MeshInkUiRect info=meshink_outer_row_rect(layout,698,150);
     ui_section_card(info);
@@ -2573,12 +2577,13 @@ static void request_hardware_shutdown() {
     T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
+    const MeshInkUiLayout& layout=portrait_layout();
     ui_centred("POWERED OFF",ui_y(250),6,0,true);
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
-    ui_centred(wake.off_battery_line1,ui_y(370),4,0,true);
-    ui_centred(wake.off_battery_line2,ui_y(425),4,0,true);
-    ui_centred(wake.off_external_line1,ui_y(560),3,0,true);
-    ui_centred(wake.off_external_line2,ui_y(610),3,0,true);
+    ui_centred_fit(wake.off_battery_line1,ui_y(370),layout.width-ui_w(32),4,0,true);
+    ui_centred_fit(wake.off_battery_line2,ui_y(425),layout.width-ui_w(32),4,0,true);
+    ui_centred_fit(wake.off_external_line1,ui_y(560),layout.width-ui_w(32),3,0,true);
+    ui_centred_fit(wake.off_external_line2,ui_y(610),layout.width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);
@@ -3541,7 +3546,7 @@ void ui_setup() {
     // local_mesh_setup() changes it only if SPIFFS fails to mount and must
     // attempt first-time initialization/recovery.
     ui_centred("STARTING UP...",ui_y(716),3,0,true);
-    if(node_name[0])ui_centred(node_name,ui_y(830),3,0,true);
+    if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(885),2,0,true);
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
