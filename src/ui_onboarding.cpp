@@ -1799,13 +1799,10 @@ static void draw_contact_details() {
     if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.node_type,details_page);
-    centred(node.name,ui_y(126),4,0,true);centred(node_role_label(node.node_type),ui_y(174),2,0,true);
+    ui_centred(node.name,ui_y(126),4,0,true);
+    ui_centred(node_role_label(node.node_type),ui_y(174),2,0,true);
     auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
-        box(rect,selected);
-        const int scale=2;
-        const int label_width=(int)strlen(label)*6*scale;
-        text(label,rect.x+(rect.width-label_width)/2,
-             rect.y+(rect.height-7*scale)/2,scale,selected?0xFF:0,true);
+        ui_action_button(label,rect,selected);
     };
     auto request_label=[&](UiNodeInfoRequest request,const char* idle) {
         return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
@@ -1826,14 +1823,25 @@ static void draw_contact_details() {
         return;
     }
     if(page==NodeInfoPage::Overview){
-        text("OVERVIEW",layout.section_margin,ui_y(206),3,0,true);
-        text("LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);text(node.advert_age,layout.detail_value_x,ui_y(258),2);
-        text("ROUTE",layout.section_margin,ui_y(326),2,0,true);text(node.route,layout.detail_value_x,ui_y(326),2);
-        text("POSITION",layout.section_margin,ui_y(394),2,0,true);draw_wrapped(node.position,layout.detail_value_x,ui_y(394),25,2,0,false,2);
-        draw_wrapped(node.position_source,layout.detail_value_x,ui_y(438),25,2,0,false,1);
-        text("LAST HEARD",layout.section_margin,ui_y(480),2,0,true);draw_wrapped(node.last_seen,layout.detail_value_x,ui_y(480),25,2,0,false,1);
-        text("IDENTITY",layout.section_margin,ui_y(526),2,0,true);text(node.identity,layout.detail_value_x,ui_y(526),2);
-        if(node.latitude||node.longitude){box(map_action);centred("OPEN POSITION ON MAP",map_action.y+ui_h(21),2,0,true);}
+        ui_text("OVERVIEW",layout.section_margin,ui_y(206),3,0,true);
+        ui_text("LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);
+        ui_text_fit(node.advert_age,layout.detail_value_x,ui_y(254),
+                    layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+        ui_text("ROUTE",layout.section_margin,ui_y(326),2,0,true);
+        ui_text_fit(node.route,layout.detail_value_x,ui_y(322),
+                    layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+        ui_text("POSITION",layout.section_margin,ui_y(394),2,0,true);
+        ui_draw_wrapped(node.position,layout.detail_value_x,ui_y(390),
+                        layout.width-layout.detail_value_x-layout.section_margin,3,0,false,2);
+        ui_text_fit(node.position_source,layout.detail_value_x,ui_y(438),
+                    layout.width-layout.detail_value_x-layout.section_margin,2,0,false);
+        ui_text("LAST HEARD",layout.section_margin,ui_y(480),2,0,true);
+        ui_text_fit(node.last_seen,layout.detail_value_x,ui_y(476),
+                    layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+        ui_text("IDENTITY",layout.section_margin,ui_y(526),2,0,true);
+        ui_text_fit(node.identity,layout.detail_value_x,ui_y(522),
+                    layout.width-layout.detail_value_x-layout.section_margin,2,0,false);
+        if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
         if(node.saved_contact){action_button("CHAT",left_action);
             action_button("DELETE",right_action);}
         else action_button("ADD CONTACT",full_action,true);
@@ -1858,7 +1866,7 @@ static void draw_contact_details() {
             draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);
             text("POSITION",layout.section_margin,ui_y(420),2,0,true);draw_wrapped(node.position,layout.section_margin,ui_y(454),27,3,0,true,2);
             draw_wrapped(node.position_source,layout.section_margin,ui_y(522),39,2,0,false,1);
-            if(node.latitude||node.longitude){box(map_action);centred("OPEN POSITION ON MAP",map_action.y+ui_h(21),2,0,true);}
+            if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
             action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
         }
     } else {
@@ -1879,12 +1887,15 @@ static void draw_contact_details() {
         const MeshInkUiRect save_rect=meshink_password_save_rect(layout);
         const MeshInkUiRect checkbox={
             save_rect.x+ui_w(4),save_rect.y+ui_h(8),ui_w(28),ui_h(28)};
-        box(checkbox,save_remote_password);
-        if(save_remote_password)text("X",checkbox.x+ui_w(6),checkbox.y+ui_h(5),2,0xFF,true);
-        text("SAVE PASSWORD",save_rect.x+ui_w(46),save_rect.y+ui_h(14),2,0,true);
-        box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
-        text(remote_password[0]?remote_password:"REMOTE PASSWORD",
-             metrics.entry.x+ui_w(16),metrics.entry.y+ui_h(24),2,0,true);draw_keyboard();
+        rounded_box(checkbox,max(ui_w(6),ui_h(6)),save_remote_password);
+        if(save_remote_password)ui_text("X",checkbox.x+ui_w(6),checkbox.y+ui_h(5),2,0xFF,true);
+        ui_text("SAVE PASSWORD",save_rect.x+ui_w(46),save_rect.y+ui_h(14),2,0,true);
+        rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
+                    max(ui_w(12),ui_h(12)));
+        ui_text_fit(remote_password[0]?remote_password:"Remote password",
+                    metrics.entry.x+ui_w(16),metrics.entry.y+ui_h(20),
+                    metrics.entry.width-ui_w(32),3,0,false);
+        draw_keyboard();
     }
 }
 
@@ -1987,9 +1998,9 @@ static void draw_gps_tuning(){
     settings_row("CONSTELLATIONS",gps_constellation_label(),120);
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect nmea=meshink_outer_row_rect(layout,238,112);
-    box(nmea);
-    text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(14),3,0,true);
-    text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(296),2,0,true);
+    ui_section_card(nmea);
+    ui_text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(13),3,0,true);
+    ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(292),3,0,false);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
     draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",layout.section_margin,ui_y(515),45,2,0,true,5);
     draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),45,2,0,true,4);
@@ -2000,10 +2011,12 @@ static void draw_timezone(){
     const MeshInkUiLayout& layout=portrait_layout();
     for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
         const MeshInkUiRect row=meshink_outer_row_rect(layout,118+i*102,92);
-        box(row,i==timezone_index);
+        rounded_box(row,max(ui_w(12),ui_h(12)),i==timezone_index);
         const uint8_t c=i==timezone_index?0xFF:0;
-        text(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(10),3,c,true);
-        text(TIMEZONES[i].detail,layout.content_text_x,row.y+ui_h(54),2,c,true);
+        ui_text_fit(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(9),
+                    row.width-ui_w(32),3,c,true);
+        ui_text_fit(TIMEZONES[i].detail,layout.content_text_x,row.y+ui_h(50),
+                    row.width-ui_w(32),3,c,false);
     }
 }
 
@@ -2020,15 +2033,15 @@ static void draw_display_settings() {
     settings_row("MODE",frontlight_mode_name(),118);
     if(frontlight_mode==FrontlightMode::NightTimer){
         const MeshInkUiRect action=meshink_settings_inline_action_rect(layout,118);
-        box(action,true);
-        text("EDIT TIMES",action.x+ui_w(17),action.y+ui_h(20),2,0xFF,true);
+        ui_action_button("EDIT TIMES",action,true);
     }
     settings_row("LIGHT TIMEOUT",frontlight_timeout_name(),238);
     const MeshInkUiRect brightness=meshink_display_brightness_rect(layout);
-    box(brightness);
-    text("BRIGHTNESS",layout.content_text_x,brightness.y+ui_h(16),3,0,true);
+    ui_section_card(brightness);
+    ui_text("BRIGHTNESS",layout.content_text_x,brightness.y+ui_h(15),3,0,true);
     char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);
-    text(level,layout.width-ui_w(12)-(int)strlen(level)*18-ui_w(8),brightness.y+ui_h(16),3,0,true);
+    ui_text(level,layout.width-ui_w(28)-ui_text_width(level,3),
+            brightness.y+ui_h(15),3,0,true);
     const MeshInkUiRect slider=meshink_display_slider_track_rect(layout);
     meshink_display_fill_rect({slider.x,slider.y,slider.width,slider.height},0,fb);
     const int knob=slider.x+(frontlight_brightness*slider.width)/100;
@@ -2038,8 +2051,7 @@ static void draw_display_settings() {
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
-    box(shutdown);
-    centred("SHUT DOWN",shutdown.y+ui_h(23),3,0,true);
+    ui_action_button("SHUT DOWN",shutdown,false);
 }
 
 static void draw_help() {
@@ -2110,15 +2122,15 @@ static void draw_night_schedule(){
     const MeshInkUiRect minus_rect=meshink_night_minus_rect(layout);
     const MeshInkUiRect plus_rect=meshink_night_plus_rect(layout);
     const MeshInkUiRect save_rect=meshink_night_save_rect(layout);
-    box(start_rect,night_edit_field==0);
-    text("START",start_rect.x+ui_w(18),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
-    text(start,start_rect.x+start_rect.width-ui_w(156),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
-    box(end_rect,night_edit_field==1);
-    text("END",end_rect.x+ui_w(18),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
-    text(end,end_rect.x+end_rect.width-ui_w(156),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
-    box(minus_rect);text("-30 MIN",minus_rect.x+ui_w(38),minus_rect.y+ui_h(26),3,0,true);
-    box(plus_rect);text("+30 MIN",plus_rect.x+ui_w(38),plus_rect.y+ui_h(26),3,0,true);
-    box(save_rect,true);centred("SAVE SCHEDULE",save_rect.y+ui_h(26),3,0xFF,true);
+    rounded_box(start_rect,max(ui_w(14),ui_h(14)),night_edit_field==0);
+    ui_text("START",start_rect.x+ui_w(18),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    ui_text(start,start_rect.x+start_rect.width-ui_w(140),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    rounded_box(end_rect,max(ui_w(14),ui_h(14)),night_edit_field==1);
+    ui_text("END",end_rect.x+ui_w(18),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    ui_text(end,end_rect.x+end_rect.width-ui_w(140),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    ui_action_button("-30 MIN",minus_rect,false);
+    ui_action_button("+30 MIN",plus_rect,false);
+    ui_action_button("SAVE SCHEDULE",save_rect,true);
     draw_wrapped("The selected timezone from GPS settings is used automatically.",layout.section_margin,ui_y(740),39,2,0,true,3);
 }
 
