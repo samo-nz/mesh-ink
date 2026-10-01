@@ -4,7 +4,6 @@
 #include <SPIFFS.h>
 #include <Preferences.h>
 #include <time.h>
-#include <esp_heap_caps.h>
 #include "local_mesh_runtime.h"
 #include "message_store.h"
 #include "companion_runtime.h"
@@ -119,7 +118,8 @@ static void format_last_heard(uint32_t timestamp,char out[72]){
 
 class MeshCoreUiProvider final:public UiDataProvider{
     ListStorage contacts_[MAX_UI_CONTACTS]{},channels_[MAX_UI_CHANNELS]{},conversations_[MAX_UI_CONTACTS+MAX_UI_CHANNELS]{},adverts_[MAX_UI_ADVERTS]{};
-    MessageView* active_messages_=nullptr;
+    uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};
+    mutable MessageView active_message_view_{};
     UiMapNode map_nodes_[MAX_MAP_NODES]{};
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
@@ -145,22 +145,6 @@ class MeshCoreUiProvider final:public UiDataProvider{
     UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
     uint8_t detail_frame_[192]{};uint8_t detail_frame_len_=0;
     MeshInkMessageStore& store_=meshink_message_store();
-    bool ensure_active_storage(){
-        if(active_messages_)return true;
-        active_messages_=(MessageView*)heap_caps_calloc(
-            MAX_STORED_MESSAGES,sizeof(MessageView),
-            MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-        if(!active_messages_){
-            Serial.printf("[T5-MESH] ERROR PSRAM message-view allocation failed bytes=%u\n",
-                          (unsigned)(MAX_STORED_MESSAGES*sizeof(MessageView)));
-            return false;
-        }
-        for(size_t i=0;i<MAX_STORED_MESSAGES;++i)bind(active_messages_[i]);
-        Serial.printf("[T5-MESH] message-view cache=PSRAM entries=%u bytes=%u\n",
-                      (unsigned)MAX_STORED_MESSAGES,
-                      (unsigned)(MAX_STORED_MESSAGES*sizeof(MessageView)));
-        return true;
-    }
     static void bind(ListStorage& item){item.entry.title=item.title;item.entry.subtitle=item.subtitle;item.entry.time=item.time;}
     static void format_short_age(uint32_t seconds,char* out,size_t len){
         if(seconds<60)snprintf(out,len,"JUST NOW");
@@ -219,8 +203,14 @@ class MeshCoreUiProvider final:public UiDataProvider{
         }
         recent_info_.heard=true;
     }
-    const StoredMessage* last_for(const uint8_t* key,bool channel)const{
-        for(size_t n=store_.count();n>0;--n){const auto& m=store_.at(n-1);if(m.kind==(uint8_t)(channel?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,key,channel?1:6)==0)return &m;}return nullptr;
+    bool last_for(const uint8_t* key,bool channel,StoredMessage& out)const{
+        StoredMessage item{};
+        for(size_t n=store_.count();n>0;--n){
+            if(!store_.read(n-1,item))continue;
+            if(item.kind==(uint8_t)(channel?MessageKind::Channel:MessageKind::Direct)&&
+               memcmp(item.key,key,channel?1:6)==0){out=item;return true;}
+        }
+        return false;
     }
     uint8_t& direct_unread(const uint8_t* key){
         for(auto& item:direct_unread_)if(item.used&&!memcmp(item.key,key,6))return item.count;
@@ -229,21 +219,20 @@ class MeshCoreUiProvider final:public UiDataProvider{
     }
     void rebuild_active(){
         active_count_=0;
-        if(!active_messages_)return;
-        for(size_t i=0;i<store_.count()&&active_count_<MAX_STORED_MESSAGES;++i){const auto& m=store_.at(i);if(!matches(m))continue;
-            auto& view=active_messages_[active_count_++];memset(&view,0,sizeof(view));bind(view);strncpy(view.text,m.text,sizeof(view.text)-1);format_time(m.timestamp,view.time);
-            view.entry.outgoing=m.state!=(uint8_t)UiMessageState::Received;view.entry.state=(UiMessageState)m.state;
-            format_message_network(m,view.network,sizeof(view.network));
+        StoredMessage item{};
+        for(size_t i=0;i<store_.count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
+            if(!store_.read(i,item)||!matches(item))continue;
+            active_indices_[active_count_++]=(uint16_t)i;
         }
     }
     bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
-    MeshCoreUiProvider(){for(auto& i:contacts_)bind(i);for(auto& i:channels_)bind(i);for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);}
-    void begin(){
-        if(!ensure_active_storage())return;
-        if(!store_.begin())return;
-        refresh(true);
+    MeshCoreUiProvider(){
+        for(auto& i:contacts_)bind(i);for(auto& i:channels_)bind(i);
+        for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);
+        bind(active_message_view_);
     }
+    void begin(){if(!store_.begin())return;refresh(true);}
     void heard(const uint8_t* key,size_t key_len){note_heard(key,key_len);}
     void refresh(bool force=false){
         const uint32_t interval=ui_is_standby()?60000:10000;
@@ -255,7 +244,7 @@ public:
             auto& item=contacts_[contact_count_++];memset(&item,0,sizeof(item));bind(item);strncpy(item.title,contact.name[0]?contact.name:"UNNAMED NODE",sizeof(item.title)-1);
             char role[20]{},heard[72]{};format_node_role(contact.type,role,sizeof(role));format_last_heard(contact.lastmod,heard);
             snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard);if(contact.lastmod)format_time(contact.lastmod,item.time);else strcpy(item.time,"--:--");memcpy(item.key,contact.id.pub_key,7);item.entry.unread=direct_unread(item.key);item.entry.node_type=contact.type;
-            if(const auto* last=last_for(item.key,false)){auto& c=conversations_[conversation_count_++];memset(&c,0,sizeof(c));bind(c);strncpy(c.title,item.title,sizeof(c.title)-1);strncpy(c.subtitle,last->text,sizeof(c.subtitle)-1);format_time(last->timestamp,c.time);memcpy(c.key,item.key,7);c.entry.unread=direct_unread(item.key);c.entry.node_type=contact.type;}
+            StoredMessage last{};if(last_for(item.key,false,last)){auto& c=conversations_[conversation_count_++];memset(&c,0,sizeof(c));bind(c);strncpy(c.title,item.title,sizeof(c.title)-1);strncpy(c.subtitle,last.text,sizeof(c.subtitle)-1);format_time(last.timestamp,c.time);memcpy(c.key,item.key,7);c.entry.unread=direct_unread(item.key);c.entry.node_type=contact.type;}
         }
         for(int i=0;i<MAX_GROUP_CHANNELS&&channel_count_<MAX_UI_CHANNELS;++i){ChannelDetails ch{};if(!t5_mesh().getChannel(i,ch)||!ch.name[0])continue;
             auto& item=channels_[channel_count_++];memset(&item,0,sizeof(item));bind(item);snprintf(item.title,sizeof(item.title),"# %s",ch.name);strncpy(item.subtitle,"MESHCORE CHANNEL",sizeof(item.subtitle)-1);item.key[0]=i;item.channel_index=i;item.entry.unread=i<MAX_UI_CHANNELS?channel_unread_[i]:0;
@@ -309,26 +298,26 @@ public:
         note_heard(key,6); // includes CLI/direct payloads that upstream does not bump
         const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
         if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
-        auto* stored=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
-        if(has_rf&&stored)store_.update_rx(stored->sequence,snr_q4,path_len);
+        const uint32_t sequence=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
+        if(has_rf&&sequence)store_.update_rx(sequence,snr_q4,path_len);
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
         if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
-        auto* stored=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
-        if(has_rf&&stored)store_.update_rx(stored->sequence,snr_q4,path_len);
+        const uint32_t sequence=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
+        if(has_rf&&sequence)store_.update_rx(sequence,snr_q4,path_len);
         refresh(true);ui_notify_message_received(true);
     }
-    uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){auto* m=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return m?m->sequence:0;}
-    uint32_t queue_direct(const char* text,uint32_t timestamp){auto* m=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return m?m->sequence:0;}
-    void update_message(uint32_t sequence,UiMessageState state){if(sequence)store_.update_state(sequence,state);rebuild_active();ui_request_data_refresh("message-state");}
+    uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
+    uint32_t queue_direct(const char* text,uint32_t timestamp){const uint32_t sequence=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return sequence;}
+    void update_message(uint32_t sequence,UiMessageState state){if(sequence)store_.update_state(sequence,state);ui_request_data_refresh("message-state");}
     void note_direct_ack(uint32_t sequence,uint32_t ack){if(sequence)store_.update_ack(sequence,ack);}
     void note_direct_route(uint32_t sequence,bool flood){
-        if(sequence)store_.update_route(sequence,flood);rebuild_active();ui_request_data_refresh("message-route");
+        if(sequence)store_.update_route(sequence,flood);ui_request_data_refresh("message-route");
     }
     void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
-        if(sequence)store_.update_repeat(sequence,repeats,snr_q4);rebuild_active();ui_request_data_refresh("channel-repeat");
+        if(sequence)store_.update_repeat(sequence,repeats,snr_q4);ui_request_data_refresh("channel-repeat");
     }
     size_t map_node_count() const override {return map_node_count_;}
     bool map_node(size_t index,UiMapNode& out) const override {
@@ -561,7 +550,21 @@ public:
         T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] node info: telemetry reply received bytes=%u gps=%d\n",
                       (unsigned)len,request_gps_received_);
     }
-    const char* active_title()const override{return active_title_;}bool active_is_channel()const override{return active_channel_;}size_t active_message_count()const override{return active_count_;}const UiMessage& active_message(size_t i)const override{return active_messages_[i].entry;}
+    const char* active_title()const override{return active_title_;}
+    bool active_is_channel()const override{return active_channel_;}
+    size_t active_message_count()const override{return active_count_;}
+    const UiMessage& active_message(size_t i)const override{
+        memset(&active_message_view_,0,sizeof(active_message_view_));bind(active_message_view_);
+        if(i>=active_count_)return active_message_view_.entry;
+        StoredMessage item{};
+        if(!store_.read(active_indices_[i],item))return active_message_view_.entry;
+        strncpy(active_message_view_.text,item.text,sizeof(active_message_view_.text)-1);
+        format_time(item.timestamp,active_message_view_.time);
+        active_message_view_.entry.outgoing=item.state!=(uint8_t)UiMessageState::Received;
+        active_message_view_.entry.state=(UiMessageState)item.state;
+        format_message_network(item,active_message_view_.network,sizeof(active_message_view_.network));
+        return active_message_view_.entry;
+    }
     bool active_contact(ContactInfo& out)const{if(active_channel_)return false;auto* found=t5_mesh().lookupContactByPubKey(active_key_,6);if(!found)return false;out=*found;return true;}
     uint8_t active_channel_index()const{return active_key_[0];}
     bool active_channel(ChannelDetails& out)const{return active_channel_&&t5_mesh().getChannel(active_key_[0],out);}
