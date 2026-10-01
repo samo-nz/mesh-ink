@@ -1066,3 +1066,12 @@ assert "static size_t discovery_page = 0;" in source, "Discovered adverts have i
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
 assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
 assert "ui_data->open_advert(index)" in source, "Discovery touch indexing follows the visible page"
+
+assert "ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);" in source, "capped map label backings also clip long node names"
+assert 'if(status_unread>99)strcpy(direct,"99+");' in source and 'if(status_channel_unread>99)strcpy(channel,"99+");' in source, "large standby unread counts stay inside their 244px cards"
+assert "ui_centred_fit(wake.confirm_battery" in source and "ui_centred_fit(wake.confirm_external" in source, "board-specific shutdown guidance is screen-bounded"
+assert "ui_centred_fit(wake.off_battery_line1" in source and "ui_centred_fit(wake.off_external_line2" in source, "powered-off guidance remains bounded for future board ports"
+assert "ui_centred_fit(wake_button,ui_y(840)" in source, "standby wake guidance cannot overflow the display"
+assert "char line_text[160]{};" in source, "proportional wrapping preserves long unbroken lines without a 64-byte scratch truncation"
+assert "const bool truncated=(row==max_lines-1)&&*next;" in source, "bounded multi-line text visibly marks intentional truncation"
+assert "ui_text_fit(footer,geometry.x+ui_w(14)" in source, "oversized message metadata is clipped inside its bubble instead of drawing outside"
