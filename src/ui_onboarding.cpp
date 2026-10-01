@@ -145,6 +145,17 @@ static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
 static size_t contacts_page = 0;
 static size_t channels_page = 0;
 static uint8_t chat_page = 0;
+static constexpr size_t CHAT_PAGE_ANCHORS=250;
+static uint16_t chat_page_starts[CHAT_PAGE_ANCHORS]{};
+static size_t chat_page_snapshot_count=(size_t)-1;
+static int chat_page_snapshot_available=-1;
+static uint16_t chat_page_known=0;
+static void reset_chat_paging(){
+    chat_page=0;
+    chat_page_snapshot_count=(size_t)-1;
+    chat_page_snapshot_available=-1;
+    chat_page_known=0;
+}
 static uint8_t timezone_index = 0;
 static bool mesh_is_ready = false;
 enum class FrontlightMode:uint8_t{On=0,NightTimer=1,Off=2};
@@ -1440,12 +1451,59 @@ static void draw_message_bubble(const UiMessage& message,int y,int h) {
     text(footer,x+w-(int)strlen(footer)*12-ui_w(12),y+h-ui_h(28),2,message.outgoing?0xFF:0,true);
 }
 
-static void chat_page_bounds(size_t count,int available,uint8_t requested,size_t& first,size_t& end,uint8_t& pages){
-    size_t cursor=count;first=count;end=count;pages=0;uint8_t page=0;
-    while(cursor>0){size_t candidate=cursor;int used=0;while(candidate>0){const int h=message_bubble_height(ui_data->active_message(candidate-1));const int needed=h+(used?8:0);if(used&&used+needed>available)break;used+=needed;--candidate;if(used>=available)break;}
-        if(page==requested){first=candidate;end=cursor;}++pages;if(candidate==0)break;cursor=candidate;++page;
+static size_t chat_fill_backwards(size_t end,int available){
+    size_t candidate=end;int used=0;
+    while(candidate>0){
+        const UiMessage& message=ui_data->active_message(candidate-1);
+        const int h=message_bubble_height(message);
+        const int needed=h+(used?ui_h(8):0);
+        if(used&&used+needed>available)break;
+        used+=needed;--candidate;
+        if(used>=available)break;
     }
-    if(!count){first=end=0;pages=1;}else if(requested>=pages){chat_page=pages-1;chat_page_bounds(count,available,chat_page,first,end,pages);}
+    return candidate;
+}
+
+static void chat_page_bounds_lazy(size_t count,int available,uint8_t requested,
+                                  size_t& first,size_t& end,bool& has_older){
+    first=end=count;has_older=false;
+    if(!count)return;
+
+    if(chat_page_snapshot_count!=count||chat_page_snapshot_available!=available){
+        chat_page_snapshot_count=count;
+        chat_page_snapshot_available=available;
+        chat_page_known=0;
+        chat_page=0;
+    }
+    if(!chat_page_known){
+        chat_page_starts[0]=(uint16_t)chat_fill_backwards(count,available);
+        chat_page_known=1;
+    }
+    while(requested>=chat_page_known&&chat_page_known<CHAT_PAGE_ANCHORS&&
+          chat_page_starts[chat_page_known-1]>0){
+        const size_t previous_start=chat_page_starts[chat_page_known-1];
+        chat_page_starts[chat_page_known]=(uint16_t)
+            chat_fill_backwards(previous_start,available);
+        ++chat_page_known;
+    }
+    if(requested>=chat_page_known){
+        chat_page=(uint8_t)(chat_page_known-1);
+        requested=chat_page;
+    }
+    first=chat_page_starts[requested];
+    end=requested?chat_page_starts[requested-1]:count;
+    has_older=first>0;
+}
+
+static void draw_chat_page_indicator(size_t page,bool has_older,int y){
+    if(page==0&&!has_older)return;
+    char page_text[20];
+    snprintf(page_text,sizeof(page_text),"PAGE %u",(unsigned)(page+1));
+    const int text_width=(int)strlen(page_text)*12;
+    const int text_left=(meshink_display_logical_width()-text_width)/2;
+    centred(page_text,y,2,0,true);
+    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
+    if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
 
 static int chat_history_bottom_no_keyboard(){
@@ -1472,8 +1530,21 @@ static void draw_chat(bool channel) {
     const auto keyboard_layout=keyboard_metrics(false);
     const int history_bottom=keyboard?keyboard_layout.history_bottom:chat_history_bottom_no_keyboard();
     const int available=history_bottom-ui_h(126);
-    size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
-    if(!count)centred("NO MESSAGES YET",ui_y(300),3,0,true);else{int y=ui_y(126);for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+ui_h(8);}}
+    size_t first=count,end=count;bool has_older=false;
+    if(count){
+        if(keyboard)first=chat_fill_backwards(count,available);
+        else chat_page_bounds_lazy(count,available,chat_page,first,end,has_older);
+    }
+    if(!count)centred("NO MESSAGES YET",ui_y(300),3,0,true);
+    else{
+        int y=ui_y(126);
+        for(size_t i=first;i<end;++i){
+            const UiMessage& message=ui_data->active_message(i);
+            const int h=message_bubble_height(message);
+            draw_message_bubble(message,y,h);
+            y+=h+ui_h(8);
+        }
+    }
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
     const uint32_t timing_keyboard_started=micros();
     if(keyboard){
@@ -1482,7 +1553,7 @@ static void draw_chat(bool channel) {
     }else{
         const MeshInkUiLayout& layout=portrait_layout();
         const int compose_y=layout.bottom_nav_top-ui_h(12);
-        draw_page_indicator(chat_page,pages,layout.bottom_nav_top-ui_h(60));
+        draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));
         box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height);
         text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",
              layout.content_text_x,compose_y+ui_h(20),2,0,true);
@@ -2675,7 +2746,7 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
 
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
-    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
+    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;reset_chat_paging();open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
     if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
@@ -2693,7 +2764,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}
+                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
                 }
             }
             break;
@@ -2706,7 +2777,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}
+                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
                 }
             }
             break;
@@ -2714,7 +2785,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::ChannelChat:
             {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=layout.bottom_nav_top-12;
             if(hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
-                keyboard_message_mode=true;keyboard_visible=true;chat_page=0;
+                keyboard_message_mode=true;keyboard_visible=true;reset_chat_paging();
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
                 text_refresh_pending=false;
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
@@ -3220,7 +3291,7 @@ void ui_loop() {
                 keyboard_landscape=false;
                 set_ui_orientation(MeshInkOrientation::Portrait);
             }
-            details_page=0;details_from_discovery=false;chat_page=0;
+            details_page=0;details_from_discovery=false;reset_chat_paging();
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
             continue;
         }
@@ -3301,13 +3372,16 @@ void ui_loop() {
             }
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=ui_data?ui_data->active_message_count():0;
-            size_t first=0,end=0;uint8_t pages=1;
-            chat_page_bounds(count,chat_history_available(),chat_page,first,end,pages);
-            int next=(int)chat_page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=pages)next=pages-1;
-            if((uint8_t)next!=chat_page){
-                chat_page=(uint8_t)next;
-                T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u/%u\n",chat_page+1,pages);
+            size_t first=count,end=count;bool has_older=false;
+            if(count)chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);
+            uint8_t next=chat_page;
+            if(tap.dy<0){
+                if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
+            }else if(chat_page>0)next=(uint8_t)(chat_page-1);
+            if(next!=chat_page){
+                chat_page=next;
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u%s\n",
+                          (unsigned)(chat_page+1),has_older?"":" (oldest)");
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if(screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
