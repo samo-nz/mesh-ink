@@ -252,7 +252,7 @@ bool MeshInkMessageStore::begin(){
         initialized_=true;
         SPIFFS.remove(STORE_BACKUP_PATH);
         SPIFFS.remove(STORE_TEMP_PATH);
-        Serial.printf("[T5-STORE] loaded flash-backed v2 journal %u/%u messages; RAM=%u-byte header only\n",
+        Serial.printf("[T5-STORE] loaded flash-backed v2 journal %u/%u messages; record-cache=0 header=%uB\n",
                       (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
                       (unsigned)sizeof(header_));
         return true;
