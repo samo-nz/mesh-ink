@@ -75,6 +75,8 @@ static void reset_gps_duty_cycle(){
 
 using MessageKind=MeshInkMessageKind;
 using StoredMessage=MeshInkStoredMessage;
+struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char time[10]{};uint8_t key[7]{};uint8_t channel_index=0;};
+struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};char network[52]{};};
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
 constexpr size_t DISCOVERED_CONTACT_CACHE_BYTES=192;
 struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[DISCOVERED_CONTACT_CACHE_BYTES]{};uint8_t len=0;};
