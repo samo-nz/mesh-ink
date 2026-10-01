@@ -594,7 +594,8 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         if(!take)take=1;
         char line_text[64]{};const size_t copy=min(take,sizeof(line_text)-1);
         memcpy(line_text,cursor,copy);
-        while(copy&&line_text[strlen(line_text)-1]==' ')line_text[strlen(line_text)-1]=0;
+        size_t trim=strlen(line_text);
+        while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
         ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
         cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
     }
