@@ -124,6 +124,8 @@ class MeshCoreUiProvider final:public UiDataProvider{
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
     bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
+    uint32_t conversation_store_revision_=0xFFFFFFFFUL;
+    uint32_t conversation_contacts_signature_=0;
     UnreadPeer direct_unread_[MAX_UI_CONTACTS]{};
     uint8_t channel_unread_[MAX_UI_CHANNELS]{};
     DiscoveredContact discovered_[MAX_UI_ADVERTS]{};
@@ -203,14 +205,61 @@ class MeshCoreUiProvider final:public UiDataProvider{
         }
         recent_info_.heard=true;
     }
-    bool last_for(const uint8_t* key,bool channel,StoredMessage& out)const{
-        StoredMessage item{};
-        for(size_t n=store_.count();n>0;--n){
-            if(!store_.read(n-1,item))continue;
-            if(item.kind==(uint8_t)(channel?MessageKind::Channel:MessageKind::Direct)&&
-               memcmp(item.key,key,channel?1:6)==0){out=item;return true;}
+    uint32_t contacts_signature()const{
+        uint32_t hash=2166136261UL;
+        for(size_t i=0;i<contact_count_;++i){
+            for(uint8_t b:contacts_[i].key){hash^=b;hash*=16777619UL;}
+            for(const char* p=contacts_[i].title;*p;++p){hash^=(uint8_t)*p;hash*=16777619UL;}
+            hash^=contacts_[i].entry.node_type;hash*=16777619UL;
         }
-        return false;
+        hash^=(uint32_t)contact_count_;hash*=16777619UL;
+        return hash;
+    }
+    void rebuild_conversations(uint32_t contact_signature){
+        int16_t latest[MAX_UI_CONTACTS];
+        for(auto& index:latest)index=-1;
+        StoredMessage item{};
+
+        // One linear journal pass finds the newest direct record for every
+        // visible contact. This replaces the old N-contacts x N-messages scan.
+        for(size_t logical=0;logical<store_.count();++logical){
+            if(!store_.read(logical,item)||
+               item.kind!=(uint8_t)MessageKind::Direct||item.sequence==0)continue;
+            for(size_t contact=0;contact<contact_count_;++contact){
+                if(!memcmp(item.key,contacts_[contact].key,6)){
+                    latest[contact]=(int16_t)logical;
+                    break;
+                }
+            }
+        }
+
+        conversation_count_=0;
+        for(size_t contact=0;contact<contact_count_&&
+                conversation_count_<MAX_UI_CONTACTS+MAX_UI_CHANNELS;++contact){
+            if(latest[contact]<0||!store_.read((size_t)latest[contact],item))continue;
+            auto& summary=conversations_[conversation_count_++];
+            memset(&summary,0,sizeof(summary));bind(summary);
+            strncpy(summary.title,contacts_[contact].title,sizeof(summary.title)-1);
+            strncpy(summary.subtitle,item.text,sizeof(summary.subtitle)-1);
+            format_time(item.timestamp,summary.time);
+            memcpy(summary.key,contacts_[contact].key,sizeof(summary.key));
+            summary.entry.unread=direct_unread(summary.key);
+            summary.entry.node_type=contacts_[contact].entry.node_type;
+        }
+        conversation_store_revision_=store_.revision();
+        conversation_contacts_signature_=contact_signature;
+    }
+    void refresh_conversation_labels(){
+        for(size_t i=0;i<conversation_count_;++i){
+            conversations_[i].entry.unread=direct_unread(conversations_[i].key);
+            for(size_t contact=0;contact<contact_count_;++contact){
+                if(memcmp(conversations_[i].key,contacts_[contact].key,6))continue;
+                strncpy(conversations_[i].title,contacts_[contact].title,
+                        sizeof(conversations_[i].title)-1);
+                conversations_[i].entry.node_type=contacts_[contact].entry.node_type;
+                break;
+            }
+        }
     }
     uint8_t& direct_unread(const uint8_t* key){
         for(auto& item:direct_unread_)if(item.used&&!memcmp(item.key,key,6))return item.count;
@@ -238,14 +287,20 @@ public:
         const uint32_t interval=ui_is_standby()?60000:10000;
         if(!force&&millis()-refreshed_at_<interval)return;
         refreshed_at_=millis();
-        contact_count_=channel_count_=conversation_count_=advert_count_=0;
+        contact_count_=channel_count_=advert_count_=0;
         ContactInfo contact{};auto iterator=t5_mesh().startContactsIterator();
         while(contact_count_<MAX_UI_CONTACTS&&iterator.hasNext(&t5_mesh(),contact)){
             auto& item=contacts_[contact_count_++];memset(&item,0,sizeof(item));bind(item);strncpy(item.title,contact.name[0]?contact.name:"UNNAMED NODE",sizeof(item.title)-1);
             char role[20]{},heard[72]{};format_node_role(contact.type,role,sizeof(role));format_last_heard(contact.lastmod,heard);
             snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard);if(contact.lastmod)format_time(contact.lastmod,item.time);else strcpy(item.time,"--:--");memcpy(item.key,contact.id.pub_key,7);item.entry.unread=direct_unread(item.key);item.entry.node_type=contact.type;
-            StoredMessage last{};if(last_for(item.key,false,last)){auto& c=conversations_[conversation_count_++];memset(&c,0,sizeof(c));bind(c);strncpy(c.title,item.title,sizeof(c.title)-1);strncpy(c.subtitle,last.text,sizeof(c.subtitle)-1);format_time(last.timestamp,c.time);memcpy(c.key,item.key,7);c.entry.unread=direct_unread(item.key);c.entry.node_type=contact.type;}
+
         }
+        const uint32_t contact_signature=contacts_signature();
+        if(conversation_store_revision_!=store_.revision()||
+           conversation_contacts_signature_!=contact_signature)
+            rebuild_conversations(contact_signature);
+        else refresh_conversation_labels();
+
         for(int i=0;i<MAX_GROUP_CHANNELS&&channel_count_<MAX_UI_CHANNELS;++i){ChannelDetails ch{};if(!t5_mesh().getChannel(i,ch)||!ch.name[0])continue;
             auto& item=channels_[channel_count_++];memset(&item,0,sizeof(item));bind(item);snprintf(item.title,sizeof(item.title),"# %s",ch.name);strncpy(item.subtitle,"MESHCORE CHANNEL",sizeof(item.subtitle)-1);item.key[0]=i;item.channel_index=i;item.entry.unread=i<MAX_UI_CHANNELS?channel_unread_[i]:0;
         }
@@ -292,7 +347,6 @@ public:
                 }else --map_node_count_;
             }
         }
-        rebuild_active();
     }
     void received_direct(const uint8_t* key,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         note_heard(key,6); // includes CLI/direct payloads that upstream does not bump
@@ -300,6 +354,7 @@ public:
         if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
         const uint32_t sequence=store_.append(MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received);
         if(has_rf&&sequence)store_.update_rx(sequence,snr_q4,path_len);
+        if(sequence)rebuild_active();
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
@@ -307,6 +362,7 @@ public:
         if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
         const uint32_t sequence=store_.append(MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received);
         if(has_rf&&sequence)store_.update_rx(sequence,snr_q4,path_len);
+        if(sequence)rebuild_active();
         refresh(true);ui_notify_message_received(true);
     }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
