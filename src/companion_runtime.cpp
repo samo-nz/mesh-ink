@@ -7,7 +7,13 @@
 #include <helpers/esp32/SerialBLEInterface.h>
 #include <BLEAdvertising.h>
 #include "../lib/MeshCore/examples/companion_radio/DataStore.cpp"
+// Upstream MyMesh.h declares a global `MyMesh the_mesh` for its stock
+// companion example, but MyMesh.cpp itself never references that global.
+// Rename only that imported declaration so MeshInk can define a derived
+// MeshInkMesh instance with receive-persistence hooks below.
+#define the_mesh meshcore_upstream_example_the_mesh
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.cpp"
+#undef the_mesh
 #include "companion_runtime.h"
 #include "companion_notice.h"
 #include "local_mesh_runtime.h"
