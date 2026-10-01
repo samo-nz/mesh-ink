@@ -978,3 +978,18 @@ assert "preserving before recreate" in message_store_source, "invalid journal ha
 assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only tiny page anchors"
 assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat page composition remains height-aware and incremental"
 assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message record is read once and reused for height plus drawing"
+assert "item.sequence==0||!matches(item)" in runtime_source, "sequence-zero records can never enter an active chat index even if an older v2 conversion contained one"
+
+
+# Test53: common message paths minimize flash traffic without weakening
+# immediate persistence.
+assert "bool has_rx=false,int8_t snr_q4=0" in message_store_header, "receive RF metadata can be included in the append write"
+assert "if(has_rx){" in message_store_source and "item.flags|=MESHINK_MESSAGE_HAS_RX;" in message_store_source, "append persists SNR/path metadata atomically with the message"
+assert "MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len" in runtime_source, "standalone receives avoid a second metadata rewrite"
+assert "MeshInkMessageOrigin::CompanionApp," in companion_source and "pkt!=nullptr" in companion_source, "companion receives persist RF metadata in the same write"
+assert "void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);" in message_store_header, "direct send response has a coalesced metadata update"
+assert "item.state=(uint8_t)state;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes state"
+assert "item.ack=ack;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes ACK"
+assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
+assert "provider.confirm_direct_send(" in runtime_source, "local send response uses one persistent metadata update"
+assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
