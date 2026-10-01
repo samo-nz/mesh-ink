@@ -1902,7 +1902,9 @@ static void draw_contact_details() {
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
             ui_text(login_text,layout.section_margin,ui_y(258),2,0,true);
-            ui_draw_wrapped(node.status,layout.section_margin,ui_y(294),layout.section_width,3,0,true,14);
+            const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;
+            ui_draw_wrapped(node.status,layout.section_margin,ui_y(294),
+                            layout.section_width,status_scale,0,true,14);
             action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),full_action,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
@@ -1912,7 +1914,10 @@ static void draw_contact_details() {
                             layout.section_margin,ui_y(282),layout.section_width,2,0,false,3);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
-            ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),layout.section_width,3,0,true,4);
+            const int telemetry_scale=
+                ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2;
+            ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),
+                            layout.section_width,telemetry_scale,0,true,4);
             ui_text("POSITION",layout.section_margin,ui_y(420),2,0,true);
             ui_draw_wrapped(node.position,layout.section_margin,ui_y(454),layout.section_width,3,0,true,2);
             ui_draw_wrapped(node.position_source,layout.section_margin,ui_y(522),layout.section_width,2,0,false,1);
@@ -1923,7 +1928,7 @@ static void draw_contact_details() {
         ui_text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
         ui_draw_wrapped(node.path,layout.section_margin,ui_y(260),layout.section_width,3,0,true,3);
         ui_text("TRACE ROUTE",layout.section_margin,ui_y(360),3,0,true);
-        ui_draw_wrapped(node.trace,layout.section_margin,ui_y(400),layout.section_width,2,0,true,7);
+        ui_draw_wrapped(node.trace,layout.section_margin,ui_y(400),layout.section_width,2,0,true,9);
         ui_text("SAVED ROUTE",layout.section_margin,ui_y(620),2,0,true);
         ui_draw_wrapped(node.route,layout.section_margin,ui_y(654),layout.section_width,3,0,true,2);
         action_button(request_label(UiNodeInfoRequest::Path,"DISCOVER PATH"),left_action,true);
