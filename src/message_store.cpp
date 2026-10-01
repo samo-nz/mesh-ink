@@ -23,6 +23,13 @@ struct LegacyStoredMessageV1 {
     char text[145];
 };
 
+static_assert(sizeof(MeshInkMessageStoreHeader)==16,
+              "journal header layout changed; update migration explicitly");
+static_assert(sizeof(LegacyStoredMessageV1)==168,
+              "v1 message layout must match the historical testing store");
+static_assert(sizeof(MeshInkStoredMessage)==172,
+              "v2 message layout changed; bump journal version explicitly");
+
 MeshInkMessageStore journal;
 }
 
@@ -141,6 +148,19 @@ bool MeshInkMessageStore::migrate_v1(const MeshInkMessageStoreHeader& legacy_hea
 bool MeshInkMessageStore::begin(){
     if(initialized_)return true;
 
+    // If power was lost after the old v1 file was renamed to the migration
+    // backup but before the completed v2 temp file became live, restore the
+    // original first and retry migration. Never interpret that state as a
+    // missing history file and create an empty journal over it.
+    if(!SPIFFS.exists(STORE_PATH)&&SPIFFS.exists(STORE_BACKUP_PATH)){
+        SPIFFS.remove(STORE_TEMP_PATH);
+        if(!SPIFFS.rename(STORE_BACKUP_PATH,STORE_PATH)){
+            Serial.println("[T5-STORE] ERROR restoring v1 migration backup");
+            return false;
+        }
+        Serial.println("[T5-STORE] recovered interrupted v1 migration");
+    }
+
     File f=SPIFFS.open(STORE_PATH,"r");
     if(!f){
         const bool ok=create_empty();
@@ -165,6 +185,10 @@ bool MeshInkMessageStore::begin(){
         current.close();
         if(hr!=sizeof(header_)||rr!=sizeof(records_))return false;
         initialized_=true;
+        // A power cut after the v2 file became live but before backup cleanup
+        // can leave the old v1 backup behind. The validated v2 file wins.
+        SPIFFS.remove(STORE_BACKUP_PATH);
+        SPIFFS.remove(STORE_TEMP_PATH);
         Serial.printf("[T5-STORE] loaded v2 journal %u/%u messages\n",
                       (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY);
         return true;
