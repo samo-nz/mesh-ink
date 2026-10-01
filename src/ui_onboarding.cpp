@@ -632,6 +632,23 @@ static void rounded_box(const MeshInkUiRect& rect,int radius,bool selected=false
     rounded_box(rect.x,rect.y,rect.width,rect.height,radius,selected);
 }
 
+static void ui_centred(const char* value,int y,int scale,uint8_t color=0,bool bold=false) {
+    ui_text(value,(meshink_display_logical_width()-ui_text_width(value,scale))/2,
+            y,scale,color,bold);
+}
+static void ui_action_button(const char* label,const MeshInkUiRect& rect,bool selected=false) {
+    const int radius=max(ui_w(12),ui_h(12));
+    rounded_box(rect,radius,selected);
+    int scale=3;
+    if(ui_text_width(label,scale)>rect.width-ui_w(24))scale=2;
+    const int label_width=ui_text_width(label,scale);
+    ui_text(label,rect.x+(rect.width-label_width)/2,
+            rect.y+(rect.height-7*scale)/2,scale,selected?0xFF:0,true);
+}
+static void ui_section_card(const MeshInkUiRect& rect) {
+    rounded_box(rect,max(ui_w(14),ui_h(14)),false);
+}
+
 static void box(int x, int y, int w, int h, bool selected=false) {
     MeshInkRect r = {x,y,w,h};
     if (selected) meshink_display_fill_rect(r, 0, fb);
