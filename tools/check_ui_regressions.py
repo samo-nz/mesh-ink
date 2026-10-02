@@ -680,7 +680,7 @@ for leaked_board in ('#include "board/board_profile.h"', "T5_UI_HAS_GPS", "T5_BO
     assert leaked_board not in source, f"UI leaked T5 board capability detail: {leaked_board}"
 assert "ED047TC1" not in source, "generic UI logging must not name the T5 panel"
 assert "SX1262 NOT DETECTED" not in source and "T5 PRO LITE" not in source, "radio failure UI must not hard-code T5 radio/variant names"
-assert 'centred("LORA RADIO NOT DETECTED"' in source, "radio failure UI uses generic LoRa wording"
+assert '"LORA RADIO NOT DETECTED"' in source and 'ui_centred_fit("LORA RADIO NOT DETECTED"' in source, "radio failure UI uses generic LoRa wording with bounded width"
 
 # Hardware-portability display boundary.
 assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
