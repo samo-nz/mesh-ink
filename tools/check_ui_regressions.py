@@ -307,8 +307,9 @@ contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use 
 contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
 contains("const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;", "received status text keeps scale 3 when it fits and scale 2 for long counter lines")
 contains("ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2", "received telemetry uses the largest scale that preserves all four visible lines")
-contains("ui_draw_wrapped(node.path,layout.section_margin,ui_y(260),layout.section_width,3,0,true,3);", "received path text is larger, proportional and scaled")
-contains("ui_draw_wrapped(node.trace,layout.section_margin,ui_y(400),layout.section_width,2,0,true,9);", "trace results use the available vertical space for up to nine readable lines")
+contains("const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.section_width,3));", "received path text line count drives following layout")
+contains("const int trace_heading_y=max(", "trace heading moves down when the discovered path uses all three lines")
+contains("const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));", "trace results reserve their actual wrapped height")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
 contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
 contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry")
@@ -1084,7 +1085,9 @@ assert "ui_text_width(start,3)" in source and "ui_text_width(end,3)" in source, 
 assert "const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;" in source, "dense Node Status counters shrink before wrapping can hide later metrics"
 assert "ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2" in source, "dense telemetry shrinks only when needed to keep its allotted four lines"
 assert "layout.section_width,2,0,true,9" in source, "Trace Route uses the safe extra vertical room for two more lines"
-assert "ui_text_fit(node.position_source,layout.detail_value_x,ui_y(448)," in source, "two-line Overview position stays clear of its source label"
+assert "overview_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "two-line Overview position reserves explicit space before its source label"
+assert "overview_source_y+ui_text_height(2)+ui_h(18)" in source, "Overview source label keeps breathing room before Last Heard"
+assert "telemetry_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "Telemetry position reserves explicit space before provenance"
 assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
 assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
@@ -1210,3 +1213,9 @@ chat_body=source[source.index("static void draw_chat(bool channel)"):source.inde
 history_branch=chat_body[chat_body.index("if(history_page){"):chat_body.index("}else{",chat_body.index("if(history_page){"))]
 assert "rounded_box(layout.outer_margin,compose_y" not in history_branch and "Write a message..." not in history_branch, "older history pages contain no compose box"
 assert "layout.height-ui_h(38)" in history_branch, "older history pages retain only the bottom page indicator"
+
+# Test65: native-size typography layout audit.
+assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key labels use native font height for vertical centring"
+assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
+assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
+assert "saved_route_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic trace extent"

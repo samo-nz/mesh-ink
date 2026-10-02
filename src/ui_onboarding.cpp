@@ -999,7 +999,7 @@ static void key(const char* label,const meshink_keyboard::Rect& rect) {
     int scale=3;
     if(ui_text_width(label,scale)+ui_w(8)>rect.width)scale=2;
     ui_text(label,rect.x+(rect.width-ui_text_width(label,scale))/2,
-            rect.y+(rect.height-7*scale)/2,scale,0,true);
+            rect.y+(rect.height-ui_text_height(scale))/2,scale,0,true);
 }
 
 static void draw_keyboard() {
@@ -2043,16 +2043,28 @@ static void draw_contact_details() {
         ui_text_fit(node.route,layout.detail_value_x,ui_y(322),
                     layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
         ui_text("POSITION",layout.section_margin,ui_y(394),2,0,true);
-        ui_draw_wrapped(node.position,layout.detail_value_x,ui_y(390),
-                        layout.width-layout.detail_value_x-layout.section_margin,3,0,false,2);
-        ui_text_fit(node.position_source,layout.detail_value_x,ui_y(448),
-                    layout.width-layout.detail_value_x-layout.section_margin,2,0,false);
-        ui_text("LAST HEARD",layout.section_margin,ui_y(480),2,0,true);
-        ui_text_fit(node.last_seen,layout.detail_value_x,ui_y(476),
-                    layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
-        ui_text("IDENTITY",layout.section_margin,ui_y(526),2,0,true);
-        ui_text_fit(node.identity,layout.detail_value_x,ui_y(522),
-                    layout.width-layout.detail_value_x-layout.section_margin,2,0,false);
+        const int overview_position_width=
+            layout.width-layout.detail_value_x-layout.section_margin;
+        const int overview_position_y=ui_y(390);
+        const int overview_position_lines=min(
+            2,ui_wrapped_line_count(node.position,overview_position_width,3));
+        ui_draw_wrapped(node.position,layout.detail_value_x,overview_position_y,
+                        overview_position_width,3,0,false,2);
+        const int overview_source_y=max(
+            ui_y(448),overview_position_y+
+            overview_position_lines*ui_text_line_step(3)+ui_h(8));
+        ui_text_fit(node.position_source,layout.detail_value_x,overview_source_y,
+                    overview_position_width,2,0,false);
+        const int overview_last_seen_y=max(
+            ui_y(476),overview_source_y+ui_text_height(2)+ui_h(18));
+        ui_text("LAST HEARD",layout.section_margin,overview_last_seen_y+ui_h(4),2,0,true);
+        ui_text_fit(node.last_seen,layout.detail_value_x,overview_last_seen_y,
+                    overview_position_width,3,0,false);
+        const int overview_identity_y=max(
+            ui_y(522),overview_last_seen_y+ui_text_height(3)+ui_h(20));
+        ui_text("IDENTITY",layout.section_margin,overview_identity_y+ui_h(4),2,0,true);
+        ui_text_fit(node.identity,layout.detail_value_x,overview_identity_y,
+                    overview_position_width,2,0,false);
         if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
         if(node.saved_contact){action_button("CHAT",left_action);
             action_button("DELETE",right_action);}
@@ -2084,18 +2096,37 @@ static void draw_contact_details() {
             ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),
                             layout.section_width,telemetry_scale,0,true,4);
             ui_text("POSITION",layout.section_margin,ui_y(420),2,0,true);
-            ui_draw_wrapped(node.position,layout.section_margin,ui_y(454),layout.section_width,3,0,true,2);
-            ui_draw_wrapped(node.position_source,layout.section_margin,ui_y(522),layout.section_width,2,0,false,1);
+            const int telemetry_position_y=ui_y(454);
+            const int telemetry_position_lines=min(
+                2,ui_wrapped_line_count(node.position,layout.section_width,3));
+            ui_draw_wrapped(node.position,layout.section_margin,telemetry_position_y,
+                            layout.section_width,3,0,true,2);
+            const int telemetry_source_y=max(
+                ui_y(522),telemetry_position_y+
+                telemetry_position_lines*ui_text_line_step(3)+ui_h(8));
+            ui_draw_wrapped(node.position_source,layout.section_margin,telemetry_source_y,
+                            layout.section_width,2,0,false,1);
             if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
             action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
         }
     } else {
         ui_text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
-        ui_draw_wrapped(node.path,layout.section_margin,ui_y(260),layout.section_width,3,0,true,3);
-        ui_text("TRACE ROUTE",layout.section_margin,ui_y(360),3,0,true);
-        ui_draw_wrapped(node.trace,layout.section_margin,ui_y(400),layout.section_width,2,0,true,9);
-        ui_text("SAVED ROUTE",layout.section_margin,ui_y(620),2,0,true);
-        ui_draw_wrapped(node.route,layout.section_margin,ui_y(654),layout.section_width,3,0,true,2);
+        const int path_text_y=ui_y(260);
+        const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.section_width,3));
+        ui_draw_wrapped(node.path,layout.section_margin,path_text_y,
+                        layout.section_width,3,0,true,3);
+        const int trace_heading_y=max(
+            ui_y(360),path_text_y+path_lines*ui_text_line_step(3)+ui_h(10));
+        ui_text("TRACE ROUTE",layout.section_margin,trace_heading_y,3,0,true);
+        const int trace_text_y=trace_heading_y+ui_h(40);
+        const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));
+        ui_draw_wrapped(node.trace,layout.section_margin,trace_text_y,
+                        layout.section_width,2,0,true,9);
+        const int saved_route_y=max(
+            ui_y(620),trace_text_y+trace_lines*ui_text_line_step(2)+ui_h(10));
+        ui_text("SAVED ROUTE",layout.section_margin,saved_route_y,2,0,true);
+        ui_draw_wrapped(node.route,layout.section_margin,saved_route_y+ui_h(34),
+                        layout.section_width,3,0,true,2);
         action_button(request_label(UiNodeInfoRequest::Path,"DISCOVER PATH"),left_action,true);
         action_button(request_label(UiNodeInfoRequest::Trace,"TRACE ROUTE"),right_action,true);
     }
@@ -2171,7 +2202,7 @@ static void draw_advert_menu() {
     draw_app_header("ADVERTISE",true);
     settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
     const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect note=meshink_outer_row_rect(layout,490,150);
+    const MeshInkUiRect note=meshink_outer_row_rect(layout,490,180);
     ui_section_card(note);
     ui_draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",
                     layout.content_text_x,note.y+ui_h(22),note.width-ui_w(32),3,0,false,4);
