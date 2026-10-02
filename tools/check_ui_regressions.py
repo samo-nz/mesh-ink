@@ -1108,3 +1108,13 @@ assert "if(!local_mesh_send_active(compose_text))return true;" in source, "lands
 
 assert 'case UiMessageState::Retrying1:return "RETRYING 1/3"' in runtime_source, "runtime retry status matches three-retry policy"
 assert 'case UiMessageState::Retrying3:state="RETRYING 3/3"' in source, "chat footer retry status matches three-retry policy"
+
+
+# Test58: direct-message ACK tracking survives retry overlap. A delayed ACK
+# from any earlier in-flight attempt can still complete the one logical message.
+assert "uint32_t acks[DIRECT_RETRY_LIMIT+1]" in runtime_source, "pending direct send retains ACK hashes for initial send plus every retry"
+assert "bool route_flood[DIRECT_RETRY_LIMIT+1]" in runtime_source, "each ACK keeps the route used by its own attempt"
+assert "for(uint8_t attempt=0;attempt<=DIRECT_RETRY_LIMIT;++attempt)" in runtime_source, "delivery checks every in-flight attempt ACK"
+assert "pending_direct.acks[attempt]==ack" in runtime_source, "late ACKs are matched against per-attempt history"
+assert "provider.confirm_direct_send(" in runtime_source and "UiMessageState::Delivered" in runtime_source, "matched late ACK persists delivered state and the route that actually delivered"
+assert "memcpy(&pending_direct.ack," not in runtime_source, "single newest-ACK tracking cannot regress"

@@ -636,7 +636,7 @@ public:
 };
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
-struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,ack=0,deadline=0;uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
+struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,deadline=0;uint32_t acks[DIRECT_RETRY_LIMIT+1]{};bool route_flood[DIRECT_RETRY_LIMIT+1]{};uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
 struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
 struct RecentChannelSend{
@@ -839,8 +839,39 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
-    else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.confirm_direct_send(pending_direct.sequence,pending_direct.ack,frame[1]!=0,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
-    else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.heard(pending_direct.key,6);provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
+    else if(frame[0]==6&&len>=10&&pending_direct.active){
+        uint32_t ack=0,timeout=0;memcpy(&ack,frame+2,4);memcpy(&timeout,frame+6,4);
+        const uint8_t attempt=min(pending_direct.retry,DIRECT_RETRY_LIMIT);
+        pending_direct.acks[attempt]=ack;
+        pending_direct.route_flood[attempt]=frame[1]!=0;
+        pending_direct.deadline=millis()+max((uint32_t)500,timeout);
+        pending_direct.waiting_response=false;
+        provider.confirm_direct_send(
+            pending_direct.sequence,ack,pending_direct.route_flood[attempt],
+            attempt?((UiMessageState)((uint8_t)UiMessageState::Retrying1+attempt-1)):UiMessageState::Sent);
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",
+                  attempt,pending_direct.route_flood[attempt]?"flood":"direct",
+                  (unsigned long)ack,(unsigned long)timeout);
+    }
+    else if(frame[0]==0x82&&len>=5&&pending_direct.active){
+        uint32_t ack=0;memcpy(&ack,frame+1,4);
+        int8_t matched_attempt=-1;
+        for(uint8_t attempt=0;attempt<=DIRECT_RETRY_LIMIT;++attempt){
+            if(pending_direct.acks[attempt]&&pending_direct.acks[attempt]==ack){
+                matched_attempt=(int8_t)attempt;break;
+            }
+        }
+        if(matched_attempt>=0){
+            const uint8_t attempt=(uint8_t)matched_attempt;
+            provider.heard(pending_direct.key,6);
+            provider.confirm_direct_send(
+                pending_direct.sequence,ack,pending_direct.route_flood[attempt],
+                UiMessageState::Delivered);
+            T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered attempt=%u ack=%08lx\n",
+                      attempt,(unsigned long)ack);
+            pending_direct={};
+        }
+    }
     else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){char reason[24]{};snprintf(reason,sizeof(reason),"command error %u",len>1?frame[1]:0);fail_pending_direct(reason);}
     else if(frame[0]==1&&pending_stats.active){finish_stats(true);}
     else if((frame[0]==0||frame[0]==1)&&pending_advert>=0){const bool flood=pending_advert==1;ui_notify_advert_result(flood,frame[0]==0);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] %s advert action result=%s\n",flood?"flood":"zero-hop",frame[0]==0?"OK":"FAILED");pending_advert=-1;}
