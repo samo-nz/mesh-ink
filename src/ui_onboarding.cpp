@@ -2,6 +2,7 @@
 #include <esp_random.h>
 #include <Preferences.h>
 #include "hardware/display.h"
+#include "hardware/storage.h"
 #include "hardware/touch.h"
 #include "hardware/power.h"
 #include "hardware/buttons.h"
@@ -23,6 +24,12 @@
 #include "t5_timing.h"
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
+#include "message_limits.h"
+#include "fonts/inter_15_regular.h"
+#include "fonts/inter_20_regular.h"
+#include "fonts/inter_25_regular.h"
+#include "fonts/inter_30_regular.h"
+#include "fonts/inter_50_digits.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
@@ -91,6 +98,96 @@ static constexpr Glyph FONT[] = {
 
 static MeshInkDisplayState display;
 static uint8_t* fb = nullptr;
+
+static bool screenshot_write_u16(MeshInkStorageFile& file,uint16_t value){
+    const uint8_t bytes[2]={(uint8_t)(value&0xFFU),(uint8_t)(value>>8)};
+    return file.write(bytes,sizeof(bytes))==sizeof(bytes);
+}
+static bool screenshot_write_u32(MeshInkStorageFile& file,uint32_t value){
+    const uint8_t bytes[4]={
+        (uint8_t)(value&0xFFU),(uint8_t)((value>>8)&0xFFU),
+        (uint8_t)((value>>16)&0xFFU),(uint8_t)((value>>24)&0xFFU)
+    };
+    return file.write(bytes,sizeof(bytes))==sizeof(bytes);
+}
+static uint8_t screenshot_gray8_at(int logical_x,int logical_y){
+    return meshink_display_read_logical_gray8(fb,logical_x,logical_y);
+}
+bool ui_save_screenshot(char* path_out,size_t path_len){
+    if(path_out&&path_len)path_out[0]=0;
+    if(!fb||!map_tiles_media_ready()){
+        Serial.println("[T5-SHOT] SD/framebuffer unavailable");
+        return false;
+    }
+
+    char path[20]{};
+    bool found=false;
+    for(unsigned i=1;i<=9999;++i){
+        snprintf(path,sizeof(path),"/SHOT%04u.BMP",i);
+        if(!meshink_storage_exists(path)){found=true;break;}
+    }
+    if(!found){
+        Serial.println("[T5-SHOT] no free screenshot filename");
+        return false;
+    }
+
+    MeshInkStorageFile file=meshink_storage_open_write(path);
+    if(!file){
+        Serial.printf("[T5-SHOT] open failed: %s\n",path);
+        return false;
+    }
+
+    const int width=meshink_display_logical_width();
+    const int height=meshink_display_logical_height();
+    const uint32_t row_stride=(uint32_t)((width+3)&~3);
+    const uint32_t palette_bytes=256U*4U;
+    const uint32_t pixel_offset=14U+40U+palette_bytes;
+    const uint32_t image_bytes=row_stride*(uint32_t)height;
+    const uint32_t file_bytes=pixel_offset+image_bytes;
+    bool ok=true;
+
+    const uint8_t signature[2]={'B','M'};
+    ok=ok&&file.write(signature,sizeof(signature))==sizeof(signature);
+    ok=ok&&screenshot_write_u32(file,file_bytes);
+    ok=ok&&screenshot_write_u16(file,0)&&screenshot_write_u16(file,0);
+    ok=ok&&screenshot_write_u32(file,pixel_offset);
+
+    ok=ok&&screenshot_write_u32(file,40);
+    ok=ok&&screenshot_write_u32(file,(uint32_t)width);
+    ok=ok&&screenshot_write_u32(file,(uint32_t)(-(int32_t)height)); // top-down BMP
+    ok=ok&&screenshot_write_u16(file,1);
+    ok=ok&&screenshot_write_u16(file,8);
+    ok=ok&&screenshot_write_u32(file,0);
+    ok=ok&&screenshot_write_u32(file,image_bytes);
+    ok=ok&&screenshot_write_u32(file,2835)&&screenshot_write_u32(file,2835);
+    ok=ok&&screenshot_write_u32(file,256)&&screenshot_write_u32(file,0);
+
+    for(unsigned i=0;ok&&i<256;++i){
+        const uint8_t entry[4]={(uint8_t)i,(uint8_t)i,(uint8_t)i,0};
+        ok=file.write(entry,sizeof(entry))==sizeof(entry);
+    }
+
+    static uint8_t row[960];
+    if(row_stride>sizeof(row))ok=false;
+    for(int y=0;ok&&y<height;++y){
+        for(int x=0;x<width;++x)row[x]=screenshot_gray8_at(x,y);
+        for(uint32_t x=(uint32_t)width;x<row_stride;++x)row[x]=0xFF;
+        ok=file.write(row,row_stride)==row_stride;
+    }
+    file.flush();
+    file.close();
+
+    if(!ok){
+        Serial.printf("[T5-SHOT] write failed: %s\n",path);
+        return false;
+    }
+    if(path_out&&path_len){
+        strncpy(path_out,path,path_len-1);
+        path_out[path_len-1]=0;
+    }
+    Serial.printf("[T5-SHOT] saved %s %dx%d\n",path,width,height);
+    return true;
+}
 static Preferences prefs;
 static char node_name[21] = "MeshInk-";
 static uint8_t selected_preset = 17;
@@ -136,7 +233,7 @@ static bool toast_opens_main = false;
 static bool keyboard_message_mode = false;
 static bool keyboard_password_mode = false;
 static bool save_remote_password = false;
-static char compose_text[49] = {};
+static char compose_text[MESHINK_MESSAGE_TEXT_BYTES] = {};
 static char remote_password[16] = {};
 static UiDataProvider* ui_data = nullptr;
 static size_t selected_contact = 0;
@@ -144,7 +241,21 @@ static size_t selected_channel = 0;
 static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
 static size_t contacts_page = 0;
 static size_t channels_page = 0;
+static size_t discovery_page = 0;
 static uint8_t chat_page = 0;
+static constexpr size_t CHAT_PAGE_ANCHORS=250;
+static uint16_t chat_page_starts[CHAT_PAGE_ANCHORS]{};
+static size_t chat_page_snapshot_count=(size_t)-1;
+static int chat_page_snapshot_current_available=-1;
+static int chat_page_snapshot_history_available=-1;
+static uint16_t chat_page_known=0;
+static void reset_chat_paging(){
+    chat_page=0;
+    chat_page_snapshot_count=(size_t)-1;
+    chat_page_snapshot_current_available=-1;
+    chat_page_snapshot_history_available=-1;
+    chat_page_known=0;
+}
 static uint8_t timezone_index = 0;
 static bool mesh_is_ready = false;
 enum class FrontlightMode:uint8_t{On=0,NightTimer=1,Off=2};
@@ -468,6 +579,7 @@ static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BY
 
 static const uint8_t* glyph(char c) {
     for (const auto& g : FONT) if (g.c == c) return g.r;
+    for (const auto& g : FONT) if (g.c == '?') return g.r;
     return FONT[0].r;
 }
 
@@ -487,14 +599,301 @@ static void centred(const char* s, int y, int scale, uint8_t color = 0, bool bol
     text(s, (meshink_display_logical_width() - (int)strlen(s)*6*scale)/2, y, scale, color, bold);
 }
 
-static void box(int x, int y, int w, int h, bool selected=false) {
-    MeshInkRect r = {x,y,w,h};
-    if (selected) meshink_display_fill_rect(r, 0, fb);
-    else { meshink_display_fill_rect(r, 0xFF, fb); meshink_display_draw_rect(r, 0, fb); }
+// Primary UI typography uses three built-in 1-bit Inter raster sizes.
+// Small technical/status text deliberately stays on the original 5x7 bitmap.
+// The Inter bitmaps contain only black/white coverage: no grayscale edge
+// pixels are introduced, preserving the proven DU e-paper refresh behaviour.
+static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
+    left=5;right=-1;
+    for(int rx=0;rx<5;++rx){
+        const uint8_t mask=(uint8_t)(1U<<(4-rx));
+        for(int ry=0;ry<7;++ry)if(rows[ry]&mask){
+            left=min(left,rx);right=max(right,rx);break;
+        }
+    }
+}
+struct UiSmoothFont {
+    const MeshInkFontData* font;
+    uint8_t baseline_from_top;
+    uint8_t visual_height;
+    uint8_t line_step;
+};
+static UiSmoothFont ui_smooth_font(int scale) {
+    // Every primary tier is a native FreeType raster. Nothing is enlarged at
+    // runtime, which keeps baselines, curves and descenders internally stable.
+    if(scale>=11)return {&inter_50_digits,77,79,81};
+    if(scale>=6)return {&inter_30_regular,46,46,65};
+    if(scale==5)return {&inter_25_regular,38,38,55};
+    if(scale==4)return {&inter_20_regular,31,31,44};
+    return {&inter_15_regular,23,23,34};
+}
+static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint32_t codepoint) {
+    if(!font)return nullptr;
+    for(uint32_t i=0;i<font->intervalCount;++i){
+        const MeshInkFontUnicodeInterval& interval=font->intervals[i];
+        if(codepoint>=interval.first&&codepoint<=interval.last)
+            return &font->glyph[interval.offset+(codepoint-interval.first)];
+        if(codepoint<interval.first)break;
+    }
+    if(codepoint!='?')return ui_smooth_glyph(font,'?');
+    return nullptr;
+}
+static int ui_smooth_char_advance(char c,int scale) {
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+    if(!glyph_data)return 0;
+    return max(1,(int)((glyph_data->advanceX+8)>>4));
+}
+static int ui_legacy_char_advance(char c,int scale) {
+    if(c==' ')return 3*scale;
+    const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
+    const int pixels=right>=left?(right-left+1):3;
+    return pixels*scale+scale;
+}
+static int ui_char_advance(char c,int scale) {
+    return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
+}
+static int ui_text_height(int scale) {
+    if(scale<3)return 7*scale;
+    return ui_smooth_font(scale).visual_height;
+}
+static int ui_text_line_step(int scale) {
+    if(scale<3)return 7*scale+8;
+    return ui_smooth_font(scale).line_step;
+}
+static int ui_text_width_n(const char* s,size_t n,int scale) {
+    if(!s||!n)return 0;int width=0;
+    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
+    return width&&scale<3?width-scale:width;
+}
+static int ui_text_width(const char* s,int scale) {
+    return s?ui_text_width_n(s,strlen(s),scale):0;
+}
+static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
+    if(!s)return;
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const int baseline=y+face.baseline_from_top;
+    while(*s&&*s!='\n'){
+        const char c=*s++;
+        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        if(!glyph_data)continue;
+        const int gx=x+glyph_data->left;
+        const int gy=baseline-glyph_data->top;
+        for(int sy=0;sy<glyph_data->height;++sy){
+            for(int sx=0;sx<glyph_data->width;++sx){
+                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
+                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
+                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+                meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
+                if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
+            }
+        }
+        x+=ui_smooth_char_advance(c,scale);
+    }
+}
+static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
+    if(!s)return;
+    if(scale>=3){ui_smooth_text(s,x,y,scale,color,bold);return;}
+    while(*s&&*s!='\n'){
+        const char c=*s++;
+        if(c==' '){x+=3*scale;continue;}
+        const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
+        if(right<left){x+=3*scale;continue;}
+        for(int ry=0;ry<7;++ry)for(int rx=left;rx<=right;++rx)
+            if(rows[ry]&(1U<<(4-rx)))
+                for(int dy=0;dy<scale;++dy)for(int dx=0;dx<scale;++dx){
+                    meshink_display_draw_pixel(x+(rx-left)*scale+dx,y+ry*scale+dy,color,fb);
+                    if(bold)meshink_display_draw_pixel(x+(rx-left)*scale+dx+1,y+ry*scale+dy,color,fb);
+                }
+        x+=(right-left+1)*scale+scale;
+    }
+}
+static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
+                        uint8_t color=0,bool bold=false) {
+    if(!value||max_width<=0)return;
+    if(ui_text_width(value,scale)<=max_width){ui_text(value,x,y,scale,color,bold);return;}
+    char clipped[64]{};size_t out=0;int width=0;
+    const int dots=ui_text_width("...",scale);
+    while(value[out]&&out<sizeof(clipped)-4){
+        const int advance=ui_char_advance(value[out],scale);
+        if(width+advance+dots>max_width)break;
+        clipped[out]=value[out];width+=advance;++out;
+    }
+    clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
+    ui_text(clipped,x,y,scale,color,bold);
+}
+static void ui_centred_fit(const char* value,int y,int max_width,int scale,
+                           uint8_t color=0,bool bold=false) {
+    if(!value||max_width<=0)return;
+    if(ui_text_width(value,scale)<=max_width){
+        ui_text(value,(meshink_display_logical_width()-ui_text_width(value,scale))/2,
+                y,scale,color,bold);
+        return;
+    }
+    char clipped[64]{};size_t out=0;int width=0;
+    const int dots=ui_text_width("...",scale);
+    while(value[out]&&out<sizeof(clipped)-4){
+        const int advance=ui_char_advance(value[out],scale);
+        if(width+advance+dots>max_width)break;
+        clipped[out]=value[out];width+=advance;++out;
+    }
+    clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
+    const int clipped_width=ui_text_width(clipped,scale);
+    ui_text(clipped,(meshink_display_logical_width()-clipped_width)/2,
+            y,scale,color,bold);
+}
+static int ui_text_max_line_width(const char* value,int scale) {
+    if(!value||!*value)return 0;
+    int widest=0,current=0;
+    for(const char* p=value;;++p){
+        if(!*p||*p=='\n'){
+            if(current>0&&scale<3)current-=scale; // legacy bitmap keeps one trailing scale-wide gap
+            widest=max(widest,current);current=0;
+            if(!*p)break;
+            continue;
+        }
+        current+=ui_char_advance(*p,scale);
+    }
+    return widest;
+}
+static size_t ui_wrap_take(const char* value,int max_width,int scale) {
+    if(!value||!*value)return 0;
+    size_t count=0,last_space=0;int width=0;
+    while(value[count]&&value[count]!='\n'){
+        const int advance=ui_char_advance(value[count],scale);
+        if(count&&width+advance>max_width)break;
+        if(!count&&advance>max_width)return 1;
+        width+=advance;
+        if(value[count]==' ')last_space=count;
+        ++count;
+    }
+    if(!value[count]||value[count]=='\n')return count;
+    return last_space?last_space:count;
+}
+static int ui_wrapped_line_count(const char* value,int max_width,int scale) {
+    if(!value||!*value)return 1;
+    int lines=0;const char* cursor=value;
+    while(*cursor){
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n'){++cursor;++lines;continue;}
+        if(!*cursor)break;
+        size_t take=ui_wrap_take(cursor,max_width,scale);
+        if(!take)take=1;
+        cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+        ++lines;
+    }
+    return max(1,lines);
+}
+static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scale,
+                            uint8_t color,bool bold,int max_lines) {
+    if(!value)return;
+    const char* cursor=value;
+    for(int row=0;row<max_lines&&*cursor;++row){
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n'){++cursor;continue;}
+        size_t take=ui_wrap_take(cursor,max_width,scale);
+        if(!take)take=1;
+        char line_text[160]{};const size_t copy=min(take,sizeof(line_text)-4);
+        memcpy(line_text,cursor,copy);
+        size_t trim=strlen(line_text);
+        while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
+
+        const char* next=cursor+take;
+        while(*next==' ')++next;
+        if(*next=='\n')++next;
+        const bool truncated=(row==max_lines-1)&&*next;
+        if(truncated){
+            const int dots=ui_text_width("...",scale);
+            while(trim&&ui_text_width(line_text,scale)+dots>max_width)
+                line_text[--trim]=0;
+            if(trim<sizeof(line_text)-4){
+                line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
+                line_text[trim]=0;
+            }
+            ui_text(line_text,x,y+row*ui_text_line_step(scale),scale,color,bold);
+        }else{
+            ui_text(line_text,x,y+row*ui_text_line_step(scale),scale,color,bold);
+        }
+        cursor=next;
+    }
+}
+static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
+                                 int max_height,int scale,uint8_t color,bool bold) {
+    if(!value||!*value||max_width<=0||max_height<=0)return;
+    struct WrappedLine { const char* start; size_t len; };
+    WrappedLine lines[32]{};
+    int line_count=0;
+    const char* cursor=value;
+    while(*cursor&&line_count<(int)(sizeof(lines)/sizeof(lines[0]))){
+        while(*cursor==' ')++cursor;
+        if(!*cursor)break;
+        if(*cursor=='\n'){lines[line_count++]={cursor,0};++cursor;continue;}
+        size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=1;
+        lines[line_count++]={cursor,take};cursor+=take;
+        while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+    }
+    if(!line_count)return;
+    const int glyph_height=ui_text_height(scale);
+    const int line_step=ui_text_line_step(scale);
+    if(max_height<glyph_height)return;
+    const int visible_lines=1+(max_height-glyph_height)/line_step;
+    const int first=max(0,line_count-visible_lines);
+    int row=0;
+    for(int i=first;i<line_count;++i,++row){
+        char line_text[MESHINK_MESSAGE_TEXT_BYTES]{};
+        const size_t copy=min(lines[i].len,sizeof(line_text)-1);
+        if(copy)memcpy(line_text,lines[i].start,copy);
+        size_t trim=copy;while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
+        ui_text(line_text,x,y+row*line_step,scale,color,bold);
+    }
 }
 
-static void box(const MeshInkUiRect& rect,bool selected=false) {
-    box(rect.x,rect.y,rect.width,rect.height,selected);
+// Integer-only rounded panel primitive. It uses the existing framebuffer
+// rectangles and a small corner inset calculation, so there is no image asset,
+// antialiasing buffer or extra display dependency.
+static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
+    if(w<=0||h<=0)return;
+    const int r=max(0,min(radius,min(w,h)/2));
+    if(!r){meshink_display_fill_rect({x,y,w,h},color,fb);return;}
+    meshink_display_fill_rect({x,y+r,w,h-2*r},color,fb);
+    for(int row=0;row<r;++row){
+        const int yy=r-1-row;int inset=0;
+        while(inset<r){
+            const int xx=r-inset;
+            if(xx*xx+yy*yy<=r*r)break;
+            ++inset;
+        }
+        const int span=max(1,w-2*inset);
+        meshink_display_fill_rect({x+inset,y+row,span,1},color,fb);
+        meshink_display_fill_rect({x+inset,y+h-1-row,span,1},color,fb);
+    }
+}
+static void rounded_box(int x,int y,int w,int h,int radius,bool selected=false) {
+    if(selected){rounded_fill(x,y,w,h,radius,0);return;}
+    rounded_fill(x,y,w,h,radius,0);
+    const int border=max(2,ui_w(2));
+    rounded_fill(x+border,y+border,w-2*border,h-2*border,
+                 max(1,radius-border),0xFF);
+}
+static void rounded_box(const MeshInkUiRect& rect,int radius,bool selected=false) {
+    rounded_box(rect.x,rect.y,rect.width,rect.height,radius,selected);
+}
+
+static void ui_centred(const char* value,int y,int scale,uint8_t color=0,bool bold=false) {
+    ui_text(value,(meshink_display_logical_width()-ui_text_width(value,scale))/2,
+            y,scale,color,bold);
+}
+static void ui_action_button(const char* label,const MeshInkUiRect& rect,bool selected=false) {
+    const int radius=max(ui_w(12),ui_h(12));
+    rounded_box(rect,radius,selected);
+    int scale=3;
+    if(ui_text_width(label,scale)>rect.width-ui_w(24))scale=2;
+    const int label_width=ui_text_width(label,scale);
+    ui_text(label,rect.x+(rect.width-label_width)/2,
+            rect.y+(rect.height-ui_text_height(scale))/2,scale,selected?0xFF:0,true);
+}
+static void ui_section_card(const MeshInkUiRect& rect) {
+    rounded_box(rect,max(ui_w(14),ui_h(14)),false);
 }
 
 static meshink_keyboard::Metrics keyboard_metrics(bool landscape) {
@@ -687,24 +1086,11 @@ static void audit_ui_geometry() {
 #endif
 
 static void key(const char* label,const meshink_keyboard::Rect& rect) {
-    box(rect.x,rect.y,rect.width,rect.height);
-    int scale=((int)strlen(label)*18+8<=rect.width)?3:2;
-    text(label,rect.x+(rect.width-(int)strlen(label)*6*scale)/2,
-         rect.y+(rect.height-7*scale)/2,scale,0,true);
-}
-
-static void draw_wrapped(const char* value,int x,int y,int chars_per_line,int scale,uint8_t color,bool bold,int max_lines) {
-    const char* cursor=value;
-    for(int row=0;row<max_lines&&*cursor;++row){
-        while(*cursor==' ')++cursor;
-        if(*cursor=='\n'){++cursor;continue;}
-        const char* newline=strchr(cursor,'\n');
-        int remaining=newline?(int)(newline-cursor):(int)strlen(cursor),take=min(chars_per_line,remaining);
-        if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}
-        char line_text[64]={};memcpy(line_text,cursor,min(take,63));
-        text(line_text,x,y+row*(7*scale+8),scale,color,bold);cursor+=take;
-        if(*cursor=='\n')++cursor;
-    }
+    rounded_box(rect.x,rect.y,rect.width,rect.height,max(ui_w(7),ui_h(7)),false);
+    int scale=3;
+    if(ui_text_width(label,scale)+ui_w(8)>rect.width)scale=2;
+    ui_text(label,rect.x+(rect.width-ui_text_width(label,scale))/2,
+            rect.y+(rect.height-ui_text_height(scale))/2,scale,0,true);
 }
 
 static void draw_keyboard() {
@@ -756,11 +1142,16 @@ static void draw_landscape_keyboard(){
     const auto metrics=keyboard_metrics(true);
     meshink_display_set_all_white(&display);
     const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
-    MeshInkRect entry={metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height};
-    meshink_display_draw_rect(entry,0,fb);
-    const int entry_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,960);
-    const int entry_y=metrics.entry.y+meshink_keyboard::scale_axis(16,metrics.height,540);
-    draw_wrapped(value[0]?value:(keyboard_password_mode?"ENTER PASSWORD":"ENTER TEXT"),entry_x,entry_y,48,4,0,true,2);
+    rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
+                max(ui_w(10),ui_h(10)),false);
+    const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,960);
+    const int inset_y=meshink_keyboard::scale_axis(12,metrics.height,540);
+    const int entry_x=metrics.entry.x+inset_x;
+    const int entry_y=metrics.entry.y+inset_y;
+    const int entry_width=metrics.entry.width-2*inset_x;
+    const int entry_height=metrics.entry.height-2*inset_y;
+    ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
+                         entry_x,entry_y,entry_width,entry_height,4,0,false);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
@@ -824,38 +1215,49 @@ static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
     while(true){meshink_display_draw_pixel(x0,y0,color,fb);if(x0==x1&&y0==y1)break;const int e2=2*err;if(e2>=dy){err+=dy;x0+=sx;}if(e2<=dx){err+=dx;y0+=sy;}}
 }
 
+static void draw_status_disc(int cx,int cy,int radius,uint8_t color=0) {
+    rounded_fill(cx-radius,cy-radius,radius*2+1,radius*2+1,radius,color);
+}
+static void draw_status_bold_line(int x0,int y0,int x1,int y1,int radius=2,uint8_t color=0) {
+    for(int oy=-radius;oy<=radius;++oy)for(int ox=-radius;ox<=radius;++ox)
+        if(ox*ox+oy*oy<=radius*radius)line(x0+ox,y0+oy,x1+ox,y1+oy,color);
+    draw_status_disc(x0,y0,radius,color);
+    draw_status_disc(x1,y1,radius,color);
+}
+
 static void draw_target_icon(int x,int y,bool disabled) {
-    // Three-pixel strokes for a clearly visible status-bar GPS icon.
-    meshink_display_fill_rect({x+4,y+4,22,3},0,fb);
-    meshink_display_fill_rect({x+4,y+23,22,3},0,fb);
-    meshink_display_fill_rect({x+4,y+4,3,22},0,fb);
-    meshink_display_fill_rect({x+23,y+4,3,22},0,fb);
-    meshink_display_fill_rect({x+12,y+12,6,6},0,fb);
-    meshink_display_fill_rect({x,y+14,30,3},0,fb);
-    meshink_display_fill_rect({x+14,y,3,30},0,fb);
-    if(disabled) {
-        for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);
-    }
+    // Modern GPS target: rounded four-pixel ring, bold centre and short ticks.
+    rounded_fill(x+3,y+3,25,25,12,0);
+    rounded_fill(x+7,y+7,17,17,8,0xFF);
+    draw_status_disc(x+15,y+15,4,0);
+    meshink_display_fill_rect({x+13,y,5,7},0,fb);
+    meshink_display_fill_rect({x+13,y+24,5,7},0,fb);
+    meshink_display_fill_rect({x,y+13,7,5},0,fb);
+    meshink_display_fill_rect({x+24,y+13,7,5},0,fb);
+    if(disabled)draw_status_bold_line(x+3,y+3,x+27,y+27,3,0);
 }
 
 static void draw_search_icon(int x,int y) {
-    meshink_display_fill_rect({x+3,y+3,20,3},0,fb);
-    meshink_display_fill_rect({x+3,y+20,20,3},0,fb);
-    meshink_display_fill_rect({x+3,y+3,3,20},0,fb);
-    meshink_display_fill_rect({x+20,y+3,3,20},0,fb);
-    for(int d=-1;d<=1;++d)line(x+20,y+20+d,x+29,y+29+d);
+    // A true circular magnifying glass rather than the old square outline.
+    rounded_fill(x+2,y+2,22,22,11,0);
+    rounded_fill(x+7,y+7,12,12,6,0xFF);
+    draw_status_bold_line(x+20,y+20,x+29,y+29,3,0);
 }
 
 static void draw_envelope_icon(int x,int y) {
-    // Bold three-pixel outline and flap, legible at status-bar size.
-    meshink_display_fill_rect({x,y+5,30,3},0,fb);
-    meshink_display_fill_rect({x,y+23,30,3},0,fb);
-    meshink_display_fill_rect({x,y+5,3,21},0,fb);
-    meshink_display_fill_rect({x+27,y+5,3,21},0,fb);
-    for(int d=-1;d<=1;++d) {
-        line(x+3,y+8+d,x+15,y+18+d);
-        line(x+26,y+8+d,x+15,y+18+d);
-    }
+    // Rounded, heavy envelope silhouette with a bold folded flap.
+    rounded_fill(x,y+5,30,22,5,0);
+    rounded_fill(x+4,y+9,22,14,2,0xFF);
+    draw_status_bold_line(x+4,y+9,x+15,y+18,2,0);
+    draw_status_bold_line(x+26,y+9,x+15,y+18,2,0);
+}
+
+static void draw_channel_status_icon(int x,int y) {
+    // Compact two-person channel/group mark; solid shapes stay legible on DU.
+    draw_status_disc(x+9,y+9,5,0);
+    draw_status_disc(x+21,y+9,5,0);
+    rounded_fill(x+2,y+16,14,11,6,0);
+    rounded_fill(x+14,y+16,14,11,6,0);
 }
 
 static void draw_standby_envelope_icon(int x,int y) {
@@ -896,17 +1298,12 @@ static void draw_standby_channel_icon(int x,int y) {
 }
 
 static void draw_standby_card(const MeshInkUiRect& rect) {
-    meshink_display_fill_rect({rect.x,rect.y,rect.width,rect.height},0xFF,fb);
-    const int border=max(ui_w(5),ui_h(5));
-    for(int inset=0;inset<border;++inset)
-        meshink_display_draw_rect(
-            {rect.x+inset,rect.y+inset,rect.width-inset*2,rect.height-inset*2},
-            0,fb);
+    rounded_box(rect,max(ui_w(22),ui_h(22)),false);
 }
 
 static void standby_centred(const char* value,const MeshInkUiRect& rect,int y,int scale,bool bold=true) {
-    const int width=(int)strlen(value)*6*scale;
-    text(value,rect.x+(rect.width-width)/2,y,scale,0,bold);
+    const int width=ui_text_width(value,scale);
+    ui_text(value,rect.x+(rect.width-width)/2,y,scale,0,bold);
 }
 
 static void draw_battery_icon(int x,int y,int level=-1) {
@@ -924,6 +1321,10 @@ static void draw_status_bar() {
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
     meshink_display_draw_rect({0,0,layout.width,status_height},0,fb);
+    auto compact_count=[](uint16_t value,char out[5]){
+        if(value>99)strcpy(out,"99+");
+        else snprintf(out,5,"%u",(unsigned)value);
+    };
     int left=ui_x(6);
     if(meshink_board_has_gps()){
         if(!status_gps_enabled)draw_target_icon(ui_x(6),ui_y(9),true);
@@ -933,12 +1334,21 @@ static void draw_status_bar() {
         if(!standby_active&&status_gps_enabled&&status_gps_fix) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-            text(satellites,ui_x(43),ui_y(13),3,0,true);
-            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(12);
+            text(satellites,ui_x(43),ui_y(17),2,0,true);
+            left=ui_x(43)+(int)strlen(satellites)*12+ui_w(8);
         }
     }
-    if(status_unread){draw_envelope_icon(left,ui_y(9));left+=ui_w(36);char count[7];snprintf(count,sizeof(count),"%u",status_unread);text(count,left,ui_y(13),3,0,true);left+=(int)strlen(count)*18+ui_w(12);}
-    if(status_channel_unread){text("#",left,ui_y(13),3,0,true);left+=ui_w(22);char count[7];snprintf(count,sizeof(count),"%u",status_channel_unread);text(count,left,ui_y(13),3,0,true);}
+    if(status_unread){
+        draw_envelope_icon(left,ui_y(9));left+=ui_w(36);
+        char count[5];compact_count(status_unread,count);
+        text(count,left,ui_y(17),2,0,true);
+        left+=(int)strlen(count)*12+ui_w(8);
+    }
+    if(status_channel_unread){
+        draw_channel_status_icon(left,ui_y(9));left+=ui_w(34);
+        char count[5];compact_count(status_channel_unread,count);
+        text(count,left,ui_y(17),2,0,true);
+    }
     char clock_text[8];
     if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
     else snprintf(clock_text,sizeof(clock_text),"--:--");
@@ -961,16 +1371,16 @@ static void draw_status_bar() {
 // Share the same small black notification style between ordinary settings
 // toasts and the synchronous Maps loading message (which has no timeout).
 static MeshInkRect toast_message_rect(const char* message) {
-    const int scale=3,w=max(ui_w(300),(int)strlen(message)*6*scale+ui_w(48)),h=ui_h(72);
-    return {(portrait_layout().width-w)/2,ui_y(640),w,h};
+    const int scale=3;
+    const int natural=ui_text_width(message,scale)+ui_w(48);
+    const int w=min(portrait_layout().width-ui_w(24),max(ui_w(300),natural));
+    return {(portrait_layout().width-w)/2,ui_y(640),w,ui_h(72)};
 }
 static void draw_toast_message(const char* message) {
     const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
-    const int x=rect.x,y=rect.y,w=rect.width,h=rect.height;
-    meshink_display_fill_rect({x+r,y,w-2*r,h},0,fb);meshink_display_fill_rect({x,y+r,w,h-2*r},0,fb);
-    meshink_display_fill_rect({x+ui_w(5),y+ui_h(5),w-ui_w(10),h-ui_h(10)},0,fb);
-    text(message,x+(w-(int)strlen(message)*6*scale)/2,y+ui_h(25),scale,0xFF,true);
+    rounded_fill(rect.x,rect.y,rect.width,rect.height,r,0);
+    ui_centred_fit(message,rect.y+ui_h(25),rect.width-ui_w(24),scale,0xFF,true);
 }
 static void draw_toast() {
     if(toast_visible)draw_toast_message(toast_message);
@@ -988,22 +1398,25 @@ static void draw_welcome() {
     const MeshInkUiRect name_rect=meshink_welcome_name_rect(layout);
     const MeshInkUiRect preset_rect=meshink_welcome_preset_rect(layout);
     const MeshInkUiRect companion_rect=meshink_welcome_companion_rect(layout);
-    centred("MESHCORE",ui_y(62),6,0,true);
-    centred("SET UP YOUR T5",ui_y(116),3,0,true);
-    text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
-    box(name_rect);
-    text(node_name,layout.form_text_x,name_rect.y+ui_h(19),3);
-    text("RADIO PRESET",layout.form_margin,ui_y(268),2,0,true);
-    box(preset_rect);
-    text(PRESETS[selected_preset].title,preset_rect.x+ui_w(14),preset_rect.y+ui_h(11),3,0,true);
-    text(PRESETS[selected_preset].detail,preset_rect.x+ui_w(14),preset_rect.y+ui_h(52),2);
-    text(">",preset_rect.x+preset_rect.width-ui_w(30),preset_rect.y+ui_h(27),3,0,true);
-    box(companion_rect);
-    centred("BLUETOOTH COMPANION MODE",companion_rect.y+ui_h(16),2,0,true);
-    if(keyboard_visible){centred("ENTER A NAME",ui_y(586),2,0,true);draw_keyboard();}
+    ui_centred("MESHCORE",ui_y(62),6,0,true);
+    ui_centred("Set up your T5",ui_y(116),3,0,true);
+    ui_text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
+    ui_section_card(name_rect);
+    ui_text_fit(node_name,layout.form_text_x,name_rect.y+ui_h(18),
+                name_rect.width-ui_w(36),3,0,false);
+    ui_text("RADIO PRESET",layout.form_margin,ui_y(268),2,0,true);
+    ui_section_card(preset_rect);
+    ui_text_fit(PRESETS[selected_preset].title,preset_rect.x+ui_w(14),preset_rect.y+ui_h(10),
+                preset_rect.width-ui_w(58),3,0,true);
+    ui_text_fit(PRESETS[selected_preset].detail,preset_rect.x+ui_w(14),preset_rect.y+ui_h(51),
+                preset_rect.width-ui_w(58),2,0,false);
+    ui_text(">",preset_rect.x+preset_rect.width-ui_w(30),preset_rect.y+ui_h(27),3,0,true);
+    ui_section_card(companion_rect);
+    ui_centred("Bluetooth companion mode",companion_rect.y+ui_h(15),2,0,true);
+    if(keyboard_visible){ui_centred("Enter a name",ui_y(586),2,0,true);draw_keyboard();}
     else {
         const MeshInkUiRect show_rect=meshink_welcome_show_keyboard_rect(layout);
-        box(show_rect);centred("SHOW KEYBOARD",show_rect.y+ui_h(21),3,0,true);
+        ui_action_button("SHOW KEYBOARD",show_rect,true);
     }
 }
 
@@ -1012,26 +1425,28 @@ static void draw_presets() {
     draw_status_bar();
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect back_rect=meshink_preset_back_rect(layout);
-    text("< BACK",back_rect.x+ui_w(12),back_rect.y+ui_h(14),2,0,true);
-    centred("RADIO PRESETS",ui_y(92),4,0,true);
+    ui_action_button("< BACK",back_rect,false);
+    ui_centred("RADIO PRESETS",ui_y(92),4,0,true);
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
         const int index=first+row; if(index>=PRESET_COUNT) break;
         const MeshInkUiRect row_rect=meshink_preset_row_rect(layout,row);
-        box(row_rect,index==selected_preset);
+        rounded_box(row_rect,max(ui_w(13),ui_h(13)),index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
-        text(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(12),3,color,true);
-        text(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(60),2,color,true);
+        ui_text_fit(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(11),
+                    row_rect.width-ui_w(32),3,color,true);
+        const int detail_width=row_rect.width-ui_w(32);
+        const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;
+        ui_text_fit(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(57),
+                    detail_width,detail_scale,color,false);
     }
     const MeshInkUiRect prev_rect=meshink_preset_prev_rect(layout);
     const MeshInkUiRect next_rect=meshink_preset_next_rect(layout);
-    box(prev_rect,preset_page==0);
-    text("PREV",prev_rect.x+(prev_rect.width-4*12)/2,prev_rect.y+ui_h(21),2,preset_page==0?0xFF:0,true);
+    ui_action_button("PREV",prev_rect,preset_page==0);
     const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
-    box(next_rect,preset_page+1>=page_count);
-    text("NEXT",next_rect.x+(next_rect.width-4*12)/2,next_rect.y+ui_h(21),2,preset_page+1>=page_count?0xFF:0,true);
+    ui_action_button("NEXT",next_rect,preset_page+1>=page_count);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
-    centred(page_text,ui_y(890),2,0,true);
+    ui_centred(page_text,ui_y(890),2,0,true);
 }
 
 static void draw_companion_confirm() {
@@ -1039,10 +1454,10 @@ static void draw_companion_confirm() {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect cancel=meshink_confirm_left_rect(layout,500);
     const MeshInkUiRect start=meshink_confirm_right_rect(layout,500);
-    centred("BLUETOOTH",ui_y(120),5,0,true);centred("COMPANION MODE",ui_y(180),4,0,true);
-    centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
-    box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
-    box(start,true);text("START",start.x+ui_w(48),start.y+ui_h(24),3,0xFF,true);
+    ui_centred("BLUETOOTH",ui_y(120),5,0,true);ui_centred("COMPANION MODE",ui_y(180),4,0,true);
+    ui_centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);ui_centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
+    ui_action_button("CANCEL",cancel,false);
+    ui_action_button("START",start,true);
 }
 
 static void draw_shutdown_confirm() {
@@ -1050,31 +1465,38 @@ static void draw_shutdown_confirm() {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect cancel=meshink_confirm_left_rect(layout,650);
     const MeshInkUiRect shutdown=meshink_confirm_right_rect(layout,650);
-    centred("SHUT DOWN",ui_y(120),5,0,true);
-    centred("FULL BATTERY POWER CUT",ui_y(245),3,0,true);
-    centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
-    centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
+    ui_centred("SHUT DOWN",ui_y(120),5,0,true);
+    ui_centred("FULL BATTERY POWER CUT",ui_y(245),3,0,true);
+    ui_centred("THE DEVICE WILL STOP",ui_y(305),3,0,true);
+    ui_centred("RECEIVING MESSAGES",ui_y(350),3,0,true);
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
-    centred(wake.confirm_battery,ui_y(445),3,0,true);
-    centred(wake.confirm_external,ui_y(500),3,0,true);
-    box(cancel);text("CANCEL",cancel.x+ui_w(44),cancel.y+ui_h(24),3,0,true);
-    box(shutdown,true);text("SHUT DOWN",shutdown.x+ui_w(21),shutdown.y+ui_h(24),3,0xFF,true);
+    ui_centred_fit(wake.confirm_battery,ui_y(445),layout.width-ui_w(32),3,0,true);
+    ui_centred_fit(wake.confirm_external,ui_y(500),layout.width-ui_w(32),3,0,true);
+    ui_action_button("CANCEL",cancel,false);
+    ui_action_button("SHUT DOWN",shutdown,true);
 }
 
 static void draw_bottom_nav(int selected) {
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
     const MeshInkUiLayout& layout=portrait_layout();
+    meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,layout.bottom_nav_height},0xFF,fb);
+    meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,ui_h(2)},0,fb);
     for(int i=0;i<4;++i){
         const int left=i*layout.tab_width;
-        box(left,layout.bottom_nav_top,layout.tab_width,layout.bottom_nav_height,
-            i==selected);
-        const uint8_t color=i==selected?0xFF:0;
-        text(labels[i],left+(layout.tab_width-(int)strlen(labels[i])*12)/2,
-             layout.bottom_nav_top+ui_h(20),2,color,true);
+        const MeshInkUiRect tab={left+ui_w(5),layout.bottom_nav_top+ui_h(7),
+                                 layout.tab_width-ui_w(10),layout.bottom_nav_height-ui_h(13)};
+        const bool active=i==selected;
+        if(active)rounded_box(tab,max(ui_w(11),ui_h(11)),true);
+        const uint8_t color=active?0xFF:0;
+        const int width=ui_text_width(labels[i],2);
+        ui_text(labels[i],left+(layout.tab_width-width)/2,
+                layout.bottom_nav_top+ui_h(21),2,color,true);
         const bool unread=(i==0&&status_unread)||(i==1&&status_channel_unread);
-        if(unread)meshink_display_fill_rect(
-            {left+layout.tab_width-ui_w(17),layout.bottom_nav_top+ui_h(8),
-             ui_w(11),ui_h(11)},color,fb);
+        if(unread){
+            const int d=ui_w(10);
+            rounded_fill(left+layout.tab_width-ui_w(18),layout.bottom_nav_top+ui_h(10),
+                         d,d,d/2,color);
+        }
     }
 }
 
@@ -1083,16 +1505,16 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     const MeshInkUiLayout& layout=portrait_layout();
     if(back){
         const MeshInkUiRect back_rect=meshink_header_back_rect(layout);
-        box(back_rect,true);
-        text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
+        rounded_box(back_rect,max(ui_w(10),ui_h(10)),true);
+        ui_text("<",back_rect.x+ui_w(19),layout.header_text_y,3,0xFF,true);
     }
-    centred(title,layout.header_title_y,4,0,true);
+    const int title_guard=back
+        ?2*(layout.header_back_x+layout.header_button_width+ui_w(12))
+        :2*ui_w(24);
+    ui_centred_fit(title,layout.header_title_y,layout.width-title_guard,4,0,true);
     if(action){
         const MeshInkUiRect action_rect=meshink_header_action_rect(layout);
-        box(action_rect,true);
-        text(action,action_rect.x+
-             (action_rect.width-(int)strlen(action)*18)/2,
-             layout.header_text_y,3,0xFF,true);
+        ui_action_button(action,action_rect,true);
     }
 }
 
@@ -1118,20 +1540,37 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
     else if(type==(uint8_t)UiNodeRole::Repeater){meshink_display_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);meshink_display_fill_rect({x+7,y+28,15,5},0,fb);}
     else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);meshink_display_fill_rect({x+8,y+8,5,5},0,fb);meshink_display_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
     else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
-    else {thick_rect(x+2,y+3,25,27);text("?",x+8,y+8,2,0,true);}
+    else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
 }
-static void draw_list_entry(const UiListEntry& item,int y) {
+static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3) {
     const MeshInkUiLayout& layout=portrait_layout();
-    box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);
+    rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,
+                max(ui_w(12),ui_h(12)));
     const bool typed=item.node_type!=0;
-    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+ui_h(12));
-    text(item.title,typed?layout.content_text_x+ui_w(42):layout.content_text_x,
-         y+ui_h(16),3,0,true);
-    text(item.time,layout.content_right-(int)strlen(item.time)*12-
-         layout.text_inset,y+ui_h(20),2,0,true);
-    draw_wrapped(item.subtitle,layout.content_text_x,y+ui_h(60),36,2,0,false,2);
+    const int title_x=typed?layout.content_text_x+ui_w(42):layout.content_text_x;
+    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+ui_h(15));
+
+    const int time_width=ui_text_width(item.time,2);
+    const int time_x=layout.content_right-layout.text_inset-time_width;
+    ui_text(item.time,time_x,y+ui_h(19),2,0,true);
+    ui_text_fit(item.title,title_x,y+ui_h(15),
+                max(ui_w(120),time_x-title_x-ui_w(16)),3,0,true);
+
+    // Body copy is deliberately scale 3 on the 540 px T5. Proportional
+    // advances keep two useful lines in the existing 142 px row without
+    // shrinking the text back to the old small metadata size.
+    ui_draw_wrapped(item.subtitle,layout.content_text_x,y+ui_h(57),
+                    layout.outer_width-2*layout.text_inset,subtitle_scale,0,false,2);
+
     if(item.unread){
-        meshink_display_fill_rect({layout.width-ui_w(58),y+ui_h(94),ui_w(20),ui_h(20)},0,fb);
+        char unread[5];snprintf(unread,sizeof(unread),"%u",(unsigned)item.unread);
+        const int badge_h=ui_h(26);
+        const int badge_w=max(ui_w(34),ui_text_width(unread,2)+ui_w(18));
+        const int badge_x=layout.content_right-layout.text_inset-badge_w;
+        const int badge_y=y+layout.list_row_height-ui_h(32);
+        rounded_box(badge_x,badge_y,badge_w,badge_h,badge_h/2,true);
+        ui_text(unread,badge_x+(badge_w-ui_text_width(unread,2))/2,
+                badge_y+ui_h(6),2,0xFF,true);
     }
 }
 
@@ -1160,9 +1599,9 @@ static void draw_page_indicator(size_t page,size_t pages,int y) {
     if(pages<=1)return;
     char page_text[24];
     snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",(unsigned)(page+1),(unsigned)pages);
-    const int text_width=(int)strlen(page_text)*12;
+    const int text_width=ui_text_width(page_text,2);
     const int text_left=(meshink_display_logical_width()-text_width)/2;
-    centred(page_text,y,2,0,true);
+    ui_centred(page_text,y,2,0,true);
     if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
     if(page+1<pages)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
@@ -1175,15 +1614,15 @@ static void draw_contacts() {
     draw_app_header("CONTACTS");
     // The model is fully populated before ui_use_data_provider() attaches it.
     // A missing provider means STARTUP, not a completed empty contact list.
-    if(!ui_data)centred("LOADING CONTACT INFO..",ui_y(300),3,0,true);
+    if(!ui_data)ui_centred("LOADING CONTACT INFO..",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->contact_count();
         clamp_list_page(contacts_page,count);
-        if(!count)centred("NO SAVED CONTACTS",ui_y(300),3,0,true);
+        if(!count)ui_centred("NO SAVED CONTACTS",ui_y(300),3,0,true);
         else {
             const size_t first=contacts_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
-                draw_list_entry(ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride);
+                draw_list_entry(ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2);
             draw_list_page_footer(contacts_page,count);
         }
     }
@@ -1192,15 +1631,15 @@ static void draw_contacts() {
 
 static void draw_channels() {
     draw_app_header("CHANNELS");
-    if(!ui_data)centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
+    if(!ui_data)ui_centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->channel_count();
         clamp_list_page(channels_page,count);
-        if(!count)centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
+        if(!count)ui_centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
         else {
             const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
-                draw_list_entry(ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride);
+                draw_list_entry(ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2);
             draw_list_page_footer(channels_page,count);
         }
     }
@@ -1239,7 +1678,6 @@ static void draw_map_nodes() {
         const auto& n=map_marker_hits[i];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
         char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
-        const int w=min(230,max(48,(int)strlen(short_name)*12+8));
         char age[16];
         if(node.gps_from_reply){
             // This is when our T5 RECEIVED GPS telemetry, not the remote fix time.
@@ -1252,22 +1690,28 @@ static void draw_map_nodes() {
             if(seconds<3600)snprintf(age,sizeof(age),"ADV %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"ADV %luh",(unsigned long)(seconds/3600));
             else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));}
+        const int w=min(230,max(48,max(ui_text_width(short_name,2),ui_text_width(age,2))+8));
         const int offsets[4][2]={{12,-18},{-12-w,-18},{12,12},{-12-w,12}};
         int lx=0,ly=0;bool placed=false;
+        const int label_bottom=ui_y(766);
         for(const auto& offset:offsets) {
             const int x=n.x+offset[0],y=n.y+offset[1];
-            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>map_bottom()-3)continue;
+            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>label_bottom)continue;
             bool overlap=false;
-            for(size_t j=0;j<occupied_count;++j)if(x<occupied[j].x+occupied[j].w+4&&
+            for(size_t control=0;control<3&&!overlap;++control){
+                const MeshInkUiRect r=meshink_map_control_rect(portrait_layout(),(int)control);
+                if(x<r.x+r.width+4&&x+w+4>r.x&&y<r.y+r.height+4&&y+38>r.y)overlap=true;
+            }
+            for(size_t j=0;j<occupied_count&&!overlap;++j)if(x<occupied[j].x+occupied[j].w+4&&
                 x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
-                {overlap=true;break;}
+                overlap=true;
             if(!overlap){lx=x;ly=y;placed=true;break;}
         }
         if(!placed)continue; // Keep the true-position dot even if labels collide.
         occupied[occupied_count++]={(int16_t)lx,(int16_t)ly,(int16_t)w,34};
         meshink_display_fill_rect({lx,ly,w,34},0xFF,fb);
-        text(short_name,lx+4,ly+2,2,0,true);
-        text(age,lx+4,ly+18,2,0,true);
+        ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);
+        ui_text_fit(age,lx+4,ly+18,w-ui_w(8),2,0,true);
     }
     // Always draw position dots last so a neighbouring label cannot move or
     // obscure a marker. Each circle has a white halo for contrast.
@@ -1369,25 +1813,25 @@ static void draw_maps() {
     if(result.sd_ready&&!result.tiles) {
         const MeshInkUiRect missing=ui_rect(18,774,232,30);
         meshink_display_fill_rect({missing.x,missing.y,missing.width,missing.height},0xFF,fb);
-        text("NO MAP TILES HERE",ui_x(22),ui_y(778),2,0,true);
+        ui_text("NO MAP TILES HERE",ui_x(22),ui_y(778),2,0,true);
     }
     char zoom[24];snprintf(zoom,sizeof(zoom),"ZOOM %u (%s)",map_zoom,map_source_badge(result));
-    const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);
+    const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);
     meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);
-    text(zoom,ui_x(22),ui_y(816),2,0,true);
+    ui_text(zoom,ui_x(22),ui_y(816),2,0,true);
 
     const MeshInkUiRect zoom_in=meshink_map_control_rect(layout,0);
     const MeshInkUiRect zoom_out=meshink_map_control_rect(layout,1);
     const MeshInkUiRect locate=meshink_map_control_rect(layout,2);
-    box(zoom_in,true);
+    rounded_box(zoom_in,max(ui_w(12),ui_h(12)),true);
     meshink_display_fill_rect({zoom_in.x+ui_w(20),zoom_in.y+ui_h(30),ui_w(26),ui_h(5)},0xFF,fb);
     meshink_display_fill_rect({zoom_in.x+ui_w(30),zoom_in.y+ui_h(20),ui_w(5),ui_h(26)},0xFF,fb);
-    box(zoom_out,true);
+    rounded_box(zoom_out,max(ui_w(12),ui_h(12)),true);
     meshink_display_fill_rect({zoom_out.x+ui_w(20),zoom_out.y+ui_h(30),ui_w(26),ui_h(5)},0xFF,fb);
     long own_latitude=0,own_longitude=0;bool own_current_fix=false;
     const bool has_own_location=map_device_position(own_latitude,own_longitude,own_current_fix);
     if(has_own_location){
-        box(locate,true);
+        rounded_box(locate,max(ui_w(12),ui_h(12)),true);
         const int target_x=locate.x+ui_w(12),target_y=locate.y+ui_h(12);
         meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(6),ui_w(33),ui_h(5)},0xFF,fb);
         meshink_display_fill_rect({target_x+ui_w(6),target_y+ui_h(34),ui_w(33),ui_h(5)},0xFF,fb);
@@ -1406,62 +1850,181 @@ static void draw_maps() {
     char scale[24];
     if(map_imperial){const double feet=nice*3.28084;if(feet>=5280)snprintf(scale,sizeof(scale),"%.1f MI",feet/5280.0);else snprintf(scale,sizeof(scale),"%.0f FT",feet);}
     else if(nice>=1000)snprintf(scale,sizeof(scale),"%.0f KM",nice/1000.0);else snprintf(scale,sizeof(scale),"%.0f M",nice);
-    meshink_display_fill_rect({ui_x(20),ui_y(850),pixels+ui_w(12),ui_h(34)},0xFF,fb);
+    const int scale_backing_width=max(pixels+ui_w(12),ui_text_width(scale,2)+ui_w(16));
+    meshink_display_fill_rect({ui_x(20),ui_y(850),scale_backing_width,ui_h(34)},0xFF,fb);
     line(ui_x(26),ui_y(872),ui_x(26)+pixels,ui_y(872));
     line(ui_x(26),ui_y(866),ui_x(26),ui_y(878));
     line(ui_x(26)+pixels,ui_y(866),ui_x(26)+pixels,ui_y(878));
-    text(scale,ui_x(28),ui_y(850),2,0,true);
+    ui_text(scale,ui_x(28),ui_y(850),2,0,true);
     if(!result.sd_ready){
         const MeshInkUiRect warning=ui_rect(80,300,380,80);
-        meshink_display_fill_rect({warning.x,warning.y,warning.width,warning.height},0xFF,fb);
-        centred("SD CARD / MAPS UNAVAILABLE",ui_y(328),2,0,true);
+        ui_section_card(warning);
+        ui_centred("SD card / maps unavailable",ui_y(328),2,0,true);
     }
     draw_bottom_nav(2);
 }
 
-static int wrapped_line_count(const char* value,int chars_per_line) {
-    int lines=0;const char* cursor=value;
-    while(*cursor){while(*cursor==' ')++cursor;if(!*cursor)break;int remaining=strlen(cursor),take=min(chars_per_line,remaining);
-        if(remaining>chars_per_line){int split=take;while(split>0&&cursor[split]!=' ')--split;if(split>0)take=split;}cursor+=max(1,take);++lines;}
-    return max(1,lines);
+static void message_footer_text(const UiMessage& message,char out[72]) {
+    const char* state=(message.network&&message.network[0])?message.network:"";
+    if(!state[0]&&message.outgoing){
+        switch(message.state){
+            case UiMessageState::Sending:state="SENDING";break;
+            case UiMessageState::Sent:state="SENT";break;
+            case UiMessageState::Delivered:state="DELIVERED";break;
+            case UiMessageState::Failed:state="FAILED";break;
+            case UiMessageState::Retrying1:state="RETRYING 1/2";break;
+            case UiMessageState::Retrying2:state="RETRYING 2/2";break;
+            case UiMessageState::Retrying3:state="SENDING FLOOD";break;
+            case UiMessageState::Retrying4:state="RETRYING 4/5";break;
+            case UiMessageState::Retrying5:state="RETRYING 5/5";break;
+            default:break;
+        }
+    }
+    snprintf(out,72,"%s%s%s",message.time,state[0]?"  ":"",state);
+}
+
+struct MessageBubbleGeometry { int x;int width;int height;int text_width; };
+
+static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
+    char footer[72]{};message_footer_text(message,footer);
+    const int screen_width=meshink_display_logical_width();
+    const int pad=ui_w(18);
+    const int max_width=ui_w(456);
+    const int min_width=ui_w(240);
+    const int body_natural=min(max_width-2*pad,ui_text_max_line_width(message.text,3));
+    const int footer_natural=ui_text_width(footer,2);
+    const int width=min(max_width,max(min_width,
+        max(body_natural+2*pad,footer_natural+2*pad)));
+    const int text_width=max(ui_w(80),width-2*pad);
+    const int lines=min(16,ui_wrapped_line_count(message.text,text_width,3));
+    const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
+    const int margin=ui_x(12);
+    const int x=message.outgoing?screen_width-margin-width:margin;
+    return {x,width,height,text_width};
 }
 
 static int message_bubble_height(const UiMessage& message){
-    return max(ui_h(104),wrapped_line_count(message.text,23)*ui_h(29)+ui_h(48));
+    return message_bubble_geometry(message).height;
 }
 
-static void draw_message_bubble(const UiMessage& message,int y,int h) {
-    const int x=message.outgoing?ui_x(82):ui_x(12),w=ui_w(446);
-    box(x,y,w,h,message.outgoing);
-    draw_wrapped(message.text,x+ui_w(16),y+ui_h(12),23,3,message.outgoing?0xFF:0,true,8);
-    char footer[72];const char* state=(message.network&&message.network[0])?message.network:"";
-    if(!state[0]&&message.outgoing){switch(message.state){case UiMessageState::Sending:state="SENDING";break;case UiMessageState::Sent:state="SENT";break;case UiMessageState::Delivered:state="DELIVERED";break;case UiMessageState::Failed:state="FAILED";break;case UiMessageState::Retrying1:state="RETRYING 1/5";break;case UiMessageState::Retrying2:state="RETRYING 2/5";break;case UiMessageState::Retrying3:state="RETRYING 3/5";break;case UiMessageState::Retrying4:state="RETRYING 4/5";break;case UiMessageState::Retrying5:state="RETRYING 5/5";break;default:break;}}
-    snprintf(footer,sizeof(footer),"%s%s%s",message.time,state[0]?"  ":"",state);
-    text(footer,x+w-(int)strlen(footer)*12-ui_w(12),y+h-ui_h(28),2,message.outgoing?0xFF:0,true);
+static void draw_message_bubble(const UiMessage& message,int y,
+                                const MessageBubbleGeometry& geometry) {
+    const int radius=max(ui_w(14),ui_h(14));
+    rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing);
+    const uint8_t color=message.outgoing?0xFF:0;
+    ui_draw_wrapped(message.text,geometry.x+ui_w(18),y+ui_h(14),
+                    geometry.text_width,3,color,false,16);
+
+    char footer[72]{};message_footer_text(message,footer);
+    const int footer_width=ui_text_width(footer,2);
+    const int footer_max=geometry.width-ui_w(28);
+    if(footer_width<=footer_max)
+        ui_text(footer,geometry.x+geometry.width-ui_w(14)-footer_width,
+                y+geometry.height-ui_h(27),2,color,true);
+    else
+        ui_text_fit(footer,geometry.x+ui_w(14),y+geometry.height-ui_h(27),
+                    footer_max,2,color,true);
 }
 
-static void chat_page_bounds(size_t count,int available,uint8_t requested,size_t& first,size_t& end,uint8_t& pages){
-    size_t cursor=count;first=count;end=count;pages=0;uint8_t page=0;
-    while(cursor>0){size_t candidate=cursor;int used=0;while(candidate>0){const int h=message_bubble_height(ui_data->active_message(candidate-1));const int needed=h+(used?8:0);if(used&&used+needed>available)break;used+=needed;--candidate;if(used>=available)break;}
-        if(page==requested){first=candidate;end=cursor;}++pages;if(candidate==0)break;cursor=candidate;++page;
+static size_t chat_fill_backwards(size_t end,int available){
+    size_t candidate=end;int used=0;
+    while(candidate>0){
+        const UiMessage& message=ui_data->active_message(candidate-1);
+        const int h=message_bubble_height(message);
+        const int needed=h+(used?ui_h(8):0);
+        if(used+needed>available)break;
+        used+=needed;--candidate;
+        if(used>=available)break;
     }
-    if(!count){first=end=0;pages=1;}else if(requested>=pages){chat_page=pages-1;chat_page_bounds(count,available,chat_page,first,end,pages);}
+    return candidate;
 }
 
-static int chat_history_bottom_no_keyboard(){
-    return portrait_layout().bottom_nav_top-ui_h(100);
+static void chat_page_bounds_lazy(size_t count,int current_available,int history_available,
+                                  uint8_t requested,size_t& first,size_t& end,bool& has_older){
+    first=end=count;has_older=false;
+    if(!count)return;
+
+    if(chat_page_snapshot_count!=count||
+       chat_page_snapshot_current_available!=current_available||
+       chat_page_snapshot_history_available!=history_available){
+        chat_page_snapshot_count=count;
+        chat_page_snapshot_current_available=current_available;
+        chat_page_snapshot_history_available=history_available;
+        chat_page_known=0;
+        chat_page=0;
+    }
+    if(!chat_page_known){
+        // Page 1/current leaves room for the normal bottom taskbar.
+        chat_page_starts[0]=(uint16_t)chat_fill_backwards(count,current_available);
+        chat_page_known=1;
+    }
+    while(requested>=chat_page_known&&chat_page_known<CHAT_PAGE_ANCHORS&&
+          chat_page_starts[chat_page_known-1]>0){
+        const size_t previous_start=chat_page_starts[chat_page_known-1];
+        // Older pages intentionally hide the taskbar and use that space for
+        // additional message history.
+        chat_page_starts[chat_page_known]=(uint16_t)
+            chat_fill_backwards(previous_start,history_available);
+        ++chat_page_known;
+    }
+    if(requested>=chat_page_known){
+        chat_page=(uint8_t)(chat_page_known-1);
+        requested=chat_page;
+    }
+    first=chat_page_starts[requested];
+    end=requested?chat_page_starts[requested-1]:count;
+    has_older=first>0;
 }
-static int chat_history_available(){
-    return chat_history_bottom_no_keyboard()-ui_h(126);
+
+static void draw_chat_page_indicator(size_t page,bool has_older,int y){
+    if(page==0&&!has_older)return;
+    char page_text[20];
+    snprintf(page_text,sizeof(page_text),"PAGE %u",(unsigned)(page+1));
+    const int text_width=ui_text_width(page_text,2);
+    const int text_left=(meshink_display_logical_width()-text_width)/2;
+    ui_centred(page_text,y,2,0,true);
+    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
+    if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
+}
+
+static int chat_compose_top(){
+    const auto metrics=keyboard_metrics(false);
+    return portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12);
+}
+static int chat_history_bottom_current(){
+    return chat_compose_top()-ui_h(88);
+}
+static int chat_history_bottom_paged(){
+    // Older pages have neither compose box nor taskbar. Leave only a slim
+    // footer band for PAGE N/arrows and give the rest back to message history.
+    return portrait_layout().height-ui_h(62);
+}
+static int chat_history_available_current(){
+    return chat_history_bottom_current()-ui_h(126);
+}
+static int chat_history_available_paged(){
+    return chat_history_bottom_paged()-ui_h(126);
+}
+static bool chat_needs_paging(size_t count){
+    return count&&chat_fill_backwards(count,chat_history_available_current())>0;
 }
 
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
-    box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
-    const int text_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,540);
+    rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
+                max(ui_w(12),ui_h(12)));
+    const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,540);
+    const int inset_y=meshink_keyboard::scale_axis(8,metrics.height,960);
+    const int text_x=metrics.entry.x+inset_x;
+    const int text_width=metrics.entry.width-2*inset_x;
+    const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;
+    const int text_y=line_count<=1
+        ?metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2
+        :metrics.entry.y+inset_y;
+    const int text_height=metrics.entry.y+metrics.entry.height-text_y-inset_y;
     if(compose_text[0])
-        draw_wrapped(compose_text,text_x,metrics.entry.y+ui_h(8),25,3,0,true,2);
+        ui_draw_wrapped_tail(compose_text,text_x,text_y,text_width,text_height,3,0,false);
     else
-        text("Enter text",text_x,metrics.entry.y+ui_h(24),2,0,false);
+        ui_text("Write a message...",text_x,text_y,3,0,false);
 }
 
 static void draw_chat(bool channel) {
@@ -1470,10 +2033,29 @@ static void draw_chat(bool channel) {
     const size_t count=ui_data?ui_data->active_message_count():0;
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
-    const int history_bottom=keyboard?keyboard_layout.history_bottom:chat_history_bottom_no_keyboard();
-    const int available=history_bottom-ui_h(126);
-    size_t first=0,end=0;uint8_t pages=1;const uint8_t requested=keyboard?0:chat_page;chat_page_bounds(count,available,requested,first,end,pages);
-    if(!count)centred("NO MESSAGES YET",ui_y(300),3,0,true);else{int y=ui_y(126);for(size_t i=first;i<end;++i){const int h=message_bubble_height(ui_data->active_message(i));draw_message_bubble(ui_data->active_message(i),y,h);y+=h+ui_h(8);}}
+    size_t first=count,end=count;bool has_older=false;
+    if(count){
+        if(keyboard){
+            first=chat_fill_backwards(count,keyboard_layout.history_bottom-ui_h(126));
+        }else if(!chat_needs_paging(count)){
+            if(chat_page)reset_chat_paging();
+            first=0;end=count;
+        }else{
+            chat_page_bounds_lazy(count,chat_history_available_current(),
+                                  chat_history_available_paged(),
+                                  chat_page,first,end,has_older);
+        }
+    }
+    if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
+    else{
+        int y=ui_y(126);
+        for(size_t i=first;i<end;++i){
+            const UiMessage& message=ui_data->active_message(i);
+            const MessageBubbleGeometry geometry=message_bubble_geometry(message);
+            draw_message_bubble(message,y,geometry);
+            y+=geometry.height+ui_h(8);
+        }
+    }
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
     const uint32_t timing_keyboard_started=micros();
     if(keyboard){
@@ -1481,11 +2063,19 @@ static void draw_chat(bool channel) {
         draw_keyboard();
     }else{
         const MeshInkUiLayout& layout=portrait_layout();
-        const int compose_y=layout.bottom_nav_top-ui_h(12);
-        draw_page_indicator(chat_page,pages,layout.bottom_nav_top-ui_h(60));
-        box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height);
-        text(compose_text[0]?compose_text:"TAP TO WRITE A MESSAGE",
-             layout.content_text_x,compose_y+ui_h(20),2,0,true);
+        const bool history_page=chat_page>0;
+        if(history_page){
+            // History pages are read-only views: no composer and no taskbar.
+            draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));
+        }else{
+            const int compose_y=chat_compose_top();
+            draw_chat_page_indicator(chat_page,has_older,compose_y-ui_h(48));
+            rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
+                        max(ui_w(12),ui_h(12)));
+            const char* prompt=compose_text[0]?compose_text:"Write a message...";
+            ui_text_fit(prompt,layout.content_text_x,compose_y+ui_h(17),
+                        layout.outer_width-2*layout.text_inset,3,0,compose_text[0]);
+        }
     }
     t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
@@ -1508,16 +2098,13 @@ static void draw_message_entry_fast() {
 
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
-    if(!ui_data||!ui_data->active_node_details(node)){centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
+    if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.node_type,details_page);
-    centred(node.name,ui_y(126),4,0,true);centred(node_role_label(node.node_type),ui_y(174),2,0,true);
+    ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,true);
+    ui_centred(node_role_label(node.node_type),ui_y(174),2,0,true);
     auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
-        box(rect,selected);
-        const int scale=2;
-        const int label_width=(int)strlen(label)*6*scale;
-        text(label,rect.x+(rect.width-label_width)/2,
-             rect.y+(rect.height-7*scale)/2,scale,selected?0xFF:0,true);
+        ui_action_button(label,rect,selected);
     };
     auto request_label=[&](UiNodeInfoRequest request,const char* idle) {
         return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
@@ -1532,54 +2119,105 @@ static void draw_contact_details() {
     const MeshInkUiRect right_action=meshink_node_right_action_rect(layout);
 
     if(page!=NodeInfoPage::Overview&&!node.saved_contact){
-        text("ADD CONTACT FIRST",layout.section_margin,ui_y(250),3,0,true);
-        draw_wrapped("REMOTE REQUESTS REQUIRE THIS NODE TO BE SAVED AS A CONTACT.",layout.section_margin,ui_y(304),39,2,0,false,4);
+        ui_text("ADD CONTACT FIRST",layout.section_margin,ui_y(250),3,0,true);
+        ui_draw_wrapped("Remote requests require this node to be saved as a contact.",
+                        layout.section_margin,ui_y(304),layout.section_width,2,0,false,4);
         draw_page_indicator(details_page,pages,ui_y(770));
         return;
     }
     if(page==NodeInfoPage::Overview){
-        text("OVERVIEW",layout.section_margin,ui_y(206),3,0,true);
-        text("LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);text(node.advert_age,layout.detail_value_x,ui_y(258),2);
-        text("ROUTE",layout.section_margin,ui_y(326),2,0,true);text(node.route,layout.detail_value_x,ui_y(326),2);
-        text("POSITION",layout.section_margin,ui_y(394),2,0,true);draw_wrapped(node.position,layout.detail_value_x,ui_y(394),25,2,0,false,2);
-        draw_wrapped(node.position_source,layout.detail_value_x,ui_y(438),25,2,0,false,1);
-        text("LAST HEARD",layout.section_margin,ui_y(480),2,0,true);draw_wrapped(node.last_seen,layout.detail_value_x,ui_y(480),25,2,0,false,1);
-        text("IDENTITY",layout.section_margin,ui_y(526),2,0,true);text(node.identity,layout.detail_value_x,ui_y(526),2);
-        if(node.latitude||node.longitude){box(map_action);centred("OPEN POSITION ON MAP",map_action.y+ui_h(21),2,0,true);}
+        ui_text("OVERVIEW",layout.section_margin,ui_y(206),3,0,true);
+        ui_text("LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);
+        ui_text_fit(node.advert_age,layout.detail_value_x,ui_y(254),
+                    layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+        ui_text("ROUTE",layout.section_margin,ui_y(326),2,0,true);
+        ui_text_fit(node.route,layout.detail_value_x,ui_y(322),
+                    layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+        ui_text("POSITION",layout.section_margin,ui_y(394),2,0,true);
+        const int overview_position_width=
+            layout.width-layout.detail_value_x-layout.section_margin;
+        const int overview_position_y=ui_y(390);
+        const int overview_position_lines=min(
+            2,ui_wrapped_line_count(node.position,overview_position_width,3));
+        ui_draw_wrapped(node.position,layout.detail_value_x,overview_position_y,
+                        overview_position_width,3,0,false,2);
+        const int overview_source_y=max(
+            ui_y(448),overview_position_y+
+            overview_position_lines*ui_text_line_step(3)+ui_h(8));
+        ui_text_fit(node.position_source,layout.detail_value_x,overview_source_y,
+                    overview_position_width,2,0,false);
+        const int overview_last_seen_y=max(
+            ui_y(476),overview_source_y+ui_text_height(2)+ui_h(18));
+        ui_text("LAST HEARD",layout.section_margin,overview_last_seen_y+ui_h(4),2,0,true);
+        ui_text_fit(node.last_seen,layout.detail_value_x,overview_last_seen_y,
+                    overview_position_width,3,0,false);
+        const int overview_identity_y=max(
+            ui_y(522),overview_last_seen_y+ui_text_height(3)+ui_h(20));
+        ui_text("IDENTITY",layout.section_margin,overview_identity_y+ui_h(4),2,0,true);
+        ui_text_fit(node.identity,layout.detail_value_x,overview_identity_y,
+                    overview_position_width,2,0,false);
+        if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
         if(node.saved_contact){action_button("CHAT",left_action);
             action_button("DELETE",right_action);}
         else action_button("ADD CONTACT",full_action,true);
     } else if(page==NodeInfoPage::Status){
-        text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,ui_y(220),3,0,true);
+        ui_text(room_server?"ROOM SERVER STATUS":"REPEATER STATUS",layout.section_margin,ui_y(220),3,0,true);
         if(!node.authenticated){
-            draw_wrapped(room_server?"LOGIN WITH THE ROOM PASSWORD TO REQUEST STATUS.":"LOGIN WITH THE REPEATER GUEST OR ADMIN PASSWORD TO REQUEST STATUS.",layout.section_margin,ui_y(282),39,2,0,false,5);
-            if(!strcmp(node.status,"LOGIN FAILED"))text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
+            ui_draw_wrapped(room_server?"Login with the room password to request status.":"Login with the repeater guest or admin password to request status.",
+                            layout.section_margin,ui_y(282),layout.section_width,2,0,false,5);
+            if(!strcmp(node.status,"LOGIN FAILED"))ui_text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
             char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
-            text(login_text,layout.section_margin,ui_y(258),2,0,true);
-            draw_wrapped(node.status,layout.section_margin,ui_y(294),27,3,0,true,14);
+            ui_text(login_text,layout.section_margin,ui_y(258),2,0,true);
+            const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;
+            ui_draw_wrapped(node.status,layout.section_margin,ui_y(294),
+                            layout.section_width,status_scale,0,true,14);
             action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),full_action,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
-        text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
+        ui_text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
         if(login_required&&!node.authenticated){
-            draw_wrapped(room_server?"ROOM SERVER TELEMETRY REQUIRES LOGIN.":"REPEATER TELEMETRY REQUIRES LOGIN.",layout.section_margin,ui_y(282),39,2,0,false,3);
+            ui_draw_wrapped(room_server?"Room server telemetry requires login.":"Repeater telemetry requires login.",
+                            layout.section_margin,ui_y(282),layout.section_width,2,0,false,3);
             action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
-            draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);
-            text("POSITION",layout.section_margin,ui_y(420),2,0,true);draw_wrapped(node.position,layout.section_margin,ui_y(454),27,3,0,true,2);
-            draw_wrapped(node.position_source,layout.section_margin,ui_y(522),39,2,0,false,1);
-            if(node.latitude||node.longitude){box(map_action);centred("OPEN POSITION ON MAP",map_action.y+ui_h(21),2,0,true);}
+            const int telemetry_scale=
+                ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2;
+            ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),
+                            layout.section_width,telemetry_scale,0,true,4);
+            ui_text("POSITION",layout.section_margin,ui_y(420),2,0,true);
+            const int telemetry_position_y=ui_y(454);
+            const int telemetry_position_lines=min(
+                2,ui_wrapped_line_count(node.position,layout.section_width,3));
+            ui_draw_wrapped(node.position,layout.section_margin,telemetry_position_y,
+                            layout.section_width,3,0,true,2);
+            const int telemetry_source_y=max(
+                ui_y(522),telemetry_position_y+
+                telemetry_position_lines*ui_text_line_step(3)+ui_h(8));
+            ui_draw_wrapped(node.position_source,layout.section_margin,telemetry_source_y,
+                            layout.section_width,2,0,false,1);
+            if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
             action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
         }
     } else {
-        text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
-        draw_wrapped(node.path,layout.section_margin,ui_y(260),27,3,0,true,3);
-        text("TRACE ROUTE",layout.section_margin,ui_y(360),3,0,true);
-        draw_wrapped(node.trace,layout.section_margin,ui_y(400),39,2,0,true,7);
-        text("SAVED ROUTE",layout.section_margin,ui_y(620),2,0,true);
-        draw_wrapped(node.route,layout.section_margin,ui_y(654),27,3,0,true,2);
+        ui_text("DISCOVERED PATH",layout.section_margin,ui_y(220),3,0,true);
+        const int path_text_y=ui_y(260);
+        const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.section_width,3));
+        ui_draw_wrapped(node.path,layout.section_margin,path_text_y,
+                        layout.section_width,3,0,true,3);
+        const int trace_heading_y=max(
+            ui_y(360),path_text_y+path_lines*ui_text_line_step(3)+ui_h(10));
+        ui_text("TRACE ROUTE",layout.section_margin,trace_heading_y,3,0,true);
+        const int trace_text_y=trace_heading_y+ui_h(40);
+        const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));
+        ui_draw_wrapped(node.trace,layout.section_margin,trace_text_y,
+                        layout.section_width,2,0,true,9);
+        const int saved_route_y=max(
+            ui_y(620),trace_text_y+trace_lines*ui_text_line_step(2)+ui_h(10));
+        ui_text("SAVED ROUTE",layout.section_margin,saved_route_y,2,0,true);
+        ui_draw_wrapped(node.route,layout.section_margin,saved_route_y+ui_h(34),
+                        layout.section_width,3,0,true,2);
         action_button(request_label(UiNodeInfoRequest::Path,"DISCOVER PATH"),left_action,true);
         action_button(request_label(UiNodeInfoRequest::Trace,"TRACE ROUTE"),right_action,true);
     }
@@ -1591,12 +2229,15 @@ static void draw_contact_details() {
         const MeshInkUiRect save_rect=meshink_password_save_rect(layout);
         const MeshInkUiRect checkbox={
             save_rect.x+ui_w(4),save_rect.y+ui_h(8),ui_w(28),ui_h(28)};
-        box(checkbox,save_remote_password);
-        if(save_remote_password)text("X",checkbox.x+ui_w(6),checkbox.y+ui_h(5),2,0xFF,true);
-        text("SAVE PASSWORD",save_rect.x+ui_w(46),save_rect.y+ui_h(14),2,0,true);
-        box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height);
-        text(remote_password[0]?remote_password:"REMOTE PASSWORD",
-             metrics.entry.x+ui_w(16),metrics.entry.y+ui_h(24),2,0,true);draw_keyboard();
+        rounded_box(checkbox,max(ui_w(6),ui_h(6)),save_remote_password);
+        if(save_remote_password)ui_text("X",checkbox.x+ui_w(6),checkbox.y+ui_h(5),2,0xFF,true);
+        ui_text("SAVE PASSWORD",save_rect.x+ui_w(46),save_rect.y+ui_h(14),2,0,true);
+        rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
+                    max(ui_w(12),ui_h(12)));
+        ui_text_fit(remote_password[0]?remote_password:"Remote password",
+                    metrics.entry.x+ui_w(16),metrics.entry.y+ui_h(20),
+                    metrics.entry.width-ui_w(32),3,0,false);
+        draw_keyboard();
     }
 }
 
@@ -1604,67 +2245,93 @@ static void settings_row(const char* title,const char* subtitle,int y);
 
 static void draw_discovery() {
     draw_app_header("DISCOVERED",true);
-    if(!ui_data||!ui_data->advert_count()){centred("NO ADVERTS HEARD",ui_y(300),3,0,true);centred("SEND AN ADVERT OR WAIT",ui_y(350),2);}
-    else for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)draw_list_entry(ui_data->advert(i),120+i*150);
+    if(!ui_data||!ui_data->advert_count()){
+        discovery_page=0;
+        ui_centred("NO ADVERTS HEARD",ui_y(300),3,0,true);
+        ui_centred("SEND AN ADVERT OR WAIT",ui_y(350),2);
+        return;
+    }
+    const size_t count=ui_data->advert_count();
+    clamp_list_page(discovery_page,count);
+    const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;
+    for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
+        draw_list_entry(ui_data->advert(first+row),
+                        portrait_layout().list_top+row*portrait_layout().list_row_stride);
+    draw_list_page_footer(discovery_page,count);
 }
 
 static void draw_more() {
     draw_app_header("MORE");
-    settings_row("DISCOVERED ADVERTS","RECENT NODES HEARD",130);settings_row("ADVERTISE","ZERO HOP OR FLOOD",260);
-    settings_row("SETTINGS","DEVICE AND RADIO",390);settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",520);
-    settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650);settings_row("HELP","USING MESHINK",780);
+    settings_row("DISCOVERED ADVERTS","Recent nodes heard",130);settings_row("ADVERTISE","Zero hop or flood",260);
+    settings_row("SETTINGS","Device and radio",390);settings_row("BLUETOOTH COMPANION","Restart in companion mode",520);
+    settings_row("DIAGNOSTICS","Live MeshCore radio stats",650);settings_row("HELP","Using MeshInk",780);
     draw_bottom_nav(3);
 }
 
 static void draw_diagnostics() {
     draw_app_header("DIAGNOSTICS",true);
     const MeshInkUiLayout& layout=portrait_layout();
-    text("CORE",layout.section_margin,ui_y(130),3,0,true);
-    draw_wrapped(local_mesh_diagnostics_core(),layout.section_margin,ui_y(170),39,2,0,true,5);
-    text("RADIO",layout.section_margin,ui_y(330),3,0,true);
-    draw_wrapped(local_mesh_diagnostics_radio(),layout.section_margin,ui_y(370),39,2,0,true,5);
-    text("PACKETS",layout.section_margin,ui_y(530),3,0,true);
-    draw_wrapped(local_mesh_diagnostics_packets(),layout.section_margin,ui_y(570),39,2,0,true,5);
-    const MeshInkUiRect action=meshink_node_action_rect(layout);box(action,true);
+    const MeshInkUiRect core=meshink_outer_row_rect(layout,120,180);
+    const MeshInkUiRect radio=meshink_outer_row_rect(layout,312,180);
+    const MeshInkUiRect packets=meshink_outer_row_rect(layout,504,180);
+    ui_section_card(core);ui_section_card(radio);ui_section_card(packets);
+    ui_text("CORE",layout.content_text_x,core.y+ui_h(13),3,0,true);
+    ui_draw_wrapped(local_mesh_diagnostics_core(),layout.content_text_x,core.y+ui_h(52),
+                    core.width-ui_w(32),2,0,false,5);
+    ui_text("RADIO",layout.content_text_x,radio.y+ui_h(13),3,0,true);
+    ui_draw_wrapped(local_mesh_diagnostics_radio(),layout.content_text_x,radio.y+ui_h(52),
+                    radio.width-ui_w(32),2,0,false,5);
+    ui_text("PACKETS",layout.content_text_x,packets.y+ui_h(13),3,0,true);
+    ui_draw_wrapped(local_mesh_diagnostics_packets(),layout.content_text_x,packets.y+ui_h(52),
+                    packets.width-ui_w(32),2,0,false,5);
+    const MeshInkUiRect action=meshink_node_action_rect(layout);
     const char* label=local_mesh_diagnostics_busy()?"REFRESHING...":"REFRESH STATS";
-    text(label,action.x+(action.width-(int)strlen(label)*12)/2,
-         action.y+(action.height-ui_h(14))/2,2,0xFF,true);
+    ui_action_button(label,action,true);
 }
 
 static void draw_advert_menu() {
     draw_app_header("ADVERTISE",true);
     settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
-    draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",portrait_layout().section_margin,ui_y(500),39,2,0,true,4);
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect note=meshink_outer_row_rect(layout,490,180);
+    ui_section_card(note);
+    ui_draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",
+                    layout.content_text_x,note.y+ui_h(22),note.width-ui_w(32),3,0,false,4);
 }
 
 static void settings_row(const char* title,const char* subtitle,int reference_y) {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
-    box(row);
-    text(title,layout.content_text_x,row.y+ui_h(14),3,0,true);
-    text(subtitle,layout.content_text_x,row.y+ui_h(58),2);
-    text(">",layout.settings_arrow_x,row.y+ui_h(42),3,0,true);
+    ui_section_card(row);
+    ui_text_fit(title,layout.content_text_x,row.y+ui_h(13),
+                row.width-ui_w(76),3,0,true);
+    const int subtitle_width=row.width-ui_w(76);
+    const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;
+    ui_text_fit(subtitle,layout.content_text_x,row.y+ui_h(55),
+                subtitle_width,subtitle_scale,0,false);
+    ui_text(">",layout.settings_arrow_x,row.y+ui_h(39),3,0,true);
 }
 
 static void draw_settings() {
     draw_app_header("SETTINGS",true);
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
     if(meshink_board_has_gps()){
-        settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);
-        settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
-        settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
-        settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
+        settings_row("LOCATION & GPS","Position, interval, advert",238);
+        settings_row("PRIVACY","Contacts and telemetry",358);
+        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478);
+        settings_row("ABOUT","Firmware and device info",598);
     }else{
-        settings_row("PRIVACY","CONTACTS AND TELEMETRY",238);
-        settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",358);
-        settings_row("ABOUT","FIRMWARE AND DEVICE INFO",478);
+        settings_row("PRIVACY","Contacts and telemetry",238);
+        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",358);
+        settings_row("ABOUT","Firmware and device info",478);
     }
 }
 
 static void draw_radio_settings() {
     draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
     settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
-    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);settings_row("PATH HASH MODE",path_hash_label(),510);
+    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);
+    if(!keyboard_visible)settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
 }
 
@@ -1697,12 +2364,14 @@ static void draw_gps_tuning(){
     settings_row("CONSTELLATIONS",gps_constellation_label(),120);
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect nmea=meshink_outer_row_rect(layout,238,112);
-    box(nmea);
-    text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(14),3,0,true);
-    text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(296),2,0,true);
+    ui_section_card(nmea);
+    ui_text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(13),3,0,true);
+    ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(292),3,0,false);
     settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
-    draw_wrapped("GPS ONLY MAY LOWER RECEIVER LOAD, BUT MAY TAKE LONGER TO FIX. CHOOSE MORE SATELLITE SYSTEMS IF RECEPTION IS POOR.",layout.section_margin,ui_y(515),45,2,0,true,5);
-    draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),45,2,0,true,4);
+    ui_draw_wrapped("GPS only may lower receiver load, but can take longer to fix. Choose more satellite systems if reception is poor.",
+                    layout.section_margin,ui_y(515),layout.section_width,2,0,false,5);
+    ui_draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),
+                    layout.section_width,2,0,false,4);
 }
 
 static void draw_timezone(){
@@ -1710,10 +2379,12 @@ static void draw_timezone(){
     const MeshInkUiLayout& layout=portrait_layout();
     for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
         const MeshInkUiRect row=meshink_outer_row_rect(layout,118+i*102,92);
-        box(row,i==timezone_index);
+        rounded_box(row,max(ui_w(12),ui_h(12)),i==timezone_index);
         const uint8_t c=i==timezone_index?0xFF:0;
-        text(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(10),3,c,true);
-        text(TIMEZONES[i].detail,layout.content_text_x,row.y+ui_h(54),2,c,true);
+        ui_text_fit(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(9),
+                    row.width-ui_w(32),3,c,true);
+        ui_text_fit(TIMEZONES[i].detail,layout.content_text_x,row.y+ui_h(50),
+                    row.width-ui_w(32),3,c,false);
     }
 }
 
@@ -1730,47 +2401,63 @@ static void draw_display_settings() {
     settings_row("MODE",frontlight_mode_name(),118);
     if(frontlight_mode==FrontlightMode::NightTimer){
         const MeshInkUiRect action=meshink_settings_inline_action_rect(layout,118);
-        box(action,true);
-        text("EDIT TIMES",action.x+ui_w(17),action.y+ui_h(20),2,0xFF,true);
+        ui_action_button("EDIT TIMES",action,true);
     }
     settings_row("LIGHT TIMEOUT",frontlight_timeout_name(),238);
     const MeshInkUiRect brightness=meshink_display_brightness_rect(layout);
-    box(brightness);
-    text("BRIGHTNESS",layout.content_text_x,brightness.y+ui_h(16),3,0,true);
+    ui_section_card(brightness);
+    ui_text("BRIGHTNESS",layout.content_text_x,brightness.y+ui_h(15),3,0,true);
     char level[8];snprintf(level,sizeof(level),"%u%%",frontlight_brightness);
-    text(level,layout.width-ui_w(12)-(int)strlen(level)*18-ui_w(8),brightness.y+ui_h(16),3,0,true);
+    ui_text(level,layout.width-ui_w(28)-ui_text_width(level,3),
+            brightness.y+ui_h(15),3,0,true);
     const MeshInkUiRect slider=meshink_display_slider_track_rect(layout);
     meshink_display_fill_rect({slider.x,slider.y,slider.width,slider.height},0,fb);
     const int knob=slider.x+(frontlight_brightness*slider.width)/100;
     meshink_display_fill_rect({knob-ui_w(12),slider.y-ui_h(15),ui_w(24),ui_h(35)},0,fb);
-    text("-",layout.content_text_x,ui_y(452),3,0,true);
-    text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
+    ui_text("-",layout.content_text_x,ui_y(452),3,0,true);
+    ui_text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
     settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
-    box(shutdown);
-    centred("SHUT DOWN",shutdown.y+ui_h(23),3,0,true);
+    ui_action_button("SHUT DOWN",shutdown,false);
 }
 
 static void draw_help() {
     draw_app_header("USING MESHINK",true);
     const MeshInkUiLayout& layout=portrait_layout();
-    text("QUICK SETTINGS",layout.section_margin,ui_y(142),3,0,true);
-    draw_wrapped("Swipe down from the top edge for front light brightness, advert flood and power off.",layout.section_margin,ui_y(176),39,2,0,false,3);
+    const MeshInkUiRect quick=meshink_outer_row_rect(layout,118,126);
+    const MeshInkUiRect button=meshink_outer_row_rect(layout,254,166);
+    const MeshInkUiRect keyboard=meshink_outer_row_rect(layout,430,126);
+    const MeshInkUiRect maps=meshink_outer_row_rect(layout,566,126);
+    const MeshInkUiRect companion=meshink_outer_row_rect(layout,702,170);
+    ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard);
+    ui_section_card(maps);ui_section_card(companion);
+
+    ui_text("QUICK SETTINGS",layout.content_text_x,quick.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Swipe down from the top edge for front light, advert flood and power off.",
+                    layout.content_text_x,quick.y+ui_h(48),quick.width-ui_w(32),2,0,false,3);
+
     char button_title[32];
     snprintf(button_title,sizeof(button_title),"%s BUTTON",meshink_primary_button_name());
-    text(button_title,layout.section_margin,ui_y(266),3,0,true);
+    ui_text(button_title,layout.content_text_x,button.y+ui_h(12),3,0,true);
     char button_help[180];
     snprintf(button_help,sizeof(button_help),
-        "Short press refreshes the current screen. Hold %s for 2 seconds to lock screen and enter standby - hold %s for 2 seconds to unlock",
-        meshink_primary_button_name(),meshink_primary_button_name());
-    draw_wrapped(button_help,layout.section_margin,ui_y(300),39,2,0,false,5);
-    text("KEYBOARD",layout.section_margin,ui_y(444),3,0,true);
-    draw_wrapped("Message entry can be made easier using the landscape keyboard. Toggle it via LAND/portrait button.",layout.section_margin,ui_y(478),39,2,0,false,4);
-    text("MAPS",layout.section_margin,ui_y(586),3,0,true);
-    draw_wrapped("Pan and pinch zooming is supported, the screen will refresh on release. double tap to zoom in, triple tap to zoom out.",layout.section_margin,ui_y(620),39,2,0,false,4);
-    text("BLUETOOTH COMPANION MODE",layout.section_margin,ui_y(728),3,0,true);
-    draw_wrapped("Reboots to a special mode where you can connect any meshcore app to it and have full control. Reboot to return to the UI.",layout.section_margin,ui_y(762),39,2,0,false,5);
+        "Short press refreshes. Hold %s for 2 seconds for standby; hold again for 2 seconds to wake.",
+        meshink_primary_button_name());
+    ui_draw_wrapped(button_help,layout.content_text_x,button.y+ui_h(48),
+                    button.width-ui_w(32),2,0,false,5);
+
+    ui_text("KEYBOARD",layout.content_text_x,keyboard.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Use LAND for the larger landscape message keyboard.",
+                    layout.content_text_x,keyboard.y+ui_h(48),keyboard.width-ui_w(32),2,0,false,3);
+
+    ui_text("MAPS",layout.content_text_x,maps.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Pan or pinch, double tap to zoom in, triple tap to zoom out.",
+                    layout.content_text_x,maps.y+ui_h(48),maps.width-ui_w(32),2,0,false,3);
+
+    ui_text("BLUETOOTH COMPANION",layout.content_text_x,companion.y+ui_h(12),3,0,true);
+    ui_draw_wrapped("Reboots into companion mode for MeshCore apps. Reboot again to return to the local UI.",
+                    layout.content_text_x,companion.y+ui_h(48),companion.width-ui_w(32),2,0,false,5);
 }
 
 static void draw_meshink_logo(int top,bool compact=false);
@@ -1779,35 +2466,61 @@ static void draw_standby(){
     meshink_display_set_all_white(&display);
     draw_status_bar();
 
-    // Standby is the device's main at-rest face: use the exact same full-size
-    // generated MeshInk artwork as About/splash rather than a text heading.
-    draw_meshink_logo(ui_y(70),false);
+    const bool has_direct=status_unread>0;
+    const bool has_channel=status_channel_unread>0;
+    const bool any_unread=has_direct||has_channel;
 
-    const MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
-    const MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
+    // With nothing waiting, lower the logo into the otherwise-empty centre of
+    // the screen. When unread cards are present retain the proven compact top
+    // placement so the logo, cards and lower standby treatment all fit.
+    const int logo_top=any_unread?ui_y(70):ui_y(165);
+    draw_meshink_logo(logo_top,false);
 
-    draw_standby_card(direct_rect);
-    draw_standby_envelope_icon(
-        direct_rect.x+(direct_rect.width-ui_w(120))/2,
-        direct_rect.y+ui_h(28));
-    char direct[12];snprintf(direct,sizeof(direct),"%u",status_unread);
-    standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11);
-    standby_centred("PRIVATE",direct_rect,direct_rect.y+ui_h(224),3);
-    standby_centred("MESSAGES",direct_rect,direct_rect.y+ui_h(260),3);
+    MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
+    MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
+    if(has_direct!=has_channel){
+        const int centred_x=(portrait_layout().width-ui_w(244))/2;
+        if(has_direct)direct_rect.x=centred_x;
+        else channel_rect.x=centred_x;
+    }
 
-    draw_standby_card(channel_rect);
-    draw_standby_channel_icon(
-        channel_rect.x+(channel_rect.width-ui_w(126))/2,
-        channel_rect.y+ui_h(22));
-    char channel[12];snprintf(channel,sizeof(channel),"%u",status_channel_unread);
-    standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11);
-    standby_centred("CHANNEL",channel_rect,channel_rect.y+ui_h(224),3);
-    standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
+    if(has_direct){
+        draw_standby_card(direct_rect);
+        draw_standby_envelope_icon(
+            direct_rect.x+(direct_rect.width-ui_w(120))/2,
+            direct_rect.y+ui_h(28));
+        char direct[12];
+        if(status_unread>99)strcpy(direct,"99+");
+        else snprintf(direct,sizeof(direct),"%u",status_unread);
+        standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11);
+        standby_centred("PRIVATE",direct_rect,direct_rect.y+ui_h(224),3);
+        standby_centred("MESSAGES",direct_rect,direct_rect.y+ui_h(260),3);
+    }
 
-    meshink_display_fill_rect({ui_x(24),ui_y(805),ui_w(492),ui_h(3)},0,fb);
-    char wake_button[40];
-    snprintf(wake_button,sizeof(wake_button),"HOLD %s FOR TWO SECONDS TO WAKE",meshink_primary_button_name());
-    centred(wake_button,ui_y(840),2,0,true);
+    if(has_channel){
+        draw_standby_card(channel_rect);
+        draw_standby_channel_icon(
+            channel_rect.x+(channel_rect.width-ui_w(126))/2,
+            channel_rect.y+ui_h(22));
+        char channel[12];
+        if(status_channel_unread>99)strcpy(channel,"99+");
+        else snprintf(channel,sizeof(channel),"%u",status_channel_unread);
+        standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11);
+        standby_centred("CHANNEL",channel_rect,channel_rect.y+ui_h(224),3);
+        standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
+    }
+
+    // STANDBY is part of the at-rest identity rather than small helper copy.
+    // Move it beneath unread cards when present; otherwise use the open centre.
+    ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);
+
+    // Keep the wake instruction low on the panel and make it readable at a
+    // glance. Scale 3 uses the smooth Inter renderer; two lines avoid squeezing.
+    meshink_display_fill_rect({ui_x(24),ui_y(830),ui_w(492),ui_h(3)},0,fb);
+    char wake_line[40];
+    snprintf(wake_line,sizeof(wake_line),"HOLD %s FOR TWO SECONDS",meshink_primary_button_name());
+    ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);
+    ui_centred("TO WAKE",ui_y(892),3,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}
@@ -1820,16 +2533,19 @@ static void draw_night_schedule(){
     const MeshInkUiRect minus_rect=meshink_night_minus_rect(layout);
     const MeshInkUiRect plus_rect=meshink_night_plus_rect(layout);
     const MeshInkUiRect save_rect=meshink_night_save_rect(layout);
-    box(start_rect,night_edit_field==0);
-    text("START",start_rect.x+ui_w(18),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
-    text(start,start_rect.x+start_rect.width-ui_w(156),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
-    box(end_rect,night_edit_field==1);
-    text("END",end_rect.x+ui_w(18),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
-    text(end,end_rect.x+end_rect.width-ui_w(156),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
-    box(minus_rect);text("-30 MIN",minus_rect.x+ui_w(38),minus_rect.y+ui_h(26),3,0,true);
-    box(plus_rect);text("+30 MIN",plus_rect.x+ui_w(38),plus_rect.y+ui_h(26),3,0,true);
-    box(save_rect,true);centred("SAVE SCHEDULE",save_rect.y+ui_h(26),3,0xFF,true);
-    draw_wrapped("The selected timezone from GPS settings is used automatically.",layout.section_margin,ui_y(740),39,2,0,true,3);
+    rounded_box(start_rect,max(ui_w(14),ui_h(14)),night_edit_field==0);
+    ui_text("START",start_rect.x+ui_w(18),start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    ui_text(start,start_rect.x+start_rect.width-ui_w(18)-ui_text_width(start,3),
+            start_rect.y+ui_h(16),3,night_edit_field==0?0xFF:0,true);
+    rounded_box(end_rect,max(ui_w(14),ui_h(14)),night_edit_field==1);
+    ui_text("END",end_rect.x+ui_w(18),end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    ui_text(end,end_rect.x+end_rect.width-ui_w(18)-ui_text_width(end,3),
+            end_rect.y+ui_h(16),3,night_edit_field==1?0xFF:0,true);
+    ui_action_button("-30 MIN",minus_rect,false);
+    ui_action_button("+30 MIN",plus_rect,false);
+    ui_action_button("SAVE SCHEDULE",save_rect,true);
+    ui_draw_wrapped("The selected timezone from GPS settings is used automatically.",
+                    layout.section_margin,ui_y(740),layout.section_width,2,0,false,3);
 }
 
 static void draw_meshink_logo(int top,bool compact) {
@@ -1860,15 +2576,19 @@ static void draw_meshink_logo(int top,bool compact) {
 
 static void draw_about() {
     draw_app_header("ABOUT",true);
+    const MeshInkUiLayout& layout=portrait_layout();
     draw_meshink_logo(ui_y(118),true);
-    centred("Made by Samo",ui_y(506),3,0,true);
-    centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,true);
-    if(node_name[0])centred(node_name,ui_y(600),3,0,true);
-    centred(UI_VERSION,ui_y(642),3,0,true);
-    text("HARDWARE",portrait_layout().section_margin,ui_y(720),2,0,true);
-    text("LILYGO T5 PRO",ui_x(170),ui_y(720),2);
-    text("CORE",portrait_layout().section_margin,ui_y(770),2,0,true);
-    text("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",ui_x(170),ui_y(770),2);
+    ui_centred("Made by Samo",ui_y(506),3,0,true);
+    ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
+    if(node_name[0])ui_centred_fit(node_name,ui_y(600),layout.width-ui_w(32),3,0,true);
+    ui_centred(UI_VERSION,ui_y(642),3,0,true);
+    const MeshInkUiRect info=meshink_outer_row_rect(layout,698,150);
+    ui_section_card(info);
+    ui_text("HARDWARE",layout.content_text_x,info.y+ui_h(18),2,0,true);
+    ui_text("LILYGO T5 PRO",ui_x(170),info.y+ui_h(16),3,0,false);
+    ui_text("CORE",layout.content_text_x,info.y+ui_h(78),2,0,true);
+    ui_text_fit("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",ui_x(170),
+                info.y+ui_h(74),info.x+info.width-ui_x(170)-ui_w(16),2,0,false);
 }
 
 static void draw_screen();
@@ -1905,23 +2625,23 @@ static void draw_quick_panel() {
     meshink_display_fill_rect({0,0,display_width,panel_bottom},0xFF,fb);
     meshink_display_fill_rect({0,panel_bottom-ui_h(4),display_width,ui_h(4)},0x00,fb);
 
-    centred("QUICK SETTINGS",ui_y(34),4,0,true);
-    centred("FRONT LIGHT",ui_y(92),3,0,true);
+    ui_centred("QUICK SETTINGS",ui_y(34),4,0,true);
+    ui_centred("Front light",ui_y(92),3,0,true);
 
-    box(slider);
+    rounded_box(slider,max(ui_w(7),ui_h(7)),false);
     const int thumb_x=slider.x+((int)frontlight_brightness*slider.width)/100;
     const int track_centre_y=slider.y+slider.height/2;
     meshink_display_fill_rect({slider.x,track_centre_y-ui_h(5),
         max(1,thumb_x-slider.x),ui_h(10)},0x00,fb);
-    meshink_display_fill_rect({max(slider.x,thumb_x-ui_w(7)),
-        track_centre_y-ui_h(18),ui_w(14),ui_h(36)},0x00,fb);
+    rounded_fill(max(slider.x,thumb_x-ui_w(9)),track_centre_y-ui_h(19),
+                 ui_w(18),ui_h(38),max(ui_w(8),ui_h(8)),0);
 
-    centred("TAP OR DRAG TO SELECT",ui_y(221),2,0,true);
+    ui_centred("Tap or drag to select",ui_y(221),2,0,false);
 
-    box(minus_button);
+    rounded_box(minus_button,max(ui_w(12),ui_h(12)),false);
     meshink_display_fill_rect({
         minus_button.x+ui_w(37),minus_button.y+ui_h(33),ui_w(38),ui_h(4)},0x00,fb);
-    box(plus_button);
+    rounded_box(plus_button,max(ui_w(12),ui_h(12)),false);
     meshink_display_fill_rect({
         plus_button.x+ui_w(37),plus_button.y+ui_h(33),ui_w(38),ui_h(4)},0x00,fb);
     meshink_display_fill_rect({
@@ -1929,16 +2649,12 @@ static void draw_quick_panel() {
     char level[16];
     if(frontlight_brightness==0) snprintf(level,sizeof(level),"OFF");
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
-    centred(level,ui_y(273),4,0,true);
+    ui_centred(level,ui_y(273),4,0,true);
 
-    box(advert_button,true);
-    text("ADVERT FLOOD",advert_button.x+(advert_button.width-12*12)/2,
-         advert_button.y+ui_h(39),2,0xFF,true);
-    box(power_button);
-    text("POWER OFF",power_button.x+(power_button.width-9*12)/2,
-         power_button.y+ui_h(39),2,0,true);
+    ui_action_button("ADVERT FLOOD",advert_button,true);
+    ui_action_button("POWER OFF",power_button,false);
 
-    centred("TAP BELOW OR SWIPE UP TO CLOSE",ui_y(560),2,0,true);
+    ui_centred("Tap below or swipe up to close",ui_y(560),2,0,false);
     draw_toast();
 }
 
@@ -2032,6 +2748,9 @@ static void draw_screen() {
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
+    else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+            !keyboard_visible&&chat_page==0)
+        draw_bottom_nav(screen==Screen::ContactChat?0:1);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||screen==Screen::Diagnostics||
             (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
         draw_bottom_nav(3);
@@ -2170,13 +2889,14 @@ static void request_hardware_shutdown() {
     T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] user confirmed; preparing peripherals and persistent display");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
-    centred("POWERED OFF",ui_y(250),6,0,true);
+    const MeshInkUiLayout& layout=portrait_layout();
+    ui_centred("POWERED OFF",ui_y(250),6,0,true);
     const MeshInkPowerWakeInfo& wake=meshink_power_wake_info();
-    centred(wake.off_battery_line1,ui_y(370),4,0,true);
-    centred(wake.off_battery_line2,ui_y(425),4,0,true);
-    centred(wake.off_external_line1,ui_y(560),3,0,true);
-    centred(wake.off_external_line2,ui_y(610),3,0,true);
-    centred(UI_VERSION,ui_y(900),2,0,true);
+    ui_centred_fit(wake.off_battery_line1,ui_y(370),layout.width-ui_w(32),4,0,true);
+    ui_centred_fit(wake.off_battery_line2,ui_y(425),layout.width-ui_w(32),4,0,true);
+    ui_centred_fit(wake.off_external_line1,ui_y(560),layout.width-ui_w(32),3,0,true);
+    ui_centred_fit(wake.off_external_line2,ui_y(610),layout.width-ui_w(32),3,0,true);
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);
     set_touch_power(false);
@@ -2198,19 +2918,19 @@ static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,
     frontlight_deadline=0;frontlight_drive(false);
 
     meshink_display_set_all_white(&display);
-    centred("LOW BATTERY",ui_y(230),6,0,true);
-    centred("POWERED DOWN",ui_y(340),5,0,true);
-    centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
+    ui_centred("LOW BATTERY",ui_y(230),6,0,true);
+    ui_centred("POWERED DOWN",ui_y(340),5,0,true);
+    ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
     if(critical.battery_mv_valid) {
         char voltage[20];
         snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
                  (unsigned)(critical.battery_mv/1000U),
                  (unsigned)((critical.battery_mv%1000U)/10U));
-        centred(voltage,ui_y(650),2,0,true);
+        ui_centred(voltage,ui_y(650),2,0,true);
     } else {
-        centred("BATTERY CRITICAL",ui_y(650),2,0,true);
+        ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
     }
-    centred(UI_VERSION,ui_y(900),2,0,true);
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
 
     set_touch_power(false);
@@ -2424,7 +3144,7 @@ static void append(char c) {
     if(keyboard_password_mode){size_t n=strlen(remote_password);if(n<15){remote_password[n]=c;remote_password[n+1]=0;}return;}
     if(keyboard_message_mode){
         const size_t n=strlen(compose_text);
-        if(n<48){
+        if(n<MESHINK_MESSAGE_TEXT_MAX){
             compose_text[n]=c;compose_text[n+1]=0;
             // Fresh messages start with sentence-style uppercase. Once the
             // first alphabetic character is entered, fall back to lowercase
@@ -2570,10 +3290,12 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
         }
         if(keyboard_message_mode){
-            if(compose_text[0]&&local_mesh_send_active(compose_text)){
-                compose_text[0]=0;text_refresh_pending=false;
-                keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
-            }
+            if(!compose_text[0])return true;
+            if(!local_mesh_send_active(compose_text))return true;
+            compose_text[0]=0;text_refresh_pending=false;
+            keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
+            keyboard_visible=true;set_keyboard_orientation(false);
+            return true;
         }
         // DONE in landscape is only an orientation switch for name entry.
         // Return to portrait setup with radio preset still available; only
@@ -2675,12 +3397,14 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
 
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
-    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;chat_page=0;open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
+    if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;reset_chat_paging();open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
     if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
-    if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&
+    const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+                              !keyboard_visible&&chat_page==0;
+    if((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat||chat_main_page)&&
        y>=portrait_layout().bottom_nav_top){
         const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
@@ -2693,7 +3417,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();chat_page=0;open_screen(Screen::ContactChat);}return true;}
+                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
                 }
             }
             break;
@@ -2706,15 +3430,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();chat_page=0;open_screen(Screen::ChannelChat);}return true;}
+                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
                 }
             }
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
-            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=layout.bottom_nav_top-12;
-            if(hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
-                keyboard_message_mode=true;keyboard_visible=true;chat_page=0;
+            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top();
+            if(chat_page==0&&hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
+                keyboard_message_mode=true;keyboard_visible=true;reset_chat_paging();
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
                 text_refresh_pending=false;
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
@@ -2768,9 +3492,24 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::Discovery:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
-            if(ui_data)for(size_t i=0;i<ui_data->advert_count()&&i<5;++i)if(hit_outer_row(x,y,portrait_layout().list_top+
-                    i*portrait_layout().list_row_stride,
-                    portrait_layout().list_row_height)){if(ui_data->open_advert(i)){details_from_discovery=true;details_page=0;open_screen(Screen::ContactDetails);}return true;}break;
+            if(ui_data){
+                const size_t count=ui_data->advert_count();
+                clamp_list_page(discovery_page,count);
+                const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;
+                for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                    const size_t index=first+row;
+                    if(hit_outer_row(x,y,portrait_layout().list_top+
+                            row*portrait_layout().list_row_stride,
+                            portrait_layout().list_row_height)){
+                        if(ui_data->open_advert(index)){
+                            details_from_discovery=true;details_page=0;
+                            open_screen(Screen::ContactDetails);
+                        }
+                        return true;
+                    }
+                }
+            }
+            break;
         case Screen::More:
             if(hit_outer_row(x,y,130)){open_screen(Screen::Discovery);return true;}
             if(hit_outer_row(x,y,260)){open_screen(Screen::AdvertMenu);return true;}
@@ -3049,7 +3788,20 @@ static void service_primary_button(){
         // refreshes from accidental short presses.
         if(!standby_active){
             last_user_activity=millis();
-            draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
+            if(screen==Screen::Maps){
+                // The visible terrain is already decoded in map_base_cache.
+                // Refresh only live node data, flash the physical screen black,
+                // then rebuild the same viewport from the cached terrain so
+                // moved node/device markers land at their latest positions.
+                // Stay on the cache-only refresh path: no toast and no tile I/O.
+                local_mesh_refresh_ui_data();
+                meshink_display_fill_framebuffer(&display,0x00);
+                force_redraw(MeshInkRefreshMode::Direct,"SHORT_BUTTON_MAP_BLACK",false);
+                draw_screen();
+                fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);
+            }else{
+                draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
+            }
         }
     }pressed_at=0;handled=false;}
 }
@@ -3122,9 +3874,9 @@ void ui_setup() {
     // is normally already mounted, so use the generic boot status by default.
     // local_mesh_setup() changes it only if SPIFFS fails to mount and must
     // attempt first-time initialization/recovery.
-    centred("STARTING UP...",ui_y(716),3,0,true);
-    if(node_name[0])centred(node_name,ui_y(830),3,0,true);
-    centred(UI_VERSION,ui_y(885),2,0,true);
+    ui_centred("STARTING UP...",ui_y(716),3,0,true);
+    if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
+    ui_centred(UI_VERSION,ui_y(885),2,0,true);
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
@@ -3133,7 +3885,7 @@ void ui_show_storage_initializing() {
     // Called only after a non-formatting mount fails. Update the existing
     // splash before SPIFFS.begin(true) may block while preparing storage.
     meshink_display_fill_rect({0,ui_y(704),portrait_layout().width,ui_h(65)},0xFF,fb);
-    centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
+    ui_centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
     refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
 }
@@ -3220,7 +3972,7 @@ void ui_loop() {
                 keyboard_landscape=false;
                 set_ui_orientation(MeshInkOrientation::Portrait);
             }
-            details_page=0;details_from_discovery=false;chat_page=0;
+            details_page=0;details_from_discovery=false;reset_chat_paging();
             open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
             continue;
         }
@@ -3287,27 +4039,40 @@ void ui_loop() {
             open_screen(Screen::Maps);
             continue;
         }
-        if((screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
-            const size_t count=!ui_data?0:(screen==Screen::Contacts?ui_data->contact_count():ui_data->channel_count());
-            size_t& page=screen==Screen::Contacts?contacts_page:channels_page;
+        if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&
+           abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            const size_t count=!ui_data?0:
+                (screen==Screen::Contacts?ui_data->contact_count():
+                 screen==Screen::Channels?ui_data->channel_count():ui_data->advert_count());
+            size_t& page=screen==Screen::Contacts?contacts_page:
+                         screen==Screen::Channels?channels_page:discovery_page;
             clamp_list_page(page,count);
             const size_t pages=list_page_count(count);
             int next=(int)page+(tap.dy<0?1:-1);
             if(next<0)next=0;if(next>=(int)pages)next=(int)pages-1;
             if((size_t)next!=page){
                 page=(size_t)next;
-                T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",screen==Screen::Contacts?"contacts":"channels",(unsigned)(page+1),(unsigned)pages);
+                const char* name=screen==Screen::Contacts?"contacts":
+                                 screen==Screen::Channels?"channels":"discovery";
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",name,
+                          (unsigned)(page+1),(unsigned)pages);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=ui_data?ui_data->active_message_count():0;
-            size_t first=0,end=0;uint8_t pages=1;
-            chat_page_bounds(count,chat_history_available(),chat_page,first,end,pages);
-            int next=(int)chat_page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=pages)next=pages-1;
-            if((uint8_t)next!=chat_page){
-                chat_page=(uint8_t)next;
-                T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u/%u\n",chat_page+1,pages);
+            size_t first=count,end=count;bool has_older=false;
+            if(chat_needs_paging(count))
+                chat_page_bounds_lazy(count,chat_history_available_current(),
+                                      chat_history_available_paged(),
+                                      chat_page,first,end,has_older);
+            uint8_t next=chat_page;
+            if(tap.dy<0){
+                if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
+            }else if(chat_page>0)next=(uint8_t)(chat_page-1);
+            if(next!=chat_page){
+                chat_page=next;
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u%s\n",
+                          (unsigned)(chat_page+1),has_older?"":" (oldest)");
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if(screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
@@ -3346,10 +4111,9 @@ void ui_loop() {
         t5_timing_set_ui_action(T5UiAction::StatusPoll);
         const uint32_t timing_status_started=micros();
         update_status_hardware();
-        // Normal UI keeps the clock current minute-by-minute. Standby keeps
-        // the lower-power five-minute wall-clock cadence requested for e-paper.
-        // Event-driven redraws still adopt the exact current time without
-        // postponing either cadence.
+        // Normal UI keeps the visible clock current minute-by-minute.
+        // Standby uses the lower-power five-minute wall-clock cadence.
+        // Event-driven redraws still adopt the exact current clock/battery.
         const int16_t status_wall_minute=(status_hour>=0&&status_minute>=0)
             ?(int16_t)(status_hour*60+status_minute):-1;
         const int16_t status_slot=status_wall_minute>=0
@@ -3428,22 +4192,22 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
     if(failure==MeshInkRadioFailureClass::MissingHardwareVariant){
-        centred("MESHINK CANNOT START",ui_y(120),4,0,true);
-        centred("LORA AND GPS NOT FOUND",ui_y(190),4,0,true);
-        centred("BOARD VARIANT MAY OMIT RADIO",ui_y(290),3,0,true);
-        centred("LORA RADIO IS REQUIRED",ui_y(360),3,0,true);
-        centred("IF YOUR BOARD HAS A RADIO",ui_y(520),2,0,true);
-        centred("PLEASE REPORT THIS ERROR",ui_y(555),2,0,true);
-        centred("PRESS RST TO RETRY",ui_y(720),3,0,true);
+        ui_centred_fit("MESHINK CANNOT START",ui_y(120),portrait_layout().width-ui_w(24),4,0,true);
+        ui_centred_fit("LORA AND GPS NOT FOUND",ui_y(190),portrait_layout().width-ui_w(24),4,0,true);
+        ui_centred_fit("BOARD VARIANT MAY OMIT RADIO",ui_y(290),portrait_layout().width-ui_w(24),3,0,true);
+        ui_centred_fit("LORA RADIO IS REQUIRED",ui_y(360),portrait_layout().width-ui_w(24),3,0,true);
+        ui_centred_fit("IF YOUR BOARD HAS A RADIO",ui_y(520),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PLEASE REPORT THIS ERROR",ui_y(555),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PRESS RST TO RETRY",ui_y(720),portrait_layout().width-ui_w(24),3,0,true);
     }else{
-        centred("RADIO STARTUP",ui_y(190),5,0,true);
-        centred("FAILED",ui_y(255),6,0,true);
-        centred("LORA RADIO NOT DETECTED",ui_y(390),4,0,true);
-        centred("CHECK BOARD RADIO HARDWARE",ui_y(475),2,0,true);
-        centred("PLEASE REPORT THIS ERROR",ui_y(510),2,0,true);
-        centred("PRESS RST TO RETRY",ui_y(600),3,0,true);
+        ui_centred_fit("RADIO STARTUP",ui_y(190),portrait_layout().width-ui_w(24),5,0,true);
+        ui_centred_fit("FAILED",ui_y(255),portrait_layout().width-ui_w(24),6,0,true);
+        ui_centred_fit("LORA RADIO NOT DETECTED",ui_y(390),portrait_layout().width-ui_w(24),4,0,true);
+        ui_centred_fit("CHECK BOARD RADIO HARDWARE",ui_y(475),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PLEASE REPORT THIS ERROR",ui_y(510),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PRESS RST TO RETRY",ui_y(600),portrait_layout().width-ui_w(24),3,0,true);
     }
-    centred(UI_VERSION,ui_y(900),2,0,true);
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
@@ -3558,6 +4322,14 @@ void ui_notify_message_received(bool channel){
     const bool visible=ui_chat_is_visible(channel);
     if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
     status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d visible=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active,visible);
+}
+
+bool ui_restore_failed_compose(const char* text){
+    if(!text||!text[0]||compose_text[0])return false;
+    strncpy(compose_text,text,sizeof(compose_text)-1);
+    compose_text[sizeof(compose_text)-1]=0;
+    status_dirty=true;
+    return true;
 }
 
 void ui_notify_advert_result(bool flood,bool ok){

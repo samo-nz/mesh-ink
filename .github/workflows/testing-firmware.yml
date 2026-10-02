@@ -11,6 +11,8 @@ on:
       - 'src/ui_onboarding.cpp'
       - 'src/ui_data.h'
       - 'src/local_mesh_runtime.cpp'
+      - 'src/message_store.cpp'
+      - 'src/message_store.h'
       - 'src/companion_notice.cpp'
       - 'src/companion_notice.h'
       - 'src/map_gestures.h'

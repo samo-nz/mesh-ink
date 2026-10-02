@@ -10,6 +10,10 @@ import re
 root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
+message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
+message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
+message_limits_source = (root / "src" / "message_limits.h").read_text(encoding="utf-8")
+component_cmake_source = (root / "src" / "CMakeLists.txt").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
@@ -75,7 +79,8 @@ assert 'frontlight_brightness<1||frontlight_brightness>100' not in source, "save
 contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);', "standby preserves keyboard under quick settings")
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button refresh also wakes frontlight")
-contains('last_user_activity=millis();\n            draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button short press counts as user activity")
+contains('last_user_activity=millis();\n            if(screen==Screen::Maps){', "primary-button short press counts as user activity")
+contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "non-map primary-button refresh keeps the established fast redraw path")
 contains('fast_full_redraw("CONTACTS_AFTER_BOOT",false);\n        // Startup can take longer than the saved light timeout.', "Contacts boot refresh completes before frontlight timer reset")
 contains('timeout only after Contacts is actually visible.\n        frontlight_event();', "Contacts starts a fresh frontlight timeout after splash")
 assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
@@ -153,7 +158,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert re.fullmatch(r"(?:1\.9\.1-test\.\d+|\d+\.\d+\.\d+)", firmware_version.group(1)), "firmware version must be a numbered test build or stable semantic version"
+assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+)?", firmware_version.group(1)), "firmware version must be a stable semantic version or numbered test build"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
 # standby retains the lower-power five-minute cadence. Event-driven redraws may
@@ -257,16 +262,19 @@ contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home 
 contains("static constexpr size_t LIST_ITEMS_PER_PAGE = 5;", "contacts/channels use paged list rows")
 contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering address later pages")
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
-contains("(screen==Screen::Contacts||screen==Screen::Channels)&&abs(tap.dy)>60", "Contacts/Channels vertical swipe changes pages")
+contains("(screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&", "Contacts/Channels/Discovery vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
-contains("box(layout.outer_margin,y,layout.outer_width,layout.list_row_height);", "list cards use shared logical interior width")
+contains("rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,", "list cards use shared logical interior width with rounded treatment")
 contains("row*portrait_layout().list_row_stride", "list drawing/touch use shared row stride")
 contains("draw_list_page_footer(channels_page,count);", "Channels displays page count when multiple pages exist")
 contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page footer")
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
-contains("draw_page_indicator(chat_page,pages,layout.bottom_nav_top-ui_h(60));", "conversation history page indicator follows scaled geometry")
+contains("chat_page_bounds_lazy(count,chat_history_available_current(),", "conversation paging starts with the taskbar-aware current-page height")
+contains("chat_history_available_paged(),", "conversation paging gives older pages their larger taskbar-free height")
+contains("draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));", "older history page indicator uses the reclaimed lower screen area")
+assert "chat_page_bounds(" not in source, "conversation drawing must not rescan all historical pages to calculate a total"
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
 contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
@@ -297,10 +305,11 @@ contains('text("SAVE PASSWORD"', "password screen has opt-in persistence checkbo
 contains("active_node_saved_password(remote_password,sizeof(remote_password))", "saved password is prefilled on later login")
 contains("static void thick_line(int x1,int y1,int x2,int y2)", "role icons use thicker line primitives")
 contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thicker rectangle primitives")
-contains("draw_wrapped(node.status,layout.section_margin,ui_y(294),27,3,0,true,14);", "received status text is larger and scaled")
-contains("draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),27,3,0,true,4);", "received telemetry text is larger and scaled")
-contains("draw_wrapped(node.path,layout.section_margin,ui_y(260),27,3,0,true,3);", "received path text is larger and scaled")
-contains("draw_wrapped(node.trace,layout.section_margin,ui_y(400),39,2,0,true,7);", "trace results have a dedicated readable area")
+contains("const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;", "received status text keeps scale 3 when it fits and scale 2 for long counter lines")
+contains("ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2", "received telemetry uses the largest scale that preserves all four visible lines")
+contains("const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.section_width,3));", "received path text line count drives following layout")
+contains("const int trace_heading_y=max(", "trace heading moves down when the discovered path uses all three lines")
+contains("const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));", "trace results reserve their actual wrapped height")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
 contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
 contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry")
@@ -309,7 +318,7 @@ assert source.count("active_node_saved_password(remote_password,sizeof(remote_pa
 
 contains('meshink_display_fill_rect({0,metrics.clear_top,layout.width,', "password keyboard clear area follows shared geometry")
 contains('screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode)', "bottom navigation is hidden while password keyboard is open")
-contains('text(remote_password[0]?remote_password:"REMOTE PASSWORD"', "portrait password entry shows plain text")
+contains('ui_text_fit(remote_password[0]?remote_password:"Remote password"', "portrait password entry shows plain text")
 contains('const char* value=keyboard_password_mode?remote_password:', "landscape password entry shows plain text")
 assert "char masked[16]" not in source, "password entry must not mask typed text on-device"
 
@@ -327,9 +336,9 @@ for request in ("Status", "Telemetry", "Path", "Trace"):
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
-contains("for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);", "bold GPS-off slash")
-contains("meshink_display_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
-contains("for(int d=-1;d<=1;++d) {\n        line(x+3,y+8+d", "bold envelope flap")
+contains("if(disabled)draw_status_bold_line(x+3,y+3,x+27,y+27,3,0);", "bold GPS-off slash")
+contains("rounded_fill(x,y+5,30,22,5,0);", "bold rounded envelope frame")
+contains("draw_status_bold_line(x+4,y+9,x+15,y+18,2,0);", "bold envelope flap")
 for index in range(3):
     contains(f"meshink_map_control_rect(layout,{index})", f"map control {index} draws from shared geometry")
     contains(f"meshink_map_control_rect(portrait_layout(),{index})", f"map control {index} touch uses shared geometry")
@@ -379,6 +388,13 @@ contains("meshink_keyboard::make_metrics(", "UI uses shared scalable keyboard ge
 contains("MESHINK_KEYBOARD_PORTRAIT_X_OFFSET", "board profile exposes portrait keyboard tuning")
 contains("MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET", "board profile exposes landscape keyboard tuning")
 contains("draw_compose_entry(keyboard_layout);", "chat compose box follows keyboard entry geometry")
+assert "static char compose_text[MESHINK_MESSAGE_TEXT_BYTES]" in source, "compose buffer accepts the full 160-byte message"
+assert "if(n<MESHINK_MESSAGE_TEXT_MAX)" in source, "portrait and landscape typing share the full message limit"
+assert "static void ui_draw_wrapped_tail(" in source, "compose rendering follows the newest wrapped lines"
+assert source.count("ui_draw_wrapped_tail(")>=3, "portrait and landscape entry rendering both use bounded tail wrapping"
+assert "landscape?198:618" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape keyboard is shifted to the bottom edge"
+assert "Rect{16,14,928,165}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compose viewport uses the reclaimed white space"
+
 assert "meshink_keyboard::in_row(y,828)" not in source, "portrait third-row touch must not use fixed T5 y coordinates"
 assert "meshink_keyboard::in_row(y,425)" not in source, "landscape action-row touch must not use fixed T5 y coordinates"
 contains('key("SPACE",metrics.space_key);', "space-capable keyboards use the shared wide space key")
@@ -502,7 +518,8 @@ contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);",
 standby_entry = source.split("static void enter_standby(const char* reason){", 1)[1].split("static void leave_standby(){", 1)[0]
 assert "update_status_hardware();" in standby_entry, "standby entry samples exact clock, battery and charger state"
 assert "wall-clock :00/:05/:10... boundaries" in standby_entry, "standby entry documents aligned five-minute status cadence"
-contains('"HOLD %s FOR TWO SECONDS TO WAKE"', "standby wake wording includes FOR and explicit two-second hold")
+contains('"HOLD %s FOR TWO SECONDS"', "standby wake wording includes FOR and explicit two-second hold")
+contains('ui_centred("TO WAKE",ui_y(892),3,0,true);', "standby wake wording is completed on the second smooth line")
 
 # Test17 power abstraction: application/UI owns presentation only. Battery
 # topology, chemistry, charger encoding and critical-battery policy are backend-owned.
@@ -544,7 +561,7 @@ assert "0x2C" not in source and "0x08" not in source, "UI must not know fuel-gau
 
 # Map zoom/source label backing should hug the rendered text rather than
 # leaving a wide opaque block over the terrain.
-contains("const int zoom_label_width=(int)strlen(zoom)*12+ui_w(8);", "zoom label backing tracks rendered text width")
+contains("const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);", "zoom label backing tracks proportional rendered text width")
 contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
 
@@ -675,7 +692,7 @@ for leaked_board in ('#include "board/board_profile.h"', "T5_UI_HAS_GPS", "T5_BO
     assert leaked_board not in source, f"UI leaked T5 board capability detail: {leaked_board}"
 assert "ED047TC1" not in source, "generic UI logging must not name the T5 panel"
 assert "SX1262 NOT DETECTED" not in source and "T5 PRO LITE" not in source, "radio failure UI must not hard-code T5 radio/variant names"
-assert 'centred("LORA RADIO NOT DETECTED"' in source, "radio failure UI uses generic LoRa wording"
+assert '"LORA RADIO NOT DETECTED"' in source and 'ui_centred_fit("LORA RADIO NOT DETECTED"' in source, "radio failure UI uses generic LoRa wording with bounded width"
 
 # Hardware-portability display boundary.
 assert '#include "hardware/display.h"' in source, "UI must include generic display surface"
@@ -781,7 +798,7 @@ assert "hit(x,y,40,420,460,100)" not in source, "brightness slider touch must de
 
 # Night Timer schedule editing lives inside the MODE row, not below Map Scale.
 assert "meshink_settings_inline_action_rect" in ui_layout_source, "inline settings action rectangle missing"
-contains('text("EDIT TIMES",action.x+ui_w(17),action.y+ui_h(20),2,0xFF,true);', "Night Timer MODE row shows Edit Times")
+contains('ui_action_button("EDIT TIMES",action,true);', "Night Timer MODE row shows Edit Times")
 contains("hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),118))", "Edit Times touch uses the same inline geometry")
 contains("open_screen(Screen::NightSchedule);return true;", "Edit Times opens Night Schedule")
 assert "meshink_night_schedule_top" not in ui_layout_source, "abandoned bottom Night Schedule geometry must be removed"
@@ -827,37 +844,42 @@ assert '[T5-INIT] wifi-bt=OK wifi=off bt=off' in unified_source, "local startup 
 assert '[T5-INIT] wifi-bt=OK wifi=off bt=ready' in unified_source, "companion startup labels ESP Wi-Fi/Bluetooth state explicitly"
 assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startup label must not return"
 
-# Test44: field standby redesign uses the existing full-size MeshInk bitmap and
-# two side-by-side, thick-bordered unread summary cards.
-assert "draw_meshink_logo(ui_y(70),false);" in source, "standby uses the existing full-size MeshInk logo"
-assert 'centred("STANDBY"' not in source, "standby text heading is replaced by the logo"
-assert "ui_rect(20,445,244,310)" in source and "ui_rect(276,445,244,310)" in source, "standby summary cards are side by side"
+# Test44: field standby redesign uses the full-size MeshInk bitmap and only
+# shows unread summary cards that contain unread messages.
+assert "const int logo_top=any_unread?ui_y(70):ui_y(165);" in source and "draw_meshink_logo(logo_top,false);" in source, "standby lowers the full-size MeshInk logo only when there are no unread cards"
+assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in source, "standby combines the logo with a large smooth STANDBY heading"
+assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
+assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
+assert "ui_rect(20,445,244,310)" in source and "ui_rect(276,445,244,310)" in source, "dual unread cards retain their side-by-side geometry"
 assert "draw_standby_envelope_icon" in source, "standby provides a dedicated large envelope icon"
 assert "draw_standby_channel_icon" in source, "standby provides a dedicated large channel people icon"
 assert "standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11)" in source, "private unread count is oversized"
 assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in source, "channel unread count is oversized"
-assert "const int border=max(ui_w(5),ui_h(5));" in source, "standby card outlines are substantially thicker"
+assert "rounded_box(rect,max(ui_w(22),ui_h(22)),false);" in source, "standby summary cards use the shared rounded visual language"
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
-assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "standby retains the lower wake instruction separator"
+assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_centred("TO WAKE",ui_y(892),3,0,true);' in source, "standby uses a lower divider and larger two-line smooth wake instruction"
 
-# Test45: MeshCore network feedback is surfaced without changing stored-message format.
-assert "const char* network" in data_source, "message model exposes transient network metadata"
-assert "STORE_VERSION=1" in runtime_source, "network metadata must not migrate or invalidate the existing message store"
+# Test45: MeshCore network feedback is surfaced and its useful RF metadata is
+# persisted in the v2 device journal.
+assert "const char* network" in data_source, "message model exposes network metadata"
+assert "STORE_VERSION=3" in message_store_source, "message journal uses the 160-byte-text v3 format"
+assert "int8_t snr_q4=0;" in message_store_header and "uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;" in message_store_header, "received SNR/path metadata lives in the persistent record"
+assert "uint8_t repeats=0;" in message_store_header and "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_header, "repeat and route metadata lives in the persistent record"
 assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
 assert "frame[0]==16&&len>=16" in runtime_source and "frame[0]==17&&len>=11" in runtime_source, "v3 direct/channel frames are parsed explicitly"
 assert "SNR %.1f DB  %u HOP%s" in runtime_source, "received messages expose SNR and hop count"
-assert 'meta->route_flood?"FLOOD":"DIRECT"' in runtime_source, "outgoing private messages expose direct versus flood routing"
+assert "(stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)" in runtime_source, "outgoing private messages expose persisted direct versus flood routing"
 assert "frame[0]==0x88" in runtime_source and "handle_raw_repeat" in runtime_source, "raw RX frames drive channel repeat-hearing detection"
-assert "HEARD %u REPEAT%s" in runtime_source, "channel sends expose heard-repeat count"
+assert "HEARD %u REPEAT%s" in runtime_source, "channel sends expose persisted heard-repeat count"
 assert "mesh::Utils::MACThenDecrypt" in runtime_source, "repeat matching validates/decrypts the echoed channel packet"
 assert "Trace=3" in data_source, "trace is a first-class node-info request"
 assert "frame[0]=36" in runtime_source and "frame[0]==0x89" in runtime_source, "trace command and response are wired through upstream MeshCore"
 assert "TRACE %u HOP%s" in runtime_source and "DEST  %.1f DB" in runtime_source, "trace result reports repeater hashes/SNR and destination SNR"
-assert 'settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650)' in source, "More exposes diagnostics"
+assert 'settings_row("DIAGNOSTICS","Live MeshCore radio stats",650)' in source, "More exposes diagnostics with sentence-case subtitle"
 assert "local_mesh_request_diagnostics()" in source and "draw_diagnostics()" in source, "diagnostics UI requests and renders live MeshCore stats"
 assert "frame[2]={56,type}" in runtime_source, "diagnostics uses upstream CMD_GET_STATS"
 assert "PACKETS RX/TX %lu / %lu" in runtime_source and "AIRTIME TX/RX %lu / %lu S" in runtime_source, "diagnostics decodes packet and radio counters"
-assert 'settings_row("HELP","USING MESHINK",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
+assert 'settings_row("HELP","Using MeshInk",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
 
 # Test46: a message received while its conversation is visibly open is already
 # seen and must not create contact/channel or bottom-tab unread dots.
@@ -868,3 +890,343 @@ assert "ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel" in r
 assert "if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}" in runtime_source, "private unread increments only when unseen"
 assert "if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;" in runtime_source, "channel unread increments only when unseen"
 assert "const bool visible=ui_chat_is_visible(channel);" in source, "bottom-tab unread uses the same visible-chat predicate"
+
+
+# Test47: LAST HEARD uses MeshCore's per-contact lastmod (our T5 clock), while
+# LAST ADVERT remains the remote advertisement timestamp.
+assert "format_last_heard(contact.lastmod,heard)" in runtime_source, "contact list LAST HEARD must use MeshCore lastmod"
+assert 'snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard)' in runtime_source, "contact list labels lastmod as heard activity"
+assert "if(contact.lastmod)format_time(contact.lastmod,item.time)" in runtime_source, "contact list time column follows lastmod"
+assert "format_last_heard(detail_contact_.lastmod,self->detail_seen_)" in runtime_source, "node Overview LAST HEARD must use lastmod"
+assert "now>=detail_contact_.last_advert_timestamp" in runtime_source and "detail_advert_age_" in runtime_source, "LAST ADVERT remains based on last_advert_timestamp"
+assert "INFO REPLY %s" not in runtime_source and "recent_info_.reply_millis" not in runtime_source, "one-node info cache must not override LAST HEARD"
+assert "contact->lastmod=heard" in runtime_source and "meshink_rtc_current_time()" in runtime_source, "matched local receptions advance lastmod using the T5 clock"
+assert "note_heard(key,6); // includes CLI/direct payloads" in runtime_source, "all attributable inbound direct payloads advance LAST HEARD"
+assert "note_heard(detail_contact_.id.pub_key,PUB_KEY_SIZE);" in runtime_source, "matched status/telemetry/path/trace replies advance LAST HEARD"
+assert "provider.heard(pending_direct.key,6)" in runtime_source, "valid end-to-end delivery ACK advances LAST HEARD"
+assert "memcpy(&detail_contact_.lastmod,item.frame+p,4)" in runtime_source, "discovered-contact details retain MeshCore lastmod when supplied"
+
+
+# Test48: Last Heard persistence. MeshInk-added lastmod updates must survive
+# reboot without abusing LAST ADVERT or forcing a flash write per packet.
+assert "local_mesh_schedule_contacts_save();" in runtime_source, "advancing Last Heard schedules contact persistence"
+assert "local_mesh_flush_contacts_save_if_due();" in runtime_source, "local mesh loop services deferred contact persistence"
+assert "local_contacts_save_due=millis()+5000UL;" in companion_source, "Last Heard persistence coalesces writes on MeshCore's five-second cadence"
+assert "store.saveContacts(&the_mesh,local_persist_contact);" in companion_source, "deferred save persists MeshCore ContactInfo including lastmod"
+assert "return contact.type!=ADV_TYPE_NONE;" in companion_source, "transient anonymous contacts are not persisted by Last Heard saves"
+assert "if(local_mesh_is_running())local_mesh_flush_contacts_save_now();" in unified_source, "deliberate local reboot flushes pending Last Heard timestamps first"
+assert "last_advert_timestamp=heard" not in runtime_source, "Last Heard persistence must never rewrite Last Advert"
+
+
+# Test49: GPS telemetry updates the saved MeshCore contact position so Node Info
+# and Maps keep the latest known coordinates after reboot.
+assert "contact->gps_lat=recent_info_.lat;" in runtime_source, "GPS telemetry persists latitude into ContactInfo"
+assert "contact->gps_lon=recent_info_.lon;" in runtime_source, "GPS telemetry persists longitude into ContactInfo"
+assert "detail_contact_.gps_lat=recent_info_.lat;" in runtime_source and "detail_contact_.gps_lon=recent_info_.lon;" in runtime_source, "open Node Info immediately reflects the persisted contact coordinates"
+assert "local_mesh_schedule_contacts_save();" in runtime_source, "GPS position changes use the deferred contact persistence path"
+assert 'strcpy(self->detail_position_source_,"SAVED POSITION")' in runtime_source, "reloaded telemetry-derived coordinates use a provenance-neutral saved-position label"
+assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinates must not be mislabelled as advert-derived"
+
+
+# Test50: one 250-message v3 journal spans standalone and Bluetooth Companion
+# modes. The one-off pre-release v1/v2 migration path has been retired.
+assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
+assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk exposes the full MeshCore direct-message text limit"
+assert "STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "current v3 fixed-record layout is pinned"
+assert "migrate_legacy" not in message_store_source and "migrate_legacy" not in message_store_header, "legacy message migration code is removed"
+assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "legacy v1/v2 record formats are removed"
+assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
+assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
+assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
+assert "meshink_message_store().begin()" in companion_source, "companion mode opens the same current-format journal"
+assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
+
+
+# Test51: the 250-message journal is flash-authoritative. Neither the full
+# journal nor 250 rendered message bodies may be duplicated in RAM/PSRAM.
+assert "MeshInkStoredMessage* records_" not in message_store_header, "journal must not allocate a 250-record RAM/PSRAM backing array"
+assert "MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]" not in message_store_header, "journal records stay exclusively in SPIFFS"
+assert "bool read(size_t logical,MeshInkStoredMessage& out) const;" in message_store_header, "journal exposes fixed-record on-demand reads"
+assert "MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)" in message_store_source, "flash file retains all 250 fixed-size records"
+assert "record-cache=0 header=%uB" in message_store_source, "boot transcript reports zero cached message records"
+assert "mutable File file_{};" in message_store_header, "one lightweight journal file handle is reused for record seeks"
+assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps only tiny journal-position indices"
+assert "mutable MessageView active_message_view_{};" in runtime_source, "UI keeps one scratch rendered message instead of 250"
+assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "full rendered history is never cached"
+assert "store_.read(active_indices_[i],item)" in runtime_source, "individual visible/measured messages are loaded from flash on demand"
+assert "heap_caps_calloc" not in message_store_source and "heap_caps_calloc" not in runtime_source, "message history no longer needs large PSRAM allocations"
+assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
+assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal startup remains after display initialization"
+
+
+# Test52: message storage stays responsive/battery-efficient with the current
+# v3 journal and lazy history indexing.
+assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
+assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rescan flash only after message history changes"
+assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
+assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews are rebuilt with one linear journal pass"
+assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
+assert "rebuild_active();" not in runtime_source[runtime_source.index("void refresh(bool force=false)"):runtime_source.index("void received_direct")], "periodic provider refresh must not rebuild the active message index"
+assert "for(size_t n=header_.count;n>0;--n)" in message_store_source[message_store_source.index("bool MeshInkMessageStore::find_physical"):message_store_source.index("uint32_t MeshInkMessageStore::append")], "message state lookup searches newest-first"
+assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
+assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling remains non-destructive"
+assert "migrate_legacy" not in message_store_source, "retired migration machinery cannot re-enter the message-store hot path"
+assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only tiny page anchors"
+assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat page composition remains height-aware and incremental"
+assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message record is read once and reused for height plus drawing"
+assert "item.sequence==0||!matches(item)" in runtime_source, "sequence-zero records can never enter an active chat index"
+
+
+# Test53: common message paths minimize flash traffic without weakening
+# immediate persistence.
+assert "bool has_rx=false,int8_t snr_q4=0" in message_store_header, "receive RF metadata can be included in the append write"
+assert "if(has_rx){" in message_store_source and "item.flags|=MESHINK_MESSAGE_HAS_RX;" in message_store_source, "append persists SNR/path metadata atomically with the message"
+assert "MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len" in runtime_source, "standalone receives avoid a second metadata rewrite"
+assert "MeshInkMessageOrigin::CompanionApp," in companion_source and "pkt!=nullptr" in companion_source, "companion receives persist RF metadata in the same write"
+assert "void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);" in message_store_header, "direct send response has a coalesced metadata update"
+assert "item.state=(uint8_t)state;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes state"
+assert "item.ack=ack;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes ACK"
+assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
+assert "provider.confirm_direct_send(" in runtime_source, "local send response uses one persistent metadata update"
+assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
+
+
+# Test54: primary text uses built-in 1-bit Inter while compact technical/status
+# copy keeps the original bitmap path.
+assert all(name in source for name in ("fonts/inter_15_regular.h","fonts/inter_20_regular.h","fonts/inter_25_regular.h","fonts/inter_30_regular.h","fonts/inter_50_digits.h")), "native 1-bit Inter raster tiers are compiled into firmware"
+assert "return {&inter_15_regular,23,23,34};" in source and "return {&inter_30_regular,46,46,65};" in source, "normal and largest heading tiers use native raster faces"
+assert "return {&inter_50_digits,77,79,81};" in source, "oversized standby unread count uses a native digit raster"
+assert "ui_smooth_metric" not in source and "numerator" not in source[source.index("struct UiSmoothFont"):source.index("static void ui_text_fit")], "primary fonts are never scaled at runtime"
+assert "const int baseline=y+face.baseline_from_top;" in source, "each native face carries its own baseline anchor"
+assert "meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);" in source, "native glyph pixels are drawn one-for-one without resampling"
+assert "if(scale>=3){ui_smooth_text" in source, "scale-three and larger primary text uses smooth raster glyphs"
+assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
+assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
+assert "static void rounded_fill(" in source and "xx*xx+yy*yy<=r*r" in source, "rounded panels use an integer framebuffer primitive"
+assert "sqrt(" not in source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))], "rounded corners avoid floating-point geometry"
+assert "rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height" in source, "contacts/channels/discovery use rounded cards"
+assert "static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3)" in source, "list rows support compact secondary metadata without shrinking titles"
+assert "ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Contacts secondary Last Heard text uses delivery-notice scale"
+assert "ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Channels MeshCore channel subtitle uses delivery-notice scale"
+assert "ui_text_fit(item.title" in source and "3,0,true" in source[source.index("ui_text_fit(item.title"):source.index("ui_draw_wrapped(item.subtitle")], "list titles remain large and clipped safely"
+assert "rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing)" in source, "chat bubbles use rounded incoming/outgoing surfaces"
+assert "const int min_width=ui_w(240);" in source and "const int max_width=ui_w(456);" in source, "chat bubbles stay compact without becoming too narrow to read"
+assert "ui_wrapped_line_count(message.text,text_width,3)" in source, "message paging measures the same proportional scale-3 body text that is drawn"
+assert "geometry.text_width,3,color,false,16" in source, "long messages remain readable instead of being clipped at the former eight-line draw limit"
+assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
+assert "rounded_box(back_rect" in source and "ui_action_button(action,action_rect,true)" in source, "chat header actions share the rounded visual language"
+assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "built-in typography/rounding adds no dynamic memory"
+assert "const MessageBubbleGeometry geometry=message_bubble_geometry(message);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse one geometry measurement for drawing"
+
+
+# Test55: the chat/contact visual language extends across the rest of the UI
+# without changing touch geometry or adding heavyweight rendering state.
+render_body = source[source.index("static void draw_welcome()"):]
+assert "ui_section_card(row);" in source[source.index("static void settings_row"):], "settings use shared rounded cards"
+assert "ui_action_button(" in source, "screens share one rounded action-button treatment"
+assert "rounded_box(rect.x,rect.y,rect.width,rect.height" in source[source.index("static void key("):source.index("static void draw_keyboard")], "portrait keyboard keys are rounded without changing key rectangles"
+assert "rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height" in source, "landscape keyboard entry uses the polished rounded field"
+assert "rounded_box(zoom_in" in source and "rounded_box(zoom_out" in source and "rounded_box(locate" in source, "map controls use the same rounded style"
+assert "ui_section_card(core);ui_section_card(radio);ui_section_card(packets);" in source, "diagnostics is grouped into readable cards"
+assert "ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard);" in source, "Help uses readable grouped cards"
+assert "ui_action_button(\"ADVERT FLOOD\",advert_button,true);" in source and "ui_action_button(\"POWER OFF\",power_button,false);" in source, "Quick Settings actions use shared polished buttons"
+assert "rounded_box(start_rect" in source and "ui_action_button(\"SAVE SCHEDULE\",save_rect,true);" in source, "Night Schedule uses rounded selected fields and action"
+assert "ui_section_card(info);" in source[source.index("static void draw_about"):], "About metadata is grouped into a rounded card"
+assert "static void box(int x" not in source and "box(" not in render_body.replace("rounded_box(", ""), "legacy square box primitive is fully removed from screen rendering"
+assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "full visual polish still adds no dynamic memory"
+
+
+# Test56: source-level 540x960 UI audit. Dynamic text stays inside its
+# controls, chat pages do not waste or overpaint vertical space, and all
+# list-style resources remain reachable.
+assert "static void ui_centred_fit(" in source, "dynamic centred text has a bounded fit helper"
+assert "ui_centred_fit(title,layout.header_title_y,layout.width-title_guard,4,0,true);" in source, "app headers constrain long contact/channel titles between controls"
+assert "ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,true);" in source, "Node Info constrains long names"
+assert "static int ui_text_max_line_width(" in source and "ui_text_max_line_width(message.text,3)" in source, "bubble width follows the longest explicit message line"
+assert "min(16,ui_wrapped_line_count(message.text,text_width,3))" in source, "bubble measurement cannot exceed the renderer's sixteen-line limit"
+assert "if(used+needed>available)break;" in source, "chat paging only admits complete bubbles into the visible viewport"
+assert "static bool chat_needs_paging(size_t count)" in source and "chat_history_available_current()" in source, "current conversation paging reserves the taskbar and composer"
+assert "const int compose_y=chat_compose_top();" in source, "message composer drawing uses shared vertical geometry"
+assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
+assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
+assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;" in source, "long settings subtitles shrink before clipping"
+assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
+assert "if(!keyboard_visible)settings_row(\"PATH HASH MODE\",path_hash_label(),510);" in source, "Radio Settings does not draw a row beneath the portrait keyboard"
+assert 'if(value>99)strcpy(out,"99+");' in source, "status unread counters are visually bounded"
+assert "text(count,left,ui_y(17),2,0,true);" in source, "status secondary counters use compact scale-two text"
+assert "ui_text_width(short_name,2),ui_text_width(age,2)" in source, "map label background accounts for both node name and age"
+assert "meshink_map_control_rect(portrait_layout(),(int)control)" in source, "map labels avoid the visible map controls"
+assert "const int label_bottom=ui_y(766);" in source, "map node labels stay clear of bottom map overlays"
+assert "const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);" in source, "map zoom background follows proportional text width"
+assert "const int scale_backing_width=max(pixels+ui_w(12),ui_text_width(scale,2)+ui_w(16));" in source, "map scale backing covers both the physical bar and proportional label"
+assert "const int natural=ui_text_width(message,scale)+ui_w(48);" in source and "portrait_layout().width-ui_w(24)" in source, "toasts are proportional and screen-bounded"
+assert "const int width=ui_text_width(value,scale);" in source[source.index("static void standby_centred"):], "standby labels use proportional centering"
+assert "for (const auto& g : FONT) if (g.c == '?') return g.r;" in source, "unsupported text is visible rather than silently blank"
+assert "ui_text_width(start,3)" in source and "ui_text_width(end,3)" in source, "Night Schedule time values are measured and right-aligned"
+assert "const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;" in source, "dense Node Status counters shrink before wrapping can hide later metrics"
+assert "ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2" in source, "dense telemetry shrinks only when needed to keep its allotted four lines"
+assert "layout.section_width,2,0,true,9" in source, "Trace Route uses the safe extra vertical room for two more lines"
+assert "overview_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "two-line Overview position reserves explicit space before its source label"
+assert "overview_source_y+ui_text_height(2)+ui_h(18)" in source, "Overview source label keeps breathing room before Last Heard"
+assert "telemetry_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "Telemetry position reserves explicit space before provenance"
+assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
+assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
+assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
+assert "ui_data->open_advert(index)" in source, "Discovery touch indexing follows the visible page"
+
+assert "ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);" in source, "capped map label backings also clip long node names"
+assert 'if(status_unread>99)strcpy(direct,"99+");' in source and 'if(status_channel_unread>99)strcpy(channel,"99+");' in source, "large standby unread counts stay inside their 244px cards"
+assert "ui_centred_fit(wake.confirm_battery" in source and "ui_centred_fit(wake.confirm_external" in source, "board-specific shutdown guidance is screen-bounded"
+assert "ui_centred_fit(wake.off_battery_line1" in source and "ui_centred_fit(wake.off_external_line2" in source, "powered-off guidance remains bounded for future board ports"
+assert "ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);" in source, "standby wake guidance cannot overflow the display"
+assert 'ui_centred_fit("LORA RADIO NOT DETECTED",ui_y(390),portrait_layout().width-ui_w(24),4,0,true);' in source, "hardware failure heading is screen-bounded"
+assert "char line_text[160]{};" in source, "proportional wrapping preserves long unbroken lines without a 64-byte scratch truncation"
+assert "const bool truncated=(row==max_lines-1)&&*next;" in source, "bounded multi-line text visibly marks intentional truncation"
+assert "ui_text_fit(footer,geometry.x+ui_w(14)" in source, "oversized message metadata is clipped inside its bubble instead of drawing outside"
+
+
+# Test57: full-length direct messages remain valid across the complete retry
+# policy, channel sends are never silently truncated, and a terminal direct
+# failure restores the draft only when it is safe to do so.
+assert "DIRECT_RETRY_LIMIT=3" in runtime_source, "direct messages use two route retries plus one flood fallback after the initial attempt"
+assert "pending_direct.retry>=DIRECT_RETRY_LIMIT" in runtime_source, "retry exhaustion occurs after the flood fallback attempt"
+assert "MESHINK_MESSAGE_TEXT_MAX==MAX_TEXT_LEN" in runtime_source, "MeshInk's 160-byte editor/store limit is compile-time tied to MeshCore"
+assert "13+MESHINK_MESSAGE_TEXT_MAX<=MAX_FRAME_SIZE" in runtime_source, "a full direct-message command is compile-time checked against the companion frame"
+assert "static size_t channel_message_limit(" in runtime_source, "channel payload capacity accounts for the sender-name prefix"
+assert "if(text_len>limit)" in runtime_source and "channel send rejected" in runtime_source, "oversized channel messages are rejected instead of silently truncated"
+assert "bool ui_restore_failed_compose(const char* text)" in source, "UI exposes bounded failed-draft recovery"
+restore_body=source.split("bool ui_restore_failed_compose(const char* text)",1)[1].split("void ui_notify_advert_result",1)[0]
+assert "!text||!text[0]||compose_text[0]" in restore_body, "failed draft never overwrites text the user already typed"
+assert "pending_direct_is_visible_chat()" in runtime_source and "ui_chat_is_visible(false)" in runtime_source, "failed draft restoration is limited to the visible direct conversation"
+assert "memcmp(active.id.pub_key,pending_direct.key,6)==0" in runtime_source, "failed draft cannot leak into a different direct conversation"
+assert "ui_restore_failed_compose(pending_direct.text)" in runtime_source, "terminal direct failure offers the original message back to the composer"
+assert 'fail_pending_direct("retry limit")' in runtime_source, "retry exhaustion marks failed and restores safely"
+assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pending_direct("initial queue busy")' in runtime_source, "local queue failures share the same safe terminal-failure path"
+assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
+
+assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "runtime shows two direct retries"
+assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "final retry is labelled as the flood fallback"
+assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer exposes flood fallback instead of a third direct retry"
+assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "third retry resets the stale saved path so MeshCore uses flood"
+assert "attempt==0?UiMessageState::Sending" in runtime_source, "radio SENT response remains an in-progress state until ACK"
+formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
+assert "state!=UiMessageState::Sending" not in formatter, "sending route is visible once MeshCore reports direct/flood"
+assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
+
+
+# Test58: direct-message ACK tracking survives retry overlap. A delayed ACK
+# from any earlier in-flight attempt can still complete the one logical message.
+assert "uint32_t acks[DIRECT_RETRY_LIMIT+1]" in runtime_source, "pending direct send retains ACK hashes for initial send plus every retry"
+assert "bool route_flood[DIRECT_RETRY_LIMIT+1]" in runtime_source, "each ACK keeps the route used by its own attempt"
+assert "for(uint8_t attempt=0;attempt<=DIRECT_RETRY_LIMIT;++attempt)" in runtime_source, "delivery checks every in-flight attempt ACK"
+assert "pending_direct.acks[attempt]==ack" in runtime_source, "late ACKs are matched against per-attempt history"
+assert "provider.confirm_direct_send(" in runtime_source and "UiMessageState::Delivered" in runtime_source, "matched late ACK persists delivered state and the route that actually delivered"
+assert "memcpy(&pending_direct.ack," not in runtime_source, "single newest-ACK tracking cannot regress"
+
+
+# Test59: companion-mode journal persistence distinguishes a new message from
+# a protocol retry and keeps all in-flight ACK hashes until delivery resolves.
+assert "uint8_t attempt=0;" in companion_source and "pending_.attempt=frame[2];" in companion_source, "companion direct send captures the MeshCore attempt number"
+assert "pending_.kind==MeshInkMessageKind::Direct&&pending_.attempt>0" in companion_source, "only explicit direct retries may deduplicate a journal entry"
+assert "CompanionAckRef ack_refs_[8]" in companion_source, "companion tracks MeshCore's eight possible in-flight ACK hashes"
+assert "remember_ack(ack,sequence,route_flood)" in companion_source, "every successful companion direct attempt retains its ACK and route"
+assert "deliver_ack(ack);" in companion_source, "companion delivery resolves against per-attempt ACK history"
+assert "for(auto& item:ack_refs_)if(item.sequence==delivered_sequence)item={};" in companion_source, "all stale ACK references for a delivered logical message are cleared"
+
+assert "CompanionAckRef& slot=ack_refs_[next_ack_ref_];" in companion_source, "companion ACK ring uses C++11-safe explicit field assignment"
+assert "ack_refs_[next_ack_ref_]={ack,sequence,route_flood}" not in companion_source, "C++11-incompatible aggregate assignment must not return"
+
+
+# Test60/Test61: test20/21 refinements keep refresh/layout/text behaviour explicit.
+button_body=source[source.index("static void service_primary_button()"):source.index("void ui_setup()",source.index("static void service_primary_button()"))]
+map_short=button_body[button_body.index('if(screen==Screen::Maps){'):button_body.index('            }else{',button_body.index('if(screen==Screen::Maps){'))]
+assert "local_mesh_refresh_ui_data();" in map_short, "physical Maps refresh obtains current node marker data"
+assert "meshink_display_fill_framebuffer(&display,0x00);" in map_short and '"SHORT_BUTTON_MAP_BLACK"' in map_short, "physical Maps refresh flashes the ready screen black"
+assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);' in map_short, "physical Maps refresh restores the cached viewport with fresh overlays"
+assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
+assert "const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;" in source, "portrait composer detects a one-line entry"
+assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
+assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
+
+# Test62: native smooth tiers are deliberately a little larger than the old
+# 5x7 primary sizes (21/28/35/42px) without any bitmap enlargement.
+assert "return {&inter_15_regular,23,23,34};" in source, "scale-three primary text increases from about 21px to a native 23px cap"
+assert "return {&inter_20_regular,31,31,44};" in source, "scale-four text uses a native 31px cap"
+assert "return {&inter_25_regular,38,38,55};" in source, "scale-five text uses a native 38px cap"
+assert "return {&inter_30_regular,46,46,65};" in source, "scale-six text uses a native 46px cap"
+assert "ui_text_line_step(scale)" in source and "lines*ui_text_line_step(3)" in source, "wrapping and message bubble height follow the larger native text metrics"
+
+# Test61 status-bar icon polish: battery remains unchanged; all other symbols
+# use bold rounded geometry that survives low-resolution DU refreshes.
+assert "static void draw_status_bold_line(" in source and "radius=2" in source, "status icons share a bold rounded stroke helper"
+assert "rounded_fill(x+2,y+2,22,22,11,0);" in source and "rounded_fill(x+7,y+7,12,12,6,0xFF);" in source, "GPS searching icon is a circular magnifying glass"
+assert "draw_status_bold_line(x+20,y+20,x+29,y+29,3,0);" in source, "GPS search handle is deliberately bold"
+assert "rounded_fill(x+3,y+3,25,25,12,0);" in source and "draw_status_disc(x+15,y+15,4,0);" in source, "GPS fix/off target is rounded and bold"
+assert "rounded_fill(x,y+5,30,22,5,0);" in source, "private unread envelope has rounded heavy corners"
+assert "static void draw_channel_status_icon(" in source and "draw_channel_status_icon(left,ui_y(9));" in source, "channel unread replaces the hash glyph with a rounded group icon"
+assert 'meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);' in source, "battery icon geometry is intentionally unchanged"
+
+# Test61 standby composition: a prominent smooth STANDBY label balances both
+# the empty and unread-card layouts without colliding with the wake footer.
+standby_body=source[source.index("static void draw_standby(){"):source.index("static void format_minutes",source.index("static void draw_standby(){"))]
+assert "const bool any_unread=has_direct||has_channel;" in standby_body, "standby layout branches only on whether any unread cards are present"
+assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in standby_body, "large smooth STANDBY heading moves below unread cards when needed"
+assert 'ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);' in standby_body, "wake instruction uses readable smooth scale-three text"
+assert "ui_y(830)" in standby_body and "ui_y(892)" in standby_body, "standby footer stays below the unread-card region"
+
+# Test63: the bottom taskbar remains on the live/current conversation and is
+# hidden only after swiping back to an older history page.
+draw_screen_body=source[source.index("static void draw_screen() {"):source.index("static void refresh(",source.index("static void draw_screen() {"))]
+assert '(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&' in draw_screen_body and '!keyboard_visible&&chat_page==0' in draw_screen_body, "current chat page keeps the taskbar"
+assert 'draw_bottom_nav(screen==Screen::ContactChat?0:1);' in draw_screen_body, "chat taskbar selects Contacts or Channels appropriately"
+assert "static int chat_compose_top()" in source, "composer geometry exists only for the current conversation page"
+assert "portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12)" in source, "current chat compose box stays above the visible taskbar"
+assert "chat_history_available_current()" in source and "chat_history_available_paged()" in source, "pagination has separate current/history capacities"
+assert "chat_fill_backwards(previous_start,history_available)" in source, "older pages use the extra space released by hiding the taskbar"
+assert "return portrait_layout().height-ui_h(62);" in source, "older pages reclaim both composer and taskbar vertical space"
+assert "if(history_page){" in source and "History pages are read-only views: no composer and no taskbar." in source, "older history pages do not draw the composer"
+assert "if(chat_page==0&&hit(x,y,layout.outer_margin,compose_y" in source, "hidden history composer cannot be tapped"
+assert "const bool chat_main_page=" in source and "chat_page==0;" in source[source.index("const bool chat_main_page="):source.index("switch(screen)",source.index("const bool chat_main_page="))], "visible chat taskbar remains tappable"
+
+# Test64: history pages show only messages plus the page footer; current page
+# restores both composer and taskbar when swiping back down.
+chat_body=source[source.index("static void draw_chat(bool channel)"):source.index("static void draw_message_entry_fast",source.index("static void draw_chat(bool channel)"))]
+history_branch=chat_body[chat_body.index("if(history_page){"):chat_body.index("}else{",chat_body.index("if(history_page){"))]
+assert "rounded_box(layout.outer_margin,compose_y" not in history_branch and "Write a message..." not in history_branch, "older history pages contain no compose box"
+assert "layout.height-ui_h(38)" in history_branch, "older history pages retain only the bottom page indicator"
+
+# Test65: native-size typography layout audit.
+assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key labels use native font height for vertical centring"
+assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
+assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
+assert "saved_route_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic trace extent"
+
+
+# Test66: release cleanup retires the one-off pre-release message migrator.
+assert "migrate_legacy" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "one-off message migration implementation is gone"
+assert "/ui_messages.v3.tmp" not in message_store_source and "/ui_messages.legacy.bak" not in message_store_source, "migration scratch files are no longer referenced"
+
+# Test67: USB terminal screenshots export the live framebuffer to SD without
+# redrawing or reprocessing the current screen.
+assert "bool ui_save_screenshot(char* path_out,size_t path_len)" in source, "UI exposes a framebuffer screenshot export"
+assert '"/SHOT%04u.BMP"' in source, "screenshots use simple sequential FAT-friendly filenames"
+assert "map_tiles_media_ready()" in source[source.index("bool ui_save_screenshot"):source.index("static Preferences prefs")], "screenshot reuses the already-mounted removable storage path"
+shot_body=source[source.index("bool ui_save_screenshot"):source.index("static Preferences prefs")]
+assert "draw_screen(" not in shot_body and "map_tiles_render(" not in shot_body, "screenshot capture never redraws or processes map tiles"
+assert "screenshot_gray8_at(x,y)" in shot_body and "top-down BMP" in shot_body, "BMP captures the current framebuffer in logical screen orientation"
+assert "meshink_display_read_logical_gray8(fb,logical_x,logical_y)" in source, "UI delegates framebuffer orientation/packing to the display backend"
+assert "meshink_display_read_logical_gray8" in display_backend_source and "MeshInkRotation::InvertedPortrait" in display_backend_source, "T5 backend owns logical-to-physical screenshot readback"
+assert "meshink_storage_open_write" in storage_backend_header and "SD.open(path,FILE_WRITE)" in storage_backend_source, "storage backend provides explicit screenshot write access"
+assert 'strcmp(terminal_line,"screenshot")' in unified_source and 'strcmp(terminal_line,"shot")' in unified_source, "local USB terminal accepts screenshot and shot commands"
+assert "service_local_terminal();" in unified_source, "terminal command service runs in local UI mode"
+
+
+# Test68: screenshot collection mode is session-scoped and one Enter equals one capture.
+assert "static bool screenshot_capture_mode=false;" in unified_source, "screenshot terminal has an explicit capture-mode latch"
+assert "if(screenshot_capture_mode&&!Serial)" in unified_source, "capture mode exits automatically when native USB CDC disconnects"
+assert 'Serial.println("[T5-CMD] Screenshot mode armed");' in unified_source, "screenshot command clearly arms continuous capture mode"
+assert 'Serial.println("[T5-CMD] Press Enter to save a screenshot");' in unified_source, "capture mode prompts for each blank Enter"
+assert 'Serial.printf("[T5-CMD] Saved %s\\n",path);' in unified_source, "each successful capture reports the saved filename"
+assert "if(!terminal_length)" in unified_source and "if(screenshot_capture_mode)terminal_save_screenshot();" in unified_source, "blank Enter captures while armed"
+assert "if(ch=='\\n'&&terminal_last_was_cr)" in unified_source, "CRLF terminals cannot double-capture one Enter"
+assert "Disconnect serial to exit screenshot mode" in unified_source, "session lifetime is explained to the user"

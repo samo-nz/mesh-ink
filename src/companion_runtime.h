@@ -9,3 +9,6 @@ void local_mesh_setup();
 void local_mesh_loop();
 bool local_mesh_is_running();
 bool local_mesh_enqueue_command(const uint8_t* frame, size_t len);
+void local_mesh_schedule_contacts_save();
+void local_mesh_flush_contacts_save_if_due();
+void local_mesh_flush_contacts_save_now();

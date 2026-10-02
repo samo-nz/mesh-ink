@@ -13,7 +13,7 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 <table>
   <tr>
     <td align="center"><img src="screenshots/contacts.webp" width="220"><br><sub>Contacts</sub></td>
-    <td align="center"><img src="screenshots/maps-mylocation.webp" width="220"><br><sub>Map — my location</sub></td>
+    <td align="center"><img src="screenshots/maps1.webp" width="220"><br><sub>Map</sub></td>
     <td align="center"><img src="screenshots/about.webp" width="220"><br><sub>About</sub></td>
   </tr>
 </table>
@@ -25,24 +25,29 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 
 <table>
   <tr>
-    <td align="center"><img src="screenshots/conversation.webp" width="220"><br><sub>Conversation</sub></td>
+    <td align="center"><img src="screenshots/message.webp" width="220"><br><sub>Message</sub></td>
+    <td align="center"><img src="screenshots/message-keyboard.webp" width="220"><br><sub>Message keyboard</sub></td>
+    <td align="center"><img src="screenshots/channel-message.webp" width="220"><br><sub>Channel message</sub></td>
+  </tr>
+  <tr>
     <td align="center"><img src="screenshots/channels.webp" width="220"><br><sub>Channels</sub></td>
-    <td align="center"><img src="screenshots/discovered.webp" width="220"><br><sub>Discovered nodes</sub></td>
+    <td align="center"><img src="screenshots/node-info.webp" width="220"><br><sub>Node information</sub></td>
+    <td align="center"><img src="screenshots/maps2.webp" width="220"><br><sub>Map — node view</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="screenshots/node-info1.webp" width="220"><br><sub>Node information</sub></td>
-    <td align="center"><img src="screenshots/node-info2.webp" width="220"><br><sub>Node information — page 2</sub></td>
-    <td align="center"><img src="screenshots/maps-node.webp" width="220"><br><sub>Map — node location</sub></td>
+    <td align="center"><img src="screenshots/quick-settings.webp" width="220"><br><sub>Quick settings</sub></td>
+    <td align="center"><img src="screenshots/settings-gps.webp" width="220"><br><sub>GPS settings</sub></td>
+    <td align="center"><img src="screenshots/settings-radio.webp" width="220"><br><sub>Radio settings</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="screenshots/advertise.webp" width="220"><br><sub>Advertise</sub></td>
-    <td align="center"><img src="screenshots/more.webp" width="220"><br><sub>More</sub></td>
-    <td align="center"><img src="screenshots/settings.webp" width="220"><br><sub>Settings</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="screenshots/settings-location.webp" width="220"><br><sub>Location settings</sub></td>
+    <td align="center"><img src="screenshots/repeater-info.webp" width="220"><br><sub>Repeater information</sub></td>
+    <td align="center"><img src="screenshots/repeater-login.webp" width="220"><br><sub>Repeater login</sub></td>
     <td align="center"><img src="screenshots/bt-companion.webp" width="220"><br><sub>Bluetooth companion mode</sub></td>
-    <td></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/standby.webp" width="220"><br><sub>Standby</sub></td>
+    <td align="center"><img src="screenshots/standby1.webp" width="220"><br><sub>Standby — private unread</sub></td>
+    <td align="center"><img src="screenshots/standby2.webp" width="220"><br><sub>Standby — unread messages</sub></td>
   </tr>
 </table>
 

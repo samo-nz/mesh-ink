@@ -10,6 +10,7 @@ void local_mesh_setup();
 void local_mesh_runtime_begin();
 void local_mesh_loop();
 UiDataProvider* local_mesh_provider();
+void local_mesh_refresh_ui_data();
 bool local_mesh_send_direct(size_t contact_index, const char* text);
 bool local_mesh_send_channel(size_t channel_index, const char* text);
 bool local_mesh_send_active(const char* text);
