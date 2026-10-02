@@ -127,6 +127,7 @@ static int8_t status_minute = -1;
 // changes are kept separate so the 48 px bar can use a small DU update.
 static bool status_dirty = false;
 static bool status_bar_dirty = false;
+static int16_t status_bar_painted_minute = -1;
 static int16_t status_bar_painted_slot = -1;
 static bool toast_visible = false;
 static uint32_t toast_until = 0;
@@ -1185,6 +1186,7 @@ static void draw_status_bar() {
     text(battery,battery_x,ui_y(13),3,0,true);
     const int16_t painted_minute=(status_hour>=0&&status_minute>=0)
         ?(int16_t)(status_hour*60+status_minute):-1;
+    status_bar_painted_minute=painted_minute;
     status_bar_painted_slot=painted_minute>=0?(int16_t)(painted_minute/5):-1;
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] status-bar clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
@@ -3838,15 +3840,16 @@ void ui_loop() {
         t5_timing_set_ui_action(T5UiAction::StatusPoll);
         const uint32_t timing_status_started=micros();
         update_status_hardware();
-        // Clock and battery use the same aligned five-minute wall-clock cadence
-        // awake or in standby. Any earlier visible event redraws the bar with
-        // current values and therefore advances the painted slot naturally.
+        // Normal UI keeps the visible clock current minute-by-minute.
+        // Standby uses the lower-power five-minute wall-clock cadence.
+        // Event-driven redraws still adopt the exact current clock/battery.
         const int16_t status_wall_minute=(status_hour>=0&&status_minute>=0)
             ?(int16_t)(status_hour*60+status_minute):-1;
         const int16_t status_slot=status_wall_minute>=0
             ?(int16_t)(status_wall_minute/5):-1;
-        const bool aligned_status_due=
-            status_slot>=0&&status_slot!=status_bar_painted_slot;
+        const bool aligned_status_due=standby_active
+            ?(status_slot>=0&&status_slot!=status_bar_painted_slot)
+            :(status_wall_minute>=0&&status_wall_minute!=status_bar_painted_minute);
         if(aligned_status_due)status_bar_dirty=true;
         t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
         t5_timing_set_ui_action(T5UiAction::None);

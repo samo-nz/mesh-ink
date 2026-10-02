@@ -159,14 +159,15 @@ assert ui_version and firmware_version, "testing UI and firmware versions are ex
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
 assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+)?", firmware_version.group(1)), "firmware version must be a stable semantic version or numbered test build"
 
-# Status-bar refresh policy: clock and battery share one aligned five-minute
-# cadence awake or in standby. Event-driven redraws may show newer values early;
-# drawing the bar records the current slot so the visible schedule advances
-# opportunistically instead of immediately redrawing again.
-assert "status_bar_painted_minute" not in source, "minute-by-minute awake status cadence must not return"
-contains("static int16_t status_bar_painted_slot = -1;", "status bar tracks the last painted five-minute wall-clock slot")
-contains("status_slot>=0&&status_slot!=status_bar_painted_slot", "awake and standby status refreshes share the five-minute slot boundary")
-contains("if(aligned_status_due)status_bar_dirty=true;", "scheduled five-minute wall-clock changes queue the status bar")
+# Status-bar refresh policy: normal UI follows the wall-clock minute while
+# standby retains the lower-power five-minute cadence. Event-driven redraws may
+# show newer values early but must not postpone the next scheduled boundary.
+contains("static int16_t status_bar_painted_minute = -1;", "normal UI tracks the last painted wall-clock minute")
+contains("static int16_t status_bar_painted_slot = -1;", "standby tracks the last painted five-minute wall-clock slot")
+contains("status_wall_minute!=status_bar_painted_minute", "normal UI queues a status refresh when the visible minute changes")
+contains("status_slot!=status_bar_painted_slot", "standby queues only on a new five-minute wall-clock slot")
+contains("const bool aligned_status_due=standby_active", "status cadence explicitly branches between standby and normal UI")
+contains("if(aligned_status_due)status_bar_dirty=true;", "scheduled wall-clock changes queue the status bar")
 assert "status_bar_refreshed_at" not in source, "elapsed-time status cadence must not return"
 contains("[T5-UI] status-bar clock=%02d:%02d", "status clock logging occurs when the bar is actually drawn")
 contains("refresh_area(MeshInkRefreshMode::Direct,", "status bar uses area refresh")
@@ -819,9 +820,9 @@ assert 'Serial.printf("[T5-RADIO]' not in board_target_source and 'Serial.printl
 assert 'Serial.printf("[T5-BOOT] GPS module=' not in board_target_source, "release GPS startup must not print module diagnostics"
 assert '[T5-ERROR]' in unified_source and '[T5-ERROR]' in power_backend_source, "release serial path retains actionable error reporting"
 
-# Test41: five-minute clock/battery cadence applies both awake and in standby.
-assert "status_bar_painted_minute" not in source, "awake UI no longer schedules minute-by-minute status refreshes"
-assert "status_slot>=0&&status_slot!=status_bar_painted_slot" in source, "all modes use aligned five-minute status slots"
+# Test41: five-minute status cadence is standby-only; normal UI updates each minute.
+assert "status_wall_minute!=status_bar_painted_minute" in source, "normal UI clock updates each wall-clock minute"
+assert "status_slot!=status_bar_painted_slot" in source, "standby keeps five-minute clock cadence"
 
 # Test42: concise startup transcript, then quiet steady state.
 assert '[T5-INIT] psram=OK' in unified_source, "startup reports PSRAM readiness"
