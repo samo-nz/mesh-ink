@@ -34,12 +34,40 @@ struct PendingCompanionSend {
     MeshInkMessageKind kind=MeshInkMessageKind::Direct;
     uint8_t key[7]{};
     size_t key_len=0;
+    uint8_t attempt=0;
     uint32_t timestamp=0;
     char text[MESHINK_MESSAGE_TEXT_BYTES]{};
 };
 
+struct CompanionAckRef {
+    uint32_t ack=0;
+    uint32_t sequence=0;
+    bool route_flood=false;
+};
+
 class MeshInkBLEInterface final : public SerialBLEInterface {
     PendingCompanionSend pending_{};
+    CompanionAckRef ack_refs_[8]{};
+    uint8_t next_ack_ref_=0;
+
+    void remember_ack(uint32_t ack,uint32_t sequence,bool route_flood){
+        if(!ack||!sequence)return;
+        ack_refs_[next_ack_ref_]={ack,sequence,route_flood};
+        next_ack_ref_=(uint8_t)((next_ack_ref_+1)%8);
+    }
+
+    bool deliver_ack(uint32_t ack){
+        if(!ack)return false;
+        for(auto& ref:ack_refs_){
+            if(ref.ack!=ack||!ref.sequence)continue;
+            meshink_message_store().update_outgoing(
+                ref.sequence,UiMessageState::Delivered,ack,ref.route_flood);
+            const uint32_t delivered_sequence=ref.sequence;
+            for(auto& item:ack_refs_)if(item.sequence==delivered_sequence)item={};
+            return true;
+        }
+        return meshink_message_store().mark_delivered_by_ack(ack);
+    }
 
     void remember_app_send(const uint8_t* frame,size_t len){
         pending_={};
@@ -48,6 +76,7 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
             pending_.active=true;
             pending_.kind=MeshInkMessageKind::Direct;
             pending_.key_len=6;
+            pending_.attempt=frame[2];
             memcpy(&pending_.timestamp,frame+3,4);
             memcpy(pending_.key,frame+7,6);
             const size_t text_len=min(sizeof(pending_.text)-1,len-(size_t)13);
@@ -68,8 +97,15 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
     uint32_t commit_pending(UiMessageState state,uint32_t ack=0){
         if(!pending_.active)return 0;
         auto& journal=meshink_message_store();
-        uint32_t sequence=journal.find_matching_outgoing(
-            pending_.kind,pending_.key,pending_.key_len,pending_.timestamp,pending_.text);
+        // Only an explicit direct retry is allowed to reuse a prior journal
+        // record. Two intentional attempt-0 messages can legitimately have
+        // identical text and second-resolution timestamps and must stay distinct.
+        uint32_t sequence=0;
+        if(pending_.kind==MeshInkMessageKind::Direct&&pending_.attempt>0){
+            sequence=journal.find_matching_outgoing(
+                pending_.kind,pending_.key,pending_.key_len,
+                pending_.timestamp,pending_.text);
+        }
         if(!sequence){
             sequence=journal.append(
                 pending_.kind,pending_.key,pending_.key_len,pending_.text,
@@ -84,17 +120,26 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
     void observe_mesh_response(const uint8_t* frame,size_t len){
         if(!companion_mode_active||!frame||!len)return;
 
-        // End-to-end ACKs can arrive long after the original app command.
+        // End-to-end ACKs can arrive after the phone has already started a
+        // later retry. Retain MeshCore's eight in-flight ACK hashes locally so
+        // any valid attempt can complete the one logical journal message.
         if(frame[0]==0x82&&len>=5){
             uint32_t ack=0;memcpy(&ack,frame+1,4);
-            meshink_message_store().mark_delivered_by_ack(ack);
+            deliver_ack(ack);
         }
 
         if(!pending_.active)return;
         if(pending_.kind==MeshInkMessageKind::Direct&&frame[0]==6&&len>=10){
             uint32_t ack=0;memcpy(&ack,frame+2,4);
-            const uint32_t sequence=commit_pending(UiMessageState::Sent,ack);
-            if(sequence)meshink_message_store().update_route(sequence,frame[1]!=0);
+            UiMessageState state=UiMessageState::Sent;
+            if(pending_.attempt>=1&&pending_.attempt<=5)
+                state=(UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_.attempt-1);
+            const bool route_flood=frame[1]!=0;
+            const uint32_t sequence=commit_pending(state,ack);
+            if(sequence){
+                meshink_message_store().update_route(sequence,route_flood);
+                remember_ack(ack,sequence,route_flood);
+            }
             pending_={};
         }else if(pending_.kind==MeshInkMessageKind::Channel&&frame[0]==0){
             commit_pending(UiMessageState::Sent);

@@ -1118,3 +1118,13 @@ assert "for(uint8_t attempt=0;attempt<=DIRECT_RETRY_LIMIT;++attempt)" in runtime
 assert "pending_direct.acks[attempt]==ack" in runtime_source, "late ACKs are matched against per-attempt history"
 assert "provider.confirm_direct_send(" in runtime_source and "UiMessageState::Delivered" in runtime_source, "matched late ACK persists delivered state and the route that actually delivered"
 assert "memcpy(&pending_direct.ack," not in runtime_source, "single newest-ACK tracking cannot regress"
+
+
+# Test59: companion-mode journal persistence distinguishes a new message from
+# a protocol retry and keeps all in-flight ACK hashes until delivery resolves.
+assert "uint8_t attempt=0;" in companion_source and "pending_.attempt=frame[2];" in companion_source, "companion direct send captures the MeshCore attempt number"
+assert "pending_.kind==MeshInkMessageKind::Direct&&pending_.attempt>0" in companion_source, "only explicit direct retries may deduplicate a journal entry"
+assert "CompanionAckRef ack_refs_[8]" in companion_source, "companion tracks MeshCore's eight possible in-flight ACK hashes"
+assert "remember_ack(ack,sequence,route_flood)" in companion_source, "every successful companion direct attempt retains its ACK and route"
+assert "deliver_ack(ack);" in companion_source, "companion delivery resolves against per-attempt ACK history"
+assert "for(auto& item:ack_refs_)if(item.sequence==delivered_sequence)item={};" in companion_source, "all stale ACK references for a delivered logical message are cleared"
