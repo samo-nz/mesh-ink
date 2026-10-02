@@ -52,7 +52,10 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
 
     void remember_ack(uint32_t ack,uint32_t sequence,bool route_flood){
         if(!ack||!sequence)return;
-        ack_refs_[next_ack_ref_]={ack,sequence,route_flood};
+        CompanionAckRef& slot=ack_refs_[next_ack_ref_];
+        slot.ack=ack;
+        slot.sequence=sequence;
+        slot.route_flood=route_flood;
         next_ack_ref_=(uint8_t)((next_ack_ref_+1)%8);
     }
 

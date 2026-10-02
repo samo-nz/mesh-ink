@@ -1128,3 +1128,6 @@ assert "CompanionAckRef ack_refs_[8]" in companion_source, "companion tracks Mes
 assert "remember_ack(ack,sequence,route_flood)" in companion_source, "every successful companion direct attempt retains its ACK and route"
 assert "deliver_ack(ack);" in companion_source, "companion delivery resolves against per-attempt ACK history"
 assert "for(auto& item:ack_refs_)if(item.sequence==delivered_sequence)item={};" in companion_source, "all stale ACK references for a delivered logical message are cleared"
+
+assert "CompanionAckRef& slot=ack_refs_[next_ack_ref_];" in companion_source, "companion ACK ring uses C++11-safe explicit field assignment"
+assert "ack_refs_[next_ack_ref_]={ack,sequence,route_flood}" not in companion_source, "C++11-incompatible aggregate assignment must not return"
