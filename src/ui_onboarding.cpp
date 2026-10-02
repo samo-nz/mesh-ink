@@ -155,12 +155,14 @@ static uint8_t chat_page = 0;
 static constexpr size_t CHAT_PAGE_ANCHORS=250;
 static uint16_t chat_page_starts[CHAT_PAGE_ANCHORS]{};
 static size_t chat_page_snapshot_count=(size_t)-1;
-static int chat_page_snapshot_available=-1;
+static int chat_page_snapshot_current_available=-1;
+static int chat_page_snapshot_history_available=-1;
 static uint16_t chat_page_known=0;
 static void reset_chat_paging(){
     chat_page=0;
     chat_page_snapshot_count=(size_t)-1;
-    chat_page_snapshot_available=-1;
+    chat_page_snapshot_current_available=-1;
+    chat_page_snapshot_history_available=-1;
     chat_page_known=0;
 }
 static uint8_t timezone_index = 0;
@@ -1846,26 +1848,32 @@ static size_t chat_fill_backwards(size_t end,int available){
     return candidate;
 }
 
-static void chat_page_bounds_lazy(size_t count,int available,uint8_t requested,
-                                  size_t& first,size_t& end,bool& has_older){
+static void chat_page_bounds_lazy(size_t count,int current_available,int history_available,
+                                  uint8_t requested,size_t& first,size_t& end,bool& has_older){
     first=end=count;has_older=false;
     if(!count)return;
 
-    if(chat_page_snapshot_count!=count||chat_page_snapshot_available!=available){
+    if(chat_page_snapshot_count!=count||
+       chat_page_snapshot_current_available!=current_available||
+       chat_page_snapshot_history_available!=history_available){
         chat_page_snapshot_count=count;
-        chat_page_snapshot_available=available;
+        chat_page_snapshot_current_available=current_available;
+        chat_page_snapshot_history_available=history_available;
         chat_page_known=0;
         chat_page=0;
     }
     if(!chat_page_known){
-        chat_page_starts[0]=(uint16_t)chat_fill_backwards(count,available);
+        // Page 1/current leaves room for the normal bottom taskbar.
+        chat_page_starts[0]=(uint16_t)chat_fill_backwards(count,current_available);
         chat_page_known=1;
     }
     while(requested>=chat_page_known&&chat_page_known<CHAT_PAGE_ANCHORS&&
           chat_page_starts[chat_page_known-1]>0){
         const size_t previous_start=chat_page_starts[chat_page_known-1];
+        // Older pages intentionally hide the taskbar and use that space for
+        // additional message history.
         chat_page_starts[chat_page_known]=(uint16_t)
-            chat_fill_backwards(previous_start,available);
+            chat_fill_backwards(previous_start,history_available);
         ++chat_page_known;
     }
     if(requested>=chat_page_known){
@@ -1888,20 +1896,26 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
 
-static int chat_compose_top(){
-    return portrait_layout().bottom_nav_top-ui_h(12);
+static int chat_compose_top(bool history_page=false){
+    const auto metrics=keyboard_metrics(false);
+    return history_page
+        ?portrait_layout().bottom_nav_top-ui_h(12)
+        :portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12);
+}
+static int chat_history_bottom_current(){
+    return chat_compose_top(false)-ui_h(88);
 }
 static int chat_history_bottom_paged(){
     return portrait_layout().bottom_nav_top-ui_h(100);
 }
-static int chat_history_available(){
+static int chat_history_available_current(){
+    return chat_history_bottom_current()-ui_h(126);
+}
+static int chat_history_available_paged(){
     return chat_history_bottom_paged()-ui_h(126);
 }
-static int chat_history_available_unpaged(){
-    return chat_compose_top()-ui_h(12)-ui_h(126);
-}
 static bool chat_needs_paging(size_t count){
-    return count&&chat_fill_backwards(count,chat_history_available_unpaged())>0;
+    return count&&chat_fill_backwards(count,chat_history_available_current())>0;
 }
 
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
@@ -1936,7 +1950,9 @@ static void draw_chat(bool channel) {
             if(chat_page)reset_chat_paging();
             first=0;end=count;
         }else{
-            chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);
+            chat_page_bounds_lazy(count,chat_history_available_current(),
+                                  chat_history_available_paged(),
+                                  chat_page,first,end,has_older);
         }
     }
     if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
@@ -1956,8 +1972,12 @@ static void draw_chat(bool channel) {
         draw_keyboard();
     }else{
         const MeshInkUiLayout& layout=portrait_layout();
-        const int compose_y=chat_compose_top();
-        draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));
+        const bool history_page=chat_page>0;
+        const int compose_y=chat_compose_top(history_page);
+        const int indicator_y=history_page
+            ?layout.bottom_nav_top-ui_h(60)
+            :compose_y-ui_h(48);
+        draw_chat_page_indicator(chat_page,has_older,indicator_y);
         rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
                     max(ui_w(12),ui_h(12)));
         const char* prompt=compose_text[0]?compose_text:"Write a message...";
@@ -2604,6 +2624,9 @@ static void draw_screen() {
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
+    else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+            !keyboard_visible&&chat_page==0)
+        draw_bottom_nav(screen==Screen::ContactChat?0:1);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||screen==Screen::Diagnostics||
             (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
         draw_bottom_nav(3);
@@ -3255,7 +3278,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
-    if(screen!=Screen::ContactChat&&screen!=Screen::ChannelChat&&
+    const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+                              !keyboard_visible&&chat_page==0;
+    if((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat||chat_main_page)&&
        y>=portrait_layout().bottom_nav_top){
         const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
@@ -3287,7 +3312,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
-            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top();
+            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top(chat_page>0);
             if(hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
                 keyboard_message_mode=true;keyboard_visible=true;reset_chat_paging();
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
@@ -3913,7 +3938,9 @@ void ui_loop() {
             const size_t count=ui_data?ui_data->active_message_count():0;
             size_t first=count,end=count;bool has_older=false;
             if(chat_needs_paging(count))
-                chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);
+                chat_page_bounds_lazy(count,chat_history_available_current(),
+                                      chat_history_available_paged(),
+                                      chat_page,first,end,has_older);
             uint8_t next=chat_page;
             if(tap.dy<0){
                 if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);

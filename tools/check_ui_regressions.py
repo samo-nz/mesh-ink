@@ -1188,3 +1188,14 @@ assert "const bool any_unread=has_direct||has_channel;" in standby_body, "standb
 assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in standby_body, "large smooth STANDBY heading moves below unread cards when needed"
 assert 'ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);' in standby_body, "wake instruction uses readable smooth scale-three text"
 assert "ui_y(830)" in standby_body and "ui_y(892)" in standby_body, "standby footer stays below the unread-card region"
+
+# Test63: the bottom taskbar remains on the live/current conversation and is
+# hidden only after swiping back to an older history page.
+draw_screen_body=source[source.index("static void draw_screen() {"):source.index("static void refresh(",source.index("static void draw_screen() {"))]
+assert '(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&' in draw_screen_body and '!keyboard_visible&&chat_page==0' in draw_screen_body, "current chat page keeps the taskbar"
+assert 'draw_bottom_nav(screen==Screen::ContactChat?0:1);' in draw_screen_body, "chat taskbar selects Contacts or Channels appropriately"
+assert "chat_compose_top(bool history_page=false)" in source, "chat compose geometry distinguishes current and older history pages"
+assert "portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12)" in source, "current chat compose box stays above the visible taskbar"
+assert "chat_history_available_current()" in source and "chat_history_available_paged()" in source, "pagination has separate current/history capacities"
+assert "chat_fill_backwards(previous_start,history_available)" in source, "older pages use the extra space released by hiding the taskbar"
+assert "const bool chat_main_page=" in source and "chat_page==0;" in source[source.index("const bool chat_main_page="):source.index("switch(screen)",source.index("const bool chat_main_page="))], "visible chat taskbar remains tappable"
