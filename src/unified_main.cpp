@@ -18,33 +18,78 @@ static bool cache64_psram_blocked = false;
 
 static char terminal_line[48]{};
 static uint8_t terminal_length=0;
+static bool screenshot_capture_mode=false;
+static bool terminal_last_was_cr=false;
+
+static void terminal_screenshot_prompt() {
+    Serial.println("[T5-CMD] Press Enter to save a screenshot");
+}
+
+static void terminal_save_screenshot() {
+    char path[20]{};
+    if(ui_save_screenshot(path,sizeof(path)))
+        Serial.printf("[T5-CMD] Saved %s\n",path);
+    else
+        Serial.println("[T5-CMD] Screenshot failed (SD card available?)");
+    terminal_screenshot_prompt();
+}
 
 static void service_local_terminal() {
+    // Native USB CDC reports false once the host closes/disconnects the port.
+    // Capture mode is deliberately session-scoped, so a reconnect starts clean.
+    if(screenshot_capture_mode&&!Serial) {
+        screenshot_capture_mode=false;
+        terminal_length=0;
+        terminal_line[0]=0;
+        terminal_last_was_cr=false;
+        return;
+    }
+
     while(Serial.available()>0) {
         const int raw=Serial.read();
         if(raw<0)break;
         const char ch=(char)raw;
+
+        // Most serial terminals send CRLF for one Enter. Treat it as one line
+        // ending so capture mode produces exactly one screenshot per keypress.
+        if(ch=='\n'&&terminal_last_was_cr) {
+            terminal_last_was_cr=false;
+            continue;
+        }
+
         if(ch=='\r'||ch=='\n') {
-            if(!terminal_length)continue;
+            terminal_last_was_cr=(ch=='\r');
+
+            if(!terminal_length) {
+                if(screenshot_capture_mode)terminal_save_screenshot();
+                continue;
+            }
+
             terminal_line[terminal_length]=0;
-            if(!strcmp(terminal_line,"screenshot")||!strcmp(terminal_line,"shot")) {
-                char path[20]{};
-                if(ui_save_screenshot(path,sizeof(path)))
-                    Serial.printf("[T5-CMD] screenshot saved: %s\n",path);
-                else
-                    Serial.println("[T5-CMD] screenshot failed (SD card available?)");
+            if(screenshot_capture_mode) {
+                Serial.println("[T5-CMD] Screenshot mode active; press Enter to capture");
+                terminal_screenshot_prompt();
+            } else if(!strcmp(terminal_line,"screenshot")||!strcmp(terminal_line,"shot")) {
+                screenshot_capture_mode=true;
+                Serial.println("[T5-CMD] Screenshot mode armed");
+                terminal_screenshot_prompt();
+                Serial.println("[T5-CMD] Disconnect serial to exit screenshot mode");
             } else if(!strcmp(terminal_line,"help")) {
                 Serial.println("[T5-CMD] commands: screenshot | shot | help");
             } else {
                 Serial.printf("[T5-CMD] unknown command: %s (try 'help')\n",terminal_line);
             }
+
             terminal_length=0;
             terminal_line[0]=0;
-        } else if(ch=='\b'||ch==0x7F) {
-            if(terminal_length)terminal_line[--terminal_length]=0;
-        } else if(ch>=32&&ch<127&&terminal_length+1<sizeof(terminal_line)) {
-            terminal_line[terminal_length++]=ch;
-            terminal_line[terminal_length]=0;
+        } else {
+            terminal_last_was_cr=false;
+            if(ch=='\b'||ch==0x7F) {
+                if(terminal_length)terminal_line[--terminal_length]=0;
+            } else if(ch>=32&&ch<127&&terminal_length+1<sizeof(terminal_line)) {
+                terminal_line[terminal_length++]=ch;
+                terminal_line[terminal_length]=0;
+            }
         }
     }
 }

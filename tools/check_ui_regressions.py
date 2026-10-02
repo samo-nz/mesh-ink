@@ -1219,3 +1219,14 @@ assert "meshink_display_read_logical_gray8" in display_backend_source and "MeshI
 assert "meshink_storage_open_write" in storage_backend_header and "SD.open(path,FILE_WRITE)" in storage_backend_source, "storage backend provides explicit screenshot write access"
 assert 'strcmp(terminal_line,"screenshot")' in unified_source and 'strcmp(terminal_line,"shot")' in unified_source, "local USB terminal accepts screenshot and shot commands"
 assert "service_local_terminal();" in unified_source, "terminal command service runs in local UI mode"
+
+
+# Test68: screenshot collection mode is session-scoped and one Enter equals one capture.
+assert "static bool screenshot_capture_mode=false;" in unified_source, "screenshot terminal has an explicit capture-mode latch"
+assert "if(screenshot_capture_mode&&!Serial)" in unified_source, "capture mode exits automatically when native USB CDC disconnects"
+assert 'Serial.println("[T5-CMD] Screenshot mode armed");' in unified_source, "screenshot command clearly arms continuous capture mode"
+assert 'Serial.println("[T5-CMD] Press Enter to save a screenshot");' in unified_source, "capture mode prompts for each blank Enter"
+assert 'Serial.printf("[T5-CMD] Saved %s\\n",path);' in unified_source, "each successful capture reports the saved filename"
+assert "if(!terminal_length)" in unified_source and "if(screenshot_capture_mode)terminal_save_screenshot();" in unified_source, "blank Enter captures while armed"
+assert "if(ch=='\\n'&&terminal_last_was_cr)" in unified_source, "CRLF terminals cannot double-capture one Enter"
+assert "Disconnect serial to exit screenshot mode" in unified_source, "session lifetime is explained to the user"
