@@ -1130,38 +1130,49 @@ static void line(int x0,int y0,int x1,int y1,uint8_t color=0) {
     while(true){meshink_display_draw_pixel(x0,y0,color,fb);if(x0==x1&&y0==y1)break;const int e2=2*err;if(e2>=dy){err+=dy;x0+=sx;}if(e2<=dx){err+=dx;y0+=sy;}}
 }
 
+static void draw_status_disc(int cx,int cy,int radius,uint8_t color=0) {
+    rounded_fill(cx-radius,cy-radius,radius*2+1,radius*2+1,radius,color);
+}
+static void draw_status_bold_line(int x0,int y0,int x1,int y1,int radius=2,uint8_t color=0) {
+    for(int oy=-radius;oy<=radius;++oy)for(int ox=-radius;ox<=radius;++ox)
+        if(ox*ox+oy*oy<=radius*radius)line(x0+ox,y0+oy,x1+ox,y1+oy,color);
+    draw_status_disc(x0,y0,radius,color);
+    draw_status_disc(x1,y1,radius,color);
+}
+
 static void draw_target_icon(int x,int y,bool disabled) {
-    // Three-pixel strokes for a clearly visible status-bar GPS icon.
-    meshink_display_fill_rect({x+4,y+4,22,3},0,fb);
-    meshink_display_fill_rect({x+4,y+23,22,3},0,fb);
-    meshink_display_fill_rect({x+4,y+4,3,22},0,fb);
-    meshink_display_fill_rect({x+23,y+4,3,22},0,fb);
-    meshink_display_fill_rect({x+12,y+12,6,6},0,fb);
-    meshink_display_fill_rect({x,y+14,30,3},0,fb);
-    meshink_display_fill_rect({x+14,y,3,30},0,fb);
-    if(disabled) {
-        for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);
-    }
+    // Modern GPS target: rounded four-pixel ring, bold centre and short ticks.
+    rounded_fill(x+3,y+3,25,25,12,0);
+    rounded_fill(x+7,y+7,17,17,8,0xFF);
+    draw_status_disc(x+15,y+15,4,0);
+    meshink_display_fill_rect({x+13,y,5,7},0,fb);
+    meshink_display_fill_rect({x+13,y+24,5,7},0,fb);
+    meshink_display_fill_rect({x,y+13,7,5},0,fb);
+    meshink_display_fill_rect({x+24,y+13,7,5},0,fb);
+    if(disabled)draw_status_bold_line(x+3,y+3,x+27,y+27,3,0);
 }
 
 static void draw_search_icon(int x,int y) {
-    meshink_display_fill_rect({x+3,y+3,20,3},0,fb);
-    meshink_display_fill_rect({x+3,y+20,20,3},0,fb);
-    meshink_display_fill_rect({x+3,y+3,3,20},0,fb);
-    meshink_display_fill_rect({x+20,y+3,3,20},0,fb);
-    for(int d=-1;d<=1;++d)line(x+20,y+20+d,x+29,y+29+d);
+    // A true circular magnifying glass rather than the old square outline.
+    rounded_fill(x+2,y+2,22,22,11,0);
+    rounded_fill(x+7,y+7,12,12,6,0xFF);
+    draw_status_bold_line(x+20,y+20,x+29,y+29,3,0);
 }
 
 static void draw_envelope_icon(int x,int y) {
-    // Bold three-pixel outline and flap, legible at status-bar size.
-    meshink_display_fill_rect({x,y+5,30,3},0,fb);
-    meshink_display_fill_rect({x,y+23,30,3},0,fb);
-    meshink_display_fill_rect({x,y+5,3,21},0,fb);
-    meshink_display_fill_rect({x+27,y+5,3,21},0,fb);
-    for(int d=-1;d<=1;++d) {
-        line(x+3,y+8+d,x+15,y+18+d);
-        line(x+26,y+8+d,x+15,y+18+d);
-    }
+    // Rounded, heavy envelope silhouette with a bold folded flap.
+    rounded_fill(x,y+5,30,22,5,0);
+    rounded_fill(x+4,y+9,22,14,2,0xFF);
+    draw_status_bold_line(x+4,y+9,x+15,y+18,2,0);
+    draw_status_bold_line(x+26,y+9,x+15,y+18,2,0);
+}
+
+static void draw_channel_status_icon(int x,int y) {
+    // Compact two-person channel/group mark; solid shapes stay legible on DU.
+    draw_status_disc(x+9,y+9,5,0);
+    draw_status_disc(x+21,y+9,5,0);
+    rounded_fill(x+2,y+16,14,11,6,0);
+    rounded_fill(x+14,y+16,14,11,6,0);
 }
 
 static void draw_standby_envelope_icon(int x,int y) {
@@ -1249,7 +1260,7 @@ static void draw_status_bar() {
         left+=(int)strlen(count)*12+ui_w(8);
     }
     if(status_channel_unread){
-        text("#",left,ui_y(17),2,0,true);left+=ui_w(16);
+        draw_channel_status_icon(left,ui_y(9));left+=ui_w(34);
         char count[5];compact_count(status_channel_unread,count);
         text(count,left,ui_y(17),2,0,true);
     }

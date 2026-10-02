@@ -1162,3 +1162,13 @@ assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings
 # Test61: smooth font size is no smaller than the original 5x7 primary tiers.
 assert "(uint8_t)(7*scale),19" in source, "Inter scaling uses the measured 19-pixel cap height as its reference"
 assert "Inter 12 uppercase glyphs use top=19" in source, "font baseline documents the measured cap-height reference"
+
+# Test61 status-bar icon polish: battery remains unchanged; all other symbols
+# use bold rounded geometry that survives low-resolution DU refreshes.
+assert "static void draw_status_bold_line(" in source and "radius=2" in source, "status icons share a bold rounded stroke helper"
+assert "rounded_fill(x+2,y+2,22,22,11,0);" in source and "rounded_fill(x+7,y+7,12,12,6,0xFF);" in source, "GPS searching icon is a circular magnifying glass"
+assert "draw_status_bold_line(x+20,y+20,x+29,y+29,3,0);" in source, "GPS search handle is deliberately bold"
+assert "rounded_fill(x+3,y+3,25,25,12,0);" in source and "draw_status_disc(x+15,y+15,4,0);" in source, "GPS fix/off target is rounded and bold"
+assert "rounded_fill(x,y+5,30,22,5,0);" in source, "private unread envelope has rounded heavy corners"
+assert "static void draw_channel_status_icon(" in source and "draw_channel_status_icon(left,ui_y(9));" in source, "channel unread replaces the hash glyph with a rounded group icon"
+assert 'meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);' in source, "battery icon geometry is intentionally unchanged"
