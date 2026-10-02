@@ -18,6 +18,41 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
   </tr>
 </table>
 
+<details>
+<summary><strong>View more screenshots</strong></summary>
+
+<br>
+
+<table>
+  <tr>
+    <td align="center"><img src="screenshots/message.webp" width="220"><br><sub>Message</sub></td>
+    <td align="center"><img src="screenshots/message-keyboard.webp" width="220"><br><sub>Message keyboard</sub></td>
+    <td align="center"><img src="screenshots/channel-message.webp" width="220"><br><sub>Channel message</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/channels.webp" width="220"><br><sub>Channels</sub></td>
+    <td align="center"><img src="screenshots/node-info.webp" width="220"><br><sub>Node information</sub></td>
+    <td align="center"><img src="screenshots/maps2.webp" width="220"><br><sub>Map — node view</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/quick-settings.webp" width="220"><br><sub>Quick settings</sub></td>
+    <td align="center"><img src="screenshots/settings-gps.webp" width="220"><br><sub>GPS settings</sub></td>
+    <td align="center"><img src="screenshots/settings-radio.webp" width="220"><br><sub>Radio settings</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/repeater-info.webp" width="220"><br><sub>Repeater information</sub></td>
+    <td align="center"><img src="screenshots/repeater-login.webp" width="220"><br><sub>Repeater login</sub></td>
+    <td align="center"><img src="screenshots/bt-companion.webp" width="220"><br><sub>Bluetooth companion mode</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/standby.webp" width="220"><br><sub>Standby</sub></td>
+    <td align="center"><img src="screenshots/standby1.webp" width="220"><br><sub>Standby — private unread</sub></td>
+    <td align="center"><img src="screenshots/standby2.webp" width="220"><br><sub>Standby — unread messages</sub></td>
+  </tr>
+</table>
+
+</details>
+
 ## Features
 
 - Direct messages and channel messaging
