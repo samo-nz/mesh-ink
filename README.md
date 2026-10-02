@@ -13,40 +13,10 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 <table>
   <tr>
     <td align="center"><img src="screenshots/contacts.webp" width="220"><br><sub>Contacts</sub></td>
-    <td align="center"><img src="screenshots/maps-mylocation.webp" width="220"><br><sub>Map — my location</sub></td>
+    <td align="center"><img src="screenshots/maps1.webp" width="220"><br><sub>Map</sub></td>
     <td align="center"><img src="screenshots/about.webp" width="220"><br><sub>About</sub></td>
   </tr>
 </table>
-
-<details>
-<summary><strong>View more screenshots</strong></summary>
-
-<br>
-
-<table>
-  <tr>
-    <td align="center"><img src="screenshots/conversation.webp" width="220"><br><sub>Conversation</sub></td>
-    <td align="center"><img src="screenshots/channels.webp" width="220"><br><sub>Channels</sub></td>
-    <td align="center"><img src="screenshots/discovered.webp" width="220"><br><sub>Discovered nodes</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="screenshots/node-info1.webp" width="220"><br><sub>Node information</sub></td>
-    <td align="center"><img src="screenshots/node-info2.webp" width="220"><br><sub>Node information — page 2</sub></td>
-    <td align="center"><img src="screenshots/maps-node.webp" width="220"><br><sub>Map — node location</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="screenshots/advertise.webp" width="220"><br><sub>Advertise</sub></td>
-    <td align="center"><img src="screenshots/more.webp" width="220"><br><sub>More</sub></td>
-    <td align="center"><img src="screenshots/settings.webp" width="220"><br><sub>Settings</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="screenshots/settings-location.webp" width="220"><br><sub>Location settings</sub></td>
-    <td align="center"><img src="screenshots/bt-companion.webp" width="220"><br><sub>Bluetooth companion mode</sub></td>
-    <td></td>
-  </tr>
-</table>
-
-</details>
 
 ## Features
 
