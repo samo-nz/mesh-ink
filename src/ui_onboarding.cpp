@@ -3883,20 +3883,20 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
     meshink_display_set_all_white(&display);
     if(failure==MeshInkRadioFailureClass::MissingHardwareVariant){
-        ui_centred("MESHINK CANNOT START",ui_y(120),4,0,true);
-        ui_centred("LORA AND GPS NOT FOUND",ui_y(190),4,0,true);
-        ui_centred("BOARD VARIANT MAY OMIT RADIO",ui_y(290),3,0,true);
-        ui_centred("LORA RADIO IS REQUIRED",ui_y(360),3,0,true);
-        ui_centred("IF YOUR BOARD HAS A RADIO",ui_y(520),2,0,true);
-        ui_centred("PLEASE REPORT THIS ERROR",ui_y(555),2,0,true);
-        ui_centred("PRESS RST TO RETRY",ui_y(720),3,0,true);
+        ui_centred_fit("MESHINK CANNOT START",ui_y(120),portrait_layout().width-ui_w(24),4,0,true);
+        ui_centred_fit("LORA AND GPS NOT FOUND",ui_y(190),portrait_layout().width-ui_w(24),4,0,true);
+        ui_centred_fit("BOARD VARIANT MAY OMIT RADIO",ui_y(290),portrait_layout().width-ui_w(24),3,0,true);
+        ui_centred_fit("LORA RADIO IS REQUIRED",ui_y(360),portrait_layout().width-ui_w(24),3,0,true);
+        ui_centred_fit("IF YOUR BOARD HAS A RADIO",ui_y(520),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PLEASE REPORT THIS ERROR",ui_y(555),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PRESS RST TO RETRY",ui_y(720),portrait_layout().width-ui_w(24),3,0,true);
     }else{
-        ui_centred("RADIO STARTUP",ui_y(190),5,0,true);
-        ui_centred("FAILED",ui_y(255),6,0,true);
-        ui_centred("LORA RADIO NOT DETECTED",ui_y(390),4,0,true);
-        ui_centred("CHECK BOARD RADIO HARDWARE",ui_y(475),2,0,true);
-        ui_centred("PLEASE REPORT THIS ERROR",ui_y(510),2,0,true);
-        ui_centred("PRESS RST TO RETRY",ui_y(600),3,0,true);
+        ui_centred_fit("RADIO STARTUP",ui_y(190),portrait_layout().width-ui_w(24),5,0,true);
+        ui_centred_fit("FAILED",ui_y(255),portrait_layout().width-ui_w(24),6,0,true);
+        ui_centred_fit("LORA RADIO NOT DETECTED",ui_y(390),portrait_layout().width-ui_w(24),4,0,true);
+        ui_centred_fit("CHECK BOARD RADIO HARDWARE",ui_y(475),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PLEASE REPORT THIS ERROR",ui_y(510),portrait_layout().width-ui_w(24),2,0,true);
+        ui_centred_fit("PRESS RST TO RETRY",ui_y(600),portrait_layout().width-ui_w(24),3,0,true);
     }
     ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
