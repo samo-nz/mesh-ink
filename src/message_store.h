@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <FS.h>
 #include "ui_data.h"
+#include "message_limits.h"
 
 constexpr size_t MESHINK_MESSAGE_CAPACITY=250;
 constexpr uint8_t MESHINK_MESSAGE_PATH_UNKNOWN=0xFF;
@@ -24,7 +25,7 @@ struct MeshInkStoredMessage {
     uint8_t kind=0;
     uint8_t state=0;
     uint8_t key[7]{};
-    char text[145]{};
+    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
     int8_t snr_q4=0;
     int8_t repeat_snr_q4=0;
     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
@@ -53,7 +54,7 @@ class MeshInkMessageStore {
     bool create_empty();
     void write_header();
     bool write_record(uint16_t physical,const MeshInkStoredMessage& record);
-    bool migrate_v1(const MeshInkMessageStoreHeader& legacy_header);
+    bool migrate_legacy(const MeshInkMessageStoreHeader& legacy_header,uint16_t legacy_version);
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:

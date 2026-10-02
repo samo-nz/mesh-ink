@@ -12,6 +12,7 @@ source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
 message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
+message_limits_source = (root / "src" / "message_limits.h").read_text(encoding="utf-8")
 component_cmake_source = (root / "src" / "CMakeLists.txt").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
 map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
@@ -384,6 +385,13 @@ contains("meshink_keyboard::make_metrics(", "UI uses shared scalable keyboard ge
 contains("MESHINK_KEYBOARD_PORTRAIT_X_OFFSET", "board profile exposes portrait keyboard tuning")
 contains("MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET", "board profile exposes landscape keyboard tuning")
 contains("draw_compose_entry(keyboard_layout);", "chat compose box follows keyboard entry geometry")
+assert "static char compose_text[MESHINK_MESSAGE_TEXT_BYTES]" in source, "compose buffer accepts the full 160-byte message"
+assert "if(n<MESHINK_MESSAGE_TEXT_MAX)" in source, "portrait and landscape typing share the full message limit"
+assert "static void ui_draw_wrapped_tail(" in source, "compose rendering follows the newest wrapped lines"
+assert source.count("ui_draw_wrapped_tail(")>=3, "portrait and landscape entry rendering both use bounded tail wrapping"
+assert "landscape?198:618" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape keyboard is shifted to the bottom edge"
+assert "Rect{16,14,928,165}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compose viewport uses the reclaimed white space"
+
 assert "meshink_keyboard::in_row(y,828)" not in source, "portrait third-row touch must not use fixed T5 y coordinates"
 assert "meshink_keyboard::in_row(y,425)" not in source, "landscape action-row touch must not use fixed T5 y coordinates"
 contains('key("SPACE",metrics.space_key);', "space-capable keyboards use the shared wide space key")
@@ -848,7 +856,7 @@ assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "s
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
 assert "const char* network" in data_source, "message model exposes network metadata"
-assert "STORE_VERSION=2" in message_store_source, "message journal uses the persistent RF-metadata v2 format"
+assert "STORE_VERSION=3" in message_store_source, "message journal uses the 160-byte-text v3 format"
 assert "int8_t snr_q4=0;" in message_store_header and "uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;" in message_store_header, "received SNR/path metadata lives in the persistent record"
 assert "uint8_t repeats=0;" in message_store_header and "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_header, "repeat and route metadata lives in the persistent record"
 assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
@@ -914,30 +922,31 @@ assert 'strcpy(self->detail_position_source_,"SAVED POSITION")' in runtime_sourc
 assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinates must not be mislabelled as advert-derived"
 
 
-# Test50: one 250-message journal spans standalone and Bluetooth Companion
-# modes, while the testing device's existing 96-message v1 history migrates.
+# Test50: one 250-message v3 journal spans standalone and Bluetooth Companion
+# modes. Existing 96-message v1 and 250-message v2 testing journals migrate
+# transactionally, with v2 RF/route metadata preserved.
 assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
-assert "LEGACY_STORE_CAPACITY=96" in message_store_source and "LEGACY_STORE_VERSION=1" in message_store_source, "v1 96-message store remains an explicit migration source"
-assert "migrate_v1(disk)" in message_store_source, "v1 store is migrated instead of discarded"
-assert "header_.sequence=legacy_header.sequence" not in message_store_source, "migration initializes sequence through the v2 header assignment"
+assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk exposes the full MeshCore direct-message text limit"
+assert "LEGACY_STORE_CAPACITY_V1=96" in message_store_source and "LEGACY_STORE_VERSION_V1=1" in message_store_source, "v1 96-message store remains an explicit migration source"
+assert "LEGACY_STORE_VERSION_V2=2" in message_store_source and "sizeof(LegacyStoredMessageV2)==172" in message_store_source, "current 250-message v2 store remains an explicit migration source"
+assert "migrate_legacy(disk,disk.version)" in message_store_source, "v1/v2 stores are migrated instead of discarded"
 assert "legacy_header.sequence" in message_store_source and "current.sequence=legacy.sequence" in message_store_source, "migration preserves journal and per-message sequence values"
-assert 'STORE_TEMP_PATH[]="/ui_messages.v2.tmp"' in message_store_source and 'STORE_BACKUP_PATH[]="/ui_messages.v1.bak"' in message_store_source, "migration uses temporary and backup files"
-assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "migration swaps v2 into place only after writing it"
+assert 'STORE_TEMP_PATH[]="/ui_messages.v3.tmp"' in message_store_source and 'STORE_BACKUP_PATH[]="/ui_messages.legacy.bak"' in message_store_source, "migration uses v3 temporary and rollback files"
+assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "migration swaps v3 into place only after writing it"
 assert "original retained" in message_store_source, "migration failure explicitly preserves the testing device's old history"
-assert "sizeof(LegacyStoredMessageV1)==168" in message_store_source and "sizeof(MeshInkMessageStoreHeader)==16" in message_store_source, "migration locks the historical v1 binary layout"
-assert "!SPIFFS.exists(STORE_PATH)&&SPIFFS.exists(STORE_BACKUP_PATH)" in message_store_source, "boot detects an interrupted migration rename"
-assert "recovered interrupted v1 migration" in message_store_source, "interrupted migration restores the original v1 journal before retrying"
-assert "+<message_store.cpp>" in platformio_source, "shared journal is compiled into Arduino unified firmware"
-assert '"message_store.cpp"' in component_cmake_source, "shared journal is linked into Arduino+ESP-IDF cache64 firmware"
-assert "class MeshInkMesh final : public MyMesh" in companion_source, "Bluetooth mode observes incoming mesh messages before app sync"
-assert "MeshInkMessageOrigin::CompanionApp" in companion_source, "Bluetooth traffic is tagged in the shared journal"
-assert "class MeshInkBLEInterface final : public SerialBLEInterface" in companion_source, "Bluetooth app commands are observed without changing the phone protocol"
-assert "frame[0]==2&&len>=14&&frame[1]==TXT_TYPE_PLAIN" in companion_source, "BT private sends are captured from CMD_SEND_TXT_MSG"
-assert "frame[0]==3&&len>=8&&frame[1]==TXT_TYPE_PLAIN" in companion_source, "BT channel sends are captured from CMD_SEND_CHANNEL_TXT_MSG"
-assert "pending_.kind==MeshInkMessageKind::Direct&&frame[0]==6&&len>=10" in companion_source, "BT private send is journaled only after MeshCore accepts it"
-assert "pending_.kind==MeshInkMessageKind::Channel&&frame[0]==0" in companion_source, "BT channel send is journaled only after MeshCore accepts it"
-assert "mark_delivered_by_ack(ack)" in companion_source, "later end-to-end BT delivery ACK updates the persisted message"
+assert "sizeof(LegacyStoredMessageV1)==168" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "legacy and v3 fixed-record layouts are pinned"
+assert "memcpy(current.text,legacy.text,sizeof(legacy.text));" in message_store_source, "legacy text copies into the larger v3 field without truncating existing messages"
+assert "current.snr_q4=legacy.snr_q4;" in message_store_source and "current.flags=legacy.flags;" in message_store_source, "v2 RF/route metadata survives v2->v3 migration"
+assert "for(uint16_t logical=0;ok&&logical<legacy_header.count;++logical)" in message_store_source, "migration reads only the old ring's logical messages"
+assert "if(legacy.sequence==0){++skipped_blank;continue;}" in message_store_source, "unexpected blank legacy active slots are skipped"
+assert "migrated.count=migrated_count;" in message_store_source, "v3 logical count is compacted to valid migrated records"
+assert "for(uint16_t i=migrated_count;ok&&i<MESHINK_MESSAGE_CAPACITY;++i)" in message_store_source, "unused v3 capacity is explicitly blank but outside logical count"
+assert "current.text[sizeof(current.text)-1]=0;" in message_store_source, "migrated text is forced NUL-terminated"
+assert "verified.count==migrated_count" in message_store_source and "verify=SPIFFS.open(STORE_TEMP_PATH" in message_store_source, "completed temp journal is reopened and validated before swapping"
+assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "incompatible live journals get a non-destructive recovery backup"
+assert "preserving before recreate" in message_store_source, "invalid journal handling is explicitly non-destructive"
 assert "meshink_message_store().begin()" in companion_source, "companion mode opens/migrates the same journal"
+assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
 
 
 # Test51: the 250-message journal is flash-authoritative. Neither the full

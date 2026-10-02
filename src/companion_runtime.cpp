@@ -35,7 +35,7 @@ struct PendingCompanionSend {
     uint8_t key[7]{};
     size_t key_len=0;
     uint32_t timestamp=0;
-    char text[145]{};
+    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
 };
 
 class MeshInkBLEInterface final : public SerialBLEInterface {

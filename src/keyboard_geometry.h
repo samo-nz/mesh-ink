@@ -4,7 +4,7 @@
 //
 // The keyboard is described in the T5 reference coordinate system and then
 // scaled onto the active logical display. This keeps the field-tested T5
-// layout pixel-for-pixel identical while allowing other displays to reuse the
+// portrait layout pixel-for-pixel identical while allowing other displays to reuse the
 // same keyboard implementation. Board profiles can supply small tuning
 // offsets/deltas without forking keyboard code.
 namespace meshink_keyboard {
@@ -83,7 +83,7 @@ inline Metrics make_metrics(int width,int height,bool landscape,
                             Tuning tuning={0,0,0,0}) {
     const int reference_width=landscape?960:540;
     const int reference_height=landscape?540:960;
-    const int reference_number_top=landscape?145:618;
+    const int reference_number_top=landscape?198:618;
 
     const Row number_reference=landscape
         ? Row{15,93,88,10,13,943}
@@ -100,25 +100,25 @@ inline Metrics make_metrics(int width,int height,bool landscape,
         : Row{93,45,42,8,91,457};
 
     const Rect entry_reference=landscape
-        ? Rect{16,14,928,112}
+        ? Rect{16,14,928,165}
         : Rect{12,544,516,70};
     const int history_bottom_reference=landscape?0:526;
     const int clear_top_reference=landscape?0:486;
 
     const Rect mode_reference=landscape
-        ? Rect{15,355,130,62}
+        ? Rect{15,408,130,62}
         : Rect{12,828,76,62};
     const Rect delete_reference=landscape
-        ? Rect{812,355,133,62}
+        ? Rect{812,408,133,62}
         : Rect{460,828,68,62};
     const Rect orientation_reference=landscape
-        ? Rect{15,425,180,62}
+        ? Rect{15,478,180,62}
         : Rect{12,898,100,62};
     const Rect space_reference=landscape
-        ? Rect{203,425,500,62}
+        ? Rect{203,478,500,62}
         : Rect{120,898,298,62};
     const Rect action_reference=landscape
-        ? Rect{711,425,234,62}
+        ? Rect{711,478,234,62}
         : Rect{426,898,102,62};
     const Rect wide_action_reference=landscape
         ? action_reference
@@ -140,7 +140,7 @@ inline Metrics make_metrics(int width,int height,bool landscape,
     metrics.clear_top=clear_top_reference?
         scale_axis(clear_top_reference,height,reference_height)+tuning.y_offset:0;
     metrics.entry=scale_rect(entry_reference,width,height,reference_width,reference_height,tuning);
-    metrics.entry.height=scale_axis(landscape?112:70,height,reference_height);
+    metrics.entry.height=scale_axis(landscape?165:70,height,reference_height);
     metrics.number_row=scale_row(number_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[0]=scale_row(top_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[1]=scale_row(home_reference,width,reference_width,tuning.x_offset);

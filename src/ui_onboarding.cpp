@@ -23,6 +23,7 @@
 #include "t5_timing.h"
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
+#include "message_limits.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
@@ -136,7 +137,7 @@ static bool toast_opens_main = false;
 static bool keyboard_message_mode = false;
 static bool keyboard_password_mode = false;
 static bool save_remote_password = false;
-static char compose_text[49] = {};
+static char compose_text[MESHINK_MESSAGE_TEXT_BYTES] = {};
 static char remote_password[16] = {};
 static UiDataProvider* ui_data = nullptr;
 static size_t selected_contact = 0;
@@ -652,6 +653,36 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         cursor=next;
     }
 }
+static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
+                                 int max_height,int scale,uint8_t color,bool bold) {
+    if(!value||!*value||max_width<=0||max_height<=0)return;
+    struct WrappedLine { const char* start; size_t len; };
+    WrappedLine lines[32]{};
+    int line_count=0;
+    const char* cursor=value;
+    while(*cursor&&line_count<(int)(sizeof(lines)/sizeof(lines[0]))){
+        while(*cursor==' ')++cursor;
+        if(!*cursor)break;
+        if(*cursor=='\n'){lines[line_count++]={cursor,0};++cursor;continue;}
+        size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=1;
+        lines[line_count++]={cursor,take};cursor+=take;
+        while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+    }
+    if(!line_count)return;
+    const int glyph_height=7*scale;
+    const int line_step=glyph_height+8;
+    if(max_height<glyph_height)return;
+    const int visible_lines=1+(max_height-glyph_height)/line_step;
+    const int first=max(0,line_count-visible_lines);
+    int row=0;
+    for(int i=first;i<line_count;++i,++row){
+        char line_text[MESHINK_MESSAGE_TEXT_BYTES]{};
+        const size_t copy=min(lines[i].len,sizeof(line_text)-1);
+        if(copy)memcpy(line_text,lines[i].start,copy);
+        size_t trim=copy;while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
+        ui_text(line_text,x,y+row*line_step,scale,color,bold);
+    }
+}
 
 // Integer-only rounded panel primitive. It uses the existing framebuffer
 // rectangles and a small corner inset calculation, so there is no image asset,
@@ -949,10 +980,14 @@ static void draw_landscape_keyboard(){
     const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(10),ui_h(10)),false);
-    const int entry_x=metrics.entry.x+meshink_keyboard::scale_axis(16,metrics.width,960);
-    const int entry_y=metrics.entry.y+meshink_keyboard::scale_axis(16,metrics.height,540);
-    ui_draw_wrapped(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
-                    entry_x,entry_y,metrics.entry.width-ui_w(32),4,0,false,2);
+    const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,960);
+    const int inset_y=meshink_keyboard::scale_axis(12,metrics.height,540);
+    const int entry_x=metrics.entry.x+inset_x;
+    const int entry_y=metrics.entry.y+inset_y;
+    const int entry_width=metrics.entry.width-2*inset_x;
+    const int entry_height=metrics.entry.height-2*inset_y;
+    ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
+                         entry_x,entry_y,entry_width,entry_height,4,0,false);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
@@ -1790,12 +1825,14 @@ static bool chat_needs_paging(size_t count){
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(12),ui_h(12)));
-    const int inset=meshink_keyboard::scale_axis(16,metrics.width,540);
-    const int text_x=metrics.entry.x+inset;
-    const int text_width=metrics.entry.width-2*inset;
+    const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,540);
+    const int inset_y=meshink_keyboard::scale_axis(8,metrics.height,960);
+    const int text_x=metrics.entry.x+inset_x;
+    const int text_y=metrics.entry.y+inset_y;
+    const int text_width=metrics.entry.width-2*inset_x;
+    const int text_height=metrics.entry.height-2*inset_y;
     if(compose_text[0])
-        ui_draw_wrapped(compose_text,text_x,metrics.entry.y+ui_h(9),
-                        text_width,3,0,false,2);
+        ui_draw_wrapped_tail(compose_text,text_x,text_y,text_width,text_height,3,0,false);
     else
         ui_text("Write a message...",text_x,metrics.entry.y+ui_h(18),3,0,false);
 }
@@ -2853,7 +2890,7 @@ static void append(char c) {
     if(keyboard_password_mode){size_t n=strlen(remote_password);if(n<15){remote_password[n]=c;remote_password[n+1]=0;}return;}
     if(keyboard_message_mode){
         const size_t n=strlen(compose_text);
-        if(n<48){
+        if(n<MESHINK_MESSAGE_TEXT_MAX){
             compose_text[n]=c;compose_text[n+1]=0;
             // Fresh messages start with sentence-style uppercase. Once the
             // first alphabetic character is entered, fall back to lowercase

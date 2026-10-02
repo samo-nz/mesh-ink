@@ -76,7 +76,7 @@ static void reset_gps_duty_cycle(){
 using MessageKind=MeshInkMessageKind;
 using StoredMessage=MeshInkStoredMessage;
 struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char time[10]{};uint8_t key[7]{};uint8_t channel_index=0;};
-struct MessageView{UiMessage entry{};char text[145]{};char time[10]{};char network[52]{};};
+struct MessageView{UiMessage entry{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};char time[10]{};char network[52]{};};
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
 constexpr size_t DISCOVERED_CONTACT_CACHE_BYTES=192;
 struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[DISCOVERED_CONTACT_CACHE_BYTES]{};uint8_t len=0;};
@@ -631,14 +631,14 @@ public:
 };
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
-struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,ack=0,deadline=0;uint8_t key[6]{};char text[145]{};} pending_direct;
+struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,ack=0,deadline=0;uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
 struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
 struct RecentChannelSend{
     bool active=false;
     uint8_t channel=0,repeats=0;
     uint32_t sequence=0,timestamp=0,expires=0;
-    char wire_text[MAX_TEXT_LEN+1]{};
+    char wire_text[MESHINK_MESSAGE_TEXT_BYTES]{};
 };
 constexpr size_t MAX_RECENT_CHANNEL_SENDS=4;
 RecentChannelSend recent_channel_sends[MAX_RECENT_CHANNEL_SENDS]{};
@@ -781,7 +781,7 @@ bool MeshCoreUiProvider::login_active_node(const char* password,bool save_passwo
 
 UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
-    if(!frame||!len)return;char message[150]{};
+    if(!frame||!len)return;char message[MESHINK_MESSAGE_TEXT_BYTES]{};
     if(frame[0]==0x88){handle_raw_repeat(frame,len);return;}
     if(frame[0]==24&&pending_stats.active){handle_stats_response(frame,len);return;}
     if(frame[0]==0x81&&len>=1+PUB_KEY_SIZE){provider.refresh(true);ui_request_data_refresh("route-updated");return;}

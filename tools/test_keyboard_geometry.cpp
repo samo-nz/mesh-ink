@@ -103,7 +103,7 @@ int main() {
     const Metrics portrait=meshink_keyboard::make_metrics(540,960,false);
     const Metrics landscape=meshink_keyboard::make_metrics(960,540,true);
 
-    // T5 reference appearance and hit boundaries must remain pixel-identical.
+    // Portrait remains pixel-identical; landscape intentionally reclaims the bottom gap.
     assert(portrait.key_height==62&&portrait.row_gap==8&&portrait.row_step==70);
     assert(portrait.number_top==618&&portrait.letter_top==688&&portrait.bottom_top==898);
     assert(portrait.number_row.start==15&&portrait.number_row.pitch==52&&portrait.number_row.width==49);
@@ -121,18 +121,19 @@ int main() {
     assert(meshink_keyboard::action_split(portrait)==422);
 
     assert(landscape.key_height==62&&landscape.row_gap==8&&landscape.row_step==70);
-    assert(landscape.number_top==145&&landscape.letter_top==215&&landscape.bottom_top==425);
+    assert(landscape.number_top==198&&landscape.letter_top==268&&landscape.bottom_top==478);
     assert(landscape.number_row.start==15&&landscape.number_row.pitch==93&&landscape.number_row.width==88);
-    assert(landscape.mode_key.x==15&&landscape.mode_key.y==355&&landscape.mode_key.width==130);
+    assert(landscape.mode_key.x==15&&landscape.mode_key.y==408&&landscape.mode_key.width==130);
     assert(landscape.delete_key.x==812&&landscape.delete_key.width==133);
     assert(landscape.orientation_key.x==15&&landscape.orientation_key.width==180);
     assert(landscape.space_key.x==203&&landscape.space_key.width==500);
     assert(landscape.action_key.x==711&&landscape.action_key.width==234);
-    assert(landscape.entry.x==16&&landscape.entry.y==14&&landscape.entry.width==928&&landscape.entry.height==112);
+    assert(landscape.entry.x==16&&landscape.entry.y==14&&landscape.entry.width==928&&landscape.entry.height==165);
     assert(meshink_keyboard::mode_split(landscape)==149);
     assert(meshink_keyboard::delete_split(landscape)==805);
     assert(meshink_keyboard::orientation_split(landscape)==199);
     assert(meshink_keyboard::action_split(landscape)==707);
+    assert(landscape.bottom_top+landscape.key_height==landscape.height);
 
     // Legacy helper overloads still expose the exact T5 reference rows.
     assert(meshink_keyboard::numbers(false).start==portrait.number_row.start);
