@@ -111,35 +111,8 @@ static bool screenshot_write_u32(MeshInkStorageFile& file,uint32_t value){
     return file.write(bytes,sizeof(bytes))==sizeof(bytes);
 }
 static uint8_t screenshot_gray8_at(int logical_x,int logical_y){
-    if(!fb)return 0xFF;
-    const int physical_width=meshink_display_physical_width();
-    const int physical_height=meshink_display_physical_height();
-    int physical_x=logical_x,physical_y=logical_y;
-    switch(meshink_display_get_rotation()){
-        case MeshInkRotation::Portrait:
-            physical_x=physical_width-1-logical_y;
-            physical_y=logical_x;
-            break;
-        case MeshInkRotation::InvertedLandscape:
-            physical_x=physical_width-1-logical_x;
-            physical_y=physical_height-1-logical_y;
-            break;
-        case MeshInkRotation::InvertedPortrait:
-            physical_x=logical_y;
-            physical_y=physical_height-1-logical_x;
-            break;
-        case MeshInkRotation::Landscape:
-        default:
-            break;
-    }
-    if(physical_x<0||physical_y<0||
-       physical_x>=physical_width||physical_y>=physical_height)return 0xFF;
-    const size_t row_bytes=(size_t)physical_width/2U;
-    const uint8_t packed=fb[(size_t)physical_y*row_bytes+((unsigned)physical_x>>1)];
-    const uint8_t gray4=(physical_x&1)?(packed>>4):(packed&0x0FU);
-    return (uint8_t)(gray4*17U);
+    return meshink_display_read_logical_gray8(fb,logical_x,logical_y);
 }
-
 bool ui_save_screenshot(char* path_out,size_t path_len){
     if(path_out&&path_len)path_out[0]=0;
     if(!fb||!map_tiles_media_ready()){

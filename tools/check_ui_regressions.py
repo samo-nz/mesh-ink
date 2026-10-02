@@ -1214,6 +1214,8 @@ assert "map_tiles_media_ready()" in source[source.index("bool ui_save_screenshot
 shot_body=source[source.index("bool ui_save_screenshot"):source.index("static Preferences prefs")]
 assert "draw_screen(" not in shot_body and "map_tiles_render(" not in shot_body, "screenshot capture never redraws or processes map tiles"
 assert "screenshot_gray8_at(x,y)" in shot_body and "top-down BMP" in shot_body, "BMP captures the current framebuffer in logical screen orientation"
+assert "meshink_display_read_logical_gray8(fb,logical_x,logical_y)" in source, "UI delegates framebuffer orientation/packing to the display backend"
+assert "meshink_display_read_logical_gray8" in display_backend_source and "MeshInkRotation::InvertedPortrait" in display_backend_source, "T5 backend owns logical-to-physical screenshot readback"
 assert "meshink_storage_open_write" in storage_backend_header and "SD.open(path,FILE_WRITE)" in storage_backend_source, "storage backend provides explicit screenshot write access"
 assert 'strcmp(terminal_line,"screenshot")' in unified_source and 'strcmp(terminal_line,"shot")' in unified_source, "local USB terminal accepts screenshot and shot commands"
 assert "service_local_terminal();" in unified_source, "terminal command service runs in local UI mode"
