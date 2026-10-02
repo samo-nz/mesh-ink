@@ -334,9 +334,9 @@ for request in ("Status", "Telemetry", "Path", "Trace"):
 assert "contact_count()&&i<5" not in source, "Contacts must not be hard-limited to the first five entries"
 assert "channel_count()&&i<5" not in source, "Channels must not be hard-limited to the first five entries"
 contains("text_refresh_pending=false;toast_visible=false;toast_opens_main=false;", "home cancels pending refreshes")
-contains("for(int d=-3;d<=3;++d)line(x+2,y+2+d,x+27,y+27+d);", "bold GPS-off slash")
-contains("meshink_display_fill_rect({x,y+5,30,3},0,fb);", "bold envelope frame")
-contains("for(int d=-1;d<=1;++d) {\n        line(x+3,y+8+d", "bold envelope flap")
+contains("if(disabled)draw_status_bold_line(x+3,y+3,x+27,y+27,3,0);", "bold GPS-off slash")
+contains("rounded_fill(x,y+5,30,22,5,0);", "bold rounded envelope frame")
+contains("draw_status_bold_line(x+4,y+9,x+15,y+18,2,0);", "bold envelope flap")
 for index in range(3):
     contains(f"meshink_map_control_rect(layout,{index})", f"map control {index} draws from shared geometry")
     contains(f"meshink_map_control_rect(portrait_layout(),{index})", f"map control {index} touch uses shared geometry")
