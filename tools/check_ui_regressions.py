@@ -1150,7 +1150,8 @@ assert "ack_refs_[next_ack_ref_]={ack,sequence,route_flood}" not in companion_so
 
 
 # Test60/Test61: test20/21 refinements keep refresh/layout/text behaviour explicit.
-map_short=source[source.index('if(screen==Screen::Maps){',source.index("static void service_primary_button")):source.index("}else{",source.index('if(screen==Screen::Maps){',source.index("static void service_primary_button")))]
+button_body=source[source.index("static void service_primary_button()"):source.index("void ui_setup()",source.index("static void service_primary_button()"))]
+map_short=button_body[button_body.index('if(screen==Screen::Maps){'):button_body.index('            }else{',button_body.index('if(screen==Screen::Maps){'))]
 assert "local_mesh_refresh_ui_data();" in map_short, "physical Maps refresh obtains current node marker data"
 assert "meshink_display_fill_framebuffer(&display,0x00);" in map_short and '"SHORT_BUTTON_MAP_BLACK"' in map_short, "physical Maps refresh flashes the ready screen black"
 assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);' in map_short, "physical Maps refresh restores the cached viewport with fresh overlays"
