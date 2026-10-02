@@ -24,9 +24,11 @@
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
-#include "fonts/inter_8_regular.h"
-#include "fonts/inter_10_regular.h"
-#include "fonts/inter_12_regular.h"
+#include "fonts/inter_15_regular.h"
+#include "fonts/inter_20_regular.h"
+#include "fonts/inter_25_regular.h"
+#include "fonts/inter_30_regular.h"
+#include "fonts/inter_50_digits.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
@@ -519,20 +521,18 @@ static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
 }
 struct UiSmoothFont {
     const MeshInkFontData* font;
-    uint8_t numerator;
-    uint8_t denominator;
+    uint8_t baseline_from_top;
+    uint8_t visual_height;
+    uint8_t line_step;
 };
 static UiSmoothFont ui_smooth_font(int scale) {
-    // The old 5x7 renderer's primary text was 7*scale pixels tall.
-    // Inter 12's capital height is 19 px, so scale it by (7*scale)/19.
-    // That makes the new capitals exactly as tall as the old font while
-    // preserving Inter's smoother proportions; lowercase is slightly larger.
-    return {&inter_12_regular,(uint8_t)(7*scale),19};
-}
-static int ui_smooth_metric(int value,const UiSmoothFont& face) {
-    const int magnitude=abs(value)*face.numerator;
-    const int rounded=(magnitude+face.denominator/2)/face.denominator;
-    return value<0?-rounded:rounded;
+    // Every primary tier is a native FreeType raster. Nothing is enlarged at
+    // runtime, which keeps baselines, curves and descenders internally stable.
+    if(scale>=11)return {&inter_50_digits,77,79,81};
+    if(scale>=6)return {&inter_30_regular,46,46,65};
+    if(scale==5)return {&inter_25_regular,38,38,55};
+    if(scale==4)return {&inter_20_regular,31,31,44};
+    return {&inter_15_regular,23,23,34};
 }
 static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint32_t codepoint) {
     if(!font)return nullptr;
@@ -549,8 +549,7 @@ static int ui_smooth_char_advance(char c,int scale) {
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
     if(!glyph_data)return 0;
-    const int advance=(glyph_data->advanceX+8)>>4;
-    return max(1,ui_smooth_metric(advance,face));
+    return max(1,(int)((glyph_data->advanceX+8)>>4));
 }
 static int ui_legacy_char_advance(char c,int scale) {
     if(c==' ')return 3*scale;
@@ -562,9 +561,12 @@ static int ui_char_advance(char c,int scale) {
     return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
 }
 static int ui_text_height(int scale) {
-    // Preserve the geometry expected by the pre-Inter UI: primary cap height
-    // remains the same 7*scale pixels used by the original 5x7 renderer.
-    return 7*scale;
+    if(scale<3)return 7*scale;
+    return ui_smooth_font(scale).visual_height;
+}
+static int ui_text_line_step(int scale) {
+    if(scale<3)return 7*scale+8;
+    return ui_smooth_font(scale).line_step;
 }
 static int ui_text_width_n(const char* s,size_t n,int scale) {
     if(!s||!n)return 0;int width=0;
@@ -577,30 +579,20 @@ static int ui_text_width(const char* s,int scale) {
 static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
     if(!s)return;
     const UiSmoothFont face=ui_smooth_font(scale);
-    // Inter 12 uppercase glyphs use top=19. Anchor that cap line to y so the
-    // visible glyph occupies the same vertical band as the old bitmap font.
-    const int baseline=y+ui_smooth_metric(19,face);
+    const int baseline=y+face.baseline_from_top;
     while(*s&&*s!='\n'){
         const char c=*s++;
         const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
         if(!glyph_data)continue;
-        const int gx=x+ui_smooth_metric(glyph_data->left,face);
-        const int gy=baseline-ui_smooth_metric(glyph_data->top,face);
+        const int gx=x+glyph_data->left;
+        const int gy=baseline-glyph_data->top;
         for(int sy=0;sy<glyph_data->height;++sy){
-            const int dy0=(sy*face.numerator)/face.denominator;
-            int dy1=((sy+1)*face.numerator+face.denominator-1)/face.denominator;
-            if(dy1<=dy0)dy1=dy0+1;
             for(int sx=0;sx<glyph_data->width;++sx){
                 const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
                 const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
                 if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
-                const int dx0=(sx*face.numerator)/face.denominator;
-                int dx1=((sx+1)*face.numerator+face.denominator-1)/face.denominator;
-                if(dx1<=dx0)dx1=dx0+1;
-                for(int py=dy0;py<dy1;++py)for(int px=dx0;px<dx1;++px){
-                    meshink_display_draw_pixel(gx+px,gy+py,color,fb);
-                    if(bold)meshink_display_draw_pixel(gx+px+1,gy+py,color,fb);
-                }
+                meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
+                if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
             }
         }
         x+=ui_smooth_char_advance(c,scale);
@@ -725,9 +717,9 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
                 line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
                 line_text[trim]=0;
             }
-            ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
+            ui_text(line_text,x,y+row*ui_text_line_step(scale),scale,color,bold);
         }else{
-            ui_text(line_text,x,y+row*(7*scale+8),scale,color,bold);
+            ui_text(line_text,x,y+row*ui_text_line_step(scale),scale,color,bold);
         }
         cursor=next;
     }
@@ -749,7 +741,7 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
     }
     if(!line_count)return;
     const int glyph_height=ui_text_height(scale);
-    const int line_step=max(7*scale+8,glyph_height+2);
+    const int line_step=ui_text_line_step(scale);
     if(max_height<glyph_height)return;
     const int visible_lines=1+(max_height-glyph_height)/line_step;
     const int first=max(0,line_count-visible_lines);
@@ -1812,7 +1804,7 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
         max(body_natural+2*pad,footer_natural+2*pad)));
     const int text_width=max(ui_w(80),width-2*pad);
     const int lines=min(16,ui_wrapped_line_count(message.text,text_width,3));
-    const int height=max(ui_h(96),lines*ui_h(29)+ui_h(58));
+    const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
     return {x,width,height,text_width};

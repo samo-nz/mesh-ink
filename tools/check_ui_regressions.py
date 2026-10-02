@@ -1010,10 +1010,12 @@ assert "provider.note_direct_ack(" not in runtime_source and "provider.note_dire
 
 # Test54: primary text uses built-in 1-bit Inter while compact technical/status
 # copy keeps the original bitmap path.
-assert 'fonts/inter_12_regular.h' in source, "built-in 1-bit Inter raster data is compiled into firmware"
-assert "return {&inter_12_regular,(uint8_t)(7*scale),19};" in source, "Inter primary text scales to the old 7x-scale capital height"
-assert "return 7*scale;" in source[source.index("static int ui_text_height"):source.index("static int ui_text_width_n")], "layout retains the pre-Inter primary text height"
-assert "const int baseline=y+ui_smooth_metric(19,face);" in source, "Inter cap line is anchored to the old bitmap text top"
+assert all(name in source for name in ("fonts/inter_15_regular.h","fonts/inter_20_regular.h","fonts/inter_25_regular.h","fonts/inter_30_regular.h","fonts/inter_50_digits.h")), "native 1-bit Inter raster tiers are compiled into firmware"
+assert "return {&inter_15_regular,23,23,34};" in source and "return {&inter_30_regular,46,46,65};" in source, "normal and largest heading tiers use native raster faces"
+assert "return {&inter_50_digits,77,79,81};" in source, "oversized standby unread count uses a native digit raster"
+assert "ui_smooth_metric" not in source and "numerator" not in source[source.index("struct UiSmoothFont"):source.index("static void ui_text_fit")], "primary fonts are never scaled at runtime"
+assert "const int baseline=y+face.baseline_from_top;" in source, "each native face carries its own baseline anchor"
+assert "meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);" in source, "native glyph pixels are drawn one-for-one without resampling"
 assert "if(scale>=3){ui_smooth_text" in source, "scale-three and larger primary text uses smooth raster glyphs"
 assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
 assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
@@ -1161,9 +1163,13 @@ assert "const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
 assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
 
-# Test61: smooth font size is no smaller than the original 5x7 primary tiers.
-assert "(uint8_t)(7*scale),19" in source, "Inter scaling uses the measured 19-pixel cap height as its reference"
-assert "Inter 12 uppercase glyphs use top=19" in source, "font baseline documents the measured cap-height reference"
+# Test62: native smooth tiers are deliberately a little larger than the old
+# 5x7 primary sizes (21/28/35/42px) without any bitmap enlargement.
+assert "return {&inter_15_regular,23,23,34};" in source, "scale-three primary text increases from about 21px to a native 23px cap"
+assert "return {&inter_20_regular,31,31,44};" in source, "scale-four text uses a native 31px cap"
+assert "return {&inter_25_regular,38,38,55};" in source, "scale-five text uses a native 38px cap"
+assert "return {&inter_30_regular,46,46,65};" in source, "scale-six text uses a native 46px cap"
+assert "ui_text_line_step(scale)" in source and "lines*ui_text_line_step(3)" in source, "wrapping and message bubble height follow the larger native text metrics"
 
 # Test61 status-bar icon polish: battery remains unchanged; all other symbols
 # use bold rounded geometry that survives low-resolution DU refreshes.
