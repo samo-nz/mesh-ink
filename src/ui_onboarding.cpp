@@ -518,7 +518,7 @@ static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
     }
 }
 struct UiSmoothFont {
-    const EpdFontData* font;
+    const MeshInkFontData* font;
     uint8_t numerator;
     uint8_t denominator;
 };
@@ -533,10 +533,10 @@ static int ui_smooth_metric(int value,const UiSmoothFont& face) {
     const int rounded=(magnitude+face.denominator/2)/face.denominator;
     return value<0?-rounded:rounded;
 }
-static const EpdGlyph* ui_smooth_glyph(const EpdFontData* font,uint32_t codepoint) {
+static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint32_t codepoint) {
     if(!font)return nullptr;
     for(uint32_t i=0;i<font->intervalCount;++i){
-        const EpdUnicodeInterval& interval=font->intervals[i];
+        const MeshInkFontUnicodeInterval& interval=font->intervals[i];
         if(codepoint>=interval.first&&codepoint<=interval.last)
             return &font->glyph[interval.offset+(codepoint-interval.first)];
         if(codepoint<interval.first)break;
@@ -546,7 +546,7 @@ static const EpdGlyph* ui_smooth_glyph(const EpdFontData* font,uint32_t codepoin
 }
 static int ui_smooth_char_advance(char c,int scale) {
     const UiSmoothFont face=ui_smooth_font(scale);
-    const EpdGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+    const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
     if(!glyph_data)return 0;
     const int advance=(glyph_data->advanceX+8)>>4;
     return max(1,ui_smooth_metric(advance,face));
@@ -579,7 +579,7 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
     const int baseline=y+ui_smooth_metric(face.font->ascender,face);
     while(*s&&*s!='\n'){
         const char c=*s++;
-        const EpdGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
         if(!glyph_data)continue;
         const int gx=x+ui_smooth_metric(glyph_data->left,face);
         const int gy=baseline-ui_smooth_metric(glyph_data->top,face);

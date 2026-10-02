@@ -6,7 +6,7 @@
  * Command used: fontconvert.py inter_12_regular 12 ../builtinFonts/source/Inter/Inter-Regular.ttf
  */
 #pragma once
-#include "EpdFontData.h"
+#include "MeshInkFontData.h"
 
 static const uint8_t inter_12_regularBitmaps[32977] = {
     0x63, 0x9C, 0xE7, 0x39, 0xCE, 0x73, 0x9C, 0xE7, 0x38, 0x00, 0x77, 0x9C, 0x40, 0x67, 0xDF, 0xBF,
@@ -2073,7 +2073,7 @@ static const uint8_t inter_12_regularBitmaps[32977] = {
     0x00,
 };
 
-static const EpdGlyph inter_12_regularGlyphs[] = {
+static const MeshInkFontGlyph inter_12_regularGlyphs[] = {
     { 0, 0, 182, 0, 0, 0, 0 }, // U+0000
     { 0, 0, 110, 0, 0, 0, 0 }, // U+0020
     { 5, 20, 109, 1, 19, 13, 0 }, // !
@@ -3086,7 +3086,7 @@ static const EpdGlyph inter_12_regularGlyphs[] = {
     { 35, 35, 556, 0, 27, 154, 32823 }, // U+2298
 };
 
-static const EpdUnicodeInterval inter_12_regularIntervals[] = {
+static const MeshInkFontUnicodeInterval inter_12_regularIntervals[] = {
     { 0x0, 0x0, 0x0 },
     { 0x20, 0x7E, 0x1 },
     { 0xA0, 0xAC, 0x60 },
@@ -3151,7 +3151,7 @@ static const EpdUnicodeInterval inter_12_regularIntervals[] = {
     { 0x2295, 0x2298, 0x3EE },
 };
 
-static const EpdKernClassEntry inter_12_regularKernLeftClasses[] = {
+static const MeshInkFontKernClassEntry inter_12_regularKernLeftClasses[] = {
     { 0x0022, 1 }, // "
     { 0x0024, 2 }, // $
     { 0x0025, 3 }, // %
@@ -3899,7 +3899,7 @@ static const EpdKernClassEntry inter_12_regularKernLeftClasses[] = {
     { 0x2265, 20 }, // U+2265
 };
 
-static const EpdKernClassEntry inter_12_regularKernRightClasses[] = {
+static const MeshInkFontKernClassEntry inter_12_regularKernRightClasses[] = {
     { 0x0022, 1 }, // "
     { 0x0023, 2 }, // #
     { 0x0024, 3 }, // $
@@ -4785,7 +4785,7 @@ static const int8_t inter_12_regularKernMatrix[] = {
        0,    0,    0,    0,    0,    0,    0,    0,  -27,    0,  -27,  -16,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -20,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -27,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
 };
 
-static constexpr EpdFontData inter_12_regular = {
+static constexpr MeshInkFontData inter_12_regular = {
     inter_12_regularBitmaps,
     inter_12_regularGlyphs,
     inter_12_regularIntervals,
