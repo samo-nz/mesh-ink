@@ -3036,10 +3036,12 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
             show_toast(ok?"LOGIN REQUESTED":"LOGIN FAILED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
         }
         if(keyboard_message_mode){
-            if(compose_text[0]&&local_mesh_send_active(compose_text)){
-                compose_text[0]=0;text_refresh_pending=false;
-                keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
-            }
+            if(!compose_text[0])return true;
+            if(!local_mesh_send_active(compose_text))return true;
+            compose_text[0]=0;text_refresh_pending=false;
+            keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
+            keyboard_visible=true;set_keyboard_orientation(false);
+            return true;
         }
         // DONE in landscape is only an orientation switch for name entry.
         // Return to portrait setup with radio preset still available; only
@@ -4050,6 +4052,14 @@ void ui_notify_message_received(bool channel){
     const bool visible=ui_chat_is_visible(channel);
     if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
     status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d visible=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active,visible);
+}
+
+bool ui_restore_failed_compose(const char* text){
+    if(!text||!text[0]||compose_text[0])return false;
+    strncpy(compose_text,text,sizeof(compose_text)-1);
+    compose_text[sizeof(compose_text)-1]=0;
+    status_dirty=true;
+    return true;
 }
 
 void ui_notify_advert_result(bool flood,bool ok){

@@ -23,6 +23,11 @@ constexpr size_t MAX_MAP_NODES=50;
 constexpr size_t MAX_UI_CHANNELS=8;
 constexpr size_t MAX_UI_ADVERTS=16;
 constexpr size_t MAX_STORED_MESSAGES=MESHINK_MESSAGE_CAPACITY;
+constexpr uint8_t DIRECT_RETRY_LIMIT=3;
+static_assert(MESHINK_MESSAGE_TEXT_MAX==MAX_TEXT_LEN,
+              "MeshInk message limit must track MeshCore MAX_TEXT_LEN");
+static_assert(13+MESHINK_MESSAGE_TEXT_MAX<=MAX_FRAME_SIZE,
+              "full direct-message command must fit the MeshCore companion frame");
 constexpr uint32_t CREDENTIAL_MAGIC=0x3143524D; // MRC1
 constexpr size_t MAX_SAVED_CREDENTIALS=16;
 struct SavedCredential{uint8_t key[PUB_KEY_SIZE]{};char password[16]{};bool valid=false;};
@@ -651,6 +656,30 @@ static bool enqueue_direct_attempt(){
     uint8_t frame[MAX_FRAME_SIZE+1]{};size_t p=0;frame[p++]=2;frame[p++]=0;frame[p++]=pending_direct.retry;memcpy(frame+p,&pending_direct.timestamp,4);p+=4;memcpy(frame+p,pending_direct.key,6);p+=6;const size_t n=min(strlen(pending_direct.text),(size_t)MAX_TEXT_LEN);memcpy(frame+p,pending_direct.text,n);p+=n;
     if(!local_mesh_enqueue_command(frame,p))return false;pending_direct.waiting_response=true;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u queued sequence=%lu\n",pending_direct.retry,(unsigned long)pending_direct.sequence);return true;
 }
+
+static size_t channel_message_limit(const char* node_name){
+    const size_t name_len=node_name?strlen(node_name):0;
+    const size_t prefix_len=name_len+2; // MeshCore sends "<name>: <text>"
+    return prefix_len<MAX_TEXT_LEN?(size_t)MAX_TEXT_LEN-prefix_len:0;
+}
+
+static bool pending_direct_is_visible_chat(){
+    if(!ui_chat_is_visible(false))return false;
+    ContactInfo active{};
+    return provider.active_contact(active)&&memcmp(active.id.pub_key,pending_direct.key,6)==0;
+}
+
+static void fail_pending_direct(const char* reason){
+    if(!pending_direct.active)return;
+    provider.update_message(pending_direct.sequence,UiMessageState::Failed);
+    const bool restored=pending_direct_is_visible_chat()&&
+                        ui_restore_failed_compose(pending_direct.text);
+    T5_DEBUGF(T5_LOG_MESH,
+              "[T5-MESH] direct failed sequence=%lu retry=%u reason=%s draft_restored=%d\n",
+              (unsigned long)pending_direct.sequence,(unsigned)pending_direct.retry,
+              reason?reason:"unknown",restored?1:0);
+    pending_direct={};
+}
 static bool enqueue_info_request(){
     uint8_t frame[MAX_FRAME_SIZE+1]{};size_t len=0;
     if(pending_info.request==UiNodeInfoRequest::Status){frame[0]=27;memcpy(frame+1,pending_info.key,PUB_KEY_SIZE);len=1+PUB_KEY_SIZE;}
@@ -812,7 +841,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_direct.active){memcpy(&pending_direct.ack,frame+2,4);uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_direct.deadline=millis()+max((uint32_t)500,timeout);pending_direct.waiting_response=false;provider.confirm_direct_send(pending_direct.sequence,pending_direct.ack,frame[1]!=0,pending_direct.retry?((UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1)):UiMessageState::Sent);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",pending_direct.retry,frame[1]?"flood":"direct",(unsigned long)pending_direct.ack,(unsigned long)timeout);}
     else if(frame[0]==0x82&&len>=5&&pending_direct.active){uint32_t ack=0;memcpy(&ack,frame+1,4);if(ack==pending_direct.ack){provider.heard(pending_direct.key,6);provider.update_message(pending_direct.sequence,UiMessageState::Delivered);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered ack=%08lx\n",(unsigned long)ack);}}
-    else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct command failed error=%u\n",len>1?frame[1]:0);}
+    else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response){char reason[24]{};snprintf(reason,sizeof(reason),"command error %u",len>1?frame[1]:0);fail_pending_direct(reason);}
     else if(frame[0]==1&&pending_stats.active){finish_stats(true);}
     else if((frame[0]==0||frame[0]==1)&&pending_advert>=0){const bool flood=pending_advert==1;ui_notify_advert_result(flood,frame[0]==0);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] %s advert action result=%s\n",flood?"flood":"zero-hop",frame[0]==0?"OK":"FAILED");pending_advert=-1;}
     else if(frame[0]==7&&len>=13){
@@ -884,8 +913,13 @@ void local_mesh_loop(){
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
     if(pending_stats.active&&(int32_t)(millis()-pending_stats.deadline)>=0)finish_stats(true);
     if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
-        if(pending_direct.retry>=5){provider.update_message(pending_direct.sequence,UiMessageState::Failed);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct failed after 5 retries sequence=%lu\n",(unsigned long)pending_direct.sequence);pending_direct.active=false;}
-        else{pending_direct.retry++;provider.update_message(pending_direct.sequence,(UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;}}
+        if(pending_direct.retry>=DIRECT_RETRY_LIMIT)fail_pending_direct("retry limit");
+        else{
+            pending_direct.retry++;
+            provider.update_message(pending_direct.sequence,
+                (UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));
+            if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
+        }
     }
 #if ENV_INCLUDE_GPS == 1
     const MeshInkGpsStatus location=meshink_gps_read_status();
@@ -898,8 +932,27 @@ void local_mesh_loop(){
 }
 bool local_mesh_send_active(const char* text){
     if(!text||!text[0])return false;const uint32_t now=time(nullptr);
-    if(provider.active_is_channel()){ChannelDetails channel{};if(!provider.active_channel(channel))return false;const bool ok=t5_mesh().sendGroupMessage(now,channel.channel,t5_mesh().getNodeName(),text,strlen(text));if(ok){const uint32_t sequence=provider.sent(text,now,0);track_channel_send(provider.active_channel_index(),now,sequence,text);}T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel send result=%d\n",ok);return ok;}
-    ContactInfo contact{};if(!provider.active_contact(contact)||pending_direct.active)return false;pending_direct={};pending_direct.active=true;pending_direct.timestamp=now;memcpy(pending_direct.key,contact.id.pub_key,6);strncpy(pending_direct.text,text,sizeof(pending_direct.text)-1);pending_direct.sequence=provider.queue_direct(text,now);if(!enqueue_direct_attempt()){provider.update_message(pending_direct.sequence,UiMessageState::Failed);pending_direct.active=false;return false;}return true;
+    if(provider.active_is_channel()){
+        ChannelDetails channel{};if(!provider.active_channel(channel))return false;
+        const size_t limit=channel_message_limit(t5_mesh().getNodeName());
+        const size_t text_len=strlen(text);
+        if(text_len>limit){
+            T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel send rejected text=%u limit=%u (sender prefix consumes %u)\n",
+                      (unsigned)text_len,(unsigned)limit,(unsigned)(MAX_TEXT_LEN-limit));
+            return false;
+        }
+        const bool ok=t5_mesh().sendGroupMessage(now,channel.channel,t5_mesh().getNodeName(),text,text_len);
+        if(ok){const uint32_t sequence=provider.sent(text,now,0);track_channel_send(provider.active_channel_index(),now,sequence,text);}
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] channel send result=%d\n",ok);return ok;
+    }
+    ContactInfo contact{};if(!provider.active_contact(contact)||pending_direct.active)return false;
+    if(strlen(text)>MESHINK_MESSAGE_TEXT_MAX)return false;
+    pending_direct={};pending_direct.active=true;pending_direct.timestamp=now;
+    memcpy(pending_direct.key,contact.id.pub_key,6);
+    strncpy(pending_direct.text,text,sizeof(pending_direct.text)-1);
+    pending_direct.sequence=provider.queue_direct(text,now);
+    if(!enqueue_direct_attempt()){fail_pending_direct("initial queue busy");return false;}
+    return true;
 }
 bool local_mesh_send_direct(size_t index,const char* text){if(!provider.open_contact(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_channel(size_t index,const char* text){if(!provider.open_channel(index))return false;return local_mesh_send_active(text);}

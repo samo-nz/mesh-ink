@@ -1085,3 +1085,23 @@ assert 'ui_centred_fit("LORA RADIO NOT DETECTED",ui_y(390),portrait_layout().wid
 assert "char line_text[160]{};" in source, "proportional wrapping preserves long unbroken lines without a 64-byte scratch truncation"
 assert "const bool truncated=(row==max_lines-1)&&*next;" in source, "bounded multi-line text visibly marks intentional truncation"
 assert "ui_text_fit(footer,geometry.x+ui_w(14)" in source, "oversized message metadata is clipped inside its bubble instead of drawing outside"
+
+
+# Test57: full-length direct messages remain valid across the complete retry
+# policy, channel sends are never silently truncated, and a terminal direct
+# failure restores the draft only when it is safe to do so.
+assert "DIRECT_RETRY_LIMIT=3" in runtime_source, "direct messages use at most three retries after the initial attempt"
+assert "pending_direct.retry>=DIRECT_RETRY_LIMIT" in runtime_source, "retry exhaustion is governed by the shared three-retry limit"
+assert "MESHINK_MESSAGE_TEXT_MAX==MAX_TEXT_LEN" in runtime_source, "MeshInk's 160-byte editor/store limit is compile-time tied to MeshCore"
+assert "13+MESHINK_MESSAGE_TEXT_MAX<=MAX_FRAME_SIZE" in runtime_source, "a full direct-message command is compile-time checked against the companion frame"
+assert "static size_t channel_message_limit(" in runtime_source, "channel payload capacity accounts for the sender-name prefix"
+assert "if(text_len>limit)" in runtime_source and "channel send rejected" in runtime_source, "oversized channel messages are rejected instead of silently truncated"
+assert "bool ui_restore_failed_compose(const char* text)" in source, "UI exposes bounded failed-draft recovery"
+restore_body=source.split("bool ui_restore_failed_compose(const char* text)",1)[1].split("void ui_notify_advert_result",1)[0]
+assert "!text||!text[0]||compose_text[0]" in restore_body, "failed draft never overwrites text the user already typed"
+assert "pending_direct_is_visible_chat()" in runtime_source and "ui_chat_is_visible(false)" in runtime_source, "failed draft restoration is limited to the visible direct conversation"
+assert "memcmp(active.id.pub_key,pending_direct.key,6)==0" in runtime_source, "failed draft cannot leak into a different direct conversation"
+assert "ui_restore_failed_compose(pending_direct.text)" in runtime_source, "terminal direct failure offers the original message back to the composer"
+assert 'fail_pending_direct("retry limit")' in runtime_source, "retry exhaustion marks failed and restores safely"
+assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pending_direct("initial queue busy")' in runtime_source, "local queue failures share the same safe terminal-failure path"
+assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
