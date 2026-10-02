@@ -271,8 +271,9 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
-contains("chat_page_bounds_lazy(count,chat_history_available(),chat_page,first,end,has_older);", "conversation history discovers only the requested fixed-height page")
-contains("draw_chat_page_indicator(chat_page,has_older,layout.bottom_nav_top-ui_h(60));", "conversation history page indicator follows scaled geometry without requiring total-page scan")
+contains("chat_page_bounds_lazy(count,chat_history_available_current(),", "conversation paging starts with the taskbar-aware current-page height")
+contains("chat_history_available_paged(),", "conversation paging gives older pages their larger taskbar-free height")
+contains("draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));", "older history page indicator uses the reclaimed lower screen area")
 assert "chat_page_bounds(" not in source, "conversation drawing must not rescan all historical pages to calculate a total"
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
@@ -1062,9 +1063,9 @@ assert "ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,t
 assert "static int ui_text_max_line_width(" in source and "ui_text_max_line_width(message.text,3)" in source, "bubble width follows the longest explicit message line"
 assert "min(16,ui_wrapped_line_count(message.text,text_width,3))" in source, "bubble measurement cannot exceed the renderer's sixteen-line limit"
 assert "if(used+needed>available)break;" in source, "chat paging only admits complete bubbles into the visible viewport"
-assert "static bool chat_needs_paging(size_t count)" in source and "chat_history_available_unpaged()" in source, "one-page conversations reclaim the unused pager band"
+assert "static bool chat_needs_paging(size_t count)" in source and "chat_history_available_current()" in source, "current conversation paging reserves the taskbar and composer"
 assert "const int compose_y=chat_compose_top();" in source, "message composer drawing uses shared vertical geometry"
-assert source.count("chat_compose_top()")>=3, "composer draw and touch paths share the same top edge"
+assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
 assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;" in source, "long settings subtitles shrink before clipping"
 assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
@@ -1194,8 +1195,18 @@ assert "ui_y(830)" in standby_body and "ui_y(892)" in standby_body, "standby foo
 draw_screen_body=source[source.index("static void draw_screen() {"):source.index("static void refresh(",source.index("static void draw_screen() {"))]
 assert '(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&' in draw_screen_body and '!keyboard_visible&&chat_page==0' in draw_screen_body, "current chat page keeps the taskbar"
 assert 'draw_bottom_nav(screen==Screen::ContactChat?0:1);' in draw_screen_body, "chat taskbar selects Contacts or Channels appropriately"
-assert "chat_compose_top(bool history_page=false)" in source, "chat compose geometry distinguishes current and older history pages"
+assert "static int chat_compose_top()" in source, "composer geometry exists only for the current conversation page"
 assert "portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12)" in source, "current chat compose box stays above the visible taskbar"
 assert "chat_history_available_current()" in source and "chat_history_available_paged()" in source, "pagination has separate current/history capacities"
 assert "chat_fill_backwards(previous_start,history_available)" in source, "older pages use the extra space released by hiding the taskbar"
+assert "return portrait_layout().height-ui_h(62);" in source, "older pages reclaim both composer and taskbar vertical space"
+assert "if(history_page){" in source and "History pages are read-only views: no composer and no taskbar." in source, "older history pages do not draw the composer"
+assert "if(chat_page==0&&hit(x,y,layout.outer_margin,compose_y" in source, "hidden history composer cannot be tapped"
 assert "const bool chat_main_page=" in source and "chat_page==0;" in source[source.index("const bool chat_main_page="):source.index("switch(screen)",source.index("const bool chat_main_page="))], "visible chat taskbar remains tappable"
+
+# Test64: history pages show only messages plus the page footer; current page
+# restores both composer and taskbar when swiping back down.
+chat_body=source[source.index("static void draw_chat(bool channel)"):source.index("static void draw_message_entry_fast",source.index("static void draw_chat(bool channel)"))]
+history_branch=chat_body[chat_body.index("if(history_page){"):chat_body.index("}else{",chat_body.index("if(history_page){"))]
+assert "rounded_box(layout.outer_margin,compose_y" not in history_branch and "Write a message..." not in history_branch, "older history pages contain no compose box"
+assert "layout.height-ui_h(38)" in history_branch, "older history pages retain only the bottom page indicator"

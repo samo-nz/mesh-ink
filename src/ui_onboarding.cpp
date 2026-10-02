@@ -1896,17 +1896,17 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
 }
 
-static int chat_compose_top(bool history_page=false){
+static int chat_compose_top(){
     const auto metrics=keyboard_metrics(false);
-    return history_page
-        ?portrait_layout().bottom_nav_top-ui_h(12)
-        :portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12);
+    return portrait_layout().bottom_nav_top-metrics.key_height-ui_h(12);
 }
 static int chat_history_bottom_current(){
-    return chat_compose_top(false)-ui_h(88);
+    return chat_compose_top()-ui_h(88);
 }
 static int chat_history_bottom_paged(){
-    return portrait_layout().bottom_nav_top-ui_h(100);
+    // Older pages have neither compose box nor taskbar. Leave only a slim
+    // footer band for PAGE N/arrows and give the rest back to message history.
+    return portrait_layout().height-ui_h(62);
 }
 static int chat_history_available_current(){
     return chat_history_bottom_current()-ui_h(126);
@@ -1973,16 +1973,18 @@ static void draw_chat(bool channel) {
     }else{
         const MeshInkUiLayout& layout=portrait_layout();
         const bool history_page=chat_page>0;
-        const int compose_y=chat_compose_top(history_page);
-        const int indicator_y=history_page
-            ?layout.bottom_nav_top-ui_h(60)
-            :compose_y-ui_h(48);
-        draw_chat_page_indicator(chat_page,has_older,indicator_y);
-        rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
-                    max(ui_w(12),ui_h(12)));
-        const char* prompt=compose_text[0]?compose_text:"Write a message...";
-        ui_text_fit(prompt,layout.content_text_x,compose_y+ui_h(17),
-                    layout.outer_width-2*layout.text_inset,3,0,compose_text[0]);
+        if(history_page){
+            // History pages are read-only views: no composer and no taskbar.
+            draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));
+        }else{
+            const int compose_y=chat_compose_top();
+            draw_chat_page_indicator(chat_page,has_older,compose_y-ui_h(48));
+            rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
+                        max(ui_w(12),ui_h(12)));
+            const char* prompt=compose_text[0]?compose_text:"Write a message...";
+            ui_text_fit(prompt,layout.content_text_x,compose_y+ui_h(17),
+                        layout.outer_width-2*layout.text_inset,3,0,compose_text[0]);
+        }
     }
     t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
@@ -3312,8 +3314,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
-            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top(chat_page>0);
-            if(hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
+            {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top();
+            if(chat_page==0&&hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
                 keyboard_message_mode=true;keyboard_visible=true;reset_chat_paging();
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
                 text_refresh_pending=false;
