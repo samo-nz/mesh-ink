@@ -136,6 +136,7 @@ jobs:
           cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
           grep -aFq "$VERSION" "meshink-$VERSION-update.bin"
           sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt
+          cp src/fonts/INTER_LICENSE.txt INTER_LICENSE.txt
 
       - name: Package release full-wipe image
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
@@ -166,6 +167,7 @@ jobs:
             meshink-*-update.bin
             meshink-*-full-wipe.bin
             SHA256SUMS.txt
+            INTER_LICENSE.txt
 
       # An explicit release commit can publish directly after a successful main
       # build. gh release create makes the matching tag at GITHUB_SHA; a tag
@@ -189,25 +191,37 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION promotes the field-tested 1.9.1-test.46 firmware
+          MeshInk $VERSION promotes the field-tested 1.9.2-test.26 firmware
           to the stable release channel.
 
-          This release keeps the 1.9.1 Bluetooth Companion Mode watchdog fix
-          and includes the testing branch's hardware-abstraction work while
-          preserving the field-tested H752-01/V2 electrical behavior.
+          Highlights:
+          - native-size, monochrome Inter UI fonts with spacing/layout updates
+          - refined message delivery states, current-page taskbar/composer and
+            larger history pages
+          - current v3 flash-backed message journal with 250-message capacity
+          - faster Maps refresh using cached terrain with updated live markers
+          - redesigned standby screen and bold rounded status-bar icons
+          - GPS, touch, radio-startup, low-battery and power-management refinements
+          - SD-card framebuffer screenshots from the USB terminal, including
+            continuous capture mode after the screenshot command
+          - refreshed README screenshot gallery
 
-          It also includes the accumulated UI, touch, keyboard, GPS, Maps,
-          power-management and messaging refinements validated through the
-          test.46 field build, including suppression of unread indicators for
-          conversations that are already visibly open.
+          The one-off pre-release legacy message migration path has been retired.
+          Unsupported old journals are preserved as /ui_messages.invalid.bak
+          before a fresh current-format store is created.
 
           The update image does not intentionally erase existing MeshCore
-          settings, contacts, message history, or saved MeshInk credentials.
+          settings, contacts, current-format message history, or saved MeshInk
+          credentials.
+
+          Inter font raster data is distributed under the SIL Open Font License
+          included as INTER_LICENSE.txt.
           EOF
           gh release create "$TAG" \
             "meshink-$VERSION-update.bin" \
             "meshink-$VERSION-full-wipe.bin" \
             SHA256SUMS.txt \
+            INTER_LICENSE.txt \
             --target "$GITHUB_SHA" \
             --title "MeshInk $VERSION" \
             --notes-file release-notes.md
