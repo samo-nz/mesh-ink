@@ -2330,12 +2330,16 @@ static void draw_standby(){
     meshink_display_set_all_white(&display);
     draw_status_bar();
 
-    // Standby is the device's main at-rest face: use the exact same full-size
-    // generated MeshInk artwork as About/splash rather than a text heading.
-    draw_meshink_logo(ui_y(70),false);
-
     const bool has_direct=status_unread>0;
     const bool has_channel=status_channel_unread>0;
+    const bool any_unread=has_direct||has_channel;
+
+    // With nothing waiting, lower the logo into the otherwise-empty centre of
+    // the screen. When unread cards are present retain the proven compact top
+    // placement so the logo, cards and lower standby treatment all fit.
+    const int logo_top=any_unread?ui_y(70):ui_y(165);
+    draw_meshink_logo(logo_top,false);
+
     MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
     MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
     if(has_direct!=has_channel){
@@ -2370,10 +2374,17 @@ static void draw_standby(){
         standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
     }
 
-    meshink_display_fill_rect({ui_x(24),ui_y(805),ui_w(492),ui_h(3)},0,fb);
-    char wake_button[40];
-    snprintf(wake_button,sizeof(wake_button),"HOLD %s FOR TWO SECONDS TO WAKE",meshink_primary_button_name());
-    ui_centred_fit(wake_button,ui_y(840),portrait_layout().width-ui_w(32),2,0,true);
+    // STANDBY is part of the at-rest identity rather than small helper copy.
+    // Move it beneath unread cards when present; otherwise use the open centre.
+    ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);
+
+    // Keep the wake instruction low on the panel and make it readable at a
+    // glance. Scale 3 uses the smooth Inter renderer; two lines avoid squeezing.
+    meshink_display_fill_rect({ui_x(24),ui_y(830),ui_w(492),ui_h(3)},0,fb);
+    char wake_line[40];
+    snprintf(wake_line,sizeof(wake_line),"HOLD %s FOR TWO SECONDS",meshink_primary_button_name());
+    ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);
+    ui_centred("TO WAKE",ui_y(892),3,0,true);
 }
 
 static void format_minutes(uint16_t minutes,char out[8]){snprintf(out,8,"%02u:%02u",minutes/60,minutes%60);}

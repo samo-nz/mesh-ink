@@ -843,7 +843,7 @@ assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startu
 
 # Test44: field standby redesign uses the full-size MeshInk bitmap and only
 # shows unread summary cards that contain unread messages.
-assert "draw_meshink_logo(ui_y(70),false);" in source, "standby uses the existing full-size MeshInk logo"
+assert "const int logo_top=any_unread?ui_y(70):ui_y(165);" in source and "draw_meshink_logo(logo_top,false);" in source, "standby lowers the full-size MeshInk logo only when there are no unread cards"
 assert 'centred("STANDBY"' not in source, "standby text heading is replaced by the logo"
 assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
 assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
@@ -854,7 +854,7 @@ assert "standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11)" in sourc
 assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in source, "channel unread count is oversized"
 assert "rounded_box(rect,max(ui_w(22),ui_h(22)),false);" in source, "standby summary cards use the shared rounded visual language"
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
-assert "ui_y(805)" in source and "HOLD %s FOR TWO SECONDS TO WAKE" in source, "standby retains the lower wake instruction separator"
+assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_centred("TO WAKE",ui_y(892),3,0,true);' in source, "standby uses a lower divider and larger two-line smooth wake instruction"
 
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
@@ -1173,3 +1173,11 @@ assert "rounded_fill(x+3,y+3,25,25,12,0);" in source and "draw_status_disc(x+15,
 assert "rounded_fill(x,y+5,30,22,5,0);" in source, "private unread envelope has rounded heavy corners"
 assert "static void draw_channel_status_icon(" in source and "draw_channel_status_icon(left,ui_y(9));" in source, "channel unread replaces the hash glyph with a rounded group icon"
 assert 'meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);' in source, "battery icon geometry is intentionally unchanged"
+
+# Test61 standby composition: a prominent smooth STANDBY label balances both
+# the empty and unread-card layouts without colliding with the wake footer.
+standby_body=source[source.index("static void draw_standby(){"):source.index("static void format_minutes",source.index("static void draw_standby(){"))]
+assert "const bool any_unread=has_direct||has_channel;" in standby_body, "standby layout branches only on whether any unread cards are present"
+assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in standby_body, "large smooth STANDBY heading moves below unread cards when needed"
+assert 'ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);' in standby_body, "wake instruction uses readable smooth scale-three text"
+assert "ui_y(830)" in standby_body and "ui_y(892)" in standby_body, "standby footer stays below the unread-card region"
