@@ -108,8 +108,8 @@ static void format_node_role(uint8_t type,char* out,size_t len){
 static const char* state_text(UiMessageState state){
     switch(state){case UiMessageState::Sending:return "SENDING";case UiMessageState::Sent:return "SENT";
         case UiMessageState::Delivered:return "DELIVERED";case UiMessageState::Failed:return "FAILED";
-        case UiMessageState::Retrying1:return "RETRYING 1/5";case UiMessageState::Retrying2:return "RETRYING 2/5";
-        case UiMessageState::Retrying3:return "RETRYING 3/5";case UiMessageState::Retrying4:return "RETRYING 4/5";
+        case UiMessageState::Retrying1:return "RETRYING 1/3";case UiMessageState::Retrying2:return "RETRYING 2/3";
+        case UiMessageState::Retrying3:return "RETRYING 3/3";case UiMessageState::Retrying4:return "RETRYING 4/5";
         case UiMessageState::Retrying5:return "RETRYING 5/5";default:return "";}
 }
 static void format_last_heard(uint32_t timestamp,char out[72]){
