@@ -1,0 +1,43 @@
+name: Temporary native UI font generation
+
+on:
+  push:
+    branches: [testing]
+    paths:
+      - ".github/workflows/temp-native-ui-fonts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install font tools
+        run: python -m pip install freetype-py fonttools
+      - name: Fetch Inter and converter
+        run: |
+          curl -L --fail -o Inter-Regular.ttf https://raw.githubusercontent.com/imshentastic/CrumBLE/3c212bb5c4897f2d3d8ffd2ef9927d9299ad8627/lib/EpdFont/builtinFonts/source/Inter/Inter-Regular.ttf
+          curl -L --fail -o fontconvert.py https://raw.githubusercontent.com/imshentastic/CrumBLE/3c212bb5c4897f2d3d8ffd2ef9927d9299ad8627/lib/EpdFont/scripts/fontconvert.py
+      - name: Generate native one-bit UI fonts
+        run: |
+          mkdir -p generated
+          for size in 15 20 25 30; do
+            python fontconvert.py inter_${size}_regular ${size} Inter-Regular.ttf \
+              --no-default-intervals --additional-intervals 0x20,0xFF --no-kern-liga \
+              > generated/inter_${size}_regular.h
+          done
+          python fontconvert.py inter_50_digits 50 Inter-Regular.ttf \
+            --no-default-intervals --additional-intervals 0x2B,0x2B \
+            --additional-intervals 0x30,0x39 --no-kern-liga \
+            > generated/inter_50_digits.h
+      - name: Upload native fonts
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-fonts
+          path: generated/*.h
+          retention-days: 2
