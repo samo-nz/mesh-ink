@@ -79,7 +79,8 @@ assert 'frontlight_brightness<1||frontlight_brightness>100' not in source, "save
 contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);', "standby preserves keyboard under quick settings")
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button refresh also wakes frontlight")
-contains('last_user_activity=millis();\n            draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button short press counts as user activity")
+contains('last_user_activity=millis();\n            if(screen==Screen::Maps){', "primary-button short press counts as user activity")
+contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "non-map primary-button refresh keeps the established fast redraw path")
 contains('fast_full_redraw("CONTACTS_AFTER_BOOT",false);\n        // Startup can take longer than the saved light timeout.', "Contacts boot refresh completes before frontlight timer reset")
 contains('timeout only after Contacts is actually visible.\n        frontlight_event();', "Contacts starts a fresh frontlight timeout after splash")
 assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
