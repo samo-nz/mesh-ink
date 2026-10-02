@@ -7,13 +7,15 @@ on:
       - ".github/workflows/temp-native-ui-fonts.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: testing
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -25,7 +27,7 @@ jobs:
           curl -L --fail -o fontconvert.py https://raw.githubusercontent.com/imshentastic/CrumBLE/3c212bb5c4897f2d3d8ffd2ef9927d9299ad8627/lib/EpdFont/scripts/fontconvert.py
       - name: Generate native one-bit UI fonts
         run: |
-          mkdir -p generated
+          mkdir -p generated src/fonts
           for size in 15 20 25 30; do
             python fontconvert.py inter_${size}_regular ${size} Inter-Regular.ttf \
               --no-default-intervals --additional-intervals 0x20,0xFF --no-kern-liga \
@@ -35,9 +37,23 @@ jobs:
             --no-default-intervals --additional-intervals 0x2B,0x2B \
             --additional-intervals 0x30,0x39 --no-kern-liga \
             > generated/inter_50_digits.h
-      - name: Upload native fonts
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-ui-fonts
-          path: generated/*.h
-          retention-days: 2
+
+          for header in generated/*.h; do
+            sed -i 's/#include "EpdFontData.h"/#include "MeshInkFontData.h"/' "$header"
+            sed -i 's/\bEpdFontData\b/MeshInkFontData/g' "$header"
+            sed -i 's/\bEpdGlyph\b/MeshInkFontGlyph/g' "$header"
+            sed -i 's/\bEpdUnicodeInterval\b/MeshInkFontUnicodeInterval/g' "$header"
+            sed -i 's/\bEpdFontGroup\b/MeshInkFontGroup/g' "$header"
+            sed -i 's/\bEpdKernClassEntry\b/MeshInkFontKernClassEntry/g' "$header"
+            sed -i 's/\bEpdLigaturePair\b/MeshInkFontLigaturePair/g' "$header"
+          done
+          cp generated/*.h src/fonts/
+      - name: Commit generated native fonts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/fonts/inter_15_regular.h src/fonts/inter_20_regular.h \
+                  src/fonts/inter_25_regular.h src/fonts/inter_30_regular.h \
+                  src/fonts/inter_50_digits.h
+          git commit -m "test22: add native-size Inter raster fonts"
+          git push origin HEAD:testing
