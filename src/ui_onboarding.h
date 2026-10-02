@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 #include "hardware/radio_types.h"
 class UiDataProvider;
 
@@ -21,3 +22,4 @@ void ui_use_data_provider(UiDataProvider* provider);
 bool ui_is_standby();
 bool ui_chat_is_visible(bool channel); // true only for the currently displayed chat type
 void ui_show_radio_failure(MeshInkRadioFailureClass failure);
+bool ui_save_screenshot(char* path_out,size_t path_len);

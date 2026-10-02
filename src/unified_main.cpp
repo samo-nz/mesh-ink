@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Preferences.h>
+#include <string.h>
 #include "ui_onboarding.h"
 #include "companion_runtime.h"
 #include "t5_timing.h"
@@ -14,6 +15,39 @@
 
 static bool companion_mode = false;
 static bool cache64_psram_blocked = false;
+
+static char terminal_line[48]{};
+static uint8_t terminal_length=0;
+
+static void service_local_terminal() {
+    while(Serial.available()>0) {
+        const int raw=Serial.read();
+        if(raw<0)break;
+        const char ch=(char)raw;
+        if(ch=='\r'||ch=='\n') {
+            if(!terminal_length)continue;
+            terminal_line[terminal_length]=0;
+            if(!strcmp(terminal_line,"screenshot")||!strcmp(terminal_line,"shot")) {
+                char path[20]{};
+                if(ui_save_screenshot(path,sizeof(path)))
+                    Serial.printf("[T5-CMD] screenshot saved: %s\n",path);
+                else
+                    Serial.println("[T5-CMD] screenshot failed (SD card available?)");
+            } else if(!strcmp(terminal_line,"help")) {
+                Serial.println("[T5-CMD] commands: screenshot | shot | help");
+            } else {
+                Serial.printf("[T5-CMD] unknown command: %s (try 'help')\n",terminal_line);
+            }
+            terminal_length=0;
+            terminal_line[0]=0;
+        } else if(ch=='\b'||ch==0x7F) {
+            if(terminal_length)terminal_line[--terminal_length]=0;
+        } else if(ch>=32&&ch<127&&terminal_length+1<sizeof(terminal_line)) {
+            terminal_line[terminal_length++]=ch;
+            terminal_line[terminal_length]=0;
+        }
+    }
+}
 
 static void check_local_wireless_state(const char* phase,const MeshInkWirelessState& state) {
     if(meshink_wireless_local_radios_off(state))return;
@@ -122,6 +156,7 @@ void loop() {
         companion_loop();
         companion_exit_button();
     } else {
+        service_local_terminal();
         const uint32_t cycle_started=t5_timing_cycle_begin();
         if(local_mesh_is_running()){
             const uint32_t mesh_started=t5_timing_section_begin(T5TimingSection::Mesh);

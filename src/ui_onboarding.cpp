@@ -2,6 +2,7 @@
 #include <esp_random.h>
 #include <Preferences.h>
 #include "hardware/display.h"
+#include "hardware/storage.h"
 #include "hardware/touch.h"
 #include "hardware/power.h"
 #include "hardware/buttons.h"
@@ -97,6 +98,123 @@ static constexpr Glyph FONT[] = {
 
 static MeshInkDisplayState display;
 static uint8_t* fb = nullptr;
+
+static bool screenshot_write_u16(MeshInkStorageFile& file,uint16_t value){
+    const uint8_t bytes[2]={(uint8_t)(value&0xFFU),(uint8_t)(value>>8)};
+    return file.write(bytes,sizeof(bytes))==sizeof(bytes);
+}
+static bool screenshot_write_u32(MeshInkStorageFile& file,uint32_t value){
+    const uint8_t bytes[4]={
+        (uint8_t)(value&0xFFU),(uint8_t)((value>>8)&0xFFU),
+        (uint8_t)((value>>16)&0xFFU),(uint8_t)((value>>24)&0xFFU)
+    };
+    return file.write(bytes,sizeof(bytes))==sizeof(bytes);
+}
+static uint8_t screenshot_gray8_at(int logical_x,int logical_y){
+    if(!fb)return 0xFF;
+    const int physical_width=meshink_display_physical_width();
+    const int physical_height=meshink_display_physical_height();
+    int physical_x=logical_x,physical_y=logical_y;
+    switch(meshink_display_get_rotation()){
+        case MeshInkRotation::Portrait:
+            physical_x=physical_width-1-logical_y;
+            physical_y=logical_x;
+            break;
+        case MeshInkRotation::InvertedLandscape:
+            physical_x=physical_width-1-logical_x;
+            physical_y=physical_height-1-logical_y;
+            break;
+        case MeshInkRotation::InvertedPortrait:
+            physical_x=logical_y;
+            physical_y=physical_height-1-logical_x;
+            break;
+        case MeshInkRotation::Landscape:
+        default:
+            break;
+    }
+    if(physical_x<0||physical_y<0||
+       physical_x>=physical_width||physical_y>=physical_height)return 0xFF;
+    const size_t row_bytes=(size_t)physical_width/2U;
+    const uint8_t packed=fb[(size_t)physical_y*row_bytes+((unsigned)physical_x>>1)];
+    const uint8_t gray4=(physical_x&1)?(packed>>4):(packed&0x0FU);
+    return (uint8_t)(gray4*17U);
+}
+
+bool ui_save_screenshot(char* path_out,size_t path_len){
+    if(path_out&&path_len)path_out[0]=0;
+    if(!fb||!map_tiles_media_ready()){
+        Serial.println("[T5-SHOT] SD/framebuffer unavailable");
+        return false;
+    }
+
+    char path[20]{};
+    bool found=false;
+    for(unsigned i=1;i<=9999;++i){
+        snprintf(path,sizeof(path),"/SHOT%04u.BMP",i);
+        if(!meshink_storage_exists(path)){found=true;break;}
+    }
+    if(!found){
+        Serial.println("[T5-SHOT] no free screenshot filename");
+        return false;
+    }
+
+    MeshInkStorageFile file=meshink_storage_open_write(path);
+    if(!file){
+        Serial.printf("[T5-SHOT] open failed: %s\n",path);
+        return false;
+    }
+
+    const int width=meshink_display_logical_width();
+    const int height=meshink_display_logical_height();
+    const uint32_t row_stride=(uint32_t)((width+3)&~3);
+    const uint32_t palette_bytes=256U*4U;
+    const uint32_t pixel_offset=14U+40U+palette_bytes;
+    const uint32_t image_bytes=row_stride*(uint32_t)height;
+    const uint32_t file_bytes=pixel_offset+image_bytes;
+    bool ok=true;
+
+    const uint8_t signature[2]={'B','M'};
+    ok=ok&&file.write(signature,sizeof(signature))==sizeof(signature);
+    ok=ok&&screenshot_write_u32(file,file_bytes);
+    ok=ok&&screenshot_write_u16(file,0)&&screenshot_write_u16(file,0);
+    ok=ok&&screenshot_write_u32(file,pixel_offset);
+
+    ok=ok&&screenshot_write_u32(file,40);
+    ok=ok&&screenshot_write_u32(file,(uint32_t)width);
+    ok=ok&&screenshot_write_u32(file,(uint32_t)(-(int32_t)height)); // top-down BMP
+    ok=ok&&screenshot_write_u16(file,1);
+    ok=ok&&screenshot_write_u16(file,8);
+    ok=ok&&screenshot_write_u32(file,0);
+    ok=ok&&screenshot_write_u32(file,image_bytes);
+    ok=ok&&screenshot_write_u32(file,2835)&&screenshot_write_u32(file,2835);
+    ok=ok&&screenshot_write_u32(file,256)&&screenshot_write_u32(file,0);
+
+    for(unsigned i=0;ok&&i<256;++i){
+        const uint8_t entry[4]={(uint8_t)i,(uint8_t)i,(uint8_t)i,0};
+        ok=file.write(entry,sizeof(entry))==sizeof(entry);
+    }
+
+    static uint8_t row[960];
+    if(row_stride>sizeof(row))ok=false;
+    for(int y=0;ok&&y<height;++y){
+        for(int x=0;x<width;++x)row[x]=screenshot_gray8_at(x,y);
+        for(uint32_t x=(uint32_t)width;x<row_stride;++x)row[x]=0xFF;
+        ok=file.write(row,row_stride)==row_stride;
+    }
+    file.flush();
+    file.close();
+
+    if(!ok){
+        Serial.printf("[T5-SHOT] write failed: %s\n",path);
+        return false;
+    }
+    if(path_out&&path_len){
+        strncpy(path_out,path,path_len-1);
+        path_out[path_len-1]=0;
+    }
+    Serial.printf("[T5-SHOT] saved %s %dx%d\n",path,width,height);
+    return true;
+}
 static Preferences prefs;
 static char node_name[21] = "MeshInk-";
 static uint8_t selected_preset = 17;

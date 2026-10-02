@@ -26,6 +26,10 @@ MeshInkStorageFile meshink_storage_open(const char* path) {
     return path ? SD.open(path,FILE_READ) : MeshInkStorageFile();
 }
 
+MeshInkStorageFile meshink_storage_open_write(const char* path) {
+    return path ? SD.open(path,FILE_WRITE) : MeshInkStorageFile();
+}
+
 bool meshink_storage_exists(const char* path) {
     return path && SD.exists(path);
 }

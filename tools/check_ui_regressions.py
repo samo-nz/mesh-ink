@@ -929,29 +929,16 @@ assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinat
 
 
 # Test50: one 250-message v3 journal spans standalone and Bluetooth Companion
-# modes. Existing 96-message v1 and 250-message v2 testing journals migrate
-# transactionally, with v2 RF/route metadata preserved.
+# modes. The one-off pre-release v1/v2 migration path has been retired.
 assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
 assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk exposes the full MeshCore direct-message text limit"
-assert "LEGACY_STORE_CAPACITY_V1=96" in message_store_source and "LEGACY_STORE_VERSION_V1=1" in message_store_source, "v1 96-message store remains an explicit migration source"
-assert "LEGACY_STORE_VERSION_V2=2" in message_store_source and "sizeof(LegacyStoredMessageV2)==172" in message_store_source, "current 250-message v2 store remains an explicit migration source"
-assert "migrate_legacy(disk,disk.version)" in message_store_source, "v1/v2 stores are migrated instead of discarded"
-assert "legacy_header.sequence" in message_store_source and "current.sequence=legacy.sequence" in message_store_source, "migration preserves journal and per-message sequence values"
-assert 'STORE_TEMP_PATH[]="/ui_messages.v3.tmp"' in message_store_source and 'STORE_BACKUP_PATH[]="/ui_messages.legacy.bak"' in message_store_source, "migration uses v3 temporary and rollback files"
-assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "migration swaps v3 into place only after writing it"
-assert "original retained" in message_store_source, "migration failure explicitly preserves the testing device's old history"
-assert "sizeof(LegacyStoredMessageV1)==168" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "legacy and v3 fixed-record layouts are pinned"
-assert "memcpy(current.text,legacy.text,sizeof(legacy.text));" in message_store_source, "legacy text copies into the larger v3 field without truncating existing messages"
-assert "current.snr_q4=legacy.snr_q4;" in message_store_source and "current.flags=legacy.flags;" in message_store_source, "v2 RF/route metadata survives v2->v3 migration"
-assert "for(uint16_t logical=0;ok&&logical<legacy_header.count;++logical)" in message_store_source, "migration reads only the old ring's logical messages"
-assert "if(legacy.sequence==0){++skipped_blank;continue;}" in message_store_source, "unexpected blank legacy active slots are skipped"
-assert "migrated.count=migrated_count;" in message_store_source, "v3 logical count is compacted to valid migrated records"
-assert "for(uint16_t i=migrated_count;ok&&i<MESHINK_MESSAGE_CAPACITY;++i)" in message_store_source, "unused v3 capacity is explicitly blank but outside logical count"
-assert "current.text[sizeof(current.text)-1]=0;" in message_store_source, "migrated text is forced NUL-terminated"
-assert "verified.count==migrated_count" in message_store_source and "verify=SPIFFS.open(STORE_TEMP_PATH" in message_store_source, "completed temp journal is reopened and validated before swapping"
-assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "incompatible live journals get a non-destructive recovery backup"
-assert "preserving before recreate" in message_store_source, "invalid journal handling is explicitly non-destructive"
-assert "meshink_message_store().begin()" in companion_source, "companion mode opens/migrates the same journal"
+assert "STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "current v3 fixed-record layout is pinned"
+assert "migrate_legacy" not in message_store_source and "migrate_legacy" not in message_store_header, "legacy message migration code is removed"
+assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "legacy v1/v2 record formats are removed"
+assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
+assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
+assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
+assert "meshink_message_store().begin()" in companion_source, "companion mode opens the same current-format journal"
 assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
 
 
@@ -969,11 +956,11 @@ assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source
 assert "store_.read(active_indices_[i],item)" in runtime_source, "individual visible/measured messages are loaded from flash on demand"
 assert "heap_caps_calloc" not in message_store_source and "heap_caps_calloc" not in runtime_source, "message history no longer needs large PSRAM allocations"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
-assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal migration remains after display initialization"
+assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal startup remains after display initialization"
 
 
-# Test52: message storage stays responsive/battery-efficient and v1 migration
-# preserves valid history without promoting zero-filled legacy capacity.
+# Test52: message storage stays responsive/battery-efficient with the current
+# v3 journal and lazy history indexing.
 assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
 assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rescan flash only after message history changes"
 assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
@@ -981,19 +968,13 @@ assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_sourc
 assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
 assert "rebuild_active();" not in runtime_source[runtime_source.index("void refresh(bool force=false)"):runtime_source.index("void received_direct")], "periodic provider refresh must not rebuild the active message index"
 assert "for(size_t n=header_.count;n>0;--n)" in message_store_source[message_store_source.index("bool MeshInkMessageStore::find_physical"):message_store_source.index("uint32_t MeshInkMessageStore::append")], "message state lookup searches newest-first"
-assert "for(uint16_t logical=0;ok&&logical<legacy_header.count;++logical)" in message_store_source, "migration reads only the old ring's logical messages, never all 96 physical slots"
-assert "if(legacy.sequence==0)" in message_store_source and "++skipped_blank;" in message_store_source, "unexpected blank legacy active slots are skipped"
-assert "migrated.count=migrated_count;" in message_store_source, "v2 logical count is compacted to valid migrated records"
-assert "for(uint16_t i=migrated_count;ok&&i<MESHINK_MESSAGE_CAPACITY;++i)" in message_store_source, "unused v2 capacity is explicitly blank but outside logical count"
-assert "current.text[sizeof(current.text)-1]=0;" in message_store_source, "legacy text is forced NUL-terminated during migration"
-assert "verified.count==migrated_count" in message_store_source and "verify=SPIFFS.open(STORE_TEMP_PATH" in message_store_source, "completed temp journal is reopened and validated before swapping"
-assert "SPIFFS.rename(STORE_PATH,STORE_BACKUP_PATH)" in message_store_source and "SPIFFS.rename(STORE_TEMP_PATH,STORE_PATH)" in message_store_source, "validated migration keeps the old journal as rollback backup until swap succeeds"
-assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "incompatible live journals get a non-destructive recovery backup"
-assert "preserving before recreate" in message_store_source, "invalid journal handling is explicitly non-destructive"
+assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
+assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling remains non-destructive"
+assert "migrate_legacy" not in message_store_source, "retired migration machinery cannot re-enter the message-store hot path"
 assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only tiny page anchors"
 assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat page composition remains height-aware and incremental"
 assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message record is read once and reused for height plus drawing"
-assert "item.sequence==0||!matches(item)" in runtime_source, "sequence-zero records can never enter an active chat index even if an older v2 conversion contained one"
+assert "item.sequence==0||!matches(item)" in runtime_source, "sequence-zero records can never enter an active chat index"
 
 
 # Test53: common message paths minimize flash traffic without weakening
@@ -1219,3 +1200,20 @@ assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key l
 assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
 assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
 assert "saved_route_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic trace extent"
+
+
+# Test66: release cleanup retires the one-off pre-release message migrator.
+assert "migrate_legacy" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "one-off message migration implementation is gone"
+assert "/ui_messages.v3.tmp" not in message_store_source and "/ui_messages.legacy.bak" not in message_store_source, "migration scratch files are no longer referenced"
+
+# Test67: USB terminal screenshots export the live framebuffer to SD without
+# redrawing or reprocessing the current screen.
+assert "bool ui_save_screenshot(char* path_out,size_t path_len)" in source, "UI exposes a framebuffer screenshot export"
+assert '"/SHOT%04u.BMP"' in source, "screenshots use simple sequential FAT-friendly filenames"
+assert "map_tiles_media_ready()" in source[source.index("bool ui_save_screenshot"):source.index("static Preferences prefs")], "screenshot reuses the already-mounted removable storage path"
+shot_body=source[source.index("bool ui_save_screenshot"):source.index("static Preferences prefs")]
+assert "draw_screen(" not in shot_body and "map_tiles_render(" not in shot_body, "screenshot capture never redraws or processes map tiles"
+assert "screenshot_gray8_at(x,y)" in shot_body and "top-down BMP" in shot_body, "BMP captures the current framebuffer in logical screen orientation"
+assert "meshink_storage_open_write" in storage_backend_header and "SD.open(path,FILE_WRITE)" in storage_backend_source, "storage backend provides explicit screenshot write access"
+assert 'strcmp(terminal_line,"screenshot")' in unified_source and 'strcmp(terminal_line,"shot")' in unified_source, "local USB terminal accepts screenshot and shot commands"
+assert "service_local_terminal();" in unified_source, "terminal command service runs in local UI mode"

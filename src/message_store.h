@@ -54,7 +54,6 @@ class MeshInkMessageStore {
     bool create_empty();
     void write_header();
     bool write_record(uint16_t physical,const MeshInkStoredMessage& record);
-    bool migrate_legacy(const MeshInkMessageStoreHeader& legacy_header,uint16_t legacy_version);
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
