@@ -523,10 +523,11 @@ struct UiSmoothFont {
     uint8_t denominator;
 };
 static UiSmoothFont ui_smooth_font(int scale) {
-    if(scale<=2)return {&inter_8_regular,1,1};
-    if(scale==3)return {&inter_10_regular,1,1};
-    if(scale<=5)return {&inter_12_regular,1,1};
-    return {&inter_12_regular,4,3};
+    // The old 5x7 renderer's primary text was 7*scale pixels tall.
+    // Inter 12's capital height is 19 px, so scale it by (7*scale)/19.
+    // That makes the new capitals exactly as tall as the old font while
+    // preserving Inter's smoother proportions; lowercase is slightly larger.
+    return {&inter_12_regular,(uint8_t)(7*scale),19};
 }
 static int ui_smooth_metric(int value,const UiSmoothFont& face) {
     const int magnitude=abs(value)*face.numerator;
@@ -561,9 +562,9 @@ static int ui_char_advance(char c,int scale) {
     return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
 }
 static int ui_text_height(int scale) {
-    if(scale<3)return 7*scale;
-    const UiSmoothFont face=ui_smooth_font(scale);
-    return ui_smooth_metric(face.font->ascender-face.font->descender,face);
+    // Preserve the geometry expected by the pre-Inter UI: primary cap height
+    // remains the same 7*scale pixels used by the original 5x7 renderer.
+    return 7*scale;
 }
 static int ui_text_width_n(const char* s,size_t n,int scale) {
     if(!s||!n)return 0;int width=0;
@@ -576,7 +577,9 @@ static int ui_text_width(const char* s,int scale) {
 static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
     if(!s)return;
     const UiSmoothFont face=ui_smooth_font(scale);
-    const int baseline=y+ui_smooth_metric(face.font->ascender,face);
+    // Inter 12 uppercase glyphs use top=19. Anchor that cap line to y so the
+    // visible glyph occupies the same vertical band as the old bitmap font.
+    const int baseline=y+ui_smooth_metric(19,face);
     while(*s&&*s!='\n'){
         const char c=*s++;
         const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
@@ -3623,9 +3626,16 @@ static void service_primary_button(){
         if(!standby_active){
             last_user_activity=millis();
             if(screen==Screen::Maps){
+                // The visible terrain is already decoded in map_base_cache.
+                // Refresh only live node data, flash the physical screen black,
+                // then rebuild the same viewport from the cached terrain so
+                // moved node/device markers land at their latest positions.
+                // Do not enter load_map_with_feedback(): no toast or tile I/O.
                 local_mesh_refresh_ui_data();
-                map_base_valid=false;
-                open_screen(Screen::Maps);
+                meshink_display_fill_framebuffer(&display,0x00);
+                force_redraw(MeshInkRefreshMode::Direct,"SHORT_BUTTON_MAP_BLACK",false);
+                draw_screen();
+                fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);
             }else{
                 draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
             }

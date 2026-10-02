@@ -1009,7 +1009,10 @@ assert "provider.note_direct_ack(" not in runtime_source and "provider.note_dire
 
 # Test54: primary text uses built-in 1-bit Inter while compact technical/status
 # copy keeps the original bitmap path.
-assert 'fonts/inter_8_regular.h' in source and 'fonts/inter_10_regular.h' in source and 'fonts/inter_12_regular.h' in source, "three built-in smooth Inter raster sizes are compiled into firmware"
+assert 'fonts/inter_12_regular.h' in source, "built-in 1-bit Inter raster data is compiled into firmware"
+assert "return {&inter_12_regular,(uint8_t)(7*scale),19};" in source, "Inter primary text scales to the old 7x-scale capital height"
+assert "return 7*scale;" in source[source.index("static int ui_text_height"):source.index("static int ui_text_width_n")], "layout retains the pre-Inter primary text height"
+assert "const int baseline=y+ui_smooth_metric(19,face);" in source, "Inter cap line is anchored to the old bitmap text top"
 assert "if(scale>=3){ui_smooth_text" in source, "scale-three and larger primary text uses smooth raster glyphs"
 assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
 assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
@@ -1146,8 +1149,16 @@ assert "CompanionAckRef& slot=ack_refs_[next_ack_ref_];" in companion_source, "c
 assert "ack_refs_[next_ack_ref_]={ack,sequence,route_flood}" not in companion_source, "C++11-incompatible aggregate assignment must not return"
 
 
-# Test60: test20 refinements keep refresh/layout/text behaviour explicit.
-assert "local_mesh_refresh_ui_data();" in source and "map_base_valid=false;" in source[source.index('if(screen==Screen::Maps){'):], "physical refresh on Maps refreshes node data and forces the normal map redraw path"
+# Test60/Test61: test20/21 refinements keep refresh/layout/text behaviour explicit.
+map_short=source[source.index('if(screen==Screen::Maps){',source.index("static void service_primary_button")):source.index("}else{",source.index('if(screen==Screen::Maps){',source.index("static void service_primary_button")))]
+assert "local_mesh_refresh_ui_data();" in map_short, "physical Maps refresh obtains current node marker data"
+assert "meshink_display_fill_framebuffer(&display,0x00);" in map_short and '"SHORT_BUTTON_MAP_BLACK"' in map_short, "physical Maps refresh flashes the ready screen black"
+assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);' in map_short, "physical Maps refresh restores the cached viewport with fresh overlays"
+assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
 assert "const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;" in source, "portrait composer detects a one-line entry"
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
 assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
+
+# Test61: smooth font size is no smaller than the original 5x7 primary tiers.
+assert "(uint8_t)(7*scale),19" in source, "Inter scaling uses the measured 19-pixel cap height as its reference"
+assert "Inter 12 uppercase glyphs use top=19" in source, "font baseline documents the measured cap-height reference"
