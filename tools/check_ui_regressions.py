@@ -516,7 +516,8 @@ contains("{0,0,portrait_layout().width,portrait_layout().status_height},wake);",
 standby_entry = source.split("static void enter_standby(const char* reason){", 1)[1].split("static void leave_standby(){", 1)[0]
 assert "update_status_hardware();" in standby_entry, "standby entry samples exact clock, battery and charger state"
 assert "wall-clock :00/:05/:10... boundaries" in standby_entry, "standby entry documents aligned five-minute status cadence"
-contains('"HOLD %s FOR TWO SECONDS TO WAKE"', "standby wake wording includes FOR and explicit two-second hold")
+contains('"HOLD %s FOR TWO SECONDS"', "standby wake wording includes FOR and explicit two-second hold")
+contains('ui_centred("TO WAKE",ui_y(892),3,0,true);', "standby wake wording is completed on the second smooth line")
 
 # Test17 power abstraction: application/UI owns presentation only. Battery
 # topology, chemistry, charger encoding and critical-battery policy are backend-owned.
