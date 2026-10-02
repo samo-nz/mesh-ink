@@ -3641,7 +3641,7 @@ static void service_primary_button(){
                 // Refresh only live node data, flash the physical screen black,
                 // then rebuild the same viewport from the cached terrain so
                 // moved node/device markers land at their latest positions.
-                // Do not enter load_map_with_feedback(): no toast or tile I/O.
+                // Stay on the cache-only refresh path: no toast and no tile I/O.
                 local_mesh_refresh_ui_data();
                 meshink_display_fill_framebuffer(&display,0x00);
                 force_redraw(MeshInkRefreshMode::Direct,"SHORT_BUTTON_MAP_BLACK",false);
