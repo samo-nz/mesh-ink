@@ -840,11 +840,13 @@ assert '[T5-INIT] wifi-bt=OK wifi=off bt=off' in unified_source, "local startup 
 assert '[T5-INIT] wifi-bt=OK wifi=off bt=ready' in unified_source, "companion startup labels ESP Wi-Fi/Bluetooth state explicitly"
 assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startup label must not return"
 
-# Test44: field standby redesign uses the existing full-size MeshInk bitmap and
-# two side-by-side, thick-bordered unread summary cards.
+# Test44: field standby redesign uses the full-size MeshInk bitmap and only
+# shows unread summary cards that contain unread messages.
 assert "draw_meshink_logo(ui_y(70),false);" in source, "standby uses the existing full-size MeshInk logo"
 assert 'centred("STANDBY"' not in source, "standby text heading is replaced by the logo"
-assert "ui_rect(20,445,244,310)" in source and "ui_rect(276,445,244,310)" in source, "standby summary cards are side by side"
+assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
+assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
+assert "ui_rect(20,445,244,310)" in source and "ui_rect(276,445,244,310)" in source, "dual unread cards retain their side-by-side geometry"
 assert "draw_standby_envelope_icon" in source, "standby provides a dedicated large envelope icon"
 assert "draw_standby_channel_icon" in source, "standby provides a dedicated large channel people icon"
 assert "standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11)" in source, "private unread count is oversized"
@@ -869,11 +871,11 @@ assert "mesh::Utils::MACThenDecrypt" in runtime_source, "repeat matching validat
 assert "Trace=3" in data_source, "trace is a first-class node-info request"
 assert "frame[0]=36" in runtime_source and "frame[0]==0x89" in runtime_source, "trace command and response are wired through upstream MeshCore"
 assert "TRACE %u HOP%s" in runtime_source and "DEST  %.1f DB" in runtime_source, "trace result reports repeater hashes/SNR and destination SNR"
-assert 'settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650)' in source, "More exposes diagnostics"
+assert 'settings_row("DIAGNOSTICS","Live MeshCore radio stats",650)' in source, "More exposes diagnostics with sentence-case subtitle"
 assert "local_mesh_request_diagnostics()" in source and "draw_diagnostics()" in source, "diagnostics UI requests and renders live MeshCore stats"
 assert "frame[2]={56,type}" in runtime_source, "diagnostics uses upstream CMD_GET_STATS"
 assert "PACKETS RX/TX %lu / %lu" in runtime_source and "AIRTIME TX/RX %lu / %lu S" in runtime_source, "diagnostics decodes packet and radio counters"
-assert 'settings_row("HELP","USING MESHINK",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
+assert 'settings_row("HELP","Using MeshInk",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
 
 # Test46: a message received while its conversation is visibly open is already
 # seen and must not create contact/channel or bottom-tab unread dots.
@@ -1004,14 +1006,18 @@ assert "provider.confirm_direct_send(" in runtime_source, "local send response u
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
 
 
-# Test54: chat/contact polish stays readable and lightweight. Reuse the tiny
-# built-in glyph bitmap instead of adding a font engine or full font asset.
-assert "static void ui_glyph_bounds(" in source and "const uint8_t* rows=glyph(c)" in source, "polished text reuses the existing compact glyph table"
-assert "static int ui_char_advance(char c,int scale)" in source and "static void ui_text(" in source, "chat/contact text uses lightweight proportional advances"
+# Test54: primary text uses built-in 1-bit Inter while compact technical/status
+# copy keeps the original bitmap path.
+assert 'fonts/inter_8_regular.h' in source and 'fonts/inter_10_regular.h' in source and 'fonts/inter_12_regular.h' in source, "three built-in smooth Inter raster sizes are compiled into firmware"
+assert "if(scale>=3){ui_smooth_text" in source, "scale-three and larger primary text uses smooth raster glyphs"
+assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
+assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
 assert "static void rounded_fill(" in source and "xx*xx+yy*yy<=r*r" in source, "rounded panels use an integer framebuffer primitive"
 assert "sqrt(" not in source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))], "rounded corners avoid floating-point geometry"
 assert "rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height" in source, "contacts/channels/discovery use rounded cards"
-assert "ui_draw_wrapped(item.subtitle" in source and "layout.outer_width-2*layout.text_inset,3" in source, "list body text is rendered at readable scale 3"
+assert "static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3)" in source, "list rows support compact secondary metadata without shrinking titles"
+assert "ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Contacts secondary Last Heard text uses delivery-notice scale"
+assert "ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Channels MeshCore channel subtitle uses delivery-notice scale"
 assert "ui_text_fit(item.title" in source and "3,0,true" in source[source.index("ui_text_fit(item.title"):source.index("ui_draw_wrapped(item.subtitle")], "list titles remain large and clipped safely"
 assert "rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing)" in source, "chat bubbles use rounded incoming/outgoing surfaces"
 assert "const int min_width=ui_w(240);" in source and "const int max_width=ui_w(456);" in source, "chat bubbles stay compact without becoming too narrow to read"
@@ -1019,7 +1025,7 @@ assert "ui_wrapped_line_count(message.text,text_width,3)" in source, "message pa
 assert "geometry.text_width,3,color,false,16" in source, "long messages remain readable instead of being clipped at the former eight-line draw limit"
 assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
 assert "rounded_box(back_rect" in source and "ui_action_button(action,action_rect,true)" in source, "chat header actions share the rounded visual language"
-assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "polished typography/rounding adds no dynamic memory"
+assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "built-in typography/rounding adds no dynamic memory"
 assert "const MessageBubbleGeometry geometry=message_bubble_geometry(message);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse one geometry measurement for drawing"
 
 
@@ -1090,8 +1096,8 @@ assert "ui_text_fit(footer,geometry.x+ui_w(14)" in source, "oversized message me
 # Test57: full-length direct messages remain valid across the complete retry
 # policy, channel sends are never silently truncated, and a terminal direct
 # failure restores the draft only when it is safe to do so.
-assert "DIRECT_RETRY_LIMIT=3" in runtime_source, "direct messages use at most three retries after the initial attempt"
-assert "pending_direct.retry>=DIRECT_RETRY_LIMIT" in runtime_source, "retry exhaustion is governed by the shared three-retry limit"
+assert "DIRECT_RETRY_LIMIT=3" in runtime_source, "direct messages use two route retries plus one flood fallback after the initial attempt"
+assert "pending_direct.retry>=DIRECT_RETRY_LIMIT" in runtime_source, "retry exhaustion occurs after the flood fallback attempt"
 assert "MESHINK_MESSAGE_TEXT_MAX==MAX_TEXT_LEN" in runtime_source, "MeshInk's 160-byte editor/store limit is compile-time tied to MeshCore"
 assert "13+MESHINK_MESSAGE_TEXT_MAX<=MAX_FRAME_SIZE" in runtime_source, "a full direct-message command is compile-time checked against the companion frame"
 assert "static size_t channel_message_limit(" in runtime_source, "channel payload capacity accounts for the sender-name prefix"
@@ -1106,8 +1112,14 @@ assert 'fail_pending_direct("retry limit")' in runtime_source, "retry exhaustion
 assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pending_direct("initial queue busy")' in runtime_source, "local queue failures share the same safe terminal-failure path"
 assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
 
-assert 'case UiMessageState::Retrying1:return "RETRYING 1/3"' in runtime_source, "runtime retry status matches three-retry policy"
-assert 'case UiMessageState::Retrying3:state="RETRYING 3/3"' in source, "chat footer retry status matches three-retry policy"
+assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "runtime shows two direct retries"
+assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "final retry is labelled as the flood fallback"
+assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer exposes flood fallback instead of a third direct retry"
+assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "third retry resets the stale saved path so MeshCore uses flood"
+assert "attempt==0?UiMessageState::Sending" in runtime_source, "radio SENT response remains an in-progress state until ACK"
+formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
+assert "state!=UiMessageState::Sending" not in formatter, "sending route is visible once MeshCore reports direct/flood"
+assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
 
 # Test58: direct-message ACK tracking survives retry overlap. A delayed ACK
@@ -1131,3 +1143,10 @@ assert "for(auto& item:ack_refs_)if(item.sequence==delivered_sequence)item={};" 
 
 assert "CompanionAckRef& slot=ack_refs_[next_ack_ref_];" in companion_source, "companion ACK ring uses C++11-safe explicit field assignment"
 assert "ack_refs_[next_ack_ref_]={ack,sequence,route_flood}" not in companion_source, "C++11-incompatible aggregate assignment must not return"
+
+
+# Test60: test20 refinements keep refresh/layout/text behaviour explicit.
+assert "local_mesh_refresh_ui_data();" in source and "map_base_valid=false;" in source[source.index('if(screen==Screen::Maps){'):], "physical refresh on Maps refreshes node data and forces the normal map redraw path"
+assert "const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;" in source, "portrait composer detects a one-line entry"
+assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
+assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"

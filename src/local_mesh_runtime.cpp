@@ -108,8 +108,8 @@ static void format_node_role(uint8_t type,char* out,size_t len){
 static const char* state_text(UiMessageState state){
     switch(state){case UiMessageState::Sending:return "SENDING";case UiMessageState::Sent:return "SENT";
         case UiMessageState::Delivered:return "DELIVERED";case UiMessageState::Failed:return "FAILED";
-        case UiMessageState::Retrying1:return "RETRYING 1/3";case UiMessageState::Retrying2:return "RETRYING 2/3";
-        case UiMessageState::Retrying3:return "RETRYING 3/3";case UiMessageState::Retrying4:return "RETRYING 4/5";
+        case UiMessageState::Retrying1:return "RETRYING 1/2";case UiMessageState::Retrying2:return "RETRYING 2/2";
+        case UiMessageState::Retrying3:return "SENDING FLOOD";case UiMessageState::Retrying4:return "RETRYING 4/5";
         case UiMessageState::Retrying5:return "RETRYING 5/5";default:return "";}
 }
 static void format_last_heard(uint32_t timestamp,char out[72]){
@@ -168,9 +168,13 @@ class MeshCoreUiProvider final:public UiDataProvider{
                 snprintf(out,len,"HEARD %u REPEAT%s",(unsigned)stored.repeats,stored.repeats==1?"":"S");
                 return;
             }
-            const char* base=state_text(state);
+            if(state==UiMessageState::Retrying3){
+                strncpy(out,"SENDING FLOOD",len-1);out[len-1]=0;return;
+            }
+            const char* base=(stored.kind==(uint8_t)MessageKind::Direct&&
+                              state==UiMessageState::Sent)?"SENDING":state_text(state);
             if((stored.flags&MESHINK_MESSAGE_ROUTE_KNOWN)&&base[0]&&
-               state!=UiMessageState::Sending&&state!=UiMessageState::Failed)
+               state!=UiMessageState::Failed)
                 snprintf(out,len,"%s %s",base,
                          (stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)?"FLOOD":"DIRECT");
             else if(base[0]){strncpy(out,base,len-1);out[len-1]=0;}
@@ -656,6 +660,13 @@ static bool enqueue_direct_attempt(){
     uint8_t frame[MAX_FRAME_SIZE+1]{};size_t p=0;frame[p++]=2;frame[p++]=0;frame[p++]=pending_direct.retry;memcpy(frame+p,&pending_direct.timestamp,4);p+=4;memcpy(frame+p,pending_direct.key,6);p+=6;const size_t n=min(strlen(pending_direct.text),(size_t)MAX_TEXT_LEN);memcpy(frame+p,pending_direct.text,n);p+=n;
     if(!local_mesh_enqueue_command(frame,p))return false;pending_direct.waiting_response=true;T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u queued sequence=%lu\n",pending_direct.retry,(unsigned long)pending_direct.sequence);return true;
 }
+static bool force_pending_direct_flood(){
+    ContactInfo* contact=t5_mesh().lookupContactByPubKey(pending_direct.key,6);
+    if(!contact)return false;
+    contact->out_path_len=OUT_PATH_UNKNOWN;
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] direct retries exhausted; reset saved path for flood fallback");
+    return true;
+}
 
 static size_t channel_message_limit(const char* node_name){
     const size_t name_len=node_name?strlen(node_name):0;
@@ -809,6 +820,7 @@ bool MeshCoreUiProvider::login_active_node(const char* password,bool save_passwo
 }
 
 UiDataProvider* local_mesh_provider(){return &provider;}
+void local_mesh_refresh_ui_data(){provider.refresh(true);}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
     if(!frame||!len)return;char message[MESHINK_MESSAGE_TEXT_BYTES]{};
     if(frame[0]==0x88){handle_raw_repeat(frame,len);return;}
@@ -846,9 +858,11 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         pending_direct.route_flood[attempt]=frame[1]!=0;
         pending_direct.deadline=millis()+max((uint32_t)500,timeout);
         pending_direct.waiting_response=false;
+        const UiMessageState attempt_state=attempt==0?UiMessageState::Sending:
+            (attempt==1?UiMessageState::Retrying1:
+             (attempt==2?UiMessageState::Retrying2:UiMessageState::Retrying3));
         provider.confirm_direct_send(
-            pending_direct.sequence,ack,pending_direct.route_flood[attempt],
-            attempt?((UiMessageState)((uint8_t)UiMessageState::Retrying1+attempt-1)):UiMessageState::Sent);
+            pending_direct.sequence,ack,pending_direct.route_flood[attempt],attempt_state);
         T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",
                   attempt,pending_direct.route_flood[attempt]?"flood":"direct",
                   (unsigned long)ack,(unsigned long)timeout);
@@ -947,9 +961,13 @@ void local_mesh_loop(){
         if(pending_direct.retry>=DIRECT_RETRY_LIMIT)fail_pending_direct("retry limit");
         else{
             pending_direct.retry++;
-            provider.update_message(pending_direct.sequence,
-                (UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));
-            if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
+            if(pending_direct.retry==DIRECT_RETRY_LIMIT&&!force_pending_direct_flood()){
+                fail_pending_direct("flood fallback contact missing");
+            }else{
+                provider.update_message(pending_direct.sequence,
+                    (UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));
+                if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
+            }
         }
     }
 #if ENV_INCLUDE_GPS == 1

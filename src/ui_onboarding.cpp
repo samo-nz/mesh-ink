@@ -24,6 +24,9 @@
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
+#include "fonts/inter_8_regular.h"
+#include "fonts/inter_10_regular.h"
+#include "fonts/inter_12_regular.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
 
 #ifndef T5_FIRMWARE_VERSION
@@ -501,10 +504,10 @@ static void centred(const char* s, int y, int scale, uint8_t color = 0, bool bol
     text(s, (meshink_display_logical_width() - (int)strlen(s)*6*scale)/2, y, scale, color, bold);
 }
 
-// Chat/contact typography stays deliberately tiny in code size: reuse the
-// proven 5x7 glyph bitmap, but crop empty side columns and advance
-// proportionally. At scale 3 this reads much more like a compact e-reader sans
-// face without embedding another font or allocating a font cache.
+// Primary UI typography uses three built-in 1-bit Inter raster sizes.
+// Small technical/status text deliberately stays on the original 5x7 bitmap.
+// The Inter bitmaps contain only black/white coverage: no grayscale edge
+// pixels are introduced, preserving the proven DU e-paper refresh behaviour.
 static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
     left=5;right=-1;
     for(int rx=0;rx<5;++rx){
@@ -514,22 +517,95 @@ static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
         }
     }
 }
-static int ui_char_advance(char c,int scale) {
+struct UiSmoothFont {
+    const EpdFontData* font;
+    uint8_t numerator;
+    uint8_t denominator;
+};
+static UiSmoothFont ui_smooth_font(int scale) {
+    if(scale<=2)return {&inter_8_regular,1,1};
+    if(scale==3)return {&inter_10_regular,1,1};
+    if(scale<=5)return {&inter_12_regular,1,1};
+    return {&inter_12_regular,4,3};
+}
+static int ui_smooth_metric(int value,const UiSmoothFont& face) {
+    const int magnitude=abs(value)*face.numerator;
+    const int rounded=(magnitude+face.denominator/2)/face.denominator;
+    return value<0?-rounded:rounded;
+}
+static const EpdGlyph* ui_smooth_glyph(const EpdFontData* font,uint32_t codepoint) {
+    if(!font)return nullptr;
+    for(uint32_t i=0;i<font->intervalCount;++i){
+        const EpdUnicodeInterval& interval=font->intervals[i];
+        if(codepoint>=interval.first&&codepoint<=interval.last)
+            return &font->glyph[interval.offset+(codepoint-interval.first)];
+        if(codepoint<interval.first)break;
+    }
+    if(codepoint!='?')return ui_smooth_glyph(font,'?');
+    return nullptr;
+}
+static int ui_smooth_char_advance(char c,int scale) {
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const EpdGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+    if(!glyph_data)return 0;
+    const int advance=(glyph_data->advanceX+8)>>4;
+    return max(1,ui_smooth_metric(advance,face));
+}
+static int ui_legacy_char_advance(char c,int scale) {
     if(c==' ')return 3*scale;
     const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
     const int pixels=right>=left?(right-left+1):3;
     return pixels*scale+scale;
 }
+static int ui_char_advance(char c,int scale) {
+    return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
+}
+static int ui_text_height(int scale) {
+    if(scale<3)return 7*scale;
+    const UiSmoothFont face=ui_smooth_font(scale);
+    return ui_smooth_metric(face.font->ascender-face.font->descender,face);
+}
 static int ui_text_width_n(const char* s,size_t n,int scale) {
     if(!s||!n)return 0;int width=0;
     for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
-    return width?width-scale:0;
+    return width&&scale<3?width-scale:width;
 }
 static int ui_text_width(const char* s,int scale) {
     return s?ui_text_width_n(s,strlen(s),scale):0;
 }
+static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
+    if(!s)return;
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const int baseline=y+ui_smooth_metric(face.font->ascender,face);
+    while(*s&&*s!='\n'){
+        const char c=*s++;
+        const EpdGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        if(!glyph_data)continue;
+        const int gx=x+ui_smooth_metric(glyph_data->left,face);
+        const int gy=baseline-ui_smooth_metric(glyph_data->top,face);
+        for(int sy=0;sy<glyph_data->height;++sy){
+            const int dy0=(sy*face.numerator)/face.denominator;
+            int dy1=((sy+1)*face.numerator+face.denominator-1)/face.denominator;
+            if(dy1<=dy0)dy1=dy0+1;
+            for(int sx=0;sx<glyph_data->width;++sx){
+                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
+                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
+                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+                const int dx0=(sx*face.numerator)/face.denominator;
+                int dx1=((sx+1)*face.numerator+face.denominator-1)/face.denominator;
+                if(dx1<=dx0)dx1=dx0+1;
+                for(int py=dy0;py<dy1;++py)for(int px=dx0;px<dx1;++px){
+                    meshink_display_draw_pixel(gx+px,gy+py,color,fb);
+                    if(bold)meshink_display_draw_pixel(gx+px+1,gy+py,color,fb);
+                }
+            }
+        }
+        x+=ui_smooth_char_advance(c,scale);
+    }
+}
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
+    if(scale>=3){ui_smooth_text(s,x,y,scale,color,bold);return;}
     while(*s&&*s!='\n'){
         const char c=*s++;
         if(c==' '){x+=3*scale;continue;}
@@ -583,7 +659,7 @@ static int ui_text_max_line_width(const char* value,int scale) {
     int widest=0,current=0;
     for(const char* p=value;;++p){
         if(!*p||*p=='\n'){
-            if(current>0)current-=scale; // remove final inter-character gap
+            if(current>0&&scale<3)current-=scale; // legacy bitmap keeps one trailing scale-wide gap
             widest=max(widest,current);current=0;
             if(!*p)break;
             continue;
@@ -669,8 +745,8 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
         while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
     }
     if(!line_count)return;
-    const int glyph_height=7*scale;
-    const int line_step=glyph_height+8;
+    const int glyph_height=ui_text_height(scale);
+    const int line_step=max(7*scale+8,glyph_height+2);
     if(max_height<glyph_height)return;
     const int visible_lines=1+(max_height-glyph_height)/line_step;
     const int first=max(0,line_count-visible_lines);
@@ -726,7 +802,7 @@ static void ui_action_button(const char* label,const MeshInkUiRect& rect,bool se
     if(ui_text_width(label,scale)>rect.width-ui_w(24))scale=2;
     const int label_width=ui_text_width(label,scale);
     ui_text(label,rect.x+(rect.width-label_width)/2,
-            rect.y+(rect.height-7*scale)/2,scale,selected?0xFF:0,true);
+            rect.y+(rect.height-ui_text_height(scale))/2,scale,selected?0xFF:0,true);
 }
 static void ui_section_card(const MeshInkUiRect& rect) {
     rounded_box(rect,max(ui_w(14),ui_h(14)),false);
@@ -1367,7 +1443,7 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
     else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
     else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
 }
-static void draw_list_entry(const UiListEntry& item,int y) {
+static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3) {
     const MeshInkUiLayout& layout=portrait_layout();
     rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,
                 max(ui_w(12),ui_h(12)));
@@ -1385,7 +1461,7 @@ static void draw_list_entry(const UiListEntry& item,int y) {
     // advances keep two useful lines in the existing 142 px row without
     // shrinking the text back to the old small metadata size.
     ui_draw_wrapped(item.subtitle,layout.content_text_x,y+ui_h(57),
-                    layout.outer_width-2*layout.text_inset,3,0,false,2);
+                    layout.outer_width-2*layout.text_inset,subtitle_scale,0,false,2);
 
     if(item.unread){
         char unread[5];snprintf(unread,sizeof(unread),"%u",(unsigned)item.unread);
@@ -1447,7 +1523,7 @@ static void draw_contacts() {
         else {
             const size_t first=contacts_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
-                draw_list_entry(ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride);
+                draw_list_entry(ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2);
             draw_list_page_footer(contacts_page,count);
         }
     }
@@ -1464,7 +1540,7 @@ static void draw_channels() {
         else {
             const size_t first=channels_page*LIST_ITEMS_PER_PAGE;
             for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
-                draw_list_entry(ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride);
+                draw_list_entry(ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2);
             draw_list_page_footer(channels_page,count);
         }
     }
@@ -1697,9 +1773,9 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
             case UiMessageState::Sent:state="SENT";break;
             case UiMessageState::Delivered:state="DELIVERED";break;
             case UiMessageState::Failed:state="FAILED";break;
-            case UiMessageState::Retrying1:state="RETRYING 1/3";break;
-            case UiMessageState::Retrying2:state="RETRYING 2/3";break;
-            case UiMessageState::Retrying3:state="RETRYING 3/3";break;
+            case UiMessageState::Retrying1:state="RETRYING 1/2";break;
+            case UiMessageState::Retrying2:state="RETRYING 2/2";break;
+            case UiMessageState::Retrying3:state="SENDING FLOOD";break;
             case UiMessageState::Retrying4:state="RETRYING 4/5";break;
             case UiMessageState::Retrying5:state="RETRYING 5/5";break;
             default:break;
@@ -1828,13 +1904,16 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,540);
     const int inset_y=meshink_keyboard::scale_axis(8,metrics.height,960);
     const int text_x=metrics.entry.x+inset_x;
-    const int text_y=metrics.entry.y+inset_y;
     const int text_width=metrics.entry.width-2*inset_x;
-    const int text_height=metrics.entry.height-2*inset_y;
+    const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;
+    const int text_y=line_count<=1
+        ?metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2
+        :metrics.entry.y+inset_y;
+    const int text_height=metrics.entry.y+metrics.entry.height-text_y-inset_y;
     if(compose_text[0])
         ui_draw_wrapped_tail(compose_text,text_x,text_y,text_width,text_height,3,0,false);
     else
-        ui_text("Write a message...",text_x,metrics.entry.y+ui_h(18),3,0,false);
+        ui_text("Write a message...",text_x,text_y,3,0,false);
 }
 
 static void draw_chat(bool channel) {
@@ -2033,9 +2112,9 @@ static void draw_discovery() {
 
 static void draw_more() {
     draw_app_header("MORE");
-    settings_row("DISCOVERED ADVERTS","RECENT NODES HEARD",130);settings_row("ADVERTISE","ZERO HOP OR FLOOD",260);
-    settings_row("SETTINGS","DEVICE AND RADIO",390);settings_row("BLUETOOTH COMPANION","RESTART IN COMPANION MODE",520);
-    settings_row("DIAGNOSTICS","LIVE MESHCORE RADIO STATS",650);settings_row("HELP","USING MESHINK",780);
+    settings_row("DISCOVERED ADVERTS","Recent nodes heard",130);settings_row("ADVERTISE","Zero hop or flood",260);
+    settings_row("SETTINGS","Device and radio",390);settings_row("BLUETOOTH COMPANION","Restart in companion mode",520);
+    settings_row("DIAGNOSTICS","Live MeshCore radio stats",650);settings_row("HELP","Using MeshInk",780);
     draw_bottom_nav(3);
 }
 
@@ -2087,14 +2166,14 @@ static void draw_settings() {
     draw_app_header("SETTINGS",true);
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
     if(meshink_board_has_gps()){
-        settings_row("LOCATION & GPS","POSITION, INTERVAL, ADVERT",238);
-        settings_row("PRIVACY","CONTACTS AND TELEMETRY",358);
-        settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",478);
-        settings_row("ABOUT","FIRMWARE AND DEVICE INFO",598);
+        settings_row("LOCATION & GPS","Position, interval, advert",238);
+        settings_row("PRIVACY","Contacts and telemetry",358);
+        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478);
+        settings_row("ABOUT","Firmware and device info",598);
     }else{
-        settings_row("PRIVACY","CONTACTS AND TELEMETRY",238);
-        settings_row("DISPLAY & POWER","FRONTLIGHT, REFRESH, STANDBY",358);
-        settings_row("ABOUT","FIRMWARE AND DEVICE INFO",478);
+        settings_row("PRIVACY","Contacts and telemetry",238);
+        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",358);
+        settings_row("ABOUT","Firmware and device info",478);
     }
 }
 
@@ -2241,30 +2320,41 @@ static void draw_standby(){
     // generated MeshInk artwork as About/splash rather than a text heading.
     draw_meshink_logo(ui_y(70),false);
 
-    const MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
-    const MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
+    const bool has_direct=status_unread>0;
+    const bool has_channel=status_channel_unread>0;
+    MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
+    MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
+    if(has_direct!=has_channel){
+        const int centred_x=(portrait_layout().width-ui_w(244))/2;
+        if(has_direct)direct_rect.x=centred_x;
+        else channel_rect.x=centred_x;
+    }
 
-    draw_standby_card(direct_rect);
-    draw_standby_envelope_icon(
-        direct_rect.x+(direct_rect.width-ui_w(120))/2,
-        direct_rect.y+ui_h(28));
-    char direct[12];
-    if(status_unread>99)strcpy(direct,"99+");
-    else snprintf(direct,sizeof(direct),"%u",status_unread);
-    standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11);
-    standby_centred("PRIVATE",direct_rect,direct_rect.y+ui_h(224),3);
-    standby_centred("MESSAGES",direct_rect,direct_rect.y+ui_h(260),3);
+    if(has_direct){
+        draw_standby_card(direct_rect);
+        draw_standby_envelope_icon(
+            direct_rect.x+(direct_rect.width-ui_w(120))/2,
+            direct_rect.y+ui_h(28));
+        char direct[12];
+        if(status_unread>99)strcpy(direct,"99+");
+        else snprintf(direct,sizeof(direct),"%u",status_unread);
+        standby_centred(direct,direct_rect,direct_rect.y+ui_h(125),11);
+        standby_centred("PRIVATE",direct_rect,direct_rect.y+ui_h(224),3);
+        standby_centred("MESSAGES",direct_rect,direct_rect.y+ui_h(260),3);
+    }
 
-    draw_standby_card(channel_rect);
-    draw_standby_channel_icon(
-        channel_rect.x+(channel_rect.width-ui_w(126))/2,
-        channel_rect.y+ui_h(22));
-    char channel[12];
-    if(status_channel_unread>99)strcpy(channel,"99+");
-    else snprintf(channel,sizeof(channel),"%u",status_channel_unread);
-    standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11);
-    standby_centred("CHANNEL",channel_rect,channel_rect.y+ui_h(224),3);
-    standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
+    if(has_channel){
+        draw_standby_card(channel_rect);
+        draw_standby_channel_icon(
+            channel_rect.x+(channel_rect.width-ui_w(126))/2,
+            channel_rect.y+ui_h(22));
+        char channel[12];
+        if(status_channel_unread>99)strcpy(channel,"99+");
+        else snprintf(channel,sizeof(channel),"%u",status_channel_unread);
+        standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11);
+        standby_centred("CHANNEL",channel_rect,channel_rect.y+ui_h(224),3);
+        standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
+    }
 
     meshink_display_fill_rect({ui_x(24),ui_y(805),ui_w(492),ui_h(3)},0,fb);
     char wake_button[40];
@@ -3532,7 +3622,13 @@ static void service_primary_button(){
         // refreshes from accidental short presses.
         if(!standby_active){
             last_user_activity=millis();
-            draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
+            if(screen==Screen::Maps){
+                local_mesh_refresh_ui_data();
+                map_base_valid=false;
+                open_screen(Screen::Maps);
+            }else{
+                draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
+            }
         }
     }pressed_at=0;handled=false;}
 }
