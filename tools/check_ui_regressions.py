@@ -1054,6 +1054,56 @@ assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_bo
 assert "cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz" in message_store_source, "boot cache timing logs the active storage CPU clock"
 assert "total=%lu.%01lums cpu=%luMHz ok=%u" in message_store_source, "runtime store timing logs the active storage CPU clock"
 
+# Test65: test.9 measures the existing splash/startup path before adding
+# progress-refresh UI. The measurements must separate LoRa from the GPS probe
+# and cover the outer setup phases without changing normal splash wording.
+for marker in (
+    "[T5-BOOTPERF] wireless-pre=%lums",
+    "[T5-BOOTPERF] ui-setup-call=%lums",
+    "[T5-BOOTPERF] local-mesh-call=%lums",
+    "[T5-BOOTPERF] wireless-post=%lums",
+    "[T5-BOOTPERF] maps-warm=%lums",
+    "[T5-BOOTPERF] ui-finish-call=%lums",
+    "[T5-BOOTPERF] startup-total=%lums",
+):
+    assert marker in unified_source, f"top-level boot timing missing {marker}"
+for marker in (
+    "[T5-BOOTPERF] mesh-board=%lums",
+    "[T5-BOOTPERF] mesh-radio=%lums",
+    "[T5-BOOTPERF] spiffs=%lums mounted=%u",
+    "[T5-BOOTPERF] mesh-datastore=%lums",
+    "[T5-BOOTPERF] mesh-core-begin=%lums",
+    "[T5-BOOTPERF] mesh-interface=%lums",
+    "[T5-BOOTPERF] gps-service=%lums",
+    "[T5-BOOTPERF] gps-prefs=%lums",
+    "[T5-BOOTPERF] mesh-runtime=%lums",
+    "[T5-BOOTPERF] mesh-ui-handoff=%lums",
+    "[T5-BOOTPERF] local-mesh-total=%lums",
+):
+    assert marker in companion_source, f"local MeshCore boot timing missing {marker}"
+for marker in (
+    "[T5-BOOTPERF] board-local=%lums",
+    "[T5-BOOTPERF] rtc=%lums",
+    "[T5-BOOTPERF] lora=%lums ready=%u",
+    "[T5-BOOTPERF] gps-probe=%lums locked=%u baud=%lu",
+    "[T5-BOOTPERF] radio-init-total=%lums",
+):
+    assert marker in board_target_source, f"board/radio boot timing missing {marker}"
+for marker in (
+    "[T5-BOOTPERF] ui-pre-display=%lums",
+    "[T5-BOOTPERF] display-init=%lums",
+    "[T5-BOOTPERF] touch-display-state=%lums",
+    "[T5-BOOTPERF] ui-prefs-status=%lums",
+    "[T5-BOOTPERF] splash-compose=%lums",
+    "[T5-BOOTPERF] splash-refresh=%lums",
+    "[T5-BOOTPERF] ui-setup-total=%lums",
+    "[T5-BOOTPERF] ui-finish=%lums",
+):
+    assert marker in source, f"UI splash boot timing missing {marker}"
+ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
+assert 'ui_centred("STARTING UP..."' in ui_setup_boot, "measurement build preserves the existing normal splash message"
+assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setup_boot and "LOADING MESSAGES" not in ui_setup_boot, "measurement build does not add progress refreshes before timings are known"
+
 
 # Testing and release artifacts use the same versioned naming convention.
 assert 'name: meshink-${{ steps.version.outputs.version }}' in testing_workflow_source, "testing artifact is named with the firmware version"
