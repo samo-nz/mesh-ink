@@ -1953,8 +1953,10 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     const int text_width=ui_text_width(page_text,2);
     const int text_left=(meshink_display_logical_width()-text_width)/2;
     ui_centred(page_text,y,2,0,true);
-    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
-    if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
+    // Chat history follows the message stack: older content is above the
+    // current/newest page, so swipe down to reveal it and swipe up to return.
+    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),true);
+    if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),false);
 }
 
 static int chat_compose_top(){
@@ -4034,7 +4036,7 @@ void ui_loop() {
                                       chat_history_available_paged(),
                                       chat_page,first,end,has_older);
             uint8_t next=chat_page;
-            if(tap.dy<0){
+            if(tap.dy>0){
                 if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
             }else if(chat_page>0)next=(uint8_t)(chat_page-1);
             if(next!=chat_page){
