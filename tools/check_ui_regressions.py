@@ -1083,6 +1083,7 @@ for marker in (
     assert marker in companion_source, f"local MeshCore boot timing missing {marker}"
 for marker in (
     "[T5-BOOTPERF] board-local=%lums",
+    "[T5-BOOTPERF] radio-rail-overlap=%lums remaining-wait=%lums required=%lums",
     "[T5-BOOTPERF] rtc=%lums",
     "[T5-BOOTPERF] lora=%lums ready=%u",
     "[T5-BOOTPERF] gps-probe=%lums locked=%u baud=%lu",
