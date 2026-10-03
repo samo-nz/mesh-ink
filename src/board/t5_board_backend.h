@@ -11,12 +11,23 @@ inline bool meshink_board_has_gps() {
 }
 
 void meshink_board_begin_companion();
+struct MeshInkDeepSleepRadioProbe {
+    bool valid=false;
+    bool transport_ok=false;
+    uint8_t dio1=0;
+    uint8_t busy=0;
+    uint16_t irq=0;
+    uint16_t packet_len=0;
+    uint8_t status=0;
+};
+
 void meshink_board_start_local_radio_settle();
 void meshink_board_begin_local();
 void meshink_board_begin_local_rx_wake();
 void meshink_board_boot_complete();
 bool meshink_board_woke_from_radio();
 bool meshink_board_woke_from_primary_button();
+bool meshink_board_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe);
 bool meshink_board_enter_deep_sleep_standby();
 void meshink_board_companion_exit_feedback_begin();
 void meshink_board_companion_release_resources();
