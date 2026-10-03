@@ -115,10 +115,13 @@ bool MeshInkMessageStore::create_empty(){
         Serial.println("[T5-STORE] ERROR reopening new message journal");
         return false;
     }
-    Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes\n",
+    if(ensure_cache())
+        memset(records_,0,MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage));
+    Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes cache=%s\n",
                   (unsigned)MESHINK_MESSAGE_CAPACITY,
                   (unsigned)(sizeof(header_)+
-                    MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)));
+                    MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)),
+                  records_?(cache_in_psram_?"PSRAM":"RAM"):"NONE");
     return true;
 }
 
