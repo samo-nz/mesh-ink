@@ -146,7 +146,7 @@ assert 'companion_set_low_power_cpu();' in companion_source, "BT companion appli
 assert "UI_IDLE_CPU_MHZ=80" in source and "UI_RENDER_CPU_MHZ=240" in source, "local UI uses 80 MHz cruise and 240 MHz render clocks"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")' in source, "local UI enters 80 MHz cruise after startup"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"wake")' in source, "wake returns to the 80 MHz interactive cruise clock before burst rendering"
-assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"display-complete")' in source and 'set_cpu_target(UI_IDLE_CPU_MHZ,"display-area-complete")' in source, "display work immediately returns to 80 MHz"
+assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete")' in source and 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete")' in source, "display work returns to the boot-aware or steady-state cruise clock"
 assert "set_cpu_target(160" not in source, "local UI no longer idles at 160 MHz"
 companion_setup_body = companion_source.split("void companion_setup() {",1)[1].split("void companion_loop()",1)[0]
 assert companion_setup_body.index("meshink_board_boot_complete();") < companion_setup_body.index("companion_set_low_power_cpu();"), "companion lowers CPU only after hardware/BLE setup"
