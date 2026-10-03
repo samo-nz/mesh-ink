@@ -1062,8 +1062,9 @@ static void ui_draw_compose_tail(const char* value,int x,int y,int max_width,
     const int caret_advance=ui_text_width_n(current.start,current.len,scale);
     constexpr int caret_width=2;
     const int caret_x=max(x,min(x+max_width-caret_width,x+caret_advance));
-    const int caret_height=max(14,(glyph_height*3)/4);
-    const int caret_y=current_y+(glyph_height-caret_height)/2;
+    const int caret_height=min(max_height-4,max(14,(glyph_height*3)/2));
+    const int centred_caret_y=current_y+(glyph_height-caret_height)/2;
+    const int caret_y=max(y+2,min(y+max_height-2-caret_height,centred_caret_y));
     meshink_display_fill_rect({caret_x,caret_y,caret_width,caret_height},0,fb);
 }
 
