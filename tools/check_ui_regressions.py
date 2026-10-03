@@ -100,7 +100,7 @@ contains("key_index_edge_extended(", "outer keyboard rows use edge-expanded hit 
 non_map_sampler = source.split("// Non-Maps keeps the legacy single-contact semantics supplied by the touch", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
-assert "const bool pressed=sample.pressed;" in non_map_sampler, "non-Maps preserves primary press semantics"
+assert "const bool pressed=sample.pressed&&!suppressed_home;" in non_map_sampler, "non-Maps preserves primary press semantics while fully suppressing keyboard Home"
 assert "held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
 assert "const bool keyboard_active=keyboard_visible||keyboard_landscape;" in non_map_sampler, "keyboard state gates capacitive Home"
 assert "const bool suppressed_home=sample.home&&keyboard_active;" in non_map_sampler, "keyboard-active Home frame is explicitly consumed"
