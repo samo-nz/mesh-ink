@@ -1025,6 +1025,35 @@ fail_direct = runtime_source[
 assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed);" in fail_direct, "direct failure persists one final state update"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
 
+# Test64: test.8 keeps the 80 MHz steady state but races actual message-store
+# flash I/O at 240 MHz. Cached PSRAM/RAM reads must never pay a clock switch.
+assert "STORE_FLASH_CPU_MHZ=240" in message_store_source, "message-store flash work has an explicit 240 MHz race-to-idle target"
+assert "struct StoreCpuBoostScope" in message_store_source and "setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ)" in message_store_source, "message-store owns a scoped flash CPU boost"
+assert "if(restore)setCpuFrequencyMhz(previous_mhz);" in message_store_source, "message-store flash boost restores the previous CPU clock"
+for method in (
+    "bool MeshInkMessageStore::load_cache(File& source)",
+    "bool MeshInkMessageStore::create_empty()",
+    "void MeshInkMessageStore::write_header()",
+    "bool MeshInkMessageStore::write_record(",
+    "bool MeshInkMessageStore::begin()",
+    "uint32_t MeshInkMessageStore::append(",
+):
+    body=message_store_source[message_store_source.index(method):]
+    assert "StoreCpuBoostScope" in body[:5000], f"{method} must race flash work at 240 MHz"
+read_body=message_store_source[
+    message_store_source.index("bool MeshInkMessageStore::read("):
+    message_store_source.index("bool MeshInkMessageStore::find_physical(")
+]
+assert read_body.index("if(records_){") < read_body.index("StoreCpuBoostScope cpu_boost;"), "cached message reads return before any CPU boost"
+find_body=message_store_source[
+    message_store_source.index("bool MeshInkMessageStore::find_physical("):
+    message_store_source.index("uint32_t MeshInkMessageStore::append(")
+]
+assert "if(records_){" in find_body and find_body.index("if(records_){") < find_body.index("StoreCpuBoostScope cpu_boost;"), "sequence lookup stays RAM-only when the journal mirror exists"
+assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_boost" not in message_store_source, "storage race-to-idle adds no dynamic allocation"
+assert "cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz" in message_store_source, "boot cache timing logs the active storage CPU clock"
+assert "total=%lu.%01lums cpu=%luMHz ok=%u" in message_store_source, "runtime store timing logs the active storage CPU clock"
+
 
 # Testing and release artifacts use the same versioned naming convention.
 assert 'name: meshink-${{ steps.version.outputs.version }}' in testing_workflow_source, "testing artifact is named with the firmware version"
