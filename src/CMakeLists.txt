@@ -11,7 +11,6 @@ idf_component_register(
         "message_store.cpp"
         "map_tiles.cpp"
         "pmtiles_reader.cpp"
-        "t5_timing.cpp"
         "ui_onboarding.cpp"
         "unified_main.cpp"
         "cache64_compat.cpp"
