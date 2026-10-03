@@ -1929,7 +1929,14 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
     snprintf(out,72,"%s%s%s",message.time,state[0]?"  ":"",state);
 }
 
-struct MessageBubbleGeometry { int x;int width;int height;int text_width; };
+struct MessageBubbleGeometry { int16_t x;int16_t width;int16_t height;int16_t text_width; };
+struct ChatGeometryCache {
+    MessageBubbleGeometry geometry[MESHINK_MESSAGE_CAPACITY]{};
+    uint8_t valid[MESHINK_MESSAGE_CAPACITY]{};
+    size_t count=(size_t)-1;
+    uint32_t revision=0xFFFFFFFFUL;
+};
+static ChatGeometryCache chat_geometry_cache{};
 
 static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
 #if T5_TIMING_DIAGNOSTICS
@@ -1957,6 +1964,29 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
         ui_message_perf.geometry_us+=(uint32_t)(micros()-perf_started);
 #endif
     return geometry;
+}
+
+static void chat_geometry_sync(size_t count){
+    const uint32_t revision=ui_data?ui_data->active_message_revision():0;
+    if(chat_geometry_cache.count==count&&chat_geometry_cache.revision==revision)return;
+    memset(chat_geometry_cache.valid,0,sizeof(chat_geometry_cache.valid));
+    chat_geometry_cache.count=count;
+    chat_geometry_cache.revision=revision;
+    // Page boundaries are still discovered lazily. Invalidate only the tiny
+    // anchor list when message layout could have changed.
+    chat_page_snapshot_count=(size_t)-1;
+    chat_page_known=0;
+}
+
+static MessageBubbleGeometry chat_message_geometry(size_t index){
+    if(index>=MESHINK_MESSAGE_CAPACITY||!ui_data)
+        return {0,0,0,0};
+    if(!chat_geometry_cache.valid[index]){
+        chat_geometry_cache.geometry[index]=
+            message_bubble_geometry(ui_data->active_message(index));
+        chat_geometry_cache.valid[index]=1;
+    }
+    return chat_geometry_cache.geometry[index];
 }
 
 static int message_bubble_height(const UiMessage& message){
@@ -1990,8 +2020,7 @@ static size_t chat_fill_backwards(size_t end,int available){
 #endif
     size_t candidate=end;int used=0;
     while(candidate>0){
-        const UiMessage& message=ui_data->active_message(candidate-1);
-        const int h=message_bubble_height(message);
+        const int h=chat_message_geometry(candidate-1).height;
         const int needed=h+(used?ui_h(8):0);
         if(used+needed>available)break;
         used+=needed;--candidate;
@@ -2070,10 +2099,6 @@ static int chat_history_available_current(){
 static int chat_history_available_paged(){
     return chat_history_bottom_paged()-ui_h(126);
 }
-static bool chat_needs_paging(size_t count){
-    return count&&chat_fill_backwards(count,chat_history_available_current())>0;
-}
-
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(12),ui_h(12)));
@@ -2103,20 +2128,17 @@ static void draw_chat(bool channel) {
     const uint32_t perf_layout_started=micros();
 #endif
     const size_t count=ui_data?ui_data->active_message_count():0;
+    chat_geometry_sync(count);
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
     size_t first=count,end=count;bool has_older=false;
     if(count){
-        if(keyboard){
+        if(keyboard)
             first=chat_fill_backwards(count,keyboard_layout.history_bottom-ui_h(126));
-        }else if(!chat_needs_paging(count)){
-            if(chat_page)reset_chat_paging();
-            first=0;end=count;
-        }else{
+        else
             chat_page_bounds_lazy(count,chat_history_available_current(),
                                   chat_history_available_paged(),
                                   chat_page,first,end,has_older);
-        }
     }
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t perf_layout_us=(uint32_t)(micros()-perf_layout_started);
@@ -2128,7 +2150,7 @@ static void draw_chat(bool channel) {
         int y=ui_y(126);
         for(size_t i=first;i<end;++i){
             const UiMessage& message=ui_data->active_message(i);
-            const MessageBubbleGeometry geometry=message_bubble_geometry(message);
+            const MessageBubbleGeometry geometry=chat_message_geometry(i);
             draw_message_bubble(message,y,geometry);
             y+=geometry.height+ui_h(8);
 #if T5_TIMING_DIAGNOSTICS
@@ -2151,6 +2173,10 @@ static void draw_chat(bool channel) {
     perf.store_read_worst_us=perf_store_after.read_worst_us;
     const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
     perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+    const uint32_t perf_cache_reads=perf_store_after.cache_reads-perf_store_before.cache_reads;
+    perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
+    const uint32_t perf_writes=perf_store_after.writes-perf_store_before.writes;
+    perf.store_writes=(uint16_t)(perf_writes>0xFFFFU?0xFFFFU:perf_writes);
     perf.active_messages=(uint16_t)(count>0xFFFFU?0xFFFFU:count);
     perf.visible_messages=perf_visible;
     perf.geometry_calls=ui_message_perf.geometry_calls;
@@ -4180,8 +4206,9 @@ void ui_loop() {
             const uint32_t perf_nav_started=micros();
 #endif
             const size_t count=ui_data?ui_data->active_message_count():0;
+            chat_geometry_sync(count);
             size_t first=count,end=count;bool has_older=false;
-            if(chat_needs_paging(count))
+            if(count)
                 chat_page_bounds_lazy(count,chat_history_available_current(),
                                       chat_history_available_paged(),
                                       chat_page,first,end,has_older);
@@ -4199,6 +4226,10 @@ void ui_loop() {
             perf.store_read_worst_us=perf_store_after.read_worst_us;
             const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
             perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+            const uint32_t perf_cache_reads=perf_store_after.cache_reads-perf_store_before.cache_reads;
+            perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
+            const uint32_t perf_writes=perf_store_after.writes-perf_store_before.writes;
+            perf.store_writes=(uint16_t)(perf_writes>0xFFFFU?0xFFFFU:perf_writes);
             perf.geometry_calls=ui_message_perf.geometry_calls;
             perf.fill_calls=ui_message_perf.fill_calls;
             perf.geometry_us=ui_message_perf.geometry_us;
