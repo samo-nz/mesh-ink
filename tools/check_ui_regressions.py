@@ -970,6 +970,10 @@ assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessa
 assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
 assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
 assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
+assert "static bool incomplete_direct_state(uint8_t state)" in message_store_source, "boot recovery identifies stale in-flight direct states"
+assert "item.kind!=(uint8_t)MeshInkMessageKind::Direct" in message_store_source, "boot recovery never rewrites channel sends"
+assert 'write_record(physical,item,"boot-fail")' in message_store_source, "stale in-flight direct sends are durably failed before history loads"
+assert "recovered-failed=%u errors=%u" in message_store_source, "boot reports stale-send recovery results"
 assert "meshink_message_store().begin()" in companion_source, "companion mode opens the same current-format journal"
 assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
 
