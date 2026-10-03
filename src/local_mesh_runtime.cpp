@@ -110,7 +110,7 @@ static const char* state_text(UiMessageState state){
     switch(state){case UiMessageState::Sending:return "SENDING";case UiMessageState::Sent:return "SENT";
         case UiMessageState::Delivered:return "DELIVERED";case UiMessageState::Failed:return "FAILED";
         case UiMessageState::Retrying1:return "RETRYING 1/2";case UiMessageState::Retrying2:return "RETRYING 2/2";
-        case UiMessageState::Retrying3:return "SENDING FLOOD";case UiMessageState::Retrying4:return "RETRYING 4/5";
+        case UiMessageState::Retrying3:return "SENDING";case UiMessageState::Retrying4:return "RETRYING 4/5";
         case UiMessageState::Retrying5:return "RETRYING 5/5";default:return "";}
 }
 static void format_last_heard(uint32_t timestamp,char out[72]){
@@ -176,15 +176,23 @@ class MeshCoreUiProvider final:public UiDataProvider{
                 snprintf(out,len,"HEARD %u REPEAT%s",(unsigned)stored.repeats,stored.repeats==1?"":"S");
                 return;
             }
+            const bool route_known=(stored.flags&MESHINK_MESSAGE_ROUTE_KNOWN)!=0;
+            const char* route=(stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)?"FLOOD":"DIRECT";
+            if(state==UiMessageState::Retrying1||state==UiMessageState::Retrying2){
+                const unsigned retry=state==UiMessageState::Retrying1?1U:2U;
+                if(route_known)snprintf(out,len,"RETRYING %s %u/2",route,retry);
+                else snprintf(out,len,"RETRYING %u/2",retry);
+                return;
+            }
             if(state==UiMessageState::Retrying3){
-                strncpy(out,"SENDING FLOOD",len-1);out[len-1]=0;return;
+                if(route_known)snprintf(out,len,"SENDING %s",route);
+                else {strncpy(out,"SENDING",len-1);out[len-1]=0;}
+                return;
             }
             const char* base=(stored.kind==(uint8_t)MessageKind::Direct&&
                               state==UiMessageState::Sent)?"SENDING":state_text(state);
-            if((stored.flags&MESHINK_MESSAGE_ROUTE_KNOWN)&&base[0]&&
-               state!=UiMessageState::Failed)
-                snprintf(out,len,"%s %s",base,
-                         (stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)?"FLOOD":"DIRECT");
+            if(route_known&&base[0]&&state!=UiMessageState::Failed)
+                snprintf(out,len,"%s %s",base,route);
             else if(base[0]){strncpy(out,base,len-1);out[len-1]=0;}
             return;
         }
@@ -749,6 +757,12 @@ static bool force_pending_direct_flood(){
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] direct retries exhausted; reset saved path for flood fallback");
     return true;
 }
+static bool pending_direct_route(bool& flood){
+    ContactInfo* contact=t5_mesh().lookupContactByPubKey(pending_direct.key,6);
+    if(!contact)return false;
+    flood=contact->out_path_len==OUT_PATH_UNKNOWN;
+    return true;
+}
 
 static size_t channel_message_limit(const char* node_name){
     const size_t name_len=node_name?strlen(node_name):0;
@@ -1054,10 +1068,10 @@ void local_mesh_loop(){
                 const UiMessageState retry_state=
                     (UiMessageState)((uint8_t)UiMessageState::Retrying1+
                                      pending_direct.retry-1);
+                bool route_flood=false;
+                const bool route_known=pending_direct_route(route_flood);
                 provider.transient_direct_status(
-                    pending_direct.sequence,retry_state,
-                    pending_direct.retry==DIRECT_RETRY_LIMIT,
-                    pending_direct.retry==DIRECT_RETRY_LIMIT);
+                    pending_direct.sequence,retry_state,route_known,route_flood);
                 if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
             }
         }
@@ -1092,6 +1106,11 @@ bool local_mesh_send_active(const char* text){
     memcpy(pending_direct.key,contact.id.pub_key,6);
     strncpy(pending_direct.text,text,sizeof(pending_direct.text)-1);
     pending_direct.sequence=provider.queue_direct(text,now);
+    // MeshCore chooses direct vs flood from the contact's current path. Show
+    // that route immediately; RESP_CODE_SENT will confirm the actual choice.
+    provider.transient_direct_status(
+        pending_direct.sequence,UiMessageState::Sending,true,
+        contact.out_path_len==OUT_PATH_UNKNOWN);
     if(!enqueue_direct_attempt()){fail_pending_direct("initial queue busy");return false;}
     return true;
 }
