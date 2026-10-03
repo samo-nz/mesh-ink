@@ -10,6 +10,7 @@
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
+#include <esp_sleep.h>
 #include <sys/time.h>
 #include <RTClib.h>
 #include "target.h"
@@ -701,7 +702,76 @@ void meshink_board_companion_release_resources() {
 
 void meshink_board_begin_companion(){board.begin();}
 void meshink_board_begin_local(){board.beginLocal();}
+void meshink_board_begin_local_rx_wake(){board.beginLocalRxWake();}
 void meshink_board_boot_complete(){board.onBootComplete();}
+
+bool meshink_board_woke_from_radio() {
+    if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT1)return false;
+    return (esp_sleep_get_ext1_wakeup_status()&(1ULL<<P_LORA_DIO_1))!=0;
+}
+
+bool meshink_board_woke_from_primary_button() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+}
+
+bool meshink_board_enter_deep_sleep_standby() {
+    // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
+    // sleeps; DIO1 is a level-high wake source and BOOT is a level-low source.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: BOOT is still held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 DIO1 already asserted");
+        return false;
+    }
+
+    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
+        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
+    if(button_wake!=ESP_OK||radio_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed button=%d radio=%d\n",
+                      (int)button_wake,(int)radio_wake);
+        return false;
+    }
+
+    // Keep the radio out of hardware reset while the ESP32 GPIO domain sleeps.
+    // The H752-01's external PCA9535 keeps the shared LoRa/GPS 3V3 rail on.
+    pinMode(P_LORA_NSS,OUTPUT);
+    digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(P_LORA_RESET,OUTPUT);
+    digitalWrite(P_LORA_RESET,HIGH);
+    const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+    if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        Serial.printf("[T5-DEEPSLEEP] SX1262 pin hold failed nss=%d reset=%d\n",
+                      (int)nss_hold,(int)reset_hold);
+        return false;
+    }
+    gpio_deep_sleep_hold_en();
+
+    // Close the race between the first level check and esp_deep_sleep_start().
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW||digitalRead(P_LORA_DIO_1)==HIGH){
+        gpio_deep_sleep_hold_dis();
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d dio1=%d\n",
+                      digitalRead(T5_PIN_BOOT_BUTTON),digitalRead(P_LORA_DIO_1));
+        return false;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] entering: DIO1(GPIO%d)=LOW BOOT(GPIO%d)=HIGH NSS/RESET=held-high\n",
+                  P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
 
 void T5Board::begin() {
     // The application renders and tears down the companion splash before this
@@ -748,6 +818,45 @@ void T5Board::beginLocal() {
     Serial1.begin(9600);
 #endif
     T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
+}
+
+void T5Board::beginLocalRxWake() {
+    // No display/I2C/GPS/battery startup here. The external power rail and
+    // SX1262 never stopped; tell MeshCore that its first RX is already buffered.
+    companion_radio_uses_arduino_irq=true;
+    startup_reason=BD_STARTUP_RX_PACKET;
+    Serial.println("[T5-DEEPSLEEP] board startup reason=BD_STARTUP_RX_PACKET; full board init skipped");
+}
+
+bool radio_resume_rx_wake() {
+    // Recreate only the ESP32-side SPI/GPIO transport. Do NOT call std_init(),
+    // toggle RESET, change the shared rail, or ask the radio for RNG entropy.
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
+    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+
+    const uint32_t busy_started=millis();
+    while(digitalRead(P_LORA_BUSY)==HIGH&&millis()-busy_started<50)delayMicroseconds(100);
+    if(digitalRead(P_LORA_BUSY)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] warm radio resume failed: BUSY stayed high for 50ms");
+        return false;
+    }
+
+    const uint32_t irq=radio.getIrqFlags();
+    const size_t packet_len=radio.getPacketLength();
+    const uint8_t status=radio.getStatus();
+    Serial.printf("[T5-DEEPSLEEP] warm radio transport ready dio1=%d busy=%d irq=0x%04lx packet_len=%u status=0x%02x\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY),
+                  (unsigned long)irq,(unsigned)packet_len,(unsigned)status);
+    if(digitalRead(P_LORA_DIO_1)!=HIGH)
+        Serial.println("[T5-DEEPSLEEP] WARNING: RX wake reported but DIO1 is no longer high");
+    return true;
 }
 
 bool radio_init() {

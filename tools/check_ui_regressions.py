@@ -173,7 +173,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+)?", firmware_version.group(1)), "firmware version must be a stable semantic version or numbered test build"
+assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+|deepsleep\d+)?", firmware_version.group(1)), "firmware version must be stable, a numbered test build, or a numbered deepsleep experiment"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
 # standby retains the lower-power five-minute cadence. Event-driven redraws may
@@ -210,7 +210,7 @@ for backend_detail in (
 ):
     assert backend_detail in wireless_backend_source, f"T5 wireless backend missing {backend_detail}"
 assert 'meshink_wireless_force_local_radios_off()' in unified_source, "local boot forces Wi-Fi and Bluetooth off"
-assert unified_source.count('meshink_wireless_force_local_radios_off()') == 2, "local wireless policy is enforced before and after MeshCore startup"
+assert unified_source.count('meshink_wireless_force_local_radios_off()') == 3, "local wireless policy is enforced for normal pre/post MeshCore startup and headless RX wake"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
 assert 'meshink_wireless_force_wifi_off()' in unified_source, "companion boot explicitly keeps unused Wi-Fi off"
@@ -1112,7 +1112,7 @@ assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS up
 # Test69: test.11 keeps only low-risk boot scheduling wins. Internal SPIFFS
 # mounting is independent of the LoRa/GPS rail, so do it while the rail is
 # still settling; MeshCore datastore/core lifecycle remains behind radio init.
-local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_is_running()")]
+local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_setup_rx_wake()")]
 assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"

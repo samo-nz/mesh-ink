@@ -9,6 +9,10 @@ bool meshink_radio_initialize() {
     return radio_init();
 }
 
+bool meshink_radio_resume_rx_wake() {
+    return radio_resume_rx_wake();
+}
+
 uint32_t meshink_radio_rng_seed() {
     return radio_driver.getRngSeed();
 }

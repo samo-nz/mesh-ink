@@ -17,6 +17,7 @@
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
+#include "companion_runtime.h"
 #include "map_tiles.h"
 #include "map_gestures.h"
 #include "ui_layout.h"
@@ -272,6 +273,9 @@ static bool touch_enabled=true;
 static bool standby_active=false;
 static bool hardware_failure=false;
 static uint8_t standby_timeout_index=1;
+static bool deep_sleep_standby=false;
+static bool deep_sleep_pending=false;
+static uint32_t deep_sleep_retry_at=0;
 static uint32_t last_user_activity=0;
 static bool status_wake_light=false;
 static bool message_alert_active=false;
@@ -452,7 +456,7 @@ static void frontlight_preview(uint8_t level){
 }
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
 static void frontlight_service(){if(message_alert_active||quick_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
-static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
+static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putBool("deep_standby",deep_sleep_standby);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 // Keep the original five-field single-touch event compatible with all UI
 // screens. Maps alone can add a completed two-finger gesture and tap timing.
@@ -2370,7 +2374,9 @@ static void draw_display_settings() {
     meshink_display_fill_rect({knob-ui_w(12),slider.y-ui_h(15),ui_w(24),ui_h(35)},0,fb);
     ui_text("-",layout.content_text_x,ui_y(452),3,0,true);
     ui_text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
-    settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
+    settings_row("STANDBY",standby_timeout_name(),538);
+    ui_action_button(deep_sleep_standby?"DEEP SLEEP":"NORMAL",
+                     meshink_settings_inline_action_rect(layout,538),true);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
     ui_action_button("SHUT DOWN",shutdown,false);
@@ -3563,6 +3569,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 const MeshInkUiRect slider=meshink_display_slider_track_rect(portrait_layout());
                 int value=((int)x-slider.x)*100/slider.width;
                 frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),538))){deep_sleep_standby=!deep_sleep_standby;save_frontlight_settings();show_toast(deep_sleep_standby?"DEEP SLEEP ON":"NORMAL STANDBY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit(x,y,meshink_shutdown_rect(portrait_layout()))){
@@ -3685,10 +3692,13 @@ static void enter_standby(const char* reason){
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
     draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
+    deep_sleep_pending=deep_sleep_standby;
+    deep_sleep_retry_at=millis();
+    if(deep_sleep_pending)Serial.println("[T5-DEEPSLEEP] standby screen committed; deep-sleep handoff armed after BOOT release");
 }
 
 static void leave_standby(){
-    if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;meshink_power_frontlight_set(0);frontlight_lit=false;
+    if(!standby_active)return;deep_sleep_pending=false;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;meshink_power_frontlight_set(0);frontlight_lit=false;
     if(standby_restore_landscape){
         standby_restore_landscape=false;
         keyboard_landscape=true;
@@ -3772,6 +3782,23 @@ static void service_primary_button(){
     }pressed_at=0;handled=false;}
 }
 
+void ui_prepare_headless_rx_wake() {
+    Preferences wake_prefs;
+    if(wake_prefs.begin("t5-ui",true)){
+        status_unread=wake_prefs.getUShort("unread_dm",0);
+        status_channel_unread=wake_prefs.getUShort("unread_ch",0);
+        wake_prefs.end();
+    }
+    // Existing receive hooks can now persist unread counts without starting
+    // framebuffer, display, touch or frontlight resources.
+    standby_active=true;
+    touch_enabled=false;
+    message_alert_active=false;
+    deep_sleep_pending=false;
+    Serial.printf("[T5-DEEPSLEEP] headless UI state only: unread_dm=%u unread_ch=%u; display/touch not initialized\n",
+                  (unsigned)status_unread,(unsigned)status_channel_unread);
+}
+
 void ui_setup() {
     ui_boot_cpu_active=true;
     set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
@@ -3806,7 +3833,7 @@ void ui_setup() {
     map_last_gps_saved=map_has_last_gps_position;
     map_saved_gps_latitude=map_last_gps_latitude;
     map_saved_gps_longitude=map_last_gps_longitude;
-    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
+    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);deep_sleep_standby=prefs.getBool("deep_standby",false);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
     if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness>100)frontlight_brightness=30;
     if(standby_timeout_index>3)standby_timeout_index=1;
@@ -3896,6 +3923,11 @@ void ui_loop() {
     }
     service_critical_battery();
     service_primary_button();
+    if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&!message_alert_active&&
+       !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
+        deep_sleep_retry_at=millis()+250;
+        if(local_mesh_enter_deep_sleep_standby())return;
+    }
     if(map_taps.count&&
        (screen!=Screen::Maps||standby_active||
         millis()-map_taps.last_at>=meshink_map_gestures::TAP_WINDOW_MS))

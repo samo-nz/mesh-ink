@@ -14,6 +14,7 @@
 #endif
 
 static bool companion_mode = false;
+static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
 
 static char terminal_line[48]{};
@@ -151,6 +152,42 @@ void setup() {
     setCpuFrequencyMhz(240);
     Serial.begin(115200);
     meshink_buttons_begin();
+
+    const bool radio_wake=meshink_board_woke_from_radio();
+    const bool button_wake=meshink_board_woke_from_primary_button();
+    if(radio_wake||button_wake)
+        Serial.printf("[T5-DEEPSLEEP] reset wake radio=%u button=%u\n",radio_wake?1U:0U,button_wake?1U:0U);
+
+    if(button_wake){
+        const uint32_t hold_started=millis();
+        while(meshink_primary_button_pressed()&&millis()-hold_started<2000UL)delay(10);
+        const bool long_hold=meshink_primary_button_pressed()&&millis()-hold_started>=2000UL;
+        if(long_hold){
+            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; continuing into normal full UI boot");
+        }else{
+            Serial.printf("[T5-DEEPSLEEP] BOOT released after %lums; treating as accidental/short wake and re-sleeping\n",
+                          (unsigned long)(millis()-hold_started));
+            Serial.flush();
+            if(meshink_board_enter_deep_sleep_standby())return;
+            Serial.println("[T5-DEEPSLEEP] short-wake re-sleep was refused; falling back to normal full boot");
+        }
+    }
+
+    if(radio_wake){
+        deep_sleep_rx_mode=true;
+        companion_mode=false;
+        Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=deep-rx-headless\n",
+                      T5_FIRMWARE_VERSION,meshink_board_name());
+        check_local_wireless_state("deep-rx-pre",
+            meshink_wireless_force_local_radios_off());
+        if(!local_mesh_setup_rx_wake()){
+            Serial.println("[T5-DEEPSLEEP] FATAL: minimal RX-wake startup failed; restarting into normal recovery boot");
+            Serial.flush();delay(100);ESP.restart();return;
+        }
+        Serial.println("[T5-DEEPSLEEP] startup=RX-WAKE-READY; UI intentionally not initialized");
+        return;
+    }
+
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=%s\n",
                   T5_FIRMWARE_VERSION,meshink_board_name(),
@@ -207,6 +244,10 @@ void setup() {
 
 void loop() {
     if(cache64_psram_blocked){delay(1000);return;}
+    if(deep_sleep_rx_mode){
+        local_mesh_rx_wake_loop();
+        return;
+    }
     if (companion_mode) {
         companion_loop();
         companion_exit_button();
