@@ -492,7 +492,7 @@ contains('if(result.parent_pmtiles)return "E-M";', "parent-only PMTiles viewport
 contains('if(result.parent_loose)return "E-P";', "parent-only loose viewport gets enlarged-source badge")
 contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?2:8;', "keyboard touch sampler uses 2 ms cadence for rapid repeated letters")
 contains("ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);", "message composer uses bottom-tail renderer")
-contains("const int multiline_lift=max(4,glyph_height/6);", "wrapped composer text is lifted clear of the lower field edge")
+contains("const int multiline_lift=max(8,glyph_height/3);", "wrapped composer descenders are lifted clear of the lower field edge")
 contains("constexpr int caret_width=2;", "message composer caret is two pixels wide")
 contains("const int caret_height=min(max_height-4,max(14,(glyph_height*3)/2));", "message composer caret extends beyond character height")
 contains("const int caret_y=max(y+2,min(y+max_height-2-caret_height,centred_caret_y));", "message composer caret stays inside the entry viewport")
@@ -1016,6 +1016,7 @@ assert "if(has_rx){" in message_store_source and "item.flags|=MESHINK_MESSAGE_HA
 assert "MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len" in runtime_source, "standalone receives avoid a second metadata rewrite"
 assert "MeshInkMessageOrigin::CompanionApp," in companion_source and "pkt!=nullptr" in companion_source, "companion receives persist RF metadata in the same write"
 assert "void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);" in message_store_header, "direct send response has a coalesced metadata update"
+assert "bool update_state(uint32_t sequence,UiMessageState state);" in message_store_header, "message journal reports whether a durable final state update succeeded"
 assert "item.state=(uint8_t)state;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes state"
 assert "item.ack=ack;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes ACK"
 assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
@@ -1026,8 +1027,8 @@ direct_attempt_response = runtime_source[
 assert "provider.confirm_direct_send(" not in direct_attempt_response and "provider.update_message(" not in direct_attempt_response, "direct attempt ACK/route metadata never reaches persistent provider methods"
 assert "provider.transient_direct_status(" in direct_attempt_response, "direct attempt ACK/route metadata updates the RAM-only UI overlay"
 direct_retry_loop = runtime_source[
-    runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
-    runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
+    runtime_source.index("else if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
+    runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("else if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
 ]
 assert "provider.update_message(" not in direct_retry_loop and "provider.confirm_direct_send(" not in direct_retry_loop, "direct retries never rewrite the journal"
 assert "provider.transient_direct_status(" in direct_retry_loop and "retry_state" in direct_retry_loop, "direct retry stages remain visible through the RAM-only UI overlay"
@@ -1041,7 +1042,10 @@ fail_direct = runtime_source[
     runtime_source.index("static void fail_pending_direct("):
     runtime_source.index("static bool enqueue_info_request(")
 ]
-assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed);" in fail_direct, "direct failure persists one final state update"
+assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed)" in fail_direct, "direct failure persists one final state update"
+assert "pending_direct.finalizing_failure=true;" in fail_direct, "terminal failure enters durable finalization before runtime state is cleared"
+assert "pending_direct.deadline=millis()+250;" in fail_direct and "retrying finalization" in fail_direct, "failed-state persistence is retried instead of being forgotten"
+assert "journal=FAILED" in fail_direct, "terminal failure is only completed after durable journal confirmation"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
 
 # Test64: test.8 keeps the 80 MHz steady state but races actual message-store
@@ -1304,7 +1308,7 @@ assert "if(!local_mesh_send_active(compose_text))return true;" in source, "lands
 
 assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "legacy retry states remain readable after upgrading"
 assert 'case UiMessageState::Retrying3:return "SENDING"' in runtime_source, "final retry state remains route-neutral until actual route metadata is applied"
-assert 'case UiMessageState::Retrying3:state="SENDING"' in source, "chat footer fallback does not invent a flood route"
+assert 'case UiMessageState::Retrying3:state="FINAL FLOOD"' in source, "chat footer fallback uses compact final-flood wording"
 assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "final runtime retry resets the stale saved path so MeshCore uses flood"
 assert "attempt==0?UiMessageState::Sending" in runtime_source and "provider.transient_direct_status(" in runtime_source and "journal=unchanged" in runtime_source, "radio attempt status is visible in RAM while the journal remains unchanged"
 assert "pending_direct.route_flood[attempt]=frame[1]!=0;" in runtime_source, "MeshCore RESP_CODE_SENT route flag is retained as the authoritative actual route"
@@ -1313,8 +1317,12 @@ send_active=runtime_source[runtime_source.index("bool local_mesh_send_active("):
 assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.transient_direct_status(" in send_active, "initial UI route reflects the same saved-path decision MeshCore will use"
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
+assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
+assert "if(!sequence||!store_.update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
+assert 'return write_record(p,item,"state");' in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
+assert '"FINAL %s"' in formatter, "final attempt uses compact route-aware wording"
 assert '"SENDING %s"' in formatter, "send footer reports the actual direct/flood route"
 assert "state!=UiMessageState::Sending" not in formatter, "sending records and transient route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"

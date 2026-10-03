@@ -404,13 +404,19 @@ uint32_t MeshInkMessageStore::append(
     return item.sequence;
 }
 
-void MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
-    uint16_t p;if(!find_physical(sequence,p)||!file_)return;
+bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
+    uint16_t p;
+    if(!find_physical(sequence,p)||!file_){
+        Serial.printf("[T5-STORE] ERROR state update missing sequence=%lu\n",
+                      (unsigned long)sequence);
+        return false;
+    }
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
-    if(item.state==(uint8_t)state)return;
-    item.state=(uint8_t)state;write_record(p,item,"state");
+    else if(!read_record(file_,p,item))return false;
+    if(item.state==(uint8_t)state)return true;
+    item.state=(uint8_t)state;
+    return write_record(p,item,"state");
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){

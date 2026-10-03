@@ -1041,7 +1041,7 @@ static void ui_draw_compose_tail(const char* value,int x,int y,int max_width,
     // One line remains vertically comfortable. Once wrapping starts, keep the
     // newest line near the bottom but lift it slightly clear of the rounded
     // field edge so descenders and the lower glyph row are never clipped.
-    const int multiline_lift=max(4,glyph_height/6);
+    const int multiline_lift=max(8,glyph_height/3);
     const int current_y=line_count<=1
         ?y+(max_height-glyph_height)/2
         :y+max_height-glyph_height-multiline_lift;
@@ -2107,7 +2107,7 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
             case UiMessageState::Failed:state="FAILED";break;
             case UiMessageState::Retrying1:state="RETRYING 1/2";break;
             case UiMessageState::Retrying2:state="RETRYING 2/2";break;
-            case UiMessageState::Retrying3:state="SENDING";break;
+            case UiMessageState::Retrying3:state="FINAL FLOOD";break;
             case UiMessageState::Retrying4:state="RETRYING 4/5";break;
             case UiMessageState::Retrying5:state="RETRYING 5/5";break;
             default:break;
