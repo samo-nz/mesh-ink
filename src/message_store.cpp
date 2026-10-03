@@ -23,7 +23,8 @@ struct StoreCpuBoostScope {
     uint32_t previous_mhz=0;
     bool restore=false;
 
-    StoreCpuBoostScope(){
+    explicit StoreCpuBoostScope(bool enabled=true){
+        if(!enabled)return;
         previous_mhz=getCpuFrequencyMhz();
         if(previous_mhz<STORE_FLASH_CPU_MHZ)
             restore=setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ);
@@ -473,8 +474,7 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
     if(!initialized_||!file_||!ack)return false;
     // Normal operation scans the PSRAM/RAM journal mirror without changing
     // CPU frequency. Only the cache-allocation fallback touches flash here.
-    StoreCpuBoostScope* flash_boost=nullptr;
-    if(!records_)flash_boost=new StoreCpuBoostScope();
+    StoreCpuBoostScope flash_boost(!records_);
     MeshInkStoredMessage item{};
     bool delivered=false;
     for(size_t n=header_.count;n>0;--n){
@@ -490,7 +490,6 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
             break;
         }
     }
-    delete flash_boost;
     return delivered;
 }
 
