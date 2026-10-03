@@ -828,9 +828,11 @@ void T5Board::beginLocalRxWake() {
     Serial.println("[T5-DEEPSLEEP] board startup reason=BD_STARTUP_RX_PACKET; full board init skipped");
 }
 
-bool radio_resume_rx_wake() {
+static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
+    probe={};
     // Recreate only the ESP32-side SPI/GPIO transport. Do NOT call std_init(),
-    // toggle RESET, change the shared rail, or ask the radio for RNG entropy.
+    // toggle RESET, change the shared rail, clear IRQs, read FIFO contents or
+    // ask the radio for RNG entropy. This is deliberately non-destructive.
     gpio_deep_sleep_hold_dis();
     gpio_hold_dis((gpio_num_t)P_LORA_NSS);
     gpio_hold_dis((gpio_num_t)P_LORA_RESET);
@@ -841,22 +843,43 @@ bool radio_resume_rx_wake() {
     pinMode(P_LORA_BUSY,INPUT);
     radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
 
+    probe.valid=true;
+    probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
+    probe.busy=(uint8_t)digitalRead(P_LORA_BUSY);
+
     const uint32_t busy_started=millis();
     while(digitalRead(P_LORA_BUSY)==HIGH&&millis()-busy_started<50)delayMicroseconds(100);
-    if(digitalRead(P_LORA_BUSY)==HIGH){
-        Serial.println("[T5-DEEPSLEEP] warm radio resume failed: BUSY stayed high for 50ms");
+    probe.busy=(uint8_t)digitalRead(P_LORA_BUSY);
+    if(probe.busy==HIGH){
+        Serial.println("[T5-DEEPSLEEP] warm radio probe failed: BUSY stayed high for 50ms");
         return false;
     }
 
-    const uint32_t irq=radio.getIrqFlags();
-    const size_t packet_len=radio.getPacketLength();
-    const uint8_t status=radio.getStatus();
-    Serial.printf("[T5-DEEPSLEEP] warm radio transport ready dio1=%d busy=%d irq=0x%04lx packet_len=%u status=0x%02x\n",
-                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY),
-                  (unsigned long)irq,(unsigned)packet_len,(unsigned)status);
-    if(digitalRead(P_LORA_DIO_1)!=HIGH)
-        Serial.println("[T5-DEEPSLEEP] WARNING: RX wake reported but DIO1 is no longer high");
+    probe.irq=(uint16_t)radio.getIrqFlags();
+    probe.packet_len=(uint16_t)radio.getPacketLength();
+    probe.status=radio.getStatus();
+    probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
+    probe.transport_ok=true;
     return true;
+}
+
+bool meshink_board_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
+    const bool ok=t5_probe_deep_sleep_radio(probe);
+    Serial.printf("[T5-DEEPSLEEP] retained-radio probe ok=%u dio1=%u busy=%u irq=0x%04x packet_len=%u status=0x%02x\n",
+                  ok?1U:0U,(unsigned)probe.dio1,(unsigned)probe.busy,
+                  (unsigned)probe.irq,(unsigned)probe.packet_len,(unsigned)probe.status);
+    return ok;
+}
+
+bool radio_resume_rx_wake() {
+    MeshInkDeepSleepRadioProbe probe{};
+    const bool ok=t5_probe_deep_sleep_radio(probe);
+    Serial.printf("[T5-DEEPSLEEP] warm radio transport ok=%u dio1=%u busy=%u irq=0x%04x packet_len=%u status=0x%02x\n",
+                  ok?1U:0U,(unsigned)probe.dio1,(unsigned)probe.busy,
+                  (unsigned)probe.irq,(unsigned)probe.packet_len,(unsigned)probe.status);
+    if(ok&&probe.dio1!=HIGH)
+        Serial.println("[T5-DEEPSLEEP] WARNING: RX wake reported but DIO1 is no longer high");
+    return ok;
 }
 
 bool radio_init() {
