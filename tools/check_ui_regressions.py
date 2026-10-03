@@ -286,6 +286,11 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
+contains("if(tap.dy>0){", "message history swipes down to older pages")
+contains("if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),true);", "message history newer-page hint points up")
+contains("if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),false);", "message history older-page hint points down")
+assert "int next=(int)page+(tap.dy<0?1:-1);" in source, "generic list paging keeps its original swipe direction"
+assert "int next=(int)details_page+(tap.dy<0?1:-1);" in source, "Node Info paging keeps its original swipe direction"
 contains("chat_page_bounds_lazy(count,chat_history_available_current(),", "conversation paging starts with the taskbar-aware current-page height")
 contains("chat_history_available_paged(),", "conversation paging gives older pages their larger taskbar-free height")
 contains("draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));", "older history page indicator uses the reclaimed lower screen area")
