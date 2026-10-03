@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 #include <string.h>
 
 namespace {
@@ -21,6 +22,10 @@ MeshInkMessageStore journal;
 uint32_t perf_reads=0;
 uint32_t perf_read_us=0;
 uint32_t perf_read_worst_us=0;
+uint32_t perf_cache_reads=0;
+uint32_t perf_writes=0;
+uint32_t perf_write_us=0;
+uint32_t perf_write_worst_us=0;
 #endif
 
 static size_t record_offset(uint16_t physical){
@@ -46,9 +51,49 @@ void meshink_message_store_perf_snapshot(MeshInkMessageStorePerf& out){
     out.reads=perf_reads;
     out.read_us=perf_read_us;
     out.read_worst_us=perf_read_worst_us;
+    out.cache_reads=perf_cache_reads;
+    out.writes=perf_writes;
+    out.write_us=perf_write_us;
+    out.write_worst_us=perf_write_worst_us;
 #else
     out=MeshInkMessageStorePerf{};
 #endif
+}
+
+bool MeshInkMessageStore::ensure_cache(){
+    if(records_)return true;
+    const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+    records_=(MeshInkStoredMessage*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    cache_in_psram_=records_!=nullptr;
+    if(!records_)records_=(MeshInkStoredMessage*)heap_caps_malloc(bytes,MALLOC_CAP_8BIT);
+    if(!records_){
+        Serial.printf("[T5-STORE] WARN message cache allocation failed bytes=%u\n",(unsigned)bytes);
+        return false;
+    }
+    memset(records_,0,bytes);
+    return true;
+}
+
+bool MeshInkMessageStore::load_cache(File& source){
+    if(!ensure_cache())return false;
+    const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+    if(!source.seek(sizeof(MeshInkMessageStoreHeader)))return false;
+    const uint32_t started=micros();
+    const size_t got=source.read((uint8_t*)records_,bytes);
+    const uint32_t elapsed=(uint32_t)(micros()-started);
+#if T5_TIMING_DIAGNOSTICS
+    ++perf_reads;perf_read_us+=elapsed;
+    if(elapsed>perf_read_worst_us)perf_read_worst_us=elapsed;
+#endif
+    if(got!=bytes){
+        heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;
+        return false;
+    }
+    Serial.printf("[T5-STORE] cache-load=%lu.%01lums storage=%s bytes=%u\n",
+                  (unsigned long)(elapsed/1000UL),
+                  (unsigned long)((elapsed%1000UL)/100UL),
+                  cache_in_psram_?"PSRAM":"RAM",(unsigned)bytes);
+    return true;
 }
 
 bool MeshInkMessageStore::create_empty(){
@@ -70,10 +115,13 @@ bool MeshInkMessageStore::create_empty(){
         Serial.println("[T5-STORE] ERROR reopening new message journal");
         return false;
     }
-    Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes\n",
+    if(ensure_cache())
+        memset(records_,0,MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage));
+    Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes cache=%s\n",
                   (unsigned)MESHINK_MESSAGE_CAPACITY,
                   (unsigned)(sizeof(header_)+
-                    MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)));
+                    MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)),
+                  records_?(cache_in_psram_?"PSRAM":"RAM"):"NONE");
     return true;
 }
 
@@ -89,11 +137,22 @@ void MeshInkMessageStore::write_header(){
 
 bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record){
     if(!initialized_||!file_||physical>=MESHINK_MESSAGE_CAPACITY)return false;
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t started=micros();
+#endif
     const bool ok=write_record_to(file_,physical,record);
-    file_.flush();
-    if(!ok)
+    if(ok)file_.flush();
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t elapsed=(uint32_t)(micros()-started);
+    ++perf_writes;perf_write_us+=elapsed;
+    if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
+#endif
+    if(!ok){
         Serial.printf("[T5-STORE] ERROR writing journal record=%u\n",(unsigned)physical);
-    return ok;
+        return false;
+    }
+    if(records_)records_[physical]=record;
+    return true;
 }
 
 bool MeshInkMessageStore::begin(){
@@ -111,9 +170,14 @@ bool MeshInkMessageStore::begin(){
     if(header_ok&&disk.magic==STORE_MAGIC&&disk.version==STORE_VERSION&&
        disk.capacity==MESHINK_MESSAGE_CAPACITY&&disk.head<MESHINK_MESSAGE_CAPACITY&&
        disk.count<=MESHINK_MESSAGE_CAPACITY&&file_size==expected_v3){
-        header_=disk;file_=SPIFFS.open(STORE_PATH,"r+");if(!file_)return false;initialized_=true;
-        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=0 header=%uB\n",
+        header_=disk;
+        File cache_source=SPIFFS.open(STORE_PATH,"r");
+        const bool cache_loaded=cache_source&&load_cache(cache_source);
+        if(cache_source)cache_source.close();
+        file_=SPIFFS.open(STORE_PATH,"r+");if(!file_)return false;initialized_=true;
+        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB\n",
                       (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
+                      cache_loaded?(cache_in_psram_?"PSRAM":"RAM"):"NONE",
                       (unsigned)sizeof(header_));
         return true;
     }
@@ -136,29 +200,38 @@ bool MeshInkMessageStore::begin(){
 }
 
 bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
-    if(!initialized_||!file_||logical>=header_.count)return false;
+    if(!initialized_||logical>=header_.count)return false;
     const uint16_t physical=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
+    if(records_){
+        out=records_[physical];
+#if T5_TIMING_DIAGNOSTICS
+        ++perf_cache_reads;
+#endif
+        return true;
+    }
+    if(!file_)return false;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t started=micros();
 #endif
     const bool ok=read_record(file_,physical,out);
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t elapsed=(uint32_t)(micros()-started);
-    ++perf_reads;
-    perf_read_us+=elapsed;
+    ++perf_reads;perf_read_us+=elapsed;
     if(elapsed>perf_read_worst_us)perf_read_worst_us=elapsed;
 #endif
     return ok;
 }
 
 bool MeshInkMessageStore::find_physical(uint32_t sequence,uint16_t& physical) const{
-    if(!initialized_||!file_||!sequence)return false;
+    if(!initialized_||!sequence)return false;
     MeshInkStoredMessage item{};
-    // State/ACK/route updates overwhelmingly target the newest message. Search
-    // newest-first so the common case is one record read instead of up to 250.
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(records_){
+            if(records_[p].sequence==sequence){physical=p;return true;}
+            continue;
+        }
+        if(!file_||!read_record(file_,p,item))break;
         if(item.sequence==sequence){physical=p;return true;}
     }
     return false;
@@ -197,15 +270,24 @@ uint32_t MeshInkMessageStore::append(
     }
 
     if(!file_)return 0;
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t started=micros();
+#endif
     const bool record_ok=write_record_to(file_,physical,item);
     bool header_ok=false;
     if(record_ok&&file_.seek(0))
         header_ok=file_.write((const uint8_t*)&next,sizeof(next))==sizeof(next);
-    file_.flush();
+    if(record_ok&&header_ok)file_.flush();
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t elapsed=(uint32_t)(micros()-started);
+    perf_writes+=2;perf_write_us+=elapsed;
+    if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
+#endif
     if(!record_ok||!header_ok){
         Serial.println("[T5-STORE] ERROR appending journal record");
         return 0;
     }
+    if(records_)records_[physical]=item;
     header_=next;
     return item.sequence;
 }
@@ -213,57 +295,67 @@ uint32_t MeshInkMessageStore::append(
 void MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){item.state=(uint8_t)state;write_record_to(file_,p,item);file_.flush();}
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.state==(uint8_t)state)return;
+    item.state=(uint8_t)state;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){item.ack=ack;write_record_to(file_,p,item);file_.flush();}
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.ack==ack)return;
+    item.ack=ack;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
-        write_record_to(file_,p,item);file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.snr_q4==snr_q4&&item.path_len==path_len&&(item.flags&MESHINK_MESSAGE_HAS_RX))return;
+    item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
+    write_record(p,item);
 }
 
 void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
-        if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
-        else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
-        write_record_to(file_,p,item);file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    const uint8_t before=item.flags;
+    item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+    if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+    else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+    if(item.flags==before)return;
+    write_record(p,item);
 }
 
 void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.repeats=repeats;item.repeat_snr_q4=snr_q4;
-        write_record_to(file_,p,item);file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.repeats==repeats&&item.repeat_snr_q4==snr_q4)return;
+    item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_outgoing(
         uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.state=(uint8_t)state;
-        item.ack=ack;
-        item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
-        if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
-        else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
-        write_record_to(file_,p,item);
-        file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    const MeshInkStoredMessage before=item;
+    item.state=(uint8_t)state;
+    item.ack=ack;
+    item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+    if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+    else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+    if(!memcmp(&before,&item,sizeof(item)))return;
+    write_record(p,item);
 }
 
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
@@ -271,10 +363,12 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))break;
         if(item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
+            if(item.state==(uint8_t)UiMessageState::Delivered)return true;
             item.state=(uint8_t)UiMessageState::Delivered;
-            const bool ok=write_record_to(file_,p,item);file_.flush();return ok;
+            return write_record(p,item);
         }
     }
     return false;
@@ -287,7 +381,8 @@ uint32_t MeshInkMessageStore::find_matching_outgoing(
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))break;
         if(item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
            item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
            strncmp(item.text,text,sizeof(item.text)))continue;

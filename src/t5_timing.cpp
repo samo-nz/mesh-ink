@@ -375,14 +375,20 @@ static void print_slow(const SlowCycleEvent& slow){
             (unsigned)d.message_rebuild.active_messages);
         print_ms_value(d.message_rebuild.elapsed_us);
         Serial.print(" store=");print_ms_value(d.message_rebuild.store_read_us);
-        Serial.printf(" reads=%u",(unsigned)d.message_rebuild.store_reads);
+        Serial.printf(" flash-reads=%u ram-reads=%u writes=%u",
+            (unsigned)d.message_rebuild.store_reads,
+            (unsigned)d.message_rebuild.store_cache_reads,
+            (unsigned)d.message_rebuild.store_writes);
         Serial.print(" global-worst=");print_ms_value(d.message_rebuild.store_read_worst_us);
         Serial.println();
     }
     if(d.message_nav.elapsed_us){
         Serial.print("[T5-MSGPERF] nav total=");print_ms_value(d.message_nav.elapsed_us);
         Serial.print(" store=");print_ms_value(d.message_nav.store_read_us);
-        Serial.printf(" reads=%u",(unsigned)d.message_nav.store_reads);
+        Serial.printf(" flash-reads=%u ram-reads=%u writes=%u",
+            (unsigned)d.message_nav.store_reads,
+            (unsigned)d.message_nav.store_cache_reads,
+            (unsigned)d.message_nav.store_writes);
         Serial.print(" global-worst=");print_ms_value(d.message_nav.store_read_worst_us);
         Serial.printf(" geom=%u/",(unsigned)d.message_nav.geometry_calls);
         print_ms_value(d.message_nav.geometry_us);
@@ -404,7 +410,10 @@ static void print_slow(const SlowCycleEvent& slow){
         Serial.print(" layout=");print_ms_value(d.message_draw.layout_us);
         Serial.print(" render=");print_ms_value(d.message_draw.render_us);
         Serial.print(" store=");print_ms_value(d.message_draw.store_read_us);
-        Serial.printf(" reads=%u",(unsigned)d.message_draw.store_reads);
+        Serial.printf(" flash-reads=%u ram-reads=%u writes=%u",
+            (unsigned)d.message_draw.store_reads,
+            (unsigned)d.message_draw.store_cache_reads,
+            (unsigned)d.message_draw.store_writes);
         Serial.print(" global-worst=");print_ms_value(d.message_draw.store_read_worst_us);
         Serial.println();
         Serial.printf("[T5-MSGPERF] work geom=%u/",

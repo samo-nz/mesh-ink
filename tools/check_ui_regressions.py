@@ -942,38 +942,38 @@ assert "meshink_message_store().begin()" in companion_source, "companion mode op
 assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
 
 
-# Test51: the 250-message journal is flash-authoritative. Neither the full
-# journal nor 250 rendered message bodies may be duplicated in RAM/PSRAM.
-assert "MeshInkStoredMessage* records_" not in message_store_header, "journal must not allocate a 250-record RAM/PSRAM backing array"
-assert "MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]" not in message_store_header, "journal records stay exclusively in SPIFFS"
-assert "bool read(size_t logical,MeshInkStoredMessage& out) const;" in message_store_header, "journal exposes fixed-record on-demand reads"
-assert "MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)" in message_store_source, "flash file retains all 250 fixed-size records"
-assert "record-cache=0 header=%uB" in message_store_source, "boot transcript reports zero cached message records"
-assert "mutable File file_{};" in message_store_header, "one lightweight journal file handle is reused for record seeks"
-assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps only tiny journal-position indices"
-assert "mutable MessageView active_message_view_{};" in runtime_source, "UI keeps one scratch rendered message instead of 250"
-assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "full rendered history is never cached"
-assert "store_.read(active_indices_[i],item)" in runtime_source, "individual visible/measured messages are loaded from flash on demand"
-assert "heap_caps_calloc" not in message_store_source and "heap_caps_calloc" not in runtime_source, "message history no longer needs large PSRAM allocations"
+# Test51: SPIFFS remains the persistent authority, but the running session is
+# RAM-first. Only raw records are mirrored; rendered history/pages are not.
+assert "MeshInkStoredMessage* records_=nullptr;" in message_store_header, "journal owns a runtime raw-record cache"
+assert "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT" in message_store_source, "raw journal cache prefers PSRAM"
+assert "source.read((uint8_t*)records_,bytes)" in message_store_source, "journal is loaded sequentially once at startup"
+assert "out=records_[physical];" in message_store_source, "normal logical reads use the RAM mirror"
+assert "if(records_)records_[physical]=record;" in message_store_source, "successful metadata writes update the RAM mirror"
+assert "if(records_)records_[physical]=item;" in message_store_source, "successful appends update the RAM mirror"
+assert "record-cache=%s header=%uB" in message_store_source, "boot transcript reports cache placement"
+assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps compact journal indices"
+assert "mutable MessageView active_message_view_{};" in runtime_source, "UI still formats only one scratch message at a time"
+assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "formatted history is never prebuilt"
+assert "store_.read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
 assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal startup remains after display initialization"
 
 
-# Test52: message storage stays responsive/battery-efficient with the current
-# v3 journal and lazy history indexing.
+# Test52: page history stays on-demand. Only tiny anchors and lazy per-message
+# geometry metadata are retained; pages themselves are never materialized.
 assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
-assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rescan flash only after message history changes"
+assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
 assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
-assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews are rebuilt with one linear journal pass"
+assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews use one linear RAM-backed journal pass"
 assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
 assert "rebuild_active();" not in runtime_source[runtime_source.index("void refresh(bool force=false)"):runtime_source.index("void received_direct")], "periodic provider refresh must not rebuild the active message index"
-assert "for(size_t n=header_.count;n>0;--n)" in message_store_source[message_store_source.index("bool MeshInkMessageStore::find_physical"):message_store_source.index("uint32_t MeshInkMessageStore::append")], "message state lookup searches newest-first"
-assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
-assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling remains non-destructive"
-assert "migrate_legacy" not in message_store_source, "retired migration machinery cannot re-enter the message-store hot path"
-assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only tiny page anchors"
-assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat page composition remains height-aware and incremental"
-assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message record is read once and reused for height plus drawing"
+assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only compact page anchors"
+assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat pages remain height-aware and built only when requested"
+assert "struct ChatGeometryCache" in source and "uint8_t valid[MESHINK_MESSAGE_CAPACITY]" in source, "only compact lazy geometry metadata is cached"
+assert "if(!chat_geometry_cache.valid[index])" in source, "message geometry is computed only on first demand"
+assert "rebuild_chat_geometry_cache" not in source, "history geometry is never prebuilt in bulk"
+assert "chat_needs_paging" not in source, "draw and swipe paths share the same lazy page-boundary calculation"
+assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message content remains on-demand"
 assert "item.sequence==0||!matches(item)" in runtime_source, "sequence-zero records can never enter an active chat index"
 
 
@@ -1016,7 +1016,7 @@ assert "geometry.text_width,3,color,false,16" in source, "long messages remain r
 assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
 assert "rounded_box(back_rect" in source and "ui_action_button(action,action_rect,true)" in source, "chat header actions share the rounded visual language"
 assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "built-in typography/rounding adds no dynamic memory"
-assert "const MessageBubbleGeometry geometry=message_bubble_geometry(message);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse one geometry measurement for drawing"
+assert "const MessageBubbleGeometry geometry=chat_message_geometry(i);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse lazily cached geometry for drawing"
 
 
 # Test55: the chat/contact visual language extends across the rest of the UI
@@ -1045,7 +1045,7 @@ assert "ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,t
 assert "static int ui_text_max_line_width(" in source and "ui_text_max_line_width(message.text,3)" in source, "bubble width follows the longest explicit message line"
 assert "min(16,ui_wrapped_line_count(message.text,text_width,3))" in source, "bubble measurement cannot exceed the renderer's sixteen-line limit"
 assert "if(used+needed>available)break;" in source, "chat paging only admits complete bubbles into the visible viewport"
-assert "static bool chat_needs_paging(size_t count)" in source and "chat_history_available_current()" in source, "current conversation paging reserves the taskbar and composer"
+assert "chat_page_bounds_lazy(count,chat_history_available_current()," in source, "current conversation lazy paging reserves the taskbar and composer"
 assert "const int compose_y=chat_compose_top();" in source, "message composer drawing uses shared vertical geometry"
 assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"

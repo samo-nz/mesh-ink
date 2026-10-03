@@ -129,6 +129,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     UiMapNode map_nodes_[MAX_MAP_NODES]{};
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
+    uint32_t active_revision_=1;
     bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
     uint32_t conversation_store_revision_=0xFFFFFFFFUL;
     uint32_t conversation_contacts_signature_=0;
@@ -289,6 +290,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
             if(!store_.read(i,item)||item.sequence==0||!matches(item))continue;
             active_indices_[active_count_++]=(uint16_t)i;
         }
+        ++active_revision_;
 #if T5_TIMING_DIAGNOSTICS
         const uint32_t perf_elapsed=(uint32_t)(micros()-perf_started);
         meshink_message_store_perf_snapshot(perf_after);
@@ -298,6 +300,8 @@ class MeshCoreUiProvider final:public UiDataProvider{
         perf.store_read_worst_us=perf_after.read_worst_us;
         const uint32_t perf_reads=perf_after.reads-perf_before.reads;
         perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+        const uint32_t perf_cache_reads=perf_after.cache_reads-perf_before.cache_reads;
+        perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
         perf.journal_messages=(uint16_t)(perf_journal_count>0xFFFFU?0xFFFFU:perf_journal_count);
         perf.active_messages=(uint16_t)(active_count_>0xFFFFU?0xFFFFU:active_count_);
         t5_timing_note_message_rebuild(perf);
@@ -398,13 +402,13 @@ public:
     }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
     uint32_t queue_direct(const char* text,uint32_t timestamp){const uint32_t sequence=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return sequence;}
-    void update_message(uint32_t sequence,UiMessageState state){if(sequence)store_.update_state(sequence,state);ui_request_data_refresh("message-state");}
+    void update_message(uint32_t sequence,UiMessageState state){if(sequence){store_.update_state(sequence,state);++active_revision_;}ui_request_data_refresh("message-state");}
     void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state){
-        if(sequence)store_.update_outgoing(sequence,state,ack,flood);
+        if(sequence){store_.update_outgoing(sequence,state,ack,flood);++active_revision_;}
         ui_request_data_refresh("message-route");
     }
     void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
-        if(sequence)store_.update_repeat(sequence,repeats,snr_q4);ui_request_data_refresh("channel-repeat");
+        if(sequence){store_.update_repeat(sequence,repeats,snr_q4);++active_revision_;}ui_request_data_refresh("channel-repeat");
     }
     size_t map_node_count() const override {return map_node_count_;}
     bool map_node(size_t index,UiMapNode& out) const override {
@@ -652,6 +656,7 @@ public:
         format_message_network(item,active_message_view_.network,sizeof(active_message_view_.network));
         return active_message_view_.entry;
     }
+    uint32_t active_message_revision()const override{return active_revision_;}
     bool active_contact(ContactInfo& out)const{if(active_channel_)return false;auto* found=t5_mesh().lookupContactByPubKey(active_key_,6);if(!found)return false;out=*found;return true;}
     uint8_t active_channel_index()const{return active_key_[0];}
     bool active_channel(ChannelDetails& out)const{return active_channel_&&t5_mesh().getChannel(active_key_[0],out);}
