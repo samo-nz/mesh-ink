@@ -3435,9 +3435,17 @@ static void touch_sampler_task(void*){
             const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();
             const int16_t x=sample.x,y=sample.y;
             const bool keyboard_active=keyboard_visible||keyboard_landscape;
+            const bool suppressed_home=sample.home&&keyboard_active;
             const bool home=sample.home&&!keyboard_active;
-            const bool pressed=sample.pressed;
-            if(home){
+            const bool pressed=sample.pressed&&!suppressed_home;
+            if(suppressed_home){
+                // GT911 reports the capacitive HOME frame as both home=true
+                // and pressed=true with no meaningful coordinate. Consume the
+                // entire frame while a keyboard is active so it cannot fall
+                // through as a (0,0) tap and dismiss the portrait keyboard.
+                held=false;home_held=false;quick_slider_dragging=false;
+                keyboard_delete_hold=false;keyboard_delete_repeated=false;
+            }else if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;
                 held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;
