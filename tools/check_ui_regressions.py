@@ -707,7 +707,7 @@ for leaked_radio in ("radio_driver", "CustomSX1262Wrapper", "t5_classify_radio_f
     assert leaked_radio not in runtime_source, f"local runtime leaked T5 radio detail: {leaked_radio}"
     assert leaked_radio not in companion_source, f"companion runtime leaked T5 radio detail: {leaked_radio}"
 assert "MESHINK_BOARD_BACKEND_HEADER" in board_selector_source, "board capability backend is compile-time selectable"
-assert "meshink_board_name()" not in source and "meshink_board_has_gps()" not in source, "removed geometry diagnostics no longer query board capabilities from UI"
+assert "meshink_board_has_gps()" in source and "meshink_board_name()" not in source, "UI keeps functional GPS capability checks but removes diagnostic board-name queries"
 assert "T5_BOARD_LABEL" in board_backend_source and "T5_HAS_GPS" in board_backend_source, "T5 capability constants remain board-backend-owned"
 for leaked_board in ('#include "board/board_profile.h"', "T5_UI_HAS_GPS", "T5_BOARD_LABEL"):
     assert leaked_board not in source, f"UI leaked T5 board capability detail: {leaked_board}"
