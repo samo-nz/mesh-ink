@@ -631,6 +631,26 @@ struct UiMessagePerfCounters {
 static UiMessagePerfCounters ui_message_perf{};
 static bool ui_message_perf_collect=false;
 static void ui_message_perf_reset(){ui_message_perf=UiMessagePerfCounters{};}
+
+static T5UiRenderPerf ui_render_perf{};
+static bool ui_render_perf_collect=false;
+static uint8_t ui_render_perf_depth=0;
+static void ui_render_perf_begin(){
+    if(ui_render_perf_depth++==0){
+        ui_render_perf=T5UiRenderPerf{};
+        ui_render_perf_collect=true;
+    }
+}
+static void ui_render_perf_end(uint32_t started_us){
+    const uint32_t elapsed=(uint32_t)(micros()-started_us);
+    if(ui_render_perf_depth) --ui_render_perf_depth;
+    if(!ui_render_perf_depth){
+        ui_render_perf.total_us=elapsed;
+        ui_render_perf_collect=false;
+        t5_timing_note_ui_render(ui_render_perf);
+    }
+    t5_timing_note_ui_draw(elapsed);
+}
 #endif
 
 struct UiSmoothFont {
@@ -733,7 +753,20 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
-    if(scale>=3){ui_smooth_text(s,x,y,scale,color,bold);return;}
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+    if(ui_render_perf_collect){
+        ++ui_render_perf.text_calls;
+        for(const char* p=s;*p&&*p!='\n';++p)++ui_render_perf.text_chars;
+    }
+#endif
+    if(scale>=3){
+        ui_smooth_text(s,x,y,scale,color,bold);
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_render_perf_collect)ui_render_perf.text_us+=(uint32_t)(micros()-render_started);
+#endif
+        return;
+    }
     while(*s&&*s!='\n'){
         const char c=*s++;
         if(c==' '){x+=3*scale;continue;}
@@ -747,6 +780,9 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
                 }
         x+=(right-left+1)*scale+scale;
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.text_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
                         uint8_t color=0,bool bold=false) {
@@ -899,8 +935,18 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
 // antialiasing buffer or extra display dependency.
 static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
     if(w<=0||h<=0)return;
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+    if(ui_render_perf_collect)++ui_render_perf.rounded_calls;
+#endif
     const int r=max(0,min(radius,min(w,h)/2));
-    if(!r){meshink_display_fill_rect({x,y,w,h},color,fb);return;}
+    if(!r){
+        meshink_display_fill_rect({x,y,w,h},color,fb);
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_render_perf_collect)ui_render_perf.rounded_us+=(uint32_t)(micros()-render_started);
+#endif
+        return;
+    }
     meshink_display_fill_rect({x,y+r,w,h-2*r},color,fb);
     for(int row=0;row<r;++row){
         const int yy=r-1-row;int inset=0;
@@ -913,6 +959,9 @@ static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
         meshink_display_fill_rect({x+inset,y+row,span,1},color,fb);
         meshink_display_fill_rect({x+inset,y+h-1-row,span,1},color,fb);
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.rounded_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 static void rounded_box(int x,int y,int w,int h,int radius,bool selected=false) {
     if(selected){rounded_fill(x,y,w,h,radius,0);return;}
@@ -1363,6 +1412,9 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar() {
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+#endif
     const MeshInkUiLayout& layout=portrait_layout();
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
@@ -1412,6 +1464,9 @@ static void draw_status_bar() {
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] status-bar clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.status_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 
 // Share the same small black notification style between ordinary settings
@@ -1523,6 +1578,9 @@ static void draw_shutdown_confirm() {
 }
 
 static void draw_bottom_nav(int selected) {
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+#endif
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
     const MeshInkUiLayout& layout=portrait_layout();
     meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,layout.bottom_nav_height},0xFF,fb);
@@ -1544,6 +1602,9 @@ static void draw_bottom_nav(int selected) {
                          d,d,d/2,color);
         }
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.nav_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
@@ -2873,11 +2934,29 @@ static void draw_screen() {
     // the normal 160 MHz.
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
     const uint32_t timing_draw_started=micros();
+#if T5_TIMING_DIAGNOSTICS
+    ui_render_perf_begin();
+#endif
     t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
-    if(standby_active){draw_standby();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
-    if(quick_panel_active){draw_quick_panel();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
-    if(keyboard_landscape){draw_landscape_keyboard();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
+    if(standby_active){draw_standby();#if T5_TIMING_DIAGNOSTICS
+        ui_render_perf_end(timing_draw_started);
+#else
+        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
+        return;}
+    if(quick_panel_active){draw_quick_panel();#if T5_TIMING_DIAGNOSTICS
+        ui_render_perf_end(timing_draw_started);
+#else
+        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
+        return;}
+    if(keyboard_landscape){draw_landscape_keyboard();#if T5_TIMING_DIAGNOSTICS
+        ui_render_perf_end(timing_draw_started);
+#else
+        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
+        return;}
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
@@ -2894,7 +2973,11 @@ static void draw_screen() {
             (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
+#if T5_TIMING_DIAGNOSTICS
+    ui_render_perf_end(timing_draw_started);
+#else
     t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
 }
 
 static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
