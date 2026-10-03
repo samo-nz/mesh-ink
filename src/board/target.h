@@ -19,6 +19,23 @@ public:
     bool isValid() const { return valid_; }
 };
 
+class MeshInkSX1262Wrapper final : public CustomSX1262Wrapper {
+    uint8_t wake_packet_[MAX_TRANS_UNIT]{};
+    uint16_t wake_packet_len_=0;
+    float wake_rssi_=0.0f;
+    float wake_snr_=0.0f;
+    bool wake_metrics_active_=false;
+public:
+    MeshInkSX1262Wrapper(CustomSX1262& radio, mesh::MainBoard& board)
+        : CustomSX1262Wrapper(radio, board) {}
+
+    void stageWakePacket(const uint8_t* data,uint16_t len,float rssi,float snr);
+    bool hasWakePacket() const { return wake_packet_len_!=0; }
+    int recvRaw(uint8_t* bytes,int sz) override;
+    float getLastRSSI() const override;
+    float getLastSNR() const override;
+};
+
 class T5Board : public ESP32Board {
 public:
     void begin();
@@ -40,7 +57,7 @@ public:
 };
 
 extern T5Board board;
-extern CustomSX1262Wrapper radio_driver;
+extern MeshInkSX1262Wrapper radio_driver;
 extern T5EnvironmentSensorManager sensors;
 SPIClass& t5_shared_spi();
 
