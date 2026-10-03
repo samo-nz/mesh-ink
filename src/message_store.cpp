@@ -38,9 +38,28 @@ static bool read_record(File& f,uint16_t physical,MeshInkStoredMessage& out){
     return f.read((uint8_t*)&out,sizeof(out))==sizeof(out);
 }
 
-static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record){
-    if(!f.seek(record_offset(physical)))return false;
-    return f.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
+static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record,
+                            uint32_t* seek_us=nullptr,uint32_t* write_us=nullptr){
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t seek_started=micros();
+#endif
+    const bool seek_ok=f.seek(record_offset(physical));
+#if T5_TIMING_DIAGNOSTICS
+    if(seek_us)*seek_us=(uint32_t)(micros()-seek_started);
+#else
+    (void)seek_us;
+#endif
+    if(!seek_ok)return false;
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t write_started=micros();
+#endif
+    const bool ok=f.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
+#if T5_TIMING_DIAGNOSTICS
+    if(write_us)*write_us=(uint32_t)(micros()-write_started);
+#else
+    (void)write_us;
+#endif
+    return ok;
 }
 }
 
@@ -135,17 +154,39 @@ void MeshInkMessageStore::write_header(){
                       (unsigned)written,(unsigned)sizeof(header_));
 }
 
-bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record){
+bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record,const char* operation){
     if(!initialized_||!file_||physical>=MESHINK_MESSAGE_CAPACITY)return false;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t started=micros();
+    uint32_t seek_us=0,write_us=0,flush_us=0;
 #endif
-    const bool ok=write_record_to(file_,physical,record);
-    if(ok)file_.flush();
+    const bool ok=write_record_to(file_,physical,record,
+#if T5_TIMING_DIAGNOSTICS
+                                  &seek_us,&write_us
+#else
+                                  nullptr,nullptr
+#endif
+    );
+    if(ok){
+#if T5_TIMING_DIAGNOSTICS
+        const uint32_t flush_started=micros();
+#endif
+        file_.flush();
+#if T5_TIMING_DIAGNOSTICS
+        flush_us=(uint32_t)(micros()-flush_started);
+#endif
+    }
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t elapsed=(uint32_t)(micros()-started);
     ++perf_writes;perf_write_us+=elapsed;
     if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
+    Serial.printf("[T5-STOREPERF] op=%s record=%u seek=%lu.%01lums write=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums ok=%u\n",
+                  operation?operation:"update",(unsigned)physical,
+                  (unsigned long)(seek_us/1000UL),(unsigned long)((seek_us%1000UL)/100UL),
+                  (unsigned long)(write_us/1000UL),(unsigned long)((write_us%1000UL)/100UL),
+                  (unsigned long)(flush_us/1000UL),(unsigned long)((flush_us%1000UL)/100UL),
+                  (unsigned long)(elapsed/1000UL),(unsigned long)((elapsed%1000UL)/100UL),
+                  ok?1U:0U);
 #endif
     if(!ok){
         Serial.printf("[T5-STORE] ERROR writing journal record=%u\n",(unsigned)physical);
@@ -272,16 +313,56 @@ uint32_t MeshInkMessageStore::append(
     if(!file_)return 0;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t started=micros();
+    uint32_t record_seek_us=0,record_write_us=0,header_seek_us=0,header_write_us=0,flush_us=0;
 #endif
-    const bool record_ok=write_record_to(file_,physical,item);
+    const bool record_ok=write_record_to(file_,physical,item,
+#if T5_TIMING_DIAGNOSTICS
+                                         &record_seek_us,&record_write_us
+#else
+                                         nullptr,nullptr
+#endif
+    );
     bool header_ok=false;
-    if(record_ok&&file_.seek(0))
-        header_ok=file_.write((const uint8_t*)&next,sizeof(next))==sizeof(next);
-    if(record_ok&&header_ok)file_.flush();
+    if(record_ok){
+#if T5_TIMING_DIAGNOSTICS
+        const uint32_t hs=micros();
+#endif
+        const bool header_seek_ok=file_.seek(0);
+#if T5_TIMING_DIAGNOSTICS
+        header_seek_us=(uint32_t)(micros()-hs);
+#endif
+        if(header_seek_ok){
+#if T5_TIMING_DIAGNOSTICS
+            const uint32_t hw=micros();
+#endif
+            header_ok=file_.write((const uint8_t*)&next,sizeof(next))==sizeof(next);
+#if T5_TIMING_DIAGNOSTICS
+            header_write_us=(uint32_t)(micros()-hw);
+#endif
+        }
+    }
+    if(record_ok&&header_ok){
+#if T5_TIMING_DIAGNOSTICS
+        const uint32_t fs=micros();
+#endif
+        file_.flush();
+#if T5_TIMING_DIAGNOSTICS
+        flush_us=(uint32_t)(micros()-fs);
+#endif
+    }
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t elapsed=(uint32_t)(micros()-started);
     perf_writes+=2;perf_write_us+=elapsed;
     if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
+    Serial.printf("[T5-STOREPERF] op=append record=%u rseek=%lu.%01lums rwrite=%lu.%01lums hseek=%lu.%01lums hwrite=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums ok=%u\n",
+                  (unsigned)physical,
+                  (unsigned long)(record_seek_us/1000UL),(unsigned long)((record_seek_us%1000UL)/100UL),
+                  (unsigned long)(record_write_us/1000UL),(unsigned long)((record_write_us%1000UL)/100UL),
+                  (unsigned long)(header_seek_us/1000UL),(unsigned long)((header_seek_us%1000UL)/100UL),
+                  (unsigned long)(header_write_us/1000UL),(unsigned long)((header_write_us%1000UL)/100UL),
+                  (unsigned long)(flush_us/1000UL),(unsigned long)((flush_us%1000UL)/100UL),
+                  (unsigned long)(elapsed/1000UL),(unsigned long)((elapsed%1000UL)/100UL),
+                  (record_ok&&header_ok)?1U:0U);
 #endif
     if(!record_ok||!header_ok){
         Serial.println("[T5-STORE] ERROR appending journal record");
@@ -298,7 +379,7 @@ void MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     if(records_)item=records_[p];
     else if(!read_record(file_,p,item))return;
     if(item.state==(uint8_t)state)return;
-    item.state=(uint8_t)state;write_record(p,item);
+    item.state=(uint8_t)state;write_record(p,item,"state");
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
@@ -307,7 +388,7 @@ void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
     if(records_)item=records_[p];
     else if(!read_record(file_,p,item))return;
     if(item.ack==ack)return;
-    item.ack=ack;write_record(p,item);
+    item.ack=ack;write_record(p,item,"ack");
 }
 
 void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len){
@@ -317,7 +398,7 @@ void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path
     else if(!read_record(file_,p,item))return;
     if(item.snr_q4==snr_q4&&item.path_len==path_len&&(item.flags&MESHINK_MESSAGE_HAS_RX))return;
     item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
-    write_record(p,item);
+    write_record(p,item,"rx");
 }
 
 void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
@@ -330,7 +411,7 @@ void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
     if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
     else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
     if(item.flags==before)return;
-    write_record(p,item);
+    write_record(p,item,"route");
 }
 
 void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
@@ -339,7 +420,7 @@ void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t
     if(records_)item=records_[p];
     else if(!read_record(file_,p,item))return;
     if(item.repeats==repeats&&item.repeat_snr_q4==snr_q4)return;
-    item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item);
+    item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item,"repeat");
 }
 
 void MeshInkMessageStore::update_outgoing(
@@ -355,7 +436,7 @@ void MeshInkMessageStore::update_outgoing(
     if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
     else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
     if(!memcmp(&before,&item,sizeof(item)))return;
-    write_record(p,item);
+    write_record(p,item,"outgoing");
 }
 
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
@@ -368,7 +449,7 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
         if(item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
             if(item.state==(uint8_t)UiMessageState::Delivered)return true;
             item.state=(uint8_t)UiMessageState::Delivered;
-            return write_record(p,item);
+            return write_record(p,item,"delivered");
         }
     }
     return false;
