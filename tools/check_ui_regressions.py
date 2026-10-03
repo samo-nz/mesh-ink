@@ -1323,7 +1323,7 @@ assert 'return write_record(p,item,"state");' in message_store_source, "message-
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
 assert '"FINAL %s"' in formatter, "final attempt uses compact route-aware wording"
-assert '"SENDING %s"' in formatter, "send footer reports the actual direct/flood route"
+assert 'snprintf(out,len,"%s %s",base,route);' in formatter, "send footer reports the actual direct/flood route"
 assert "state!=UiMessageState::Sending" not in formatter, "sending records and transient route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
