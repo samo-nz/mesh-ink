@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp32-hal-cpu.h>
 #include <Preferences.h>
 #include <string.h>
 #include "ui_onboarding.h"
@@ -145,6 +146,13 @@ static void companion_exit_button() {
 }
 
 void setup() {
+    // Boot is a race-to-idle phase: run the ESP32-S3 at its maximum clock
+    // until the local UI becomes interactive (or companion setup completes).
+    // The steady-state policies then drop back to their validated 80 MHz cruise.
+    const bool boot_cpu_ok=setCpuFrequencyMhz(240);
+    Serial.begin(115200);
+    Serial.printf("[T5-BOOTPERF] cpu-boot-target=240MHz actual=%luMHz ok=%u\n",
+                  (unsigned long)getCpuFrequencyMhz(),boot_cpu_ok?1U:0U);
     const uint32_t bootperf_total_started=millis();
     uint32_t bootperf_stage_started=millis();
     Serial.begin(115200);
