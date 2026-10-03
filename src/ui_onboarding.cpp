@@ -503,6 +503,9 @@ struct MapTapSequence{
 static MapTapSequence map_taps{};
 static uint32_t navigation_touch_cutoff_ms=0;
 
+static constexpr uint32_t UI_IDLE_CPU_MHZ=80;
+static constexpr uint32_t UI_RENDER_CPU_MHZ=240;
+
 static bool set_cpu_target(uint32_t mhz,const char* reason){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
     if(!accepted||actual!=mhz)Serial.printf("[T5-ERROR] CPU target=%lu actual=%lu MHz reason=%s\n",(unsigned long)mhz,(unsigned long)actual,reason);
@@ -514,8 +517,8 @@ struct T5CpuBoostScope {
     bool restore;
     explicit T5CpuBoostScope(bool enabled,const char* reason):
         previous_mhz(getCpuFrequencyMhz()),restore(false){
-        if(enabled&&previous_mhz<240)
-            restore=set_cpu_target(240,reason);
+        if(enabled&&previous_mhz<UI_RENDER_CPU_MHZ)
+            restore=set_cpu_target(UI_RENDER_CPU_MHZ,reason);
     }
     ~T5CpuBoostScope(){
         if(restore)set_cpu_target(previous_mhz,"ui-draw-complete");
@@ -1393,6 +1396,7 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t render_started=ui_render_perf_collect?micros():0;
 #endif
@@ -1459,6 +1463,7 @@ static MeshInkRect toast_message_rect(const char* message) {
     return {(portrait_layout().width-w)/2,ui_y(640),w,ui_h(72)};
 }
 static void draw_toast_message(const char* message) {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");
     const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
     rounded_fill(rect.x,rect.y,rect.width,rect.height,r,0);
@@ -1962,7 +1967,7 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
             case UiMessageState::Failed:state="FAILED";break;
             case UiMessageState::Retrying1:state="RETRYING 1/2";break;
             case UiMessageState::Retrying2:state="RETRYING 2/2";break;
-            case UiMessageState::Retrying3:state="SENDING FLOOD";break;
+            case UiMessageState::Retrying3:state="SENDING";break;
             case UiMessageState::Retrying4:state="RETRYING 4/5";break;
             case UiMessageState::Retrying5:state="RETRYING 5/5";break;
             default:break;
@@ -2262,6 +2267,7 @@ static void draw_chat(bool channel) {
 }
 
 static void draw_message_entry_fast() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
     // Typing does not change the chat history. Avoid rebuilding the status
     // bar, message bubbles and bottom navigation for every character.
     const uint32_t timing_draw_started=micros();
@@ -2517,6 +2523,7 @@ static void draw_radio_settings() {
 }
 
 static void draw_radio_name_fast() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
     const uint32_t timing_draw_started=micros();
     settings_row("NODE NAME",node_name,120);
     t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
@@ -2787,6 +2794,7 @@ static void draw_underlying_screen() {
 }
 
 static void draw_quick_panel() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");
     draw_underlying_screen();
 
     const MeshInkUiLayout& layout=portrait_layout();
@@ -2909,10 +2917,10 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 }
 
 static void draw_screen() {
-    // Full framebuffer composition is CPU-bound on cache64. Burst to 240 MHz
-    // only while drawing, then restore the previous clock before the caller
-    // decides whether to refresh the panel. Fast text-only redraws remain at
-    // the normal 160 MHz.
+    // Local UI cruises at 80 MHz. Full framebuffer composition bursts to
+    // 240 MHz only while drawing, then restores the previous clock before the
+    // caller decides whether to refresh the panel. Small standalone draw paths
+    // (keyboard/status/quick panel/toasts) use the same short boost.
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
     const uint32_t timing_draw_started=micros();
 #if T5_TIMING_DIAGNOSTICS
@@ -2980,13 +2988,13 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
-    set_cpu_target(240,"display-refresh");
+    set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err = meshink_display_update_screen(&display,mode,(int)meshink_display_ambient_temperature());
     // The map stays clear when the panel is powered down as soon as EPDiy's
     // synchronous DU waveform completes. Do not reintroduce a powered hold.
     meshink_display_poweroff();
-    set_cpu_target(standby_active?80:160,"display-complete");
+    set_cpu_target(UI_IDLE_CPU_MHZ,"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
     t5_timing_display_end(timing_display_started);
@@ -3000,12 +3008,12 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
-    set_cpu_target(240,"display-area-refresh");
+    set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err=meshink_display_update_area(
         &display,mode,(int)meshink_display_ambient_temperature(),area);
     meshink_display_poweroff();
-    set_cpu_target(standby_active?80:160,"display-area-complete");
+    set_cpu_target(UI_IDLE_CPU_MHZ,"display-area-complete");
     const uint32_t elapsed=millis()-started;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
@@ -3076,10 +3084,10 @@ static void load_map_with_feedback(bool already_on_map) {
         refresh(MeshInkRefreshMode::Direct);
 
     // The previous map and toast stay on the panel while all tile I/O and
-    // PNG decoding run synchronously. Refreshing the loading toast lowered
-    // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
-    // display-performance setting for the CPU-heavy raster render.
-    set_cpu_target(240,"map-render");
+    // PNG decoding run synchronously. Refreshing the loading toast returns
+    // the CPU to the 80 MHz UI cruise clock; temporarily burst to 240 MHz for
+    // the CPU-heavy raster render.
+    set_cpu_target(UI_RENDER_CPU_MHZ,"map-render");
     draw_screen();
 
     // Prepare the completed terrain black, then reveal the finished map.
@@ -3930,7 +3938,7 @@ static void enter_standby(const char* reason){
     // Enter standby with an exact clock/battery sample. Periodic status updates
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
-    draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
 }
 
 static void leave_standby(){
@@ -3942,7 +3950,7 @@ static void leave_standby(){
     } else {
         set_ui_orientation(MeshInkOrientation::Portrait);
     }
-    set_cpu_target(160,"wake");
+    set_cpu_target(UI_IDLE_CPU_MHZ,"wake");
     draw_screen();
     if(screen==Screen::Maps&&!keyboard_landscape) {
         T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] Maps wake uses black-prep reveal");
@@ -4128,7 +4136,7 @@ void ui_finish_startup() {
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
-    set_cpu_target(160,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
+    set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
 }
 
 void ui_loop() {
@@ -4452,7 +4460,7 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     }
     ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
-    frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
+    frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(UI_IDLE_CPU_MHZ,"hardware-failure");
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
 }
 void ui_status_set_unread(uint16_t count) {
