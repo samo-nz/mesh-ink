@@ -2,7 +2,7 @@ name: MeshInk build and release
 
 on:
   push:
-    branches: [main, testing, feature/quick-settings-swipe]
+    branches: [main, feature/quick-settings-swipe]
     tags: ['v*']
   workflow_dispatch:
 
@@ -57,6 +57,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_map_gray.cpp -o /tmp/map-gray-test
           /tmp/map-gray-test
+      - name: T5 packed framebuffer fill regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_t5_packed_framebuffer.cpp -o /tmp/t5-packed-fb-test
+          /tmp/t5-packed-fb-test
       - name: Check UI interaction regressions
         run: python tools/check_ui_regressions.py
       - name: Verify portrait and landscape keyboard hitboxes
