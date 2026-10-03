@@ -115,4 +115,81 @@ inline bool fill_logical_gray4(uint8_t* framebuffer,int physical_width,
     return true;
 }
 
+inline int rounded_row_inset(int radius,int row) {
+    if(radius<=0||row<0||row>=radius)return 0;
+    const int yy=radius-1-row;
+    int inset=0;
+    while(inset<radius) {
+        const int xx=radius-inset;
+        if(xx*xx+yy*yy<=radius*radius)break;
+        ++inset;
+    }
+    return inset;
+}
+
+// Preserve the UI's established integer rounded-rectangle pixels while
+// choosing the span direction that is contiguous in the packed framebuffer.
+// Landscape rotations draw logical rows; portrait rotations draw equivalent
+// logical columns, which become physical rows on the H752-01.
+inline bool fill_logical_rounded_gray4(
+    uint8_t* framebuffer,int physical_width,int physical_height,
+    MeshInkRotation rotation,MeshInkRect logical,int radius,uint8_t gray4) {
+    if(!framebuffer||logical.width<=0||logical.height<=0)return false;
+    int r=radius;
+    if(r<0)r=0;
+    const int max_radius=(logical.width<logical.height?logical.width:logical.height)/2;
+    if(r>max_radius)r=max_radius;
+    if(!r)
+        return fill_logical_gray4(framebuffer,physical_width,physical_height,
+                                  rotation,logical,gray4);
+
+    bool wrote=false;
+    const bool portrait=rotation==MeshInkRotation::Portrait||
+                        rotation==MeshInkRotation::InvertedPortrait;
+    if(!portrait) {
+        wrote|=fill_logical_gray4(
+            framebuffer,physical_width,physical_height,rotation,
+            {logical.x,logical.y+r,logical.width,logical.height-2*r},gray4);
+        for(int row=0;row<r;++row) {
+            const int inset=rounded_row_inset(r,row);
+            const int span=logical.width-2*inset;
+            if(span<=0)continue;
+            wrote|=fill_logical_gray4(
+                framebuffer,physical_width,physical_height,rotation,
+                {logical.x+inset,logical.y+row,span,1},gray4);
+            wrote|=fill_logical_gray4(
+                framebuffer,physical_width,physical_height,rotation,
+                {logical.x+inset,logical.y+logical.height-1-row,span,1},gray4);
+        }
+        return wrote;
+    }
+
+    // In portrait, logical columns map to contiguous physical rows. The middle
+    // columns are one bulk fill; only the 2*r corner columns need individual
+    // spans. top_inset is derived from the exact existing row-inset rule.
+    if(logical.width-2*r>0) {
+        wrote|=fill_logical_gray4(
+            framebuffer,physical_width,physical_height,rotation,
+            {logical.x+r,logical.y,logical.width-2*r,logical.height},gray4);
+    }
+    for(int col=0;col<r;++col) {
+        int top_inset=r;
+        for(int row=0;row<r;++row) {
+            if(col>=rounded_row_inset(r,row)) {
+                top_inset=row;
+                break;
+            }
+        }
+        const int span=logical.height-2*top_inset;
+        if(span<=0)continue;
+        wrote|=fill_logical_gray4(
+            framebuffer,physical_width,physical_height,rotation,
+            {logical.x+col,logical.y+top_inset,1,span},gray4);
+        wrote|=fill_logical_gray4(
+            framebuffer,physical_width,physical_height,rotation,
+            {logical.x+logical.width-1-col,logical.y+top_inset,1,span},gray4);
+    }
+    return wrote;
+}
+
 } // namespace meshink_t5_packed
