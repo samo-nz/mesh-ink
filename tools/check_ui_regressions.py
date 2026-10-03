@@ -999,7 +999,8 @@ assert "return {&inter_50_digits,77,79,81};" in source, "oversized standby unrea
 assert "ui_smooth_metric" not in source and "numerator" not in source[source.index("struct UiSmoothFont"):source.index("static void ui_text_fit")], "primary fonts are never scaled at runtime"
 assert "const int baseline=y+face.baseline_from_top;" in source, "each native face carries its own baseline anchor"
 assert "meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);" in source, "native glyph pixels are drawn one-for-one without resampling"
-assert "if(scale>=3){ui_smooth_text" in source, "scale-three and larger primary text uses smooth raster glyphs"
+ui_text_body=source[source.index("static void ui_text("):source.index("static void ui_text_fit(")]
+assert "if(scale>=3)" in ui_text_body and "ui_smooth_text(s,x,y,scale,color,bold);" in ui_text_body, "scale-three and larger primary text uses smooth raster glyphs"
 assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
 assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
 assert "static void rounded_fill(" in source and "xx*xx+yy*yy<=r*r" in source, "rounded panels use an integer framebuffer primitive"
