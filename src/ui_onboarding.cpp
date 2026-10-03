@@ -930,35 +930,16 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
     }
 }
 
-// Integer-only rounded panel primitive. It uses the existing framebuffer
-// rectangles and a small corner inset calculation, so there is no image asset,
-// antialiasing buffer or extra display dependency.
+// Rounded surfaces are composed directly in the selected display backend.
+// The T5 backend preserves these exact integer corner pixels while choosing
+// packed-framebuffer-friendly spans for the current rotation.
 static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
     if(w<=0||h<=0)return;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t render_started=ui_render_perf_collect?micros():0;
     if(ui_render_perf_collect)++ui_render_perf.rounded_calls;
 #endif
-    const int r=max(0,min(radius,min(w,h)/2));
-    if(!r){
-        meshink_display_fill_rect({x,y,w,h},color,fb);
-#if T5_TIMING_DIAGNOSTICS
-        if(ui_render_perf_collect)ui_render_perf.rounded_us+=(uint32_t)(micros()-render_started);
-#endif
-        return;
-    }
-    meshink_display_fill_rect({x,y+r,w,h-2*r},color,fb);
-    for(int row=0;row<r;++row){
-        const int yy=r-1-row;int inset=0;
-        while(inset<r){
-            const int xx=r-inset;
-            if(xx*xx+yy*yy<=r*r)break;
-            ++inset;
-        }
-        const int span=max(1,w-2*inset);
-        meshink_display_fill_rect({x+inset,y+row,span,1},color,fb);
-        meshink_display_fill_rect({x+inset,y+h-1-row,span,1},color,fb);
-    }
+    meshink_display_fill_rounded_rect({x,y,w,h},radius,color,fb);
 #if T5_TIMING_DIAGNOSTICS
     if(ui_render_perf_collect)ui_render_perf.rounded_us+=(uint32_t)(micros()-render_started);
 #endif
