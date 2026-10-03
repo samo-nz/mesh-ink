@@ -175,12 +175,8 @@ jobs:
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_COLORS 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
-      - name: Prepare testing firmware
-        run: |
-          test -s .pio/build/t5-unified-cache64/firmware.bin
-          cp .pio/build/t5-unified-cache64/firmware.bin meshink-testing-update.bin
-          sha256sum meshink-testing-update.bin > meshink-testing-SHA256.txt
-      - name: Verify testing version is embedded
+      - name: Read testing firmware version
+        id: version
         run: |
           VERSION=$(python - <<'PY'
           import pathlib, re
@@ -190,14 +186,26 @@ jobs:
           print(match.group(1))
           PY
           )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Prepare testing firmware
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          test -s .pio/build/t5-unified-cache64/firmware.bin
+          cp .pio/build/t5-unified-cache64/firmware.bin "meshink-$VERSION-update.bin"
+          sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt
+      - name: Verify testing version is embedded
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
           echo "Expected embedded firmware version: $VERSION"
-          grep -aFq "$VERSION" meshink-testing-update.bin
+          grep -aFq "$VERSION" "meshink-$VERSION-update.bin"
       - name: Downloadable testing firmware
         uses: actions/upload-artifact@v4
         with:
-          name: meshink-testing-firmware
+          name: meshink-${{ steps.version.outputs.version }}
           path: |
-            meshink-testing-update.bin
-            meshink-testing-SHA256.txt
+            meshink-${{ steps.version.outputs.version }}-update.bin
+            SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
