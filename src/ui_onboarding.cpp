@@ -505,6 +505,11 @@ static uint32_t navigation_touch_cutoff_ms=0;
 
 static constexpr uint32_t UI_IDLE_CPU_MHZ=80;
 static constexpr uint32_t UI_RENDER_CPU_MHZ=240;
+static bool ui_boot_cpu_active=false;
+
+static uint32_t ui_post_render_cpu_target(){
+    return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;
+}
 
 static bool set_cpu_target(uint32_t mhz,const char* reason){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
@@ -2994,7 +2999,7 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     // The map stays clear when the panel is powered down as soon as EPDiy's
     // synchronous DU waveform completes. Do not reintroduce a powered hold.
     meshink_display_poweroff();
-    set_cpu_target(UI_IDLE_CPU_MHZ,"display-complete");
+    set_cpu_target(ui_post_render_cpu_target(),"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
     t5_timing_display_end(timing_display_started);
@@ -3013,7 +3018,7 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     const MeshInkDisplayResult err=meshink_display_update_area(
         &display,mode,(int)meshink_display_ambient_temperature(),area);
     meshink_display_poweroff();
-    set_cpu_target(UI_IDLE_CPU_MHZ,"display-area-complete");
+    set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");
     const uint32_t elapsed=millis()-started;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
@@ -4027,6 +4032,8 @@ static void service_primary_button(){
 }
 
 void ui_setup() {
+    ui_boot_cpu_active=true;
+    set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
     const uint32_t bootperf_total_started=millis();
     uint32_t bootperf_stage_started=millis();
     Serial.begin(115200); delay(200);
@@ -4158,6 +4165,7 @@ void ui_finish_startup() {
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
+    ui_boot_cpu_active=false;
     set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
     Serial.printf("[T5-BOOTPERF] ui-finish=%lums\n",
                   (unsigned long)(millis()-bootperf_started));
@@ -4484,6 +4492,7 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     }
     ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
+    ui_boot_cpu_active=false;
     frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(UI_IDLE_CPU_MHZ,"hardware-failure");
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
 }
