@@ -4036,7 +4036,10 @@ void ui_setup() {
     set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
     const uint32_t bootperf_total_started=millis();
     uint32_t bootperf_stage_started=millis();
-    Serial.begin(115200); delay(200);
+    // unified_main has already started USB CDC before entering the local UI
+    // path. Keep begin() here for the standalone UI target, but do not burn a
+    // fixed 200 ms delay before useful boot work.
+    Serial.begin(115200);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
     meshink_buttons_begin();
     // Stay off until preferences have been loaded. The splash refresh then
