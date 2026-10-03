@@ -728,6 +728,22 @@ bool meshink_board_enter_deep_sleep_standby() {
         return false;
     }
 
+    // Put the actual SX1262 hardware into a known sleep-listening state at the
+    // last possible point. MeshCore's continuous_rx flag describes wrapper
+    // state; this command also re-applies RadioLib's RX_DONE -> DIO1 mapping.
+    const int16_t rx_rearm=radio.startReceive();
+    if(rx_rearm!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 RX re-arm failed code=%d\n",(int)rx_rearm);
+        return false;
+    }
+    delayMicroseconds(200);
+    Serial.printf("[T5-DEEPSLEEP] SX1262 RX re-armed before sleep dio1=%d busy=%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY));
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: DIO1 asserted during RX re-arm");
+        return false;
+    }
+
     const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
         (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
     const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
