@@ -883,12 +883,10 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         pending_direct.route_flood[attempt]=frame[1]!=0;
         pending_direct.deadline=millis()+max((uint32_t)500,timeout);
         pending_direct.waiting_response=false;
-        const UiMessageState attempt_state=attempt==0?UiMessageState::Sending:
-            (attempt==1?UiMessageState::Retrying1:
-             (attempt==2?UiMessageState::Retrying2:UiMessageState::Retrying3));
-        provider.confirm_direct_send(
-            pending_direct.sequence,ack,pending_direct.route_flood[attempt],attempt_state);
-        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",
+        // ACK/route metadata is transient until the direct message reaches a
+        // durable final outcome. Keep retries in RAM and avoid rewriting the
+        // flash journal for every send attempt.
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu journal=unchanged\n",
                   attempt,pending_direct.route_flood[attempt]?"flood":"direct",
                   (unsigned long)ack,(unsigned long)timeout);
     }
@@ -989,8 +987,8 @@ void local_mesh_loop(){
             if(pending_direct.retry==DIRECT_RETRY_LIMIT&&!force_pending_direct_flood()){
                 fail_pending_direct("flood fallback contact missing");
             }else{
-                provider.update_message(pending_direct.sequence,
-                    (UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));
+                // Retry progress is runtime state only. The journal remains
+                // Sending until one final Delivered or Failed update.
                 if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
             }
         }
