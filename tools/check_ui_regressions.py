@@ -1343,7 +1343,7 @@ assert "local_mesh_refresh_ui_data();" in map_short, "physical Maps refresh obta
 assert "meshink_display_fill_framebuffer(&display,0x00);" in map_short and '"SHORT_BUTTON_MAP_BLACK"' in map_short, "physical Maps refresh flashes the ready screen black"
 assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);' in map_short, "physical Maps refresh restores the cached viewport with fresh overlays"
 assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
-assert "const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;" in source, "portrait composer detects a one-line entry"
+assert "ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);" in source, "portrait composer uses the clipped bottom-tail entry renderer"
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
 assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
 
