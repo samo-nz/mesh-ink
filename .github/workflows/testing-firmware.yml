@@ -47,6 +47,9 @@ on:
       - 'tests/board_mock_backend.h'
       - 'src/board/t5_board_backend.h'
       - 'src/board/t5_touch_backend.h'
+      - 'src/board/t5_display_backend.h'
+      - 'src/board/t5_packed_framebuffer.h'
+      - 'tests/test_t5_packed_framebuffer.cpp'
       - 'tests/test_map_gestures.cpp'
       - 'tests/test_ui_layout.cpp'
       - 'tests/test_touch_contract.cpp'
@@ -109,6 +112,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_map_gray.cpp -o /tmp/map-gray-test
           /tmp/map-gray-test
+      - name: T5 packed framebuffer fill regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_t5_packed_framebuffer.cpp -o /tmp/t5-packed-fb-test
+          /tmp/t5-packed-fb-test
       - name: UI interaction regression checks
         run: python tools/check_ui_regressions.py
       - name: Portrait and landscape keyboard target regression
