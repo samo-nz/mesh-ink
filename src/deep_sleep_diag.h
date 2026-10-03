@@ -7,6 +7,10 @@ enum class MeshInkDeepSleepDiagStage : uint8_t {
     WakeRadio,
     WakeButton,
     HeadlessStart,
+    WakePacketCaptured,
+    WakePacketCaptureFail,
+    RadioReinitOk,
+    RadioReinitFail,
     RadioResumeOk,
     RadioResumeFail,
     SpiffsOk,
@@ -16,6 +20,7 @@ enum class MeshInkDeepSleepDiagStage : uint8_t {
     RuntimeReady,
     FirstLoop,
     FirstMeshActivity,
+    WakePacketInjected,
     ReSleepAttempt,
     ButtonProbe,
 };
