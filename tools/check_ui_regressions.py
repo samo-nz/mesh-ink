@@ -49,6 +49,7 @@ touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encodi
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
 platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
+testing_workflow_source = (root / ".github" / "workflows" / "testing-firmware.yml").read_text(encoding="utf-8")
 cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].split("; Generic portability", 1)[0]
 
 def contains(fragment, label):
@@ -991,12 +992,14 @@ direct_attempt_response = runtime_source[
     runtime_source.index("else if(frame[0]==6&&len>=10&&pending_direct.active)"):
     runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)")
 ]
-assert "provider.confirm_direct_send(" not in direct_attempt_response and "provider.update_message(" not in direct_attempt_response, "direct attempt ACK/route metadata stays RAM-only"
+assert "provider.confirm_direct_send(" not in direct_attempt_response and "provider.update_message(" not in direct_attempt_response, "direct attempt ACK/route metadata never reaches persistent provider methods"
+assert "provider.transient_direct_status(" in direct_attempt_response, "direct attempt ACK/route metadata updates the RAM-only UI overlay"
 direct_retry_loop = runtime_source[
     runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
     runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
 ]
 assert "provider.update_message(" not in direct_retry_loop and "provider.confirm_direct_send(" not in direct_retry_loop, "direct retries never rewrite the journal"
+assert "provider.transient_direct_status(" in direct_retry_loop and "retry_state" in direct_retry_loop, "direct retry stages remain visible through the RAM-only UI overlay"
 direct_delivery = runtime_source[
     runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)"):
     runtime_source.index("else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response)")
@@ -1008,6 +1011,13 @@ fail_direct = runtime_source[
 ]
 assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed);" in fail_direct, "direct failure persists one final state update"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
+
+
+# Testing and release artifacts use the same versioned naming convention.
+assert 'name: meshink-${{ steps.version.outputs.version }}' in testing_workflow_source, "testing artifact is named with the firmware version"
+assert 'meshink-$VERSION-update.bin' in testing_workflow_source, "testing update binary uses the same versioned filename as release builds"
+assert "SHA256SUMS.txt" in testing_workflow_source, "testing and release packages share the checksum filename"
+assert "meshink-testing-update.bin" not in testing_workflow_source and "meshink-testing-firmware" not in testing_workflow_source, "legacy generic testing artifact names are removed"
 
 
 # Test54: primary text uses built-in 1-bit Inter while compact technical/status
@@ -1135,9 +1145,11 @@ assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source,
 assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "legacy flood-retry state remains readable after upgrading"
 assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer can still render legacy flood-retry records"
 assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "final runtime retry resets the stale saved path so MeshCore uses flood"
-assert "attempt==0?UiMessageState::Sending" not in runtime_source and "journal=unchanged" in runtime_source, "radio send-attempt responses remain RAM-only until final delivery/failure"
+assert "attempt==0?UiMessageState::Sending" in runtime_source and "provider.transient_direct_status(" in runtime_source and "journal=unchanged" in runtime_source, "radio attempt status is visible in RAM while the journal remains unchanged"
+assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
+assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
-assert "state!=UiMessageState::Sending" not in formatter, "legacy sending records with route metadata remain displayable"
+assert "state!=UiMessageState::Sending" not in formatter, "sending records and transient route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
 
