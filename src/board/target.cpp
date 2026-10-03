@@ -15,6 +15,7 @@
 #include "target.h"
 #include "t5_logging.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
+#include <helpers/sensors/EnvironmentSensorManager.h>
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.0.0"
@@ -577,8 +578,36 @@ public:
 #endif
     }
 };
+
+// This board build enables only MeshCore's GPS environment provider. The
+// board-level radio/GPS probe above has already selected the UART baud and,
+// on a healthy receiver, confirmed checksum-valid NMEA before this manager is
+// started. Upstream EnvironmentSensorManager::begin() performs another GPS
+// detection cycle with a fixed 1000 ms delay plus an I2C sensor scan. Reuse
+// the board probe instead while preserving the same public GPS setting and
+// applyGpsPrefs() semantics.
+class T5EnvironmentSensorManager final : public EnvironmentSensorManager {
+public:
+    explicit T5EnvironmentSensorManager(LocationProvider& location)
+        : EnvironmentSensorManager(location) {}
+
+    bool begin() override {
+#if ENV_INCLUDE_GPS == 1
+        // ENV_SKIP_GPS_DETECT was already part of this target, so GPS remains
+        // exposed even if the first boot probe has not locked yet. T5GPS's
+        // background baud retry then continues exactly as before.
+        gps_detected=true;
+        gps_active=false;
+        Serial.printf("[T5-BOOTPERF] gps-manager-reuse=1 probe-locked=%u module=%s baud=%lu\n",
+                      gps_baud_locked?1U:0U,gps_module_name(),
+                      (unsigned long)detected_gps_baud);
+#endif
+        return true;
+    }
+};
+
 static T5GPS gps;
-EnvironmentSensorManager sensors(gps);
+static T5EnvironmentSensorManager sensors(gps);
 
 void meshink_gps_service_begin(){
     sensors.begin();
