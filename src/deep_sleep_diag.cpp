@@ -6,7 +6,7 @@
 namespace {
 
 static constexpr uint32_t DIAG_MAGIC=0x44534C50UL; // "DSLP"
-static constexpr uint8_t DIAG_VERSION=1;
+static constexpr uint8_t DIAG_VERSION=2;
 static constexpr size_t DIAG_EVENT_COUNT=16;
 
 struct DeepSleepDiagEvent {
