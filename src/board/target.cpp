@@ -710,6 +710,7 @@ void T5Board::begin() {
 }
 
 void T5Board::beginLocal() {
+    const uint32_t bootperf_started=millis();
     companion_radio_uses_arduino_irq=false;
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
@@ -728,11 +729,18 @@ void T5Board::beginLocal() {
     Serial1.begin(9600);
 #endif
     T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
+    Serial.printf("[T5-BOOTPERF] board-local=%lums\n",
+                  (unsigned long)(millis()-bootperf_started));
 }
 
 bool radio_init() {
+    const uint32_t bootperf_total_started=millis();
     T5_TRACE("radio: begin clock and RTC\n");
+    const uint32_t bootperf_rtc_started=millis();
     meshink_rtc_begin();
+    Serial.printf("[T5-BOOTPERF] rtc=%lums\n",
+                  (unsigned long)(millis()-bootperf_rtc_started));
+    const uint32_t bootperf_lora_started=millis();
     T5_TRACE("radio: SX1262 init SPI=%d/%d/%d ctrl=%d/%d/%d/%d\n",
         P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
 
@@ -800,9 +808,12 @@ bool radio_init() {
     }
 
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
+    Serial.printf("[T5-BOOTPERF] lora=%lums ready=%u\n",
+                  (unsigned long)(millis()-bootperf_lora_started),ready?1U:0U);
     if(ready)Serial.println("[T5-INIT] radio=SX1262 OK");
     else Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
 #if ENV_INCLUDE_GPS == 1
+    const uint32_t bootperf_gps_started=millis();
     // LoRa and GPS share the PCA9535-controlled rail; radio initialization
     // ensures power is available before probing GPS. T5 boards carry either
     // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
@@ -844,7 +855,12 @@ bool radio_init() {
         T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
                  Serial1.baudRate(), gps_baud_locked, gps_module_name());
     }
+    Serial.printf("[T5-BOOTPERF] gps-probe=%lums locked=%u baud=%lu\n",
+                  (unsigned long)(millis()-bootperf_gps_started),
+                  gps_baud_locked?1U:0U,(unsigned long)Serial1.baudRate());
 #endif
+    Serial.printf("[T5-BOOTPERF] radio-init-total=%lums\n",
+                  (unsigned long)(millis()-bootperf_total_started));
     return ready;
 }
 
