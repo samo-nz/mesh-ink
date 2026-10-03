@@ -759,6 +759,35 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
     if(ui_message_perf_collect)ui_message_perf.smooth_us+=(uint32_t)(micros()-perf_started);
 #endif
 }
+static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
+                                   uint8_t color,bool bold,
+                                   int clip_left,int clip_top,
+                                   int clip_right,int clip_bottom) {
+    if(!s||clip_right<=clip_left||clip_bottom<=clip_top)return;
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const int baseline=y+face.baseline_from_top;
+    while(*s&&*s!='\n'){
+        const char c=*s++;
+        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        if(!glyph_data)continue;
+        const int gx=x+glyph_data->left;
+        const int gy=baseline-glyph_data->top;
+        for(int sy=0;sy<glyph_data->height;++sy){
+            const int py=gy+sy;
+            if(py<clip_top||py>=clip_bottom)continue;
+            for(int sx=0;sx<glyph_data->width;++sx){
+                const int px=gx+sx;
+                if(px<clip_left||px>=clip_right)continue;
+                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
+                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
+                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+                meshink_display_draw_pixel(px,py,color,fb);
+                if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
+            }
+        }
+        x+=ui_smooth_char_advance(c,scale);
+    }
+}
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
 #if T5_TIMING_DIAGNOSTICS
@@ -936,6 +965,104 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
         size_t trim=copy;while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
         ui_text(line_text,x,y+row*line_step,scale,color,bold);
     }
+}
+
+struct UiComposeLine { const char* start; size_t len; };
+
+static int ui_compose_wrap_lines(const char* value,int max_width,int scale,
+                                 UiComposeLine* lines,int capacity) {
+    if(!value||!lines||capacity<=0)return 0;
+    if(!*value){lines[0]={value,0};return 1;}
+    int count=0;
+    const char* cursor=value;
+    while(count<capacity){
+        const char* start=cursor;
+        const char* scan=cursor;
+        const char* last_space=nullptr;
+        int width=0;
+        while(*scan&&*scan!='\n'){
+            const int advance=ui_char_advance(*scan,scale);
+            if(scan>start&&width+advance>max_width)break;
+            width+=advance;
+            if(*scan==' ')last_space=scan;
+            ++scan;
+        }
+        if(*scan=='\n'){
+            lines[count++]={start,(size_t)(scan-start)};
+            cursor=scan+1;
+            if(!*cursor&&count<capacity)lines[count++]={cursor,0};
+            if(!*cursor)break;
+            continue;
+        }
+        if(!*scan){
+            lines[count++]={start,(size_t)(scan-start)};
+            break;
+        }
+
+        // If the character that overflowed is itself a space, put the caret
+        // on the next line rather than silently discarding the user's space.
+        if(*scan==' '){
+            lines[count++]={start,(size_t)(scan-start)};
+            cursor=scan+1;
+            if(!*cursor&&count<capacity)lines[count++]={cursor,0};
+            if(!*cursor)break;
+            continue;
+        }
+
+        // Prefer a word boundary when one exists. The separator space remains
+        // in compose_text, while rendering begins after it on the next line.
+        if(last_space&&last_space>start){
+            lines[count++]={start,(size_t)(last_space-start)};
+            cursor=last_space+1;
+        }else{
+            lines[count++]={start,(size_t)(scan-start)};
+            cursor=scan;
+        }
+        if(!*cursor&&count<capacity){
+            lines[count++]={cursor,0};
+            break;
+        }
+    }
+    return max(1,count);
+}
+
+static void ui_draw_compose_tail(const char* value,int x,int y,int max_width,
+                                 int max_height,int scale) {
+    if(!value||max_width<=0||max_height<=0)return;
+    UiComposeLine lines[64]{};
+    const int line_count=ui_compose_wrap_lines(
+        value,max_width,scale,lines,(int)(sizeof(lines)/sizeof(lines[0])));
+    if(!line_count)return;
+
+    const int glyph_height=ui_text_height(scale);
+    const int line_step=ui_text_line_step(scale);
+    if(max_height<glyph_height)return;
+
+    // One line remains vertically comfortable. Once wrapping starts, pin the
+    // newest line to the bottom and let the preceding line peek through the
+    // clipped top of the viewport so text never appears to vanish.
+    const int current_y=line_count<=1
+        ?y+(max_height-glyph_height)/2
+        :y+max_height-glyph_height;
+    for(int i=line_count-1;i>=0;--i){
+        const int line_y=current_y-(line_count-1-i)*line_step;
+        if(line_y+glyph_height<=y)break;
+        if(line_y>=y+max_height)continue;
+        char line_text[MESHINK_MESSAGE_TEXT_BYTES]{};
+        const size_t copy=min(lines[i].len,sizeof(line_text)-1);
+        if(copy)memcpy(line_text,lines[i].start,copy);
+        ui_smooth_text_clipped(line_text,x,line_y,scale,0,false,
+                               x,y,x+max_width,y+max_height);
+    }
+
+    // A 1 px, half-height non-blinking caret is enough to expose trailing
+    // spaces and the next insertion point without dominating an e-paper field.
+    const UiComposeLine& current=lines[line_count-1];
+    const int caret_advance=ui_text_width_n(current.start,current.len,scale);
+    const int caret_x=max(x,min(x+max_width-1,x+caret_advance));
+    const int caret_height=max(8,glyph_height/2);
+    const int caret_y=current_y+(glyph_height-caret_height)/2;
+    meshink_display_fill_rect({caret_x,caret_y,1,caret_height},0,fb);
 }
 
 // Rounded surfaces are composed directly in the selected display backend.
@@ -1234,8 +1361,11 @@ static void draw_landscape_keyboard(){
     const int entry_y=metrics.entry.y+inset_y;
     const int entry_width=metrics.entry.width-2*inset_x;
     const int entry_height=metrics.entry.height-2*inset_y;
-    ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
-                         entry_x,entry_y,entry_width,entry_height,4,0,false);
+    if(keyboard_message_mode&&value[0])
+        ui_draw_compose_tail(value,entry_x,entry_y,entry_width,entry_height,4);
+    else
+        ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
+                             entry_x,entry_y,entry_width,entry_height,4,0,false);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
@@ -2159,16 +2289,14 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,540);
     const int inset_y=meshink_keyboard::scale_axis(8,metrics.height,960);
     const int text_x=metrics.entry.x+inset_x;
+    const int text_y=metrics.entry.y+inset_y;
     const int text_width=metrics.entry.width-2*inset_x;
-    const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;
-    const int text_y=line_count<=1
-        ?metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2
-        :metrics.entry.y+inset_y;
-    const int text_height=metrics.entry.y+metrics.entry.height-text_y-inset_y;
+    const int text_height=metrics.entry.height-2*inset_y;
     if(compose_text[0])
-        ui_draw_wrapped_tail(compose_text,text_x,text_y,text_width,text_height,3,0,false);
+        ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);
     else
-        ui_text("Write a message...",text_x,text_y,3,0,false);
+        ui_text("Write a message...",text_x,
+                metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2,3,0,false);
 }
 
 static void draw_chat(bool channel) {
@@ -3205,6 +3333,8 @@ static bool update_status_hardware() {
 static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
     bool map_multi=false,map_pinch_allowed=false;
+    bool keyboard_delete_hold=false,keyboard_delete_repeated=false;
+    uint32_t keyboard_delete_repeat_at=0;
     int16_t start_x=0,start_y=0,last_x=0,last_y=0;
     int16_t pinch_x=0,pinch_y=0;
     int32_t initial_distance=0,final_distance=0;
@@ -3212,6 +3342,7 @@ static void touch_sampler_task(void*){
     for(;;){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
+            keyboard_delete_hold=false;keyboard_delete_repeated=false;
             meshink_touch_reset_tracking();
             t5_timing_touch_reset();
             T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
@@ -3229,6 +3360,7 @@ static void touch_sampler_task(void*){
             !keyboard_landscape&&!quick_panel_active;
         if(on_map!=map_previous) {
             held=false;home_held=false;map_multi=false;
+            keyboard_delete_hold=false;keyboard_delete_repeated=false;
             meshink_touch_reset_tracking();
             map_previous=on_map;
         }
@@ -3304,13 +3436,22 @@ static void touch_sampler_task(void*){
             if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;
-                held=false;
+                held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;
             }else if(home_held){
                 if(!pressed)home_held=false;
             }else if(pressed){
                 last_x=x;last_y=y;
                 if(!held){
-                    held=true;start_x=x;start_y=y;frontlight_event();
+                    held=true;start_x=x;start_y=y;pressed_at=millis();frontlight_event();
+                    keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                    if(keyboard_message_mode&&(keyboard_visible||keyboard_landscape)){
+                        const auto delete_metrics=keyboard_metrics(keyboard_landscape);
+                        keyboard_delete_hold=
+                            meshink_keyboard::in_row(y,delete_metrics.mode_key.y,delete_metrics)&&
+                            x>=meshink_keyboard::delete_split(delete_metrics);
+                        if(keyboard_delete_hold)
+                            keyboard_delete_repeat_at=pressed_at+350;
+                    }
                     const MeshInkUiRect slider_touch=
                         meshink_quick_slider_touch_rect(portrait_layout());
                     quick_slider_dragging=quick_panel_active&&
@@ -3326,6 +3467,15 @@ static void touch_sampler_task(void*){
                         slider.width;
                     quick_slider_preview=(uint8_t)max(0,min(100,value));
                     frontlight_preview(quick_slider_preview);
+                }
+                if(keyboard_delete_hold&&!quick_panel_active&&
+                   (int32_t)(millis()-keyboard_delete_repeat_at)>=0){
+                    QueuedTap repeat{start_x,start_y,0,0,false};
+                    if(xQueueSend(touch_queue,&repeat,0)==pdTRUE)
+                        keyboard_delete_repeated=true;
+                    else
+                        t5_timing_note_touch_queue_drop();
+                    keyboard_delete_repeat_at=millis()+45;
                 }
             }else if(held){
                 held=false;
@@ -3344,9 +3494,14 @@ static void touch_sampler_task(void*){
                     event_x=start_x;
                     event_y=start_y;
                 }
-                QueuedTap tap{event_x,event_y,dx,dy,false};
-                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    t5_timing_note_touch_queue_drop();
+                const bool suppress_release=
+                    keyboard_delete_hold&&keyboard_delete_repeated;
+                keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                if(!suppress_release){
+                    QueuedTap tap{event_x,event_y,dx,dy,false};
+                    if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                        t5_timing_note_touch_queue_drop();
+                }
             }
         }
         t5_timing_touch_end(timing_touch_started);

@@ -484,6 +484,11 @@ contains('if(result.native_loose)return "PNG";', "native loose PNG wins over har
 contains('if(result.parent_pmtiles)return "E-M";', "parent-only PMTiles viewport gets enlarged-source badge")
 contains('if(result.parent_loose)return "E-P";', "parent-only loose viewport gets enlarged-source badge")
 contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?2:8;', "keyboard touch sampler uses 2 ms cadence for rapid repeated letters")
+contains("ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);", "message composer uses bottom-tail renderer")
+contains("meshink_display_fill_rect({caret_x,caret_y,1,caret_height},0,fb);", "message composer has subtle one-pixel caret")
+contains("keyboard_delete_repeat_at=pressed_at+350;", "message delete hold delay")
+contains("keyboard_delete_repeat_at=millis()+45;", "message delete repeat cadence")
+contains("keyboard_delete_hold&&keyboard_delete_repeated", "repeated delete suppresses release double-delete")
 contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
 assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTiles v3 header"
 assert 'archive-scan entry=%s dir=%u base=%s' in map_source, "archive scan logs cache64 directory enumeration"
