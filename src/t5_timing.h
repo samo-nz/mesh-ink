@@ -16,6 +16,8 @@ struct T5MessageRebuildPerf {
     uint32_t store_read_us=0;
     uint32_t store_read_worst_us=0;
     uint16_t store_reads=0;
+    uint16_t store_cache_reads=0;
+    uint16_t store_writes=0;
     uint16_t journal_messages=0;
     uint16_t active_messages=0;
 };
@@ -30,6 +32,8 @@ struct T5MessageNavPerf {
     uint32_t wrap_chars=0;
     uint32_t advances=0;
     uint16_t store_reads=0;
+    uint16_t store_cache_reads=0;
+    uint16_t store_writes=0;
     uint16_t geometry_calls=0;
     uint16_t fill_calls=0;
 };
@@ -51,6 +55,8 @@ struct T5MessageDrawPerf {
     uint32_t glyph_pixels=0;
     uint32_t draw_ops=0;
     uint16_t store_reads=0;
+    uint16_t store_cache_reads=0;
+    uint16_t store_writes=0;
     uint16_t active_messages=0;
     uint16_t visible_messages=0;
     uint16_t geometry_calls=0;
