@@ -402,8 +402,9 @@ contains("MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET", "board profile exposes landscape
 contains("draw_compose_entry(keyboard_layout);", "chat compose box follows keyboard entry geometry")
 assert "static char compose_text[MESHINK_MESSAGE_TEXT_BYTES]" in source, "compose buffer accepts the full 160-byte message"
 assert "if(n<MESHINK_MESSAGE_TEXT_MAX)" in source, "portrait and landscape typing share the full message limit"
-assert "static void ui_draw_wrapped_tail(" in source, "compose rendering follows the newest wrapped lines"
-assert source.count("ui_draw_wrapped_tail(")>=3, "portrait and landscape entry rendering both use bounded tail wrapping"
+assert "static void ui_draw_wrapped_tail(" in source, "bounded tail rendering remains available for non-message keyboard entry"
+assert "static void ui_draw_compose_tail(" in source, "message composer has a dedicated clipped tail renderer"
+assert source.count("ui_draw_compose_tail(")>=3, "portrait and landscape message entry both use the clipped compose tail renderer"
 assert "landscape?198:618" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape keyboard is shifted to the bottom edge"
 assert "Rect{16,14,928,165}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compose viewport uses the reclaimed white space"
 
