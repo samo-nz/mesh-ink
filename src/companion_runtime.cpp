@@ -518,7 +518,7 @@ bool local_mesh_setup_rx_wake() {
     local_rx_wake_button_started=0;
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RuntimeReady,
                                  local_rx_wake_stats.packets_received,
-                                 (uint16_t)min<uint32_t>(local_rx_wake_stats.receive_errors,65535));
+                                 (uint16_t)(local_rx_wake_stats.receive_errors>65535?65535:local_rx_wake_stats.receive_errors));
     Serial.printf("[T5-DEEPSLEEP] MeshCore headless READY +%lums rx=%lu err=%lu tx=%lu rxmode=%u\n",
                   (unsigned long)(millis()-started),
                   (unsigned long)local_rx_wake_stats.packets_received,
@@ -543,7 +543,7 @@ bool local_mesh_enter_deep_sleep_standby() {
                   (unsigned long)stats.packets_sent,stats.continuous_rx?1U:0U);
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SleepEnter,
                                  stats.packets_received,
-                                 (uint16_t)min<uint32_t>(stats.packets_sent,65535));
+                                 (uint16_t)(stats.packets_sent>65535?65535:stats.packets_sent));
     return meshink_board_enter_deep_sleep_standby();
 }
 
@@ -571,7 +571,7 @@ void local_mesh_rx_wake_loop() {
             flash_first_activity_logged=true;
             meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::FirstMeshActivity,
                                          now.packets_received,
-                                         (uint16_t)min<uint32_t>(now.packets_sent,65535));
+                                         (uint16_t)(now.packets_sent>65535?65535:now.packets_sent));
         }
         Serial.printf("[T5-DEEPSLEEP] mesh activity +%lums rx=%lu(+%ld) err=%lu(+%ld) tx=%lu(+%ld) rxmode=%u\n",
                       (unsigned long)now_ms,
@@ -618,7 +618,7 @@ void local_mesh_rx_wake_loop() {
                           (unsigned long)LOCAL_RX_WAKE_QUIET_MS);
             meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::ReSleepAttempt,
                                          now.packets_received,
-                                         (uint16_t)min<uint32_t>(now.packets_sent,65535));
+                                         (uint16_t)(now.packets_sent>65535?65535:now.packets_sent));
             if(!local_mesh_enter_deep_sleep_standby())
                 Serial.println("[T5-DEEPSLEEP] re-sleep deferred; MeshCore will keep running and retry");
         }
