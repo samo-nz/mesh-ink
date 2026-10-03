@@ -32,7 +32,8 @@ inline bool map_logical_rect(MeshInkRect rect,MeshInkRotation rotation,
     long long y0=rect.y;
     long long x1=x0+(long long)rect.width;
     long long y1=y0+(long long)rect.height;
-    if(x0<0)x0=0;if(y0<0)y0=0;
+    if(x0<0)x0=0;
+    if(y0<0)y0=0;
     if(x1>logical_width)x1=logical_width;
     if(y1>logical_height)y1=logical_height;
     if(x0>=x1||y0>=y1)return false;
@@ -68,7 +69,8 @@ inline void fill_physical_gray4(uint8_t* framebuffer,int physical_width,
 
     int x0=rect.x,y0=rect.y;
     int x1=rect.x+rect.width,y1=rect.y+rect.height;
-    if(x0<0)x0=0;if(y0<0)y0=0;
+    if(x0<0)x0=0;
+    if(y0<0)y0=0;
     if(x1>physical_width)x1=physical_width;
     if(y1>physical_height)y1=physical_height;
     if(x0>=x1||y0>=y1)return;
