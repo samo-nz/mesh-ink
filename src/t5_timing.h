@@ -11,6 +11,17 @@ enum class T5UiAction : uint8_t {
     StatusRefresh=4, ToastRefresh=5, MessageAlert=6, Other=7
 };
 
+struct T5UiRenderPerf {
+    uint32_t total_us=0;
+    uint32_t status_us=0;
+    uint32_t nav_us=0;
+    uint32_t rounded_us=0;
+    uint32_t text_us=0;
+    uint32_t rounded_calls=0;
+    uint32_t text_calls=0;
+    uint32_t text_chars=0;
+};
+
 struct T5MessageRebuildPerf {
     uint32_t elapsed_us=0;
     uint32_t store_read_us=0;
@@ -81,6 +92,7 @@ void t5_timing_display_end(uint32_t started_us);
 void t5_timing_set_ui_context(const char* screen,bool keyboard,bool landscape,bool standby);
 void t5_timing_set_ui_action(T5UiAction action);
 void t5_timing_note_ui_draw(uint32_t elapsed_us);
+void t5_timing_note_ui_render(const T5UiRenderPerf& perf);
 void t5_timing_note_chat_draw(uint32_t history_us,uint32_t keyboard_us);
 void t5_timing_note_message_rebuild(const T5MessageRebuildPerf& perf);
 void t5_timing_note_message_nav(const T5MessageNavPerf& perf);
@@ -105,6 +117,7 @@ inline void t5_timing_display_end(uint32_t){}
 inline void t5_timing_set_ui_context(const char*,bool,bool,bool){}
 inline void t5_timing_set_ui_action(T5UiAction){}
 inline void t5_timing_note_ui_draw(uint32_t){}
+inline void t5_timing_note_ui_render(const T5UiRenderPerf&){}
 inline void t5_timing_note_chat_draw(uint32_t,uint32_t){}
 inline void t5_timing_note_message_rebuild(const T5MessageRebuildPerf&){}
 inline void t5_timing_note_message_nav(const T5MessageNavPerf&){}
