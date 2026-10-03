@@ -12,9 +12,6 @@
 #ifndef T5_LOG_UI
 #define T5_LOG_UI T5_DIAGNOSTICS
 #endif
-#ifndef T5_LOG_TOUCH
-#define T5_LOG_TOUCH T5_DIAGNOSTICS
-#endif
 #ifndef T5_LOG_GPS
 #define T5_LOG_GPS T5_DIAGNOSTICS
 #endif
