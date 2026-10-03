@@ -1072,7 +1072,7 @@ for marker in (
 for marker in (
     "[T5-BOOTPERF] mesh-board=%lums",
     "[T5-BOOTPERF] mesh-radio=%lums",
-    "[T5-BOOTPERF] spiffs=%lums mounted=%u",
+    "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz",
     "[T5-BOOTPERF] mesh-datastore=%lums",
     "[T5-BOOTPERF] mesh-core-begin=%lums",
     "[T5-BOOTPERF] mesh-interface=%lums",
@@ -1137,6 +1137,24 @@ assert "T5EnvironmentSensorManager sensors(gps);" in board_target_source, "MeshC
 assert platformio_source.count("-DENV_INCLUDE_")==1 and "-DENV_INCLUDE_GPS=1" in platformio_source, "fast T5 environment startup is valid only while GPS is the sole enabled environment provider"
 assert 'gps_send_pcas("PCAS02' not in board_target_source, "test.10 leaves GNSS positioning rate unchanged at the normal 1 Hz"
 assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS update-rate override"
+
+# Test69: test.11 keeps only low-risk boot scheduling wins. Internal SPIFFS
+# mounting is independent of the LoRa/GPS rail, so do it while the rail is
+# still settling; MeshCore datastore/core lifecycle remains behind radio init.
+local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_is_running()")]
+assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
+assert "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz" in local_setup_body, "overlapped SPIFFS work is timed and confirms the 240 MHz boot clock"
+radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
+assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
+assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
+assert local_setup_body.count("SPIFFS.begin(false)") == 1, "local startup mounts existing SPIFFS exactly once"
+assert "delay(200)" not in ui_setup_boot, "local UI no longer burns a fixed 200 ms serial delay before useful startup work"
+assert "Serial.begin(115200);" in ui_setup_boot, "standalone UI target still initializes Serial without the fixed wait"
+
+# Satellite count is primary status information and matches clock/battery size.
+status_bar_body=source[source.index("static void draw_status_bar()"):source.index("static MeshInkRect toast_message_rect")]
+assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in status_bar_body, "satellite count uses the same scale and baseline as clock/battery status text"
+assert "strlen(satellites)*18" in status_bar_body, "satellite status spacing matches scale-three character width"
 
 
 # Testing and release artifacts use the same versioned naming convention.
