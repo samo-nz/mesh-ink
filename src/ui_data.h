@@ -83,4 +83,7 @@ public:
     virtual bool active_is_channel() const = 0;
     virtual size_t active_message_count() const = 0;
     virtual const UiMessage& active_message(size_t index) const = 0;
+    // Changes whenever the active conversation or its displayed metadata
+    // changes, allowing small UI layout caches to invalidate safely.
+    virtual uint32_t active_message_revision() const { return 0; }
 };
