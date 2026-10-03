@@ -3439,8 +3439,8 @@ static void touch_sampler_task(void*){
             const bool home=sample.home&&!keyboard_active;
             const bool pressed=sample.pressed&&!suppressed_home;
             if(suppressed_home){
-                // GT911 reports the capacitive HOME frame as both home=true
-                // and pressed=true with no meaningful coordinate. Consume the
+                // The capacitive HOME frame arrives as both home=true and
+                // pressed=true with no meaningful coordinate. Consume the
                 // entire frame while a keyboard is active so it cannot fall
                 // through as a (0,0) tap and dismiss the portrait keyboard.
                 held=false;home_held=false;quick_slider_dragging=false;
