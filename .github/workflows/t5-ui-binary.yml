@@ -196,24 +196,29 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION promotes the field-tested 1.9.3-test.11 firmware
-          to the stable release channel.
+          MeshInk $VERSION is a major interaction and messaging upgrade,
+          promoted after the 1.9.4-test series passed hardware testing and CI.
 
           Highlights:
-          - RAM-first message journal access with lazy history paging, eliminating
-            runtime SPIFFS reads while keeping persisted messages durable
-          - substantially faster e-paper UI composition through packed framebuffer
-            rectangle and rounded-fill acceleration
-          - direct-message retry progress stays RAM-only until the final outcome,
-            while the UI reports MeshCore's actual direct/flood route
-          - 80 MHz interactive cruise with targeted 240 MHz render/storage bursts
-            for lower active power without sacrificing responsiveness
-          - 240 MHz race-to-idle startup, reused GPS detection and overlapped SPIFFS
-            mounting for substantially faster boot while preserving LilyGO's
-            required LoRa/GPS rail settling time
-          - Maps remain warmed during startup, with faster 240 MHz preparation
-          - larger satellites-in-use status text matching clock and battery sizing
-          - expanded timing, storage and UI performance diagnostics and regressions
+          - much larger, edge-to-edge portrait and landscape keyboard targets with
+            improved rapid-tap handling and cached touch recovery
+          - polished message composition with bottom-anchored multiline text,
+            a clear insertion cursor, visible trailing spaces and hold-to-repeat DEL
+          - capacitive HOME is suppressed while either keyboard is active so typing
+            cannot accidentally collapse the composer
+          - direct-message delivery status follows the actual MeshCore path through
+            direct/flood sends, retries, FINAL FLOOD and the terminal result
+          - retry progress remains RAM-only; the journal records only the initial
+            SENDING state and the durable final delivered/failed outcome
+          - failed final-state writes are retried, and stale in-flight direct sends
+            found after reboot are recovered as FAILED before history is displayed
+          - message-history paging now follows the visual conversation stack:
+            swipe down for older history and up to return toward newer messages
+          - 80 MHz interactive cruise, targeted 240 MHz work bursts and the faster
+            startup/render/storage path are retained without the temporary tuning
+            and keyboard diagnostic instrumentation
+          - existing message history is migrated and preserved across the updated
+            message format and persistence behavior
 
           The update image does not intentionally erase existing MeshCore
           settings, contacts, current-format message history, saved Maps data,
