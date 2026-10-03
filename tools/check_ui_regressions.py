@@ -652,8 +652,9 @@ assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not 
 # Test32 overlaps H752-01 rail settling with splash preparation instead of
 # paying a fresh 1500 ms delay after the splash is already visible.
 assert "meshink_board_start_local_radio_settle" in board_backend_source, "board backend exposes generic early-settle hook"
-contains("meshink_display_init();\n    // EPDiy has now established the shared board/I2C environment.", "early radio power begins immediately after display board init")
-contains("meshink_board_start_local_radio_settle();\n    set_ui_orientation", "UI starts rail before framebuffer/preferences/splash work")
+ui_setup_overlap=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
+assert ui_setup_overlap.index("meshink_display_init();") < ui_setup_overlap.index("meshink_board_start_local_radio_settle();"), "early radio power begins immediately after display board init"
+assert ui_setup_overlap.index("meshink_board_start_local_radio_settle();") < ui_setup_overlap.index("set_ui_orientation"), "UI starts rail before framebuffer/preferences/splash work"
 assert "radio_gps_rail_started_at" in board_target_source, "T5 backend timestamps early rail assertion"
 assert "REQUIRED_SETTLE_MS=1500" in board_target_source, "manufacturer-style total settle remains 1500 ms"
 assert "remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0" in board_target_source, "local handoff waits only the unconsumed settle remainder"
