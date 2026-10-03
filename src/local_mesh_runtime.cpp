@@ -12,6 +12,7 @@
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
 #include "t5_logging.h"
+#include "t5_timing.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
 
@@ -109,7 +110,7 @@ static const char* state_text(UiMessageState state){
     switch(state){case UiMessageState::Sending:return "SENDING";case UiMessageState::Sent:return "SENT";
         case UiMessageState::Delivered:return "DELIVERED";case UiMessageState::Failed:return "FAILED";
         case UiMessageState::Retrying1:return "RETRYING 1/2";case UiMessageState::Retrying2:return "RETRYING 2/2";
-        case UiMessageState::Retrying3:return "SENDING FLOOD";case UiMessageState::Retrying4:return "RETRYING 4/5";
+        case UiMessageState::Retrying3:return "SENDING";case UiMessageState::Retrying4:return "RETRYING 4/5";
         case UiMessageState::Retrying5:return "RETRYING 5/5";default:return "";}
 }
 static void format_last_heard(uint32_t timestamp,char out[72]){
@@ -128,6 +129,13 @@ class MeshCoreUiProvider final:public UiDataProvider{
     UiMapNode map_nodes_[MAX_MAP_NODES]{};
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
+    uint32_t active_revision_=1;
+    // One direct send can be in flight at a time. Retry/status presentation is
+    // session-only UI state: never write it to the flash-backed journal.
+    uint32_t transient_direct_sequence_=0;
+    UiMessageState transient_direct_state_=UiMessageState::Sending;
+    bool transient_direct_route_known_=false;
+    bool transient_direct_route_flood_=false;
     bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
     uint32_t conversation_store_revision_=0xFFFFFFFFUL;
     uint32_t conversation_contacts_signature_=0;
@@ -168,15 +176,23 @@ class MeshCoreUiProvider final:public UiDataProvider{
                 snprintf(out,len,"HEARD %u REPEAT%s",(unsigned)stored.repeats,stored.repeats==1?"":"S");
                 return;
             }
+            const bool route_known=(stored.flags&MESHINK_MESSAGE_ROUTE_KNOWN)!=0;
+            const char* route=(stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)?"FLOOD":"DIRECT";
+            if(state==UiMessageState::Retrying1||state==UiMessageState::Retrying2){
+                const unsigned retry=state==UiMessageState::Retrying1?1U:2U;
+                if(route_known)snprintf(out,len,"RETRYING %s %u/2",route,retry);
+                else snprintf(out,len,"RETRYING %u/2",retry);
+                return;
+            }
             if(state==UiMessageState::Retrying3){
-                strncpy(out,"SENDING FLOOD",len-1);out[len-1]=0;return;
+                if(route_known)snprintf(out,len,"SENDING %s",route);
+                else {strncpy(out,"SENDING",len-1);out[len-1]=0;}
+                return;
             }
             const char* base=(stored.kind==(uint8_t)MessageKind::Direct&&
                               state==UiMessageState::Sent)?"SENDING":state_text(state);
-            if((stored.flags&MESHINK_MESSAGE_ROUTE_KNOWN)&&base[0]&&
-               state!=UiMessageState::Failed)
-                snprintf(out,len,"%s %s",base,
-                         (stored.flags&MESHINK_MESSAGE_ROUTE_FLOOD)?"FLOOD":"DIRECT");
+            if(route_known&&base[0]&&state!=UiMessageState::Failed)
+                snprintf(out,len,"%s %s",base,route);
             else if(base[0]){strncpy(out,base,len-1);out[len-1]=0;}
             return;
         }
@@ -276,12 +292,34 @@ class MeshCoreUiProvider final:public UiDataProvider{
         return direct_unread_[0].count;
     }
     void rebuild_active(){
+#if T5_TIMING_DIAGNOSTICS
+        MeshInkMessageStorePerf perf_before{},perf_after{};
+        meshink_message_store_perf_snapshot(perf_before);
+        const uint32_t perf_started=micros();
+        const size_t perf_journal_count=store_.count();
+#endif
         active_count_=0;
         StoredMessage item{};
         for(size_t i=0;i<store_.count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
             if(!store_.read(i,item)||item.sequence==0||!matches(item))continue;
             active_indices_[active_count_++]=(uint16_t)i;
         }
+        ++active_revision_;
+#if T5_TIMING_DIAGNOSTICS
+        const uint32_t perf_elapsed=(uint32_t)(micros()-perf_started);
+        meshink_message_store_perf_snapshot(perf_after);
+        T5MessageRebuildPerf perf{};
+        perf.elapsed_us=perf_elapsed;
+        perf.store_read_us=perf_after.read_us-perf_before.read_us;
+        perf.store_read_worst_us=perf_after.read_worst_us;
+        const uint32_t perf_reads=perf_after.reads-perf_before.reads;
+        perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+        const uint32_t perf_cache_reads=perf_after.cache_reads-perf_before.cache_reads;
+        perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
+        perf.journal_messages=(uint16_t)(perf_journal_count>0xFFFFU?0xFFFFU:perf_journal_count);
+        perf.active_messages=(uint16_t)(active_count_>0xFFFFU?0xFFFFU:active_count_);
+        t5_timing_note_message_rebuild(perf);
+#endif
     }
     bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
@@ -377,14 +415,53 @@ public:
         refresh(true);ui_notify_message_received(true);
     }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
-    uint32_t queue_direct(const char* text,uint32_t timestamp){const uint32_t sequence=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return sequence;}
-    void update_message(uint32_t sequence,UiMessageState state){if(sequence)store_.update_state(sequence,state);ui_request_data_refresh("message-state");}
+    uint32_t queue_direct(const char* text,uint32_t timestamp){
+        const uint32_t sequence=store_.append(
+            MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);
+        transient_direct_sequence_=sequence;
+        transient_direct_state_=UiMessageState::Sending;
+        transient_direct_route_known_=false;
+        transient_direct_route_flood_=false;
+        rebuild_active();
+        return sequence;
+    }
+    void transient_direct_status(uint32_t sequence,UiMessageState state,
+                                 bool route_known=false,bool route_flood=false){
+        if(!sequence||sequence!=transient_direct_sequence_)return;
+        const bool changed=transient_direct_state_!=state||
+                           transient_direct_route_known_!=route_known||
+                           (route_known&&transient_direct_route_flood_!=route_flood);
+        transient_direct_state_=state;
+        transient_direct_route_known_=route_known;
+        transient_direct_route_flood_=route_flood;
+        if(changed)++active_revision_;
+        ui_request_data_refresh("message-transient");
+    }
+    void clear_transient_direct(uint32_t sequence){
+        if(!sequence||sequence!=transient_direct_sequence_)return;
+        transient_direct_sequence_=0;
+        transient_direct_state_=UiMessageState::Sending;
+        transient_direct_route_known_=false;
+        transient_direct_route_flood_=false;
+    }
+    void update_message(uint32_t sequence,UiMessageState state){
+        if(sequence){
+            store_.update_state(sequence,state);
+            clear_transient_direct(sequence);
+            ++active_revision_;
+        }
+        ui_request_data_refresh("message-state");
+    }
     void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state){
-        if(sequence)store_.update_outgoing(sequence,state,ack,flood);
+        if(sequence){
+            store_.update_outgoing(sequence,state,ack,flood);
+            clear_transient_direct(sequence);
+            ++active_revision_;
+        }
         ui_request_data_refresh("message-route");
     }
     void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
-        if(sequence)store_.update_repeat(sequence,repeats,snr_q4);ui_request_data_refresh("channel-repeat");
+        if(sequence){store_.update_repeat(sequence,repeats,snr_q4);++active_revision_;}ui_request_data_refresh("channel-repeat");
     }
     size_t map_node_count() const override {return map_node_count_;}
     bool map_node(size_t index,UiMapNode& out) const override {
@@ -625,6 +702,18 @@ public:
         if(i>=active_count_)return active_message_view_.entry;
         StoredMessage item{};
         if(!store_.read(active_indices_[i],item))return active_message_view_.entry;
+        if(item.sequence==transient_direct_sequence_&&
+           item.kind==(uint8_t)MessageKind::Direct) {
+            item.state=(uint8_t)transient_direct_state_;
+            if(transient_direct_route_known_) {
+                item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+                if(transient_direct_route_flood_)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+                else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+            } else {
+                item.flags&=(uint8_t)~(MESHINK_MESSAGE_ROUTE_KNOWN|
+                                      MESHINK_MESSAGE_ROUTE_FLOOD);
+            }
+        }
         strncpy(active_message_view_.text,item.text,sizeof(active_message_view_.text)-1);
         format_time(item.timestamp,active_message_view_.time);
         active_message_view_.entry.outgoing=item.state!=(uint8_t)UiMessageState::Received;
@@ -632,6 +721,7 @@ public:
         format_message_network(item,active_message_view_.network,sizeof(active_message_view_.network));
         return active_message_view_.entry;
     }
+    uint32_t active_message_revision()const override{return active_revision_;}
     bool active_contact(ContactInfo& out)const{if(active_channel_)return false;auto* found=t5_mesh().lookupContactByPubKey(active_key_,6);if(!found)return false;out=*found;return true;}
     uint8_t active_channel_index()const{return active_key_[0];}
     bool active_channel(ChannelDetails& out)const{return active_channel_&&t5_mesh().getChannel(active_key_[0],out);}
@@ -665,6 +755,12 @@ static bool force_pending_direct_flood(){
     if(!contact)return false;
     contact->out_path_len=OUT_PATH_UNKNOWN;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] direct retries exhausted; reset saved path for flood fallback");
+    return true;
+}
+static bool pending_direct_route(bool& flood){
+    ContactInfo* contact=t5_mesh().lookupContactByPubKey(pending_direct.key,6);
+    if(!contact)return false;
+    flood=contact->out_path_len==OUT_PATH_UNKNOWN;
     return true;
 }
 
@@ -858,12 +954,15 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         pending_direct.route_flood[attempt]=frame[1]!=0;
         pending_direct.deadline=millis()+max((uint32_t)500,timeout);
         pending_direct.waiting_response=false;
+        // ACK/route metadata and retry progress are transient UI state until
+        // the direct message reaches a durable final outcome.
         const UiMessageState attempt_state=attempt==0?UiMessageState::Sending:
             (attempt==1?UiMessageState::Retrying1:
              (attempt==2?UiMessageState::Retrying2:UiMessageState::Retrying3));
-        provider.confirm_direct_send(
-            pending_direct.sequence,ack,pending_direct.route_flood[attempt],attempt_state);
-        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu\n",
+        provider.transient_direct_status(
+            pending_direct.sequence,attempt_state,true,
+            pending_direct.route_flood[attempt]);
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu journal=unchanged\n",
                   attempt,pending_direct.route_flood[attempt]?"flood":"direct",
                   (unsigned long)ack,(unsigned long)timeout);
     }
@@ -964,8 +1063,15 @@ void local_mesh_loop(){
             if(pending_direct.retry==DIRECT_RETRY_LIMIT&&!force_pending_direct_flood()){
                 fail_pending_direct("flood fallback contact missing");
             }else{
-                provider.update_message(pending_direct.sequence,
-                    (UiMessageState)((uint8_t)UiMessageState::Retrying1+pending_direct.retry-1));
+                // Retry progress is runtime/UI state only. The journal remains
+                // Sending until one final Delivered or Failed update.
+                const UiMessageState retry_state=
+                    (UiMessageState)((uint8_t)UiMessageState::Retrying1+
+                                     pending_direct.retry-1);
+                bool route_flood=false;
+                const bool route_known=pending_direct_route(route_flood);
+                provider.transient_direct_status(
+                    pending_direct.sequence,retry_state,route_known,route_flood);
                 if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
             }
         }
@@ -1000,6 +1106,11 @@ bool local_mesh_send_active(const char* text){
     memcpy(pending_direct.key,contact.id.pub_key,6);
     strncpy(pending_direct.text,text,sizeof(pending_direct.text)-1);
     pending_direct.sequence=provider.queue_direct(text,now);
+    // MeshCore chooses direct vs flood from the contact's current path. Show
+    // that route immediately; RESP_CODE_SENT will confirm the actual choice.
+    provider.transient_direct_status(
+        pending_direct.sequence,UiMessageState::Sending,true,
+        contact.out_path_len==OUT_PATH_UNKNOWN);
     if(!enqueue_direct_attempt()){fail_pending_direct("initial queue busy");return false;}
     return true;
 }

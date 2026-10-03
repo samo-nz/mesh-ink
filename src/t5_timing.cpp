@@ -44,8 +44,12 @@ struct CycleDetail {
     uint32_t mesh_us=0;
     uint32_t ui_us=0;
     uint32_t draw_us=0;          // longest draw_screen() in this loop
+    T5UiRenderPerf ui_render{};
     uint32_t chat_history_us=0;
     uint32_t keyboard_draw_us=0;
+    T5MessageRebuildPerf message_rebuild{};
+    T5MessageNavPerf message_nav{};
+    T5MessageDrawPerf message_draw{};
     uint32_t display_us=0;       // cumulative physical EPD time this loop
     uint32_t status_us=0;
     uint32_t text_wait_ms=0;
@@ -365,6 +369,81 @@ static void print_slow(const SlowCycleEvent& slow){
     Serial.print(" status=");print_ms_value(d.status_us);
     Serial.printf(" text-wait=%lums",(unsigned long)d.text_wait_ms);
     Serial.println();
+
+    if(d.ui_render.total_us){
+        Serial.print("[T5-UIPERF] total=");print_ms_value(d.ui_render.total_us);
+        Serial.print(" status=");print_ms_value(d.ui_render.status_us);
+        Serial.print(" nav=");print_ms_value(d.ui_render.nav_us);
+        Serial.print(" rounded=");print_ms_value(d.ui_render.rounded_us);
+        Serial.print(" text=");print_ms_value(d.ui_render.text_us);
+        Serial.printf(" calls rounded=%lu text=%lu chars=%lu (categories nested)\n",
+            (unsigned long)d.ui_render.rounded_calls,
+            (unsigned long)d.ui_render.text_calls,
+            (unsigned long)d.ui_render.text_chars);
+    }
+    if(d.message_rebuild.elapsed_us){
+        Serial.printf("[T5-MSGPERF] rebuild journal=%u active=%u total=",
+            (unsigned)d.message_rebuild.journal_messages,
+            (unsigned)d.message_rebuild.active_messages);
+        print_ms_value(d.message_rebuild.elapsed_us);
+        Serial.print(" store=");print_ms_value(d.message_rebuild.store_read_us);
+        Serial.printf(" flash-reads=%u ram-reads=%u writes=%u",
+            (unsigned)d.message_rebuild.store_reads,
+            (unsigned)d.message_rebuild.store_cache_reads,
+            (unsigned)d.message_rebuild.store_writes);
+        Serial.print(" global-worst=");print_ms_value(d.message_rebuild.store_read_worst_us);
+        Serial.println();
+    }
+    if(d.message_nav.elapsed_us){
+        Serial.print("[T5-MSGPERF] nav total=");print_ms_value(d.message_nav.elapsed_us);
+        Serial.print(" store=");print_ms_value(d.message_nav.store_read_us);
+        Serial.printf(" flash-reads=%u ram-reads=%u writes=%u",
+            (unsigned)d.message_nav.store_reads,
+            (unsigned)d.message_nav.store_cache_reads,
+            (unsigned)d.message_nav.store_writes);
+        Serial.print(" global-worst=");print_ms_value(d.message_nav.store_read_worst_us);
+        Serial.printf(" geom=%u/",(unsigned)d.message_nav.geometry_calls);
+        print_ms_value(d.message_nav.geometry_us);
+        Serial.printf(" fill=%u/",(unsigned)d.message_nav.fill_calls);
+        print_ms_value(d.message_nav.fill_us);
+        Serial.printf(" wrap=%lu chars=%lu advance=%lu\n",
+            (unsigned long)d.message_nav.wrap_calls,
+            (unsigned long)d.message_nav.wrap_chars,
+            (unsigned long)d.message_nav.advances);
+    }
+    if(d.message_draw.history_us){
+        Serial.printf("[T5-MSGPERF] draw kind=%s page=%u keyboard=%u active=%u visible=%u history=",
+            d.message_draw.channel?"channel":"direct",
+            (unsigned)d.message_draw.page,
+            (unsigned)d.message_draw.keyboard,
+            (unsigned)d.message_draw.active_messages,
+            (unsigned)d.message_draw.visible_messages);
+        print_ms_value(d.message_draw.history_us);
+        Serial.print(" layout=");print_ms_value(d.message_draw.layout_us);
+        Serial.print(" render=");print_ms_value(d.message_draw.render_us);
+        Serial.print(" store=");print_ms_value(d.message_draw.store_read_us);
+        Serial.printf(" flash-reads=%u ram-reads=%u writes=%u",
+            (unsigned)d.message_draw.store_reads,
+            (unsigned)d.message_draw.store_cache_reads,
+            (unsigned)d.message_draw.store_writes);
+        Serial.print(" global-worst=");print_ms_value(d.message_draw.store_read_worst_us);
+        Serial.println();
+        Serial.printf("[T5-MSGPERF] work geom=%u/",
+            (unsigned)d.message_draw.geometry_calls);
+        print_ms_value(d.message_draw.geometry_us);
+        Serial.printf(" fill=%u/",(unsigned)d.message_draw.fill_calls);
+        print_ms_value(d.message_draw.fill_us);
+        Serial.printf(" wrap=%lu chars=%lu advance=%lu inter=%lu/%lu smooth=",
+            (unsigned long)d.message_draw.wrap_calls,
+            (unsigned long)d.message_draw.wrap_chars,
+            (unsigned long)d.message_draw.advances,
+            (unsigned long)d.message_draw.smooth_calls,
+            (unsigned long)d.message_draw.smooth_chars);
+        print_ms_value(d.message_draw.smooth_us);
+        Serial.printf(" glyphscan=%lu drawops=%lu\n",
+            (unsigned long)d.message_draw.glyph_pixels,
+            (unsigned long)d.message_draw.draw_ops);
+    }
 }
 } // namespace
 
@@ -484,10 +563,34 @@ void t5_timing_note_ui_draw(uint32_t elapsed_us){
     portEXIT_CRITICAL(&timing_mux);
 }
 
+void t5_timing_note_ui_render(const T5UiRenderPerf& perf){
+    portENTER_CRITICAL(&timing_mux);
+    if(perf.total_us>=current_cycle.ui_render.total_us)current_cycle.ui_render=perf;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
 void t5_timing_note_chat_draw(uint32_t history_us,uint32_t keyboard_us){
     portENTER_CRITICAL(&timing_mux);
     if(history_us>current_cycle.chat_history_us)current_cycle.chat_history_us=history_us;
     if(keyboard_us>current_cycle.keyboard_draw_us)current_cycle.keyboard_draw_us=keyboard_us;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_message_rebuild(const T5MessageRebuildPerf& perf){
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.message_rebuild=perf;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_message_nav(const T5MessageNavPerf& perf){
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.message_nav=perf;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_message_draw(const T5MessageDrawPerf& perf){
+    portENTER_CRITICAL(&timing_mux);
+    current_cycle.message_draw=perf;
     portEXIT_CRITICAL(&timing_mux);
 }
 

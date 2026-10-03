@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp32-hal-cpu.h>
 #include <Preferences.h>
 #include <string.h>
 #include "ui_onboarding.h"
@@ -145,7 +146,15 @@ static void companion_exit_button() {
 }
 
 void setup() {
+    // Boot is a race-to-idle phase: run the ESP32-S3 at its maximum clock
+    // until the local UI becomes interactive (or companion setup completes).
+    // The steady-state policies then drop back to their validated 80 MHz cruise.
+    const bool boot_cpu_ok=setCpuFrequencyMhz(240);
     Serial.begin(115200);
+    Serial.printf("[T5-BOOTPERF] cpu-boot-target=240MHz actual=%luMHz ok=%u\n",
+                  (unsigned long)getCpuFrequencyMhz(),boot_cpu_ok?1U:0U);
+    const uint32_t bootperf_total_started=millis();
+    uint32_t bootperf_stage_started=millis();
     meshink_buttons_begin();
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=%s\n",
@@ -181,17 +190,44 @@ void setup() {
         // verify the policy again after MeshCore setup in case a dependency
         // changes in a future build. Returning from companion mode always
         // reboots through this same path.
+        bootperf_stage_started=millis();
         check_local_wireless_state("local-pre",
             meshink_wireless_force_local_radios_off());
+        Serial.printf("[T5-BOOTPERF] wireless-pre=%lums\n",
+                      (unsigned long)(millis()-bootperf_stage_started));
+
+        bootperf_stage_started=millis();
         ui_setup();           // show boot logo while storage/radio initialize
+        Serial.printf("[T5-BOOTPERF] ui-setup-call=%lums\n",
+                      (unsigned long)(millis()-bootperf_stage_started));
+
+        bootperf_stage_started=millis();
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        Serial.printf("[T5-BOOTPERF] local-mesh-call=%lums\n",
+                      (unsigned long)(millis()-bootperf_stage_started));
+
+        bootperf_stage_started=millis();
         const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
         check_local_wireless_state("local-post-mesh",local_ready);
         if(meshink_wireless_local_radios_off(local_ready))
             Serial.println("[T5-INIT] wifi-bt=OK wifi=off bt=off");
+        Serial.printf("[T5-BOOTPERF] wireless-post=%lums\n",
+                      (unsigned long)(millis()-bootperf_stage_started));
+
+        bootperf_stage_started=millis();
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
+        Serial.printf("[T5-BOOTPERF] maps-warm=%lums cpu=%luMHz\n",
+                      (unsigned long)(millis()-bootperf_stage_started),
+                      (unsigned long)getCpuFrequencyMhz());
+
+        bootperf_stage_started=millis();
         ui_finish_startup();  // only now show a tappable setup/home screen
+        Serial.printf("[T5-BOOTPERF] ui-finish-call=%lums\n",
+                      (unsigned long)(millis()-bootperf_stage_started));
+
         if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
+        Serial.printf("[T5-BOOTPERF] startup-total=%lums\n",
+                      (unsigned long)(millis()-bootperf_total_started));
     }
 }
 

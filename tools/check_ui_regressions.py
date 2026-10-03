@@ -21,6 +21,7 @@ pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 standalone_source = (root / "src" / "ui_standalone_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
+board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
 companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
@@ -49,6 +50,7 @@ touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encodi
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
 platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
+testing_workflow_source = (root / ".github" / "workflows" / "testing-firmware.yml").read_text(encoding="utf-8")
 cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].split("; Generic portability", 1)[0]
 
 def contains(fragment, label):
@@ -133,13 +135,19 @@ assert "meshink_touch_reset_tracking();" in source, "UI resets backend tracking 
 assert "meshink_touch_set_power(false);" in board_target_source, "companion mode delegates touch disable to backend"
 assert "GT911" not in board_target_source, "board runtime must not name the touch controller outside its backend"
 
-# Test10 companion-mode power/logging policy: local UI keeps its validated
-# frequencies, while BT companion drops to 80 MHz only after radio/BLE/GPS
-# initialization. The companion ISR path must choose Arduino ownership before
+# Test10 companion-mode power/logging policy: both steady-state runtimes use
+# an 80 MHz cruise clock after initialization. Local UI separately bursts to
+# 240 MHz for rendering/display work. The companion ISR path must choose
+# Arduino ownership before
 # probing the deinitialized EPDiy ISR service, and BLE scan response data must
 # stay within the legacy 31-byte budget without duplicating the UART UUID.
 assert "COMPANION_CPU_MHZ=80" in companion_source, "BT companion steady-state CPU target is 80 MHz"
 assert 'companion_set_low_power_cpu();' in companion_source, "BT companion applies low-power CPU policy"
+assert "UI_IDLE_CPU_MHZ=80" in source and "UI_RENDER_CPU_MHZ=240" in source, "local UI uses 80 MHz cruise and 240 MHz render clocks"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")' in source, "local UI enters 80 MHz cruise after startup"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"wake")' in source, "wake returns to the 80 MHz interactive cruise clock before burst rendering"
+assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete")' in source and 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete")' in source, "display work returns to the boot-aware or steady-state cruise clock"
+assert "set_cpu_target(160" not in source, "local UI no longer idles at 160 MHz"
 companion_setup_body = companion_source.split("void companion_setup() {",1)[1].split("void companion_loop()",1)[0]
 assert companion_setup_body.index("meshink_board_boot_complete();") < companion_setup_body.index("companion_set_low_power_cpu();"), "companion lowers CPU only after hardware/BLE setup"
 assert "board.begin();" not in companion_source and "board.beginLocal();" not in companion_source and "board.onBootComplete();" not in companion_source, "generic runtime must use board lifecycle abstraction"
@@ -434,10 +442,16 @@ contains("T5UiAction::StatusPoll", "status-poll timing attribution")
 contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
 assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
 
-# 1.8.10: full-screen framebuffer composition may use a short 240 MHz burst,
-# but must restore the previous clock immediately afterwards.
+# Local UI framebuffer composition uses short 240 MHz bursts from the 80 MHz
+# cruise clock, restoring the previous clock immediately afterwards.
 contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
 contains('set_cpu_target(previous_mhz,"ui-draw-complete");', "UI draw boost restores previous CPU clock")
+assert 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh")' in source and 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh")' in source, "e-paper updates still run at 240 MHz"
 contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
 contains("const bool stale_navigation_tap=", "UI filters touch releases queued during blocking navigation")
 contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale-touch filter excludes keyboard and Quick Settings")
@@ -639,8 +653,9 @@ assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not 
 # Test32 overlaps H752-01 rail settling with splash preparation instead of
 # paying a fresh 1500 ms delay after the splash is already visible.
 assert "meshink_board_start_local_radio_settle" in board_backend_source, "board backend exposes generic early-settle hook"
-contains("meshink_display_init();\n    // EPDiy has now established the shared board/I2C environment.", "early radio power begins immediately after display board init")
-contains("meshink_board_start_local_radio_settle();\n    set_ui_orientation", "UI starts rail before framebuffer/preferences/splash work")
+ui_setup_overlap=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
+assert ui_setup_overlap.index("meshink_display_init();") < ui_setup_overlap.index("meshink_board_start_local_radio_settle();"), "early radio power begins immediately after display board init"
+assert ui_setup_overlap.index("meshink_board_start_local_radio_settle();") < ui_setup_overlap.index("set_ui_orientation"), "UI starts rail before framebuffer/preferences/splash work"
 assert "radio_gps_rail_started_at" in board_target_source, "T5 backend timestamps early rail assertion"
 assert "REQUIRED_SETTLE_MS=1500" in board_target_source, "manufacturer-style total settle remains 1500 ms"
 assert "remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0" in board_target_source, "local handoff waits only the unconsumed settle remainder"
@@ -942,38 +957,38 @@ assert "meshink_message_store().begin()" in companion_source, "companion mode op
 assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
 
 
-# Test51: the 250-message journal is flash-authoritative. Neither the full
-# journal nor 250 rendered message bodies may be duplicated in RAM/PSRAM.
-assert "MeshInkStoredMessage* records_" not in message_store_header, "journal must not allocate a 250-record RAM/PSRAM backing array"
-assert "MeshInkStoredMessage records_[MESHINK_MESSAGE_CAPACITY]" not in message_store_header, "journal records stay exclusively in SPIFFS"
-assert "bool read(size_t logical,MeshInkStoredMessage& out) const;" in message_store_header, "journal exposes fixed-record on-demand reads"
-assert "MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)" in message_store_source, "flash file retains all 250 fixed-size records"
-assert "record-cache=0 header=%uB" in message_store_source, "boot transcript reports zero cached message records"
-assert "mutable File file_{};" in message_store_header, "one lightweight journal file handle is reused for record seeks"
-assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps only tiny journal-position indices"
-assert "mutable MessageView active_message_view_{};" in runtime_source, "UI keeps one scratch rendered message instead of 250"
-assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "full rendered history is never cached"
-assert "store_.read(active_indices_[i],item)" in runtime_source, "individual visible/measured messages are loaded from flash on demand"
-assert "heap_caps_calloc" not in message_store_source and "heap_caps_calloc" not in runtime_source, "message history no longer needs large PSRAM allocations"
+# Test51: SPIFFS remains the persistent authority, but the running session is
+# RAM-first. Only raw records are mirrored; rendered history/pages are not.
+assert "MeshInkStoredMessage* records_=nullptr;" in message_store_header, "journal owns a runtime raw-record cache"
+assert "MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT" in message_store_source, "raw journal cache prefers PSRAM"
+assert "source.read((uint8_t*)records_,bytes)" in message_store_source, "journal is loaded sequentially once at startup"
+assert "out=records_[physical];" in message_store_source, "normal logical reads use the RAM mirror"
+assert "if(records_)records_[physical]=record;" in message_store_source, "successful metadata writes update the RAM mirror"
+assert "if(records_)records_[physical]=item;" in message_store_source, "successful appends update the RAM mirror"
+assert "record-cache=%s header=%uB" in message_store_source, "boot transcript reports cache placement"
+assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps compact journal indices"
+assert "mutable MessageView active_message_view_{};" in runtime_source, "UI still formats only one scratch message at a time"
+assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "formatted history is never prebuilt"
+assert "store_.read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
 assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal startup remains after display initialization"
 
 
-# Test52: message storage stays responsive/battery-efficient with the current
-# v3 journal and lazy history indexing.
+# Test52: page history stays on-demand. Only tiny anchors and lazy per-message
+# geometry metadata are retained; pages themselves are never materialized.
 assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
-assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rescan flash only after message history changes"
+assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
 assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
-assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews are rebuilt with one linear journal pass"
+assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews use one linear RAM-backed journal pass"
 assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
 assert "rebuild_active();" not in runtime_source[runtime_source.index("void refresh(bool force=false)"):runtime_source.index("void received_direct")], "periodic provider refresh must not rebuild the active message index"
-assert "for(size_t n=header_.count;n>0;--n)" in message_store_source[message_store_source.index("bool MeshInkMessageStore::find_physical"):message_store_source.index("uint32_t MeshInkMessageStore::append")], "message state lookup searches newest-first"
-assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
-assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling remains non-destructive"
-assert "migrate_legacy" not in message_store_source, "retired migration machinery cannot re-enter the message-store hot path"
-assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only tiny page anchors"
-assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat page composition remains height-aware and incremental"
-assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message record is read once and reused for height plus drawing"
+assert "CHAT_PAGE_ANCHORS=250" in source and "chat_page_starts[CHAT_PAGE_ANCHORS]" in source, "lazy chat navigation stores only compact page anchors"
+assert "chat_fill_backwards" in source and "chat_page_bounds_lazy" in source, "chat pages remain height-aware and built only when requested"
+assert "struct ChatGeometryCache" in source and "uint8_t valid[MESHINK_MESSAGE_CAPACITY]" in source, "only compact lazy geometry metadata is cached"
+assert "if(!chat_geometry_cache.valid[index])" in source, "message geometry is computed only on first demand"
+assert "rebuild_chat_geometry_cache" not in source, "history geometry is never prebuilt in bulk"
+assert "chat_needs_paging" not in source, "draw and swipe paths share the same lazy page-boundary calculation"
+assert "const UiMessage& message=ui_data->active_message(i);" in source, "visible message content remains on-demand"
 assert "item.sequence==0||!matches(item)" in runtime_source, "sequence-zero records can never enter an active chat index"
 
 
@@ -987,8 +1002,166 @@ assert "void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack
 assert "item.state=(uint8_t)state;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes state"
 assert "item.ack=ack;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes ACK"
 assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
-assert "provider.confirm_direct_send(" in runtime_source, "local send response uses one persistent metadata update"
+direct_attempt_response = runtime_source[
+    runtime_source.index("else if(frame[0]==6&&len>=10&&pending_direct.active)"):
+    runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)")
+]
+assert "provider.confirm_direct_send(" not in direct_attempt_response and "provider.update_message(" not in direct_attempt_response, "direct attempt ACK/route metadata never reaches persistent provider methods"
+assert "provider.transient_direct_status(" in direct_attempt_response, "direct attempt ACK/route metadata updates the RAM-only UI overlay"
+direct_retry_loop = runtime_source[
+    runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
+    runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
+]
+assert "provider.update_message(" not in direct_retry_loop and "provider.confirm_direct_send(" not in direct_retry_loop, "direct retries never rewrite the journal"
+assert "provider.transient_direct_status(" in direct_retry_loop and "retry_state" in direct_retry_loop, "direct retry stages remain visible through the RAM-only UI overlay"
+assert "pending_direct_route(route_flood)" in direct_retry_loop, "each retry derives the route MeshCore will actually use from the current contact path"
+direct_delivery = runtime_source[
+    runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)"):
+    runtime_source.index("else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response)")
+]
+assert "provider.confirm_direct_send(" in direct_delivery and "UiMessageState::Delivered" in direct_delivery, "direct delivery persists one final ACK/route/state update"
+fail_direct = runtime_source[
+    runtime_source.index("static void fail_pending_direct("):
+    runtime_source.index("static bool enqueue_info_request(")
+]
+assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed);" in fail_direct, "direct failure persists one final state update"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
+
+# Test64: test.8 keeps the 80 MHz steady state but races actual message-store
+# flash I/O at 240 MHz. Cached PSRAM/RAM reads must never pay a clock switch.
+assert "STORE_FLASH_CPU_MHZ=240" in message_store_source, "message-store flash work has an explicit 240 MHz race-to-idle target"
+assert "struct StoreCpuBoostScope" in message_store_source and "setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ)" in message_store_source, "message-store owns a scoped flash CPU boost"
+assert "if(restore)setCpuFrequencyMhz(previous_mhz);" in message_store_source, "message-store flash boost restores the previous CPU clock"
+for method in (
+    "bool MeshInkMessageStore::load_cache(File& source)",
+    "bool MeshInkMessageStore::create_empty()",
+    "void MeshInkMessageStore::write_header()",
+    "bool MeshInkMessageStore::write_record(",
+    "bool MeshInkMessageStore::begin()",
+    "uint32_t MeshInkMessageStore::append(",
+):
+    body=message_store_source[message_store_source.index(method):]
+    assert "StoreCpuBoostScope" in body[:5000], f"{method} must race flash work at 240 MHz"
+read_body=message_store_source[
+    message_store_source.index("bool MeshInkMessageStore::read("):
+    message_store_source.index("bool MeshInkMessageStore::find_physical(")
+]
+assert read_body.index("if(records_){") < read_body.index("StoreCpuBoostScope cpu_boost;"), "cached message reads return before any CPU boost"
+find_body=message_store_source[
+    message_store_source.index("bool MeshInkMessageStore::find_physical("):
+    message_store_source.index("uint32_t MeshInkMessageStore::append(")
+]
+assert "if(records_){" in find_body and find_body.index("if(records_){") < find_body.index("StoreCpuBoostScope cpu_boost;"), "sequence lookup stays RAM-only when the journal mirror exists"
+assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_boost" not in message_store_source, "storage race-to-idle adds no dynamic allocation"
+assert "cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz" in message_store_source, "boot cache timing logs the active storage CPU clock"
+assert "total=%lu.%01lums cpu=%luMHz ok=%u" in message_store_source, "runtime store timing logs the active storage CPU clock"
+
+# Test65: test.9 measures the existing splash/startup path before adding
+# progress-refresh UI. The measurements must separate LoRa from the GPS probe
+# and cover the outer setup phases without changing normal splash wording.
+for marker in (
+    "[T5-BOOTPERF] wireless-pre=%lums",
+    "[T5-BOOTPERF] ui-setup-call=%lums",
+    "[T5-BOOTPERF] local-mesh-call=%lums",
+    "[T5-BOOTPERF] wireless-post=%lums",
+    "[T5-BOOTPERF] maps-warm=%lums",
+    "[T5-BOOTPERF] ui-finish-call=%lums",
+    "[T5-BOOTPERF] startup-total=%lums",
+):
+    assert marker in unified_source, f"top-level boot timing missing {marker}"
+for marker in (
+    "[T5-BOOTPERF] mesh-board=%lums",
+    "[T5-BOOTPERF] mesh-radio=%lums",
+    "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz",
+    "[T5-BOOTPERF] mesh-datastore=%lums",
+    "[T5-BOOTPERF] mesh-core-begin=%lums",
+    "[T5-BOOTPERF] mesh-interface=%lums",
+    "[T5-BOOTPERF] gps-service=%lums",
+    "[T5-BOOTPERF] gps-prefs=%lums",
+    "[T5-BOOTPERF] mesh-runtime=%lums",
+    "[T5-BOOTPERF] mesh-ui-handoff=%lums",
+    "[T5-BOOTPERF] local-mesh-total=%lums",
+):
+    assert marker in companion_source, f"local MeshCore boot timing missing {marker}"
+for marker in (
+    "[T5-BOOTPERF] board-local=%lums",
+    "[T5-BOOTPERF] radio-rail-overlap=%lums remaining-wait=%lums required=%lums",
+    "[T5-BOOTPERF] rtc=%lums",
+    "[T5-BOOTPERF] lora=%lums ready=%u",
+    "[T5-BOOTPERF] gps-probe=%lums locked=%u baud=%lu",
+    "[T5-BOOTPERF] radio-init-total=%lums",
+):
+    assert marker in board_target_source, f"board/radio boot timing missing {marker}"
+for marker in (
+    "[T5-BOOTPERF] ui-pre-display=%lums",
+    "[T5-BOOTPERF] display-init=%lums",
+    "[T5-BOOTPERF] touch-display-state=%lums",
+    "[T5-BOOTPERF] ui-prefs-status=%lums",
+    "[T5-BOOTPERF] splash-compose=%lums",
+    "[T5-BOOTPERF] splash-refresh=%lums",
+    "[T5-BOOTPERF] ui-setup-total=%lums",
+    "[T5-BOOTPERF] ui-finish=%lums",
+):
+    assert marker in source, f"UI splash boot timing missing {marker}"
+ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
+assert 'ui_centred("STARTING UP..."' in ui_setup_boot, "measurement build preserves the existing normal splash message"
+assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setup_boot and "LOADING MESSAGES" not in ui_setup_boot, "measurement build does not add progress refreshes before timings are known"
+
+# Test66: test.10 keeps the complete boot path at 240 MHz, including Maps
+# warm-up and panel refresh restore, then drops once to the validated 80 MHz
+# interactive cruise. The T5 GPS manager reuses the board-level NMEA probe
+# instead of paying upstream EnvironmentSensorManager's fixed 1000 ms detect.
+setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
+assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
+assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
+assert "[T5-BOOTPERF] cpu-boot-target=240MHz actual=%luMHz ok=%u" in setup_body, "boot clock is visible in field logs"
+assert "ui_boot_cpu_active=true;" in source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")], "UI boot phase explicitly stays at render clock"
+assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
+assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
+assert 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");' in source, "area refresh cannot drop boot to 80 MHz"
+finish_body=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()")]
+assert finish_body.index("ui_boot_cpu_active=false;") < finish_body.index('set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")'), "interactive-ready is the single boot-to-80 transition"
+assert setup_body.index("map_tiles_warm_storage();") < setup_body.index("ui_finish_startup();"), "Maps remains warmed before the interactive screen"
+assert "[T5-BOOTPERF] maps-warm=%lums cpu=%luMHz" in setup_body, "Maps warm-up records that it ran in the boot clock phase"
+
+assert "class T5EnvironmentSensorManager final : public EnvironmentSensorManager" in board_target_header_source, "T5 target exposes its fast GPS manager to MeshCore"
+assert "bool T5EnvironmentSensorManager::begin()" in board_target_source, "T5 target overrides MeshCore environment startup"
+fast_gps_begin=board_target_source[
+    board_target_source.index("bool T5EnvironmentSensorManager::begin()"):
+    board_target_source.index("static T5GPS gps;")
+]
+assert "gps_detected=true;" in fast_gps_begin and "gps_active=false;" in fast_gps_begin, "fast manager preserves ENV_SKIP_GPS_DETECT visibility and preference-driven activation"
+assert "delay(1000)" not in fast_gps_begin and "scanI2CBus" not in fast_gps_begin, "T5 GPS manager does not repeat upstream fixed detect wait or unused environment scan"
+assert "[T5-BOOTPERF] gps-manager-reuse=1" in fast_gps_begin, "field log confirms the board probe was reused"
+assert "T5EnvironmentSensorManager sensors(gps);" in board_target_source, "MeshCore global sensors object uses the T5 fast manager"
+assert platformio_source.count("-DENV_INCLUDE_")==1 and "-DENV_INCLUDE_GPS=1" in platformio_source, "fast T5 environment startup is valid only while GPS is the sole enabled environment provider"
+assert 'gps_send_pcas("PCAS02' not in board_target_source, "test.10 leaves GNSS positioning rate unchanged at the normal 1 Hz"
+assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS update-rate override"
+
+# Test69: test.11 keeps only low-risk boot scheduling wins. Internal SPIFFS
+# mounting is independent of the LoRa/GPS rail, so do it while the rail is
+# still settling; MeshCore datastore/core lifecycle remains behind radio init.
+local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_is_running()")]
+assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
+assert "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz" in local_setup_body, "overlapped SPIFFS work is timed and confirms the 240 MHz boot clock"
+radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
+assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
+assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
+assert local_setup_body.count("SPIFFS.begin(false)") == 1, "local startup mounts existing SPIFFS exactly once"
+assert "delay(200)" not in ui_setup_boot, "local UI no longer burns a fixed 200 ms serial delay before useful startup work"
+assert "Serial.begin(115200);" in ui_setup_boot, "standalone UI target still initializes Serial without the fixed wait"
+
+# Satellite count is primary status information and matches clock/battery size.
+status_bar_body=source[source.index("static void draw_status_bar()"):source.index("static MeshInkRect toast_message_rect")]
+assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in status_bar_body, "satellite count uses the same scale and baseline as clock/battery status text"
+assert "strlen(satellites)*18" in status_bar_body, "satellite status spacing matches scale-three character width"
+
+
+# Testing and release artifacts use the same versioned naming convention.
+assert 'name: meshink-${{ steps.version.outputs.version }}' in testing_workflow_source, "testing artifact is named with the firmware version"
+assert 'meshink-$VERSION-update.bin' in testing_workflow_source, "testing update binary uses the same versioned filename as release builds"
+assert "SHA256SUMS.txt" in testing_workflow_source, "testing and release packages share the checksum filename"
+assert "meshink-testing-update.bin" not in testing_workflow_source and "meshink-testing-firmware" not in testing_workflow_source, "legacy generic testing artifact names are removed"
 
 
 # Test54: primary text uses built-in 1-bit Inter while compact technical/status
@@ -999,12 +1172,20 @@ assert "return {&inter_50_digits,77,79,81};" in source, "oversized standby unrea
 assert "ui_smooth_metric" not in source and "numerator" not in source[source.index("struct UiSmoothFont"):source.index("static void ui_text_fit")], "primary fonts are never scaled at runtime"
 assert "const int baseline=y+face.baseline_from_top;" in source, "each native face carries its own baseline anchor"
 assert "meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);" in source, "native glyph pixels are drawn one-for-one without resampling"
-assert "if(scale>=3){ui_smooth_text" in source, "scale-three and larger primary text uses smooth raster glyphs"
+ui_text_body=source[source.index("static void ui_text("):source.index("static void ui_text_fit(")]
+assert "if(scale>=3)" in ui_text_body and "ui_smooth_text(s,x,y,scale,color,bold);" in ui_text_body, "scale-three and larger primary text uses smooth raster glyphs"
 assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
 assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
-assert "static void rounded_fill(" in source and "xx*xx+yy*yy<=r*r" in source, "rounded panels use an integer framebuffer primitive"
-assert "sqrt(" not in source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))], "rounded corners avoid floating-point geometry"
+rounded_fill_body=source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))]
+assert "meshink_display_fill_rounded_rect({x,y,w,h},radius,color,fb);" in rounded_fill_body, "rounded panels delegate one shape to the display backend"
+assert "sqrt(" not in rounded_fill_body, "rounded UI path avoids floating-point geometry"
 assert "rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height" in source, "contacts/channels/discovery use rounded cards"
+assert '#include "board/t5_packed_framebuffer.h"' in display_backend_source, "T5 display backend owns packed framebuffer accelerator"
+assert "color==0x00U||color==0xFFU" in display_backend_source, "only exact monochrome fills bypass EPDiy"
+assert "meshink_t5_packed::fill_logical_gray4(" in display_backend_source, "monochrome rectangles use direct packed framebuffer fill"
+assert "meshink_t5_packed::fill_logical_rounded_gray4(" in display_backend_source, "rounded monochrome surfaces use orientation-aware packed fills"
+assert "meshink_t5_packed::rounded_row_inset" in display_backend_source, "grayscale rounded fallback preserves integer corner geometry"
+assert "epd_fill_rect(meshink_display_native_rect(rect),color,framebuffer);" in display_backend_source, "grayscale rectangle fallback remains EPDiy"
 assert "static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3)" in source, "list rows support compact secondary metadata without shrinking titles"
 assert "ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Contacts secondary Last Heard text uses delivery-notice scale"
 assert "ui_data->channel(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Channels MeshCore channel subtitle uses delivery-notice scale"
@@ -1016,7 +1197,7 @@ assert "geometry.text_width,3,color,false,16" in source, "long messages remain r
 assert 'ui_text("Write a message..."' in source and 'const char* prompt=compose_text[0]?compose_text:"Write a message...";' in source, "composer uses a readable mixed-case prompt"
 assert "rounded_box(back_rect" in source and "ui_action_button(action,action_rect,true)" in source, "chat header actions share the rounded visual language"
 assert "malloc(" not in source[source.index("static void ui_glyph_bounds("):source.index("static meshink_keyboard::Metrics")], "built-in typography/rounding adds no dynamic memory"
-assert "const MessageBubbleGeometry geometry=message_bubble_geometry(message);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse one geometry measurement for drawing"
+assert "const MessageBubbleGeometry geometry=chat_message_geometry(i);" in source and "draw_message_bubble(message,y,geometry);" in source, "visible chat bubbles reuse lazily cached geometry for drawing"
 
 
 # Test55: the chat/contact visual language extends across the rest of the UI
@@ -1045,7 +1226,7 @@ assert "ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,t
 assert "static int ui_text_max_line_width(" in source and "ui_text_max_line_width(message.text,3)" in source, "bubble width follows the longest explicit message line"
 assert "min(16,ui_wrapped_line_count(message.text,text_width,3))" in source, "bubble measurement cannot exceed the renderer's sixteen-line limit"
 assert "if(used+needed>available)break;" in source, "chat paging only admits complete bubbles into the visible viewport"
-assert "static bool chat_needs_paging(size_t count)" in source and "chat_history_available_current()" in source, "current conversation paging reserves the taskbar and composer"
+assert "chat_page_bounds_lazy(count,chat_history_available_current()," in source, "current conversation lazy paging reserves the taskbar and composer"
 assert "const int compose_y=chat_compose_top();" in source, "message composer drawing uses shared vertical geometry"
 assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
@@ -1104,13 +1285,21 @@ assert 'fail_pending_direct("retry limit")' in runtime_source, "retry exhaustion
 assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pending_direct("initial queue busy")' in runtime_source, "local queue failures share the same safe terminal-failure path"
 assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
 
-assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "runtime shows two direct retries"
-assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "final retry is labelled as the flood fallback"
-assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer exposes flood fallback instead of a third direct retry"
-assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "third retry resets the stale saved path so MeshCore uses flood"
-assert "attempt==0?UiMessageState::Sending" in runtime_source, "radio SENT response remains an in-progress state until ACK"
+assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "legacy retry states remain readable after upgrading"
+assert 'case UiMessageState::Retrying3:return "SENDING"' in runtime_source, "final retry state remains route-neutral until actual route metadata is applied"
+assert 'case UiMessageState::Retrying3:state="SENDING"' in source, "chat footer fallback does not invent a flood route"
+assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "final runtime retry resets the stale saved path so MeshCore uses flood"
+assert "attempt==0?UiMessageState::Sending" in runtime_source and "provider.transient_direct_status(" in runtime_source and "journal=unchanged" in runtime_source, "radio attempt status is visible in RAM while the journal remains unchanged"
+assert "pending_direct.route_flood[attempt]=frame[1]!=0;" in runtime_source, "MeshCore RESP_CODE_SENT route flag is retained as the authoritative actual route"
+assert "pending_direct.route_flood[attempt]);" in direct_attempt_response, "actual MeshCore route is pushed into the RAM-only UI overlay"
+send_active=runtime_source[runtime_source.index("bool local_mesh_send_active("):runtime_source.index("bool local_mesh_send_direct(",runtime_source.index("bool local_mesh_send_active("))]
+assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.transient_direct_status(" in send_active, "initial UI route reflects the same saved-path decision MeshCore will use"
+assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
+assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
-assert "state!=UiMessageState::Sending" not in formatter, "sending route is visible once MeshCore reports direct/flood"
+assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
+assert '"SENDING %s"' in formatter, "send footer reports the actual direct/flood route"
+assert "state!=UiMessageState::Sending" not in formatter, "sending records and transient route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
 

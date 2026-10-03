@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hardware/display_types.h"
+#include "board/t5_packed_framebuffer.h"
 
 // Field-tested LILYGO T5 H752-01 / EPDiy v7 backend.
 //
@@ -182,7 +183,59 @@ inline void meshink_display_draw_rect(MeshInkRect rect,uint8_t color,uint8_t* fr
     epd_draw_rect(meshink_display_native_rect(rect),color,framebuffer);
 }
 inline void meshink_display_fill_rect(MeshInkRect rect,uint8_t color,uint8_t* framebuffer) {
+    // The local UI is monochrome. Bypass EPDiy's per-rectangle drawing path
+    // for black/white fills and write the packed 4bpp framebuffer directly.
+    // This is especially important for rounded panels, which are composed from
+    // many one-pixel-high fill calls. Preserve EPDiy as the exact fallback for
+    // grayscale colours or an unavailable framebuffer.
+    if(framebuffer&&(color==0x00U||color==0xFFU)) {
+        meshink_t5_packed::fill_logical_gray4(
+            framebuffer,
+            meshink_display_physical_width(),
+            meshink_display_physical_height(),
+            meshink_display_get_rotation(),
+            rect,
+            color==0x00U?0x00U:0x0FU);
+        return;
+    }
     epd_fill_rect(meshink_display_native_rect(rect),color,framebuffer);
+}
+
+inline void meshink_display_fill_rounded_rect(
+    MeshInkRect rect,int radius,uint8_t color,uint8_t* framebuffer) {
+    if(framebuffer&&(color==0x00U||color==0xFFU)) {
+        meshink_t5_packed::fill_logical_rounded_gray4(
+            framebuffer,
+            meshink_display_physical_width(),
+            meshink_display_physical_height(),
+            meshink_display_get_rotation(),
+            rect,
+            radius,
+            color==0x00U?0x00U:0x0FU);
+        return;
+    }
+
+    // Generic grayscale fallback preserves the established UI geometry.
+    if(rect.width<=0||rect.height<=0)return;
+    const int max_radius=(rect.width<rect.height?rect.width:rect.height)/2;
+    int r=radius;
+    if(r<0)r=0;
+    if(r>max_radius)r=max_radius;
+    if(!r) {
+        meshink_display_fill_rect(rect,color,framebuffer);
+        return;
+    }
+    meshink_display_fill_rect(
+        {rect.x,rect.y+r,rect.width,rect.height-2*r},color,framebuffer);
+    for(int row=0;row<r;++row) {
+        const int inset=meshink_t5_packed::rounded_row_inset(r,row);
+        const int span=rect.width-2*inset;
+        if(span<=0)continue;
+        meshink_display_fill_rect(
+            {rect.x+inset,rect.y+row,span,1},color,framebuffer);
+        meshink_display_fill_rect(
+            {rect.x+inset,rect.y+rect.height-1-row,span,1},color,framebuffer);
+    }
 }
 
 // Maps bulk compositor. It preserves the current T5 cache64 fast path while

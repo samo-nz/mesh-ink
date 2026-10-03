@@ -25,6 +25,7 @@
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
+#include "message_store.h"
 #include "fonts/inter_15_regular.h"
 #include "fonts/inter_20_regular.h"
 #include "fonts/inter_25_regular.h"
@@ -502,6 +503,14 @@ struct MapTapSequence{
 static MapTapSequence map_taps{};
 static uint32_t navigation_touch_cutoff_ms=0;
 
+static constexpr uint32_t UI_IDLE_CPU_MHZ=80;
+static constexpr uint32_t UI_RENDER_CPU_MHZ=240;
+static bool ui_boot_cpu_active=false;
+
+static uint32_t ui_post_render_cpu_target(){
+    return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;
+}
+
 static bool set_cpu_target(uint32_t mhz,const char* reason){
     const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
     if(!accepted||actual!=mhz)Serial.printf("[T5-ERROR] CPU target=%lu actual=%lu MHz reason=%s\n",(unsigned long)mhz,(unsigned long)actual,reason);
@@ -513,8 +522,8 @@ struct T5CpuBoostScope {
     bool restore;
     explicit T5CpuBoostScope(bool enabled,const char* reason):
         previous_mhz(getCpuFrequencyMhz()),restore(false){
-        if(enabled&&previous_mhz<240)
-            restore=set_cpu_target(240,reason);
+        if(enabled&&previous_mhz<UI_RENDER_CPU_MHZ)
+            restore=set_cpu_target(UI_RENDER_CPU_MHZ,reason);
     }
     ~T5CpuBoostScope(){
         if(restore)set_cpu_target(previous_mhz,"ui-draw-complete");
@@ -612,6 +621,46 @@ static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
         }
     }
 }
+#if T5_TIMING_DIAGNOSTICS
+struct UiMessagePerfCounters {
+    uint32_t geometry_us=0;
+    uint32_t fill_us=0;
+    uint32_t smooth_us=0;
+    uint32_t wrap_calls=0;
+    uint32_t wrap_chars=0;
+    uint32_t advances=0;
+    uint32_t smooth_calls=0;
+    uint32_t smooth_chars=0;
+    uint32_t glyph_pixels=0;
+    uint32_t draw_ops=0;
+    uint16_t geometry_calls=0;
+    uint16_t fill_calls=0;
+};
+static UiMessagePerfCounters ui_message_perf{};
+static bool ui_message_perf_collect=false;
+static void ui_message_perf_reset(){ui_message_perf=UiMessagePerfCounters{};}
+
+static T5UiRenderPerf ui_render_perf{};
+static bool ui_render_perf_collect=false;
+static uint8_t ui_render_perf_depth=0;
+static void ui_render_perf_begin(){
+    if(ui_render_perf_depth++==0){
+        ui_render_perf=T5UiRenderPerf{};
+        ui_render_perf_collect=true;
+    }
+}
+static void ui_render_perf_end(uint32_t started_us){
+    const uint32_t elapsed=(uint32_t)(micros()-started_us);
+    if(ui_render_perf_depth) --ui_render_perf_depth;
+    if(!ui_render_perf_depth){
+        ui_render_perf.total_us=elapsed;
+        ui_render_perf_collect=false;
+        t5_timing_note_ui_render(ui_render_perf);
+    }
+    t5_timing_note_ui_draw(elapsed);
+}
+#endif
+
 struct UiSmoothFont {
     const MeshInkFontData* font;
     uint8_t baseline_from_top;
@@ -639,6 +688,9 @@ static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint3
     return nullptr;
 }
 static int ui_smooth_char_advance(char c,int scale) {
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)++ui_message_perf.advances;
+#endif
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
     if(!glyph_data)return 0;
@@ -671,12 +723,22 @@ static int ui_text_width(const char* s,int scale) {
 }
 static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
     if(!s)return;
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_started=ui_message_perf_collect?micros():0;
+    if(ui_message_perf_collect)++ui_message_perf.smooth_calls;
+#endif
     const UiSmoothFont face=ui_smooth_font(scale);
     const int baseline=y+face.baseline_from_top;
     while(*s&&*s!='\n'){
         const char c=*s++;
         const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
         if(!glyph_data)continue;
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_message_perf_collect){
+            ++ui_message_perf.smooth_chars;
+            ui_message_perf.glyph_pixels+=(uint32_t)glyph_data->width*glyph_data->height;
+        }
+#endif
         const int gx=x+glyph_data->left;
         const int gy=baseline-glyph_data->top;
         for(int sy=0;sy<glyph_data->height;++sy){
@@ -684,16 +746,35 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
                 const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
                 const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
                 if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+#if T5_TIMING_DIAGNOSTICS
+                if(ui_message_perf_collect)ui_message_perf.draw_ops+=bold?2U:1U;
+#endif
                 meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
                 if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
             }
         }
         x+=ui_smooth_char_advance(c,scale);
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)ui_message_perf.smooth_us+=(uint32_t)(micros()-perf_started);
+#endif
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
-    if(scale>=3){ui_smooth_text(s,x,y,scale,color,bold);return;}
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+    if(ui_render_perf_collect){
+        ++ui_render_perf.text_calls;
+        for(const char* p=s;*p&&*p!='\n';++p)++ui_render_perf.text_chars;
+    }
+#endif
+    if(scale>=3){
+        ui_smooth_text(s,x,y,scale,color,bold);
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_render_perf_collect)ui_render_perf.text_us+=(uint32_t)(micros()-render_started);
+#endif
+        return;
+    }
     while(*s&&*s!='\n'){
         const char c=*s++;
         if(c==' '){x+=3*scale;continue;}
@@ -707,6 +788,9 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
                 }
         x+=(right-left+1)*scale+scale;
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.text_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
                         uint8_t color=0,bool bold=false) {
@@ -758,8 +842,14 @@ static int ui_text_max_line_width(const char* value,int scale) {
 }
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)++ui_message_perf.wrap_calls;
+#endif
     size_t count=0,last_space=0;int width=0;
     while(value[count]&&value[count]!='\n'){
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_message_perf_collect)++ui_message_perf.wrap_chars;
+#endif
         const int advance=ui_char_advance(value[count],scale);
         if(count&&width+advance>max_width)break;
         if(!count&&advance>max_width)return 1;
@@ -848,25 +938,19 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
     }
 }
 
-// Integer-only rounded panel primitive. It uses the existing framebuffer
-// rectangles and a small corner inset calculation, so there is no image asset,
-// antialiasing buffer or extra display dependency.
+// Rounded surfaces are composed directly in the selected display backend.
+// The T5 backend preserves these exact integer corner pixels while choosing
+// packed-framebuffer-friendly spans for the current rotation.
 static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
     if(w<=0||h<=0)return;
-    const int r=max(0,min(radius,min(w,h)/2));
-    if(!r){meshink_display_fill_rect({x,y,w,h},color,fb);return;}
-    meshink_display_fill_rect({x,y+r,w,h-2*r},color,fb);
-    for(int row=0;row<r;++row){
-        const int yy=r-1-row;int inset=0;
-        while(inset<r){
-            const int xx=r-inset;
-            if(xx*xx+yy*yy<=r*r)break;
-            ++inset;
-        }
-        const int span=max(1,w-2*inset);
-        meshink_display_fill_rect({x+inset,y+row,span,1},color,fb);
-        meshink_display_fill_rect({x+inset,y+h-1-row,span,1},color,fb);
-    }
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+    if(ui_render_perf_collect)++ui_render_perf.rounded_calls;
+#endif
+    meshink_display_fill_rounded_rect({x,y,w,h},radius,color,fb);
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.rounded_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 static void rounded_box(int x,int y,int w,int h,int radius,bool selected=false) {
     if(selected){rounded_fill(x,y,w,h,radius,0);return;}
@@ -1317,6 +1401,10 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+#endif
     const MeshInkUiLayout& layout=portrait_layout();
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
@@ -1334,8 +1422,10 @@ static void draw_status_bar() {
         if(!standby_active&&status_gps_enabled&&status_gps_fix) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-            text(satellites,ui_x(43),ui_y(17),2,0,true);
-            left=ui_x(43)+(int)strlen(satellites)*12+ui_w(8);
+            // Match the clock and battery percentage: the satellite count
+            // is primary status information, not compact secondary metadata.
+            text(satellites,ui_x(43),ui_y(13),3,0,true);
+            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(8);
         }
     }
     if(status_unread){
@@ -1366,6 +1456,9 @@ static void draw_status_bar() {
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] status-bar clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.status_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 
 // Share the same small black notification style between ordinary settings
@@ -1377,6 +1470,7 @@ static MeshInkRect toast_message_rect(const char* message) {
     return {(portrait_layout().width-w)/2,ui_y(640),w,ui_h(72)};
 }
 static void draw_toast_message(const char* message) {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");
     const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
     rounded_fill(rect.x,rect.y,rect.width,rect.height,r,0);
@@ -1477,6 +1571,9 @@ static void draw_shutdown_confirm() {
 }
 
 static void draw_bottom_nav(int selected) {
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t render_started=ui_render_perf_collect?micros():0;
+#endif
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
     const MeshInkUiLayout& layout=portrait_layout();
     meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,layout.bottom_nav_height},0xFF,fb);
@@ -1498,6 +1595,9 @@ static void draw_bottom_nav(int selected) {
                          d,d,d/2,color);
         }
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_render_perf_collect)ui_render_perf.nav_us+=(uint32_t)(micros()-render_started);
+#endif
 }
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
@@ -1874,7 +1974,7 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
             case UiMessageState::Failed:state="FAILED";break;
             case UiMessageState::Retrying1:state="RETRYING 1/2";break;
             case UiMessageState::Retrying2:state="RETRYING 2/2";break;
-            case UiMessageState::Retrying3:state="SENDING FLOOD";break;
+            case UiMessageState::Retrying3:state="SENDING";break;
             case UiMessageState::Retrying4:state="RETRYING 4/5";break;
             case UiMessageState::Retrying5:state="RETRYING 5/5";break;
             default:break;
@@ -1883,9 +1983,21 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
     snprintf(out,72,"%s%s%s",message.time,state[0]?"  ":"",state);
 }
 
-struct MessageBubbleGeometry { int x;int width;int height;int text_width; };
+struct MessageBubbleGeometry { int16_t x;int16_t width;int16_t height;int16_t text_width; };
+struct ChatGeometryCache {
+    MessageBubbleGeometry geometry[MESHINK_MESSAGE_CAPACITY]{};
+    uint8_t valid[MESHINK_MESSAGE_CAPACITY]{};
+    size_t count=(size_t)-1;
+    uint32_t revision=0xFFFFFFFFUL;
+};
+static ChatGeometryCache chat_geometry_cache{};
 
 static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_started=ui_message_perf_collect?micros():0;
+    if(ui_message_perf_collect&&ui_message_perf.geometry_calls<0xFFFF)
+        ++ui_message_perf.geometry_calls;
+#endif
     char footer[72]{};message_footer_text(message,footer);
     const int screen_width=meshink_display_logical_width();
     const int pad=ui_w(18);
@@ -1900,7 +2012,35 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
-    return {x,width,height,text_width};
+    const MessageBubbleGeometry geometry={x,width,height,text_width};
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)
+        ui_message_perf.geometry_us+=(uint32_t)(micros()-perf_started);
+#endif
+    return geometry;
+}
+
+static void chat_geometry_sync(size_t count){
+    const uint32_t revision=ui_data?ui_data->active_message_revision():0;
+    if(chat_geometry_cache.count==count&&chat_geometry_cache.revision==revision)return;
+    memset(chat_geometry_cache.valid,0,sizeof(chat_geometry_cache.valid));
+    chat_geometry_cache.count=count;
+    chat_geometry_cache.revision=revision;
+    // Page boundaries are still discovered lazily. Invalidate only the tiny
+    // anchor list when message layout could have changed.
+    chat_page_snapshot_count=(size_t)-1;
+    chat_page_known=0;
+}
+
+static MessageBubbleGeometry chat_message_geometry(size_t index){
+    if(index>=MESHINK_MESSAGE_CAPACITY||!ui_data)
+        return {0,0,0,0};
+    if(!chat_geometry_cache.valid[index]){
+        chat_geometry_cache.geometry[index]=
+            message_bubble_geometry(ui_data->active_message(index));
+        chat_geometry_cache.valid[index]=1;
+    }
+    return chat_geometry_cache.geometry[index];
 }
 
 static int message_bubble_height(const UiMessage& message){
@@ -1927,15 +2067,23 @@ static void draw_message_bubble(const UiMessage& message,int y,
 }
 
 static size_t chat_fill_backwards(size_t end,int available){
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_started=ui_message_perf_collect?micros():0;
+    if(ui_message_perf_collect&&ui_message_perf.fill_calls<0xFFFF)
+        ++ui_message_perf.fill_calls;
+#endif
     size_t candidate=end;int used=0;
     while(candidate>0){
-        const UiMessage& message=ui_data->active_message(candidate-1);
-        const int h=message_bubble_height(message);
+        const int h=chat_message_geometry(candidate-1).height;
         const int needed=h+(used?ui_h(8):0);
         if(used+needed>available)break;
         used+=needed;--candidate;
         if(used>=available)break;
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)
+        ui_message_perf.fill_us+=(uint32_t)(micros()-perf_started);
+#endif
     return candidate;
 }
 
@@ -2005,10 +2153,6 @@ static int chat_history_available_current(){
 static int chat_history_available_paged(){
     return chat_history_bottom_paged()-ui_h(126);
 }
-static bool chat_needs_paging(size_t count){
-    return count&&chat_fill_backwards(count,chat_history_available_current())>0;
-}
-
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(12),ui_h(12)));
@@ -2030,33 +2174,82 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
     const uint32_t timing_history_started=micros();
+#if T5_TIMING_DIAGNOSTICS
+    ui_message_perf_reset();
+    ui_message_perf_collect=true;
+    MeshInkMessageStorePerf perf_store_before{},perf_store_after{};
+    meshink_message_store_perf_snapshot(perf_store_before);
+    const uint32_t perf_layout_started=micros();
+#endif
     const size_t count=ui_data?ui_data->active_message_count():0;
+    chat_geometry_sync(count);
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
     size_t first=count,end=count;bool has_older=false;
     if(count){
-        if(keyboard){
+        if(keyboard)
             first=chat_fill_backwards(count,keyboard_layout.history_bottom-ui_h(126));
-        }else if(!chat_needs_paging(count)){
-            if(chat_page)reset_chat_paging();
-            first=0;end=count;
-        }else{
+        else
             chat_page_bounds_lazy(count,chat_history_available_current(),
                                   chat_history_available_paged(),
                                   chat_page,first,end,has_older);
-        }
     }
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_layout_us=(uint32_t)(micros()-perf_layout_started);
+    const uint32_t perf_render_started=micros();
+    uint16_t perf_visible=0;
+#endif
     if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
     else{
         int y=ui_y(126);
         for(size_t i=first;i<end;++i){
             const UiMessage& message=ui_data->active_message(i);
-            const MessageBubbleGeometry geometry=message_bubble_geometry(message);
+            const MessageBubbleGeometry geometry=chat_message_geometry(i);
             draw_message_bubble(message,y,geometry);
             y+=geometry.height+ui_h(8);
+#if T5_TIMING_DIAGNOSTICS
+            if(perf_visible<0xFFFF)++perf_visible;
+#endif
         }
     }
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_render_us=(uint32_t)(micros()-perf_render_started);
+#endif
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
+#if T5_TIMING_DIAGNOSTICS
+    meshink_message_store_perf_snapshot(perf_store_after);
+    ui_message_perf_collect=false;
+    T5MessageDrawPerf perf{};
+    perf.history_us=timing_history_us;
+    perf.layout_us=perf_layout_us;
+    perf.render_us=perf_render_us;
+    perf.store_read_us=perf_store_after.read_us-perf_store_before.read_us;
+    perf.store_read_worst_us=perf_store_after.read_worst_us;
+    const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
+    perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+    const uint32_t perf_cache_reads=perf_store_after.cache_reads-perf_store_before.cache_reads;
+    perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
+    const uint32_t perf_writes=perf_store_after.writes-perf_store_before.writes;
+    perf.store_writes=(uint16_t)(perf_writes>0xFFFFU?0xFFFFU:perf_writes);
+    perf.active_messages=(uint16_t)(count>0xFFFFU?0xFFFFU:count);
+    perf.visible_messages=perf_visible;
+    perf.geometry_calls=ui_message_perf.geometry_calls;
+    perf.fill_calls=ui_message_perf.fill_calls;
+    perf.geometry_us=ui_message_perf.geometry_us;
+    perf.fill_us=ui_message_perf.fill_us;
+    perf.smooth_us=ui_message_perf.smooth_us;
+    perf.wrap_calls=ui_message_perf.wrap_calls;
+    perf.wrap_chars=ui_message_perf.wrap_chars;
+    perf.advances=ui_message_perf.advances;
+    perf.smooth_calls=ui_message_perf.smooth_calls;
+    perf.smooth_chars=ui_message_perf.smooth_chars;
+    perf.glyph_pixels=ui_message_perf.glyph_pixels;
+    perf.draw_ops=ui_message_perf.draw_ops;
+    perf.page=(uint8_t)(chat_page+1);
+    perf.channel=channel;
+    perf.keyboard=keyboard;
+    t5_timing_note_message_draw(perf);
+#endif
     const uint32_t timing_keyboard_started=micros();
     if(keyboard){
         draw_compose_entry(keyboard_layout);
@@ -2081,6 +2274,7 @@ static void draw_chat(bool channel) {
 }
 
 static void draw_message_entry_fast() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
     // Typing does not change the chat history. Avoid rebuilding the status
     // bar, message bubbles and bottom navigation for every character.
     const uint32_t timing_draw_started=micros();
@@ -2336,6 +2530,7 @@ static void draw_radio_settings() {
 }
 
 static void draw_radio_name_fast() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
     const uint32_t timing_draw_started=micros();
     settings_row("NODE NAME",node_name,120);
     t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
@@ -2606,6 +2801,7 @@ static void draw_underlying_screen() {
 }
 
 static void draw_quick_panel() {
+    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");
     draw_underlying_screen();
 
     const MeshInkUiLayout& layout=portrait_layout();
@@ -2728,17 +2924,44 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 }
 
 static void draw_screen() {
-    // Full framebuffer composition is CPU-bound on cache64. Burst to 240 MHz
-    // only while drawing, then restore the previous clock before the caller
-    // decides whether to refresh the panel. Fast text-only redraws remain at
-    // the normal 160 MHz.
+    // Local UI cruises at 80 MHz. Full framebuffer composition bursts to
+    // 240 MHz only while drawing, then restores the previous clock before the
+    // caller decides whether to refresh the panel. Small standalone draw paths
+    // (keyboard/status/quick panel/toasts) use the same short boost.
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
     const uint32_t timing_draw_started=micros();
+#if T5_TIMING_DIAGNOSTICS
+    ui_render_perf_begin();
+#endif
     t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
-    if(standby_active){draw_standby();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
-    if(quick_panel_active){draw_quick_panel();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
-    if(keyboard_landscape){draw_landscape_keyboard();t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));return;}
+    if(standby_active){
+        draw_standby();
+#if T5_TIMING_DIAGNOSTICS
+        ui_render_perf_end(timing_draw_started);
+#else
+        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
+        return;
+    }
+    if(quick_panel_active){
+        draw_quick_panel();
+#if T5_TIMING_DIAGNOSTICS
+        ui_render_perf_end(timing_draw_started);
+#else
+        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
+        return;
+    }
+    if(keyboard_landscape){
+        draw_landscape_keyboard();
+#if T5_TIMING_DIAGNOSTICS
+        ui_render_perf_end(timing_draw_started);
+#else
+        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
+        return;
+    }
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
@@ -2755,7 +2978,11 @@ static void draw_screen() {
             (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
+#if T5_TIMING_DIAGNOSTICS
+    ui_render_perf_end(timing_draw_started);
+#else
     t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
+#endif
 }
 
 static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
@@ -2768,13 +2995,13 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
-    set_cpu_target(240,"display-refresh");
+    set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err = meshink_display_update_screen(&display,mode,(int)meshink_display_ambient_temperature());
     // The map stays clear when the panel is powered down as soon as EPDiy's
     // synchronous DU waveform completes. Do not reintroduce a powered hold.
     meshink_display_poweroff();
-    set_cpu_target(standby_active?80:160,"display-complete");
+    set_cpu_target(ui_post_render_cpu_target(),"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
     t5_timing_display_end(timing_display_started);
@@ -2788,12 +3015,12 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
-    set_cpu_target(240,"display-area-refresh");
+    set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err=meshink_display_update_area(
         &display,mode,(int)meshink_display_ambient_temperature(),area);
     meshink_display_poweroff();
-    set_cpu_target(standby_active?80:160,"display-area-complete");
+    set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");
     const uint32_t elapsed=millis()-started;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
@@ -2864,10 +3091,10 @@ static void load_map_with_feedback(bool already_on_map) {
         refresh(MeshInkRefreshMode::Direct);
 
     // The previous map and toast stay on the panel while all tile I/O and
-    // PNG decoding run synchronously. Refreshing the loading toast lowered
-    // the CPU to 160 MHz; temporarily use the ESP32-S3's existing 240 MHz
-    // display-performance setting for the CPU-heavy raster render.
-    set_cpu_target(240,"map-render");
+    // PNG decoding run synchronously. Refreshing the loading toast returns
+    // the CPU to the 80 MHz UI cruise clock; temporarily burst to 240 MHz for
+    // the CPU-heavy raster render.
+    set_cpu_target(UI_RENDER_CPU_MHZ,"map-render");
     draw_screen();
 
     // Prepare the completed terrain black, then reveal the finished map.
@@ -3718,7 +3945,7 @@ static void enter_standby(const char* reason){
     // Enter standby with an exact clock/battery sample. Periodic status updates
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
-    draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(80,"standby");
+    draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
 }
 
 static void leave_standby(){
@@ -3730,7 +3957,7 @@ static void leave_standby(){
     } else {
         set_ui_orientation(MeshInkOrientation::Portrait);
     }
-    set_cpu_target(160,"wake");
+    set_cpu_target(UI_IDLE_CPU_MHZ,"wake");
     draw_screen();
     if(screen==Screen::Maps&&!keyboard_landscape) {
         T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] Maps wake uses black-prep reveal");
@@ -3807,27 +4034,43 @@ static void service_primary_button(){
 }
 
 void ui_setup() {
-    Serial.begin(115200); delay(200);
+    ui_boot_cpu_active=true;
+    set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
+    const uint32_t bootperf_total_started=millis();
+    uint32_t bootperf_stage_started=millis();
+    // unified_main has already started USB CDC before entering the local UI
+    // path. Keep begin() here for the standalone UI target, but do not burn a
+    // fixed 200 ms delay before useful boot work.
+    Serial.begin(115200);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
     meshink_buttons_begin();
     // Stay off until preferences have been loaded. The splash refresh then
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
+    Serial.printf("[T5-BOOTPERF] ui-pre-display=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     meshink_display_init();
+    Serial.printf("[T5-BOOTPERF] display-init=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
     // EPDiy has now established the shared board/I2C environment. Start the
     // LoRa/GPS rail before framebuffer, preferences and splash rendering so
     // those operations overlap its required settling time.
     meshink_board_start_local_radio_settle();
     set_ui_orientation(MeshInkOrientation::Portrait);
     Serial.println("[T5-INIT] display=initialized");
+    bootperf_stage_started=millis();
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     Serial.println("[T5-INIT] touch=initialized");
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
+    Serial.printf("[T5-BOOTPERF] touch-display-state=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
 #if MESHINK_GEOMETRY_DIAGNOSTICS
     audit_ui_geometry();
 #endif
+    bootperf_stage_started=millis();
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
@@ -3868,6 +4111,9 @@ void ui_setup() {
     MeshInkPowerCriticalState boot_power{};
     if(meshink_power_boot_critical(boot_power))
         critical_battery_shutdown(boot_power,"boot");
+    Serial.printf("[T5-BOOTPERF] ui-prefs-status=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     meshink_display_set_all_white(&display);
     draw_meshink_logo(ui_y(160),false);
     // Keep the original logo visible throughout MeshCore startup. Storage
@@ -3877,7 +4123,14 @@ void ui_setup() {
     ui_centred("STARTING UP...",ui_y(716),3,0,true);
     if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(885),2,0,true);
+    Serial.printf("[T5-BOOTPERF] splash-compose=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
+    Serial.printf("[T5-BOOTPERF] splash-refresh=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    Serial.printf("[T5-BOOTPERF] ui-setup-total=%lums\n",
+                  (unsigned long)(millis()-bootperf_total_started));
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
 
@@ -3892,6 +4145,7 @@ void ui_show_storage_initializing() {
 
 void ui_finish_startup() {
     if(hardware_failure)return;
+    const uint32_t bootperf_started=millis();
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
@@ -3916,7 +4170,10 @@ void ui_finish_startup() {
     if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
-    set_cpu_target(160,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
+    ui_boot_cpu_active=false;
+    set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
+    Serial.printf("[T5-BOOTPERF] ui-finish=%lums\n",
+                  (unsigned long)(millis()-bootperf_started));
 }
 
 void ui_loop() {
@@ -4059,9 +4316,17 @@ void ui_loop() {
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+#if T5_TIMING_DIAGNOSTICS
+            ui_message_perf_reset();
+            ui_message_perf_collect=true;
+            MeshInkMessageStorePerf perf_store_before{},perf_store_after{};
+            meshink_message_store_perf_snapshot(perf_store_before);
+            const uint32_t perf_nav_started=micros();
+#endif
             const size_t count=ui_data?ui_data->active_message_count():0;
+            chat_geometry_sync(count);
             size_t first=count,end=count;bool has_older=false;
-            if(chat_needs_paging(count))
+            if(count)
                 chat_page_bounds_lazy(count,chat_history_available_current(),
                                       chat_history_available_paged(),
                                       chat_page,first,end,has_older);
@@ -4069,6 +4334,29 @@ void ui_loop() {
             if(tap.dy<0){
                 if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
             }else if(chat_page>0)next=(uint8_t)(chat_page-1);
+#if T5_TIMING_DIAGNOSTICS
+            const uint32_t perf_nav_elapsed=(uint32_t)(micros()-perf_nav_started);
+            meshink_message_store_perf_snapshot(perf_store_after);
+            ui_message_perf_collect=false;
+            T5MessageNavPerf perf{};
+            perf.elapsed_us=perf_nav_elapsed;
+            perf.store_read_us=perf_store_after.read_us-perf_store_before.read_us;
+            perf.store_read_worst_us=perf_store_after.read_worst_us;
+            const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
+            perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+            const uint32_t perf_cache_reads=perf_store_after.cache_reads-perf_store_before.cache_reads;
+            perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
+            const uint32_t perf_writes=perf_store_after.writes-perf_store_before.writes;
+            perf.store_writes=(uint16_t)(perf_writes>0xFFFFU?0xFFFFU:perf_writes);
+            perf.geometry_calls=ui_message_perf.geometry_calls;
+            perf.fill_calls=ui_message_perf.fill_calls;
+            perf.geometry_us=ui_message_perf.geometry_us;
+            perf.fill_us=ui_message_perf.fill_us;
+            perf.wrap_calls=ui_message_perf.wrap_calls;
+            perf.wrap_chars=ui_message_perf.wrap_chars;
+            perf.advances=ui_message_perf.advances;
+            t5_timing_note_message_nav(perf);
+#endif
             if(next!=chat_page){
                 chat_page=next;
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u%s\n",
@@ -4209,7 +4497,8 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     }
     ui_centred(UI_VERSION,ui_y(900),2,0,true);
     refresh(MeshInkRefreshMode::FastGray16,false);
-    frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(80,"hardware-failure");
+    ui_boot_cpu_active=false;
+    frontlight_deadline=0;frontlight_drive(false);set_touch_power(false);set_cpu_target(UI_IDLE_CPU_MHZ,"hardware-failure");
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
 }
 void ui_status_set_unread(uint16_t count) {
