@@ -3097,7 +3097,7 @@ static void touch_sampler_task(void*){
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
                 if(!suppress_release){
                     QueuedTap tap{event_x,event_y,dx,dy,false};
-                    if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
+                    xQueueSend(touch_queue,&tap,0);
                 }
             }
         }
