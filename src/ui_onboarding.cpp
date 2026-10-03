@@ -25,6 +25,7 @@
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
+#include "message_store.h"
 #include "fonts/inter_15_regular.h"
 #include "fonts/inter_20_regular.h"
 #include "fonts/inter_25_regular.h"
@@ -612,6 +613,26 @@ static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
         }
     }
 }
+#if T5_TIMING_DIAGNOSTICS
+struct UiMessagePerfCounters {
+    uint32_t geometry_us=0;
+    uint32_t fill_us=0;
+    uint32_t smooth_us=0;
+    uint32_t wrap_calls=0;
+    uint32_t wrap_chars=0;
+    uint32_t advances=0;
+    uint32_t smooth_calls=0;
+    uint32_t smooth_chars=0;
+    uint32_t glyph_pixels=0;
+    uint32_t draw_ops=0;
+    uint16_t geometry_calls=0;
+    uint16_t fill_calls=0;
+};
+static UiMessagePerfCounters ui_message_perf{};
+static bool ui_message_perf_collect=false;
+static void ui_message_perf_reset(){ui_message_perf=UiMessagePerfCounters{};}
+#endif
+
 struct UiSmoothFont {
     const MeshInkFontData* font;
     uint8_t baseline_from_top;
@@ -639,6 +660,9 @@ static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint3
     return nullptr;
 }
 static int ui_smooth_char_advance(char c,int scale) {
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)++ui_message_perf.advances;
+#endif
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
     if(!glyph_data)return 0;
@@ -671,12 +695,22 @@ static int ui_text_width(const char* s,int scale) {
 }
 static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
     if(!s)return;
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_started=ui_message_perf_collect?micros():0;
+    if(ui_message_perf_collect)++ui_message_perf.smooth_calls;
+#endif
     const UiSmoothFont face=ui_smooth_font(scale);
     const int baseline=y+face.baseline_from_top;
     while(*s&&*s!='\n'){
         const char c=*s++;
         const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
         if(!glyph_data)continue;
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_message_perf_collect){
+            ++ui_message_perf.smooth_chars;
+            ui_message_perf.glyph_pixels+=(uint32_t)glyph_data->width*glyph_data->height;
+        }
+#endif
         const int gx=x+glyph_data->left;
         const int gy=baseline-glyph_data->top;
         for(int sy=0;sy<glyph_data->height;++sy){
@@ -684,12 +718,18 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
                 const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
                 const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
                 if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+#if T5_TIMING_DIAGNOSTICS
+                if(ui_message_perf_collect)ui_message_perf.draw_ops+=bold?2U:1U;
+#endif
                 meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
                 if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
             }
         }
         x+=ui_smooth_char_advance(c,scale);
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)ui_message_perf.smooth_us+=(uint32_t)(micros()-perf_started);
+#endif
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
@@ -758,8 +798,14 @@ static int ui_text_max_line_width(const char* value,int scale) {
 }
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)++ui_message_perf.wrap_calls;
+#endif
     size_t count=0,last_space=0;int width=0;
     while(value[count]&&value[count]!='\n'){
+#if T5_TIMING_DIAGNOSTICS
+        if(ui_message_perf_collect)++ui_message_perf.wrap_chars;
+#endif
         const int advance=ui_char_advance(value[count],scale);
         if(count&&width+advance>max_width)break;
         if(!count&&advance>max_width)return 1;
@@ -1886,6 +1932,11 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
 struct MessageBubbleGeometry { int x;int width;int height;int text_width; };
 
 static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_started=ui_message_perf_collect?micros():0;
+    if(ui_message_perf_collect&&ui_message_perf.geometry_calls<0xFFFF)
+        ++ui_message_perf.geometry_calls;
+#endif
     char footer[72]{};message_footer_text(message,footer);
     const int screen_width=meshink_display_logical_width();
     const int pad=ui_w(18);
@@ -1900,7 +1951,12 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
-    return {x,width,height,text_width};
+    const MessageBubbleGeometry geometry={x,width,height,text_width};
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)
+        ui_message_perf.geometry_us+=(uint32_t)(micros()-perf_started);
+#endif
+    return geometry;
 }
 
 static int message_bubble_height(const UiMessage& message){
@@ -1927,6 +1983,11 @@ static void draw_message_bubble(const UiMessage& message,int y,
 }
 
 static size_t chat_fill_backwards(size_t end,int available){
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_started=ui_message_perf_collect?micros():0;
+    if(ui_message_perf_collect&&ui_message_perf.fill_calls<0xFFFF)
+        ++ui_message_perf.fill_calls;
+#endif
     size_t candidate=end;int used=0;
     while(candidate>0){
         const UiMessage& message=ui_data->active_message(candidate-1);
@@ -1936,6 +1997,10 @@ static size_t chat_fill_backwards(size_t end,int available){
         used+=needed;--candidate;
         if(used>=available)break;
     }
+#if T5_TIMING_DIAGNOSTICS
+    if(ui_message_perf_collect)
+        ui_message_perf.fill_us+=(uint32_t)(micros()-perf_started);
+#endif
     return candidate;
 }
 
@@ -2030,6 +2095,13 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
     const uint32_t timing_history_started=micros();
+#if T5_TIMING_DIAGNOSTICS
+    ui_message_perf_reset();
+    ui_message_perf_collect=true;
+    MeshInkMessageStorePerf perf_store_before{},perf_store_after{};
+    meshink_message_store_perf_snapshot(perf_store_before);
+    const uint32_t perf_layout_started=micros();
+#endif
     const size_t count=ui_data?ui_data->active_message_count():0;
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
@@ -2046,6 +2118,11 @@ static void draw_chat(bool channel) {
                                   chat_page,first,end,has_older);
         }
     }
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_layout_us=(uint32_t)(micros()-perf_layout_started);
+    const uint32_t perf_render_started=micros();
+    uint16_t perf_visible=0;
+#endif
     if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
     else{
         int y=ui_y(126);
@@ -2054,9 +2131,45 @@ static void draw_chat(bool channel) {
             const MessageBubbleGeometry geometry=message_bubble_geometry(message);
             draw_message_bubble(message,y,geometry);
             y+=geometry.height+ui_h(8);
+#if T5_TIMING_DIAGNOSTICS
+            if(perf_visible<0xFFFF)++perf_visible;
+#endif
         }
     }
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t perf_render_us=(uint32_t)(micros()-perf_render_started);
+#endif
     const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
+#if T5_TIMING_DIAGNOSTICS
+    meshink_message_store_perf_snapshot(perf_store_after);
+    ui_message_perf_collect=false;
+    T5MessageDrawPerf perf{};
+    perf.history_us=timing_history_us;
+    perf.layout_us=perf_layout_us;
+    perf.render_us=perf_render_us;
+    perf.store_read_us=perf_store_after.read_us-perf_store_before.read_us;
+    perf.store_read_worst_us=perf_store_after.read_worst_us;
+    const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
+    perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+    perf.active_messages=(uint16_t)(count>0xFFFFU?0xFFFFU:count);
+    perf.visible_messages=perf_visible;
+    perf.geometry_calls=ui_message_perf.geometry_calls;
+    perf.fill_calls=ui_message_perf.fill_calls;
+    perf.geometry_us=ui_message_perf.geometry_us;
+    perf.fill_us=ui_message_perf.fill_us;
+    perf.smooth_us=ui_message_perf.smooth_us;
+    perf.wrap_calls=ui_message_perf.wrap_calls;
+    perf.wrap_chars=ui_message_perf.wrap_chars;
+    perf.advances=ui_message_perf.advances;
+    perf.smooth_calls=ui_message_perf.smooth_calls;
+    perf.smooth_chars=ui_message_perf.smooth_chars;
+    perf.glyph_pixels=ui_message_perf.glyph_pixels;
+    perf.draw_ops=ui_message_perf.draw_ops;
+    perf.page=(uint8_t)(chat_page+1);
+    perf.channel=channel;
+    perf.keyboard=keyboard;
+    t5_timing_note_message_draw(perf);
+#endif
     const uint32_t timing_keyboard_started=micros();
     if(keyboard){
         draw_compose_entry(keyboard_layout);
@@ -4059,6 +4172,13 @@ void ui_loop() {
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+#if T5_TIMING_DIAGNOSTICS
+            ui_message_perf_reset();
+            ui_message_perf_collect=true;
+            MeshInkMessageStorePerf perf_store_before{},perf_store_after{};
+            meshink_message_store_perf_snapshot(perf_store_before);
+            const uint32_t perf_nav_started=micros();
+#endif
             const size_t count=ui_data?ui_data->active_message_count():0;
             size_t first=count,end=count;bool has_older=false;
             if(chat_needs_paging(count))
@@ -4069,6 +4189,25 @@ void ui_loop() {
             if(tap.dy<0){
                 if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
             }else if(chat_page>0)next=(uint8_t)(chat_page-1);
+#if T5_TIMING_DIAGNOSTICS
+            const uint32_t perf_nav_elapsed=(uint32_t)(micros()-perf_nav_started);
+            meshink_message_store_perf_snapshot(perf_store_after);
+            ui_message_perf_collect=false;
+            T5MessageNavPerf perf{};
+            perf.elapsed_us=perf_nav_elapsed;
+            perf.store_read_us=perf_store_after.read_us-perf_store_before.read_us;
+            perf.store_read_worst_us=perf_store_after.read_worst_us;
+            const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
+            perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+            perf.geometry_calls=ui_message_perf.geometry_calls;
+            perf.fill_calls=ui_message_perf.fill_calls;
+            perf.geometry_us=ui_message_perf.geometry_us;
+            perf.fill_us=ui_message_perf.fill_us;
+            perf.wrap_calls=ui_message_perf.wrap_calls;
+            perf.wrap_chars=ui_message_perf.wrap_chars;
+            perf.advances=ui_message_perf.advances;
+            t5_timing_note_message_nav(perf);
+#endif
             if(next!=chat_page){
                 chat_page=next;
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u%s\n",

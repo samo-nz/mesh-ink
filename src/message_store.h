@@ -43,6 +43,12 @@ struct MeshInkMessageStoreHeader {
     uint32_t sequence;
 };
 
+struct MeshInkMessageStorePerf {
+    uint32_t reads=0;
+    uint32_t read_us=0;
+    uint32_t read_worst_us=0;
+};
+
 // Flash is authoritative. No message-record cache lives in RAM/PSRAM; only
 // the small journal header/file handle remain resident, while records are read
 // from SPIFFS into caller-owned scratch space.
@@ -80,3 +86,4 @@ public:
 };
 
 MeshInkMessageStore& meshink_message_store();
+void meshink_message_store_perf_snapshot(MeshInkMessageStorePerf& out);

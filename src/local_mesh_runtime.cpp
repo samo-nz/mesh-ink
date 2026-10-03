@@ -12,6 +12,7 @@
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
 #include "t5_logging.h"
+#include "t5_timing.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
 
@@ -276,12 +277,31 @@ class MeshCoreUiProvider final:public UiDataProvider{
         return direct_unread_[0].count;
     }
     void rebuild_active(){
+#if T5_TIMING_DIAGNOSTICS
+        MeshInkMessageStorePerf perf_before{},perf_after{};
+        meshink_message_store_perf_snapshot(perf_before);
+        const uint32_t perf_started=micros();
+        const size_t perf_journal_count=store_.count();
+#endif
         active_count_=0;
         StoredMessage item{};
         for(size_t i=0;i<store_.count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
             if(!store_.read(i,item)||item.sequence==0||!matches(item))continue;
             active_indices_[active_count_++]=(uint16_t)i;
         }
+#if T5_TIMING_DIAGNOSTICS
+        const uint32_t perf_elapsed=(uint32_t)(micros()-perf_started);
+        meshink_message_store_perf_snapshot(perf_after);
+        T5MessageRebuildPerf perf{};
+        perf.elapsed_us=perf_elapsed;
+        perf.store_read_us=perf_after.read_us-perf_before.read_us;
+        perf.store_read_worst_us=perf_after.read_worst_us;
+        const uint32_t perf_reads=perf_after.reads-perf_before.reads;
+        perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
+        perf.journal_messages=(uint16_t)(perf_journal_count>0xFFFFU?0xFFFFU:perf_journal_count);
+        perf.active_messages=(uint16_t)(active_count_>0xFFFFU?0xFFFFU:active_count_);
+        t5_timing_note_message_rebuild(perf);
+#endif
     }
     bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:

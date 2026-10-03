@@ -1,4 +1,5 @@
 #include "message_store.h"
+#include "t5_timing.h"
 
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -16,6 +17,11 @@ static_assert(sizeof(MeshInkStoredMessage)==188,
               "message record layout changed; bump store version explicitly");
 
 MeshInkMessageStore journal;
+#if T5_TIMING_DIAGNOSTICS
+uint32_t perf_reads=0;
+uint32_t perf_read_us=0;
+uint32_t perf_read_worst_us=0;
+#endif
 
 static size_t record_offset(uint16_t physical){
     return sizeof(MeshInkMessageStoreHeader)+
@@ -34,6 +40,16 @@ static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage
 }
 
 MeshInkMessageStore& meshink_message_store(){return journal;}
+
+void meshink_message_store_perf_snapshot(MeshInkMessageStorePerf& out){
+#if T5_TIMING_DIAGNOSTICS
+    out.reads=perf_reads;
+    out.read_us=perf_read_us;
+    out.read_worst_us=perf_read_worst_us;
+#else
+    out=MeshInkMessageStorePerf{};
+#endif
+}
 
 bool MeshInkMessageStore::create_empty(){
     header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
@@ -122,7 +138,17 @@ bool MeshInkMessageStore::begin(){
 bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
     if(!initialized_||!file_||logical>=header_.count)return false;
     const uint16_t physical=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
-    return read_record(file_,physical,out);
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t started=micros();
+#endif
+    const bool ok=read_record(file_,physical,out);
+#if T5_TIMING_DIAGNOSTICS
+    const uint32_t elapsed=(uint32_t)(micros()-started);
+    ++perf_reads;
+    perf_read_us+=elapsed;
+    if(elapsed>perf_read_worst_us)perf_read_worst_us=elapsed;
+#endif
+    return ok;
 }
 
 bool MeshInkMessageStore::find_physical(uint32_t sequence,uint16_t& physical) const{
