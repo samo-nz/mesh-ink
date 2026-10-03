@@ -17,6 +17,22 @@ static_assert(sizeof(MeshInkMessageStoreHeader)==16,
 static_assert(sizeof(MeshInkStoredMessage)==188,
               "message record layout changed; bump store version explicitly");
 
+constexpr uint32_t STORE_FLASH_CPU_MHZ=240;
+
+struct StoreCpuBoostScope {
+    uint32_t previous_mhz=0;
+    bool restore=false;
+
+    StoreCpuBoostScope(){
+        previous_mhz=getCpuFrequencyMhz();
+        if(previous_mhz<STORE_FLASH_CPU_MHZ)
+            restore=setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ);
+    }
+    ~StoreCpuBoostScope(){
+        if(restore)setCpuFrequencyMhz(previous_mhz);
+    }
+};
+
 MeshInkMessageStore journal;
 #if T5_TIMING_DIAGNOSTICS
 uint32_t perf_reads=0;
@@ -95,6 +111,7 @@ bool MeshInkMessageStore::ensure_cache(){
 
 bool MeshInkMessageStore::load_cache(File& source){
     if(!ensure_cache())return false;
+    StoreCpuBoostScope cpu_boost;
     const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
     if(!source.seek(sizeof(MeshInkMessageStoreHeader)))return false;
     const uint32_t started=micros();
@@ -108,14 +125,16 @@ bool MeshInkMessageStore::load_cache(File& source){
         heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;
         return false;
     }
-    Serial.printf("[T5-STORE] cache-load=%lu.%01lums storage=%s bytes=%u\n",
+    Serial.printf("[T5-STORE] cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz\n",
                   (unsigned long)(elapsed/1000UL),
                   (unsigned long)((elapsed%1000UL)/100UL),
-                  cache_in_psram_?"PSRAM":"RAM",(unsigned)bytes);
+                  cache_in_psram_?"PSRAM":"RAM",(unsigned)bytes,
+                  (unsigned long)getCpuFrequencyMhz());
     return true;
 }
 
 bool MeshInkMessageStore::create_empty(){
+    StoreCpuBoostScope cpu_boost;
     header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
     File f=SPIFFS.open(STORE_PATH,"w");
     if(!f)return false;
@@ -146,6 +165,7 @@ bool MeshInkMessageStore::create_empty(){
 
 void MeshInkMessageStore::write_header(){
     if(!initialized_||!file_)return;
+    StoreCpuBoostScope cpu_boost;
     const bool seek_ok=file_.seek(0);
     const size_t written=seek_ok?file_.write((const uint8_t*)&header_,sizeof(header_)):0;
     file_.flush();
@@ -156,6 +176,7 @@ void MeshInkMessageStore::write_header(){
 
 bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record,const char* operation){
     if(!initialized_||!file_||physical>=MESHINK_MESSAGE_CAPACITY)return false;
+    StoreCpuBoostScope cpu_boost;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t started=micros();
     uint32_t seek_us=0,write_us=0,flush_us=0;
@@ -180,13 +201,13 @@ bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMess
     const uint32_t elapsed=(uint32_t)(micros()-started);
     ++perf_writes;perf_write_us+=elapsed;
     if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
-    Serial.printf("[T5-STOREPERF] op=%s record=%u seek=%lu.%01lums write=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums ok=%u\n",
+    Serial.printf("[T5-STOREPERF] op=%s record=%u seek=%lu.%01lums write=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums cpu=%luMHz ok=%u\n",
                   operation?operation:"update",(unsigned)physical,
                   (unsigned long)(seek_us/1000UL),(unsigned long)((seek_us%1000UL)/100UL),
                   (unsigned long)(write_us/1000UL),(unsigned long)((write_us%1000UL)/100UL),
                   (unsigned long)(flush_us/1000UL),(unsigned long)((flush_us%1000UL)/100UL),
                   (unsigned long)(elapsed/1000UL),(unsigned long)((elapsed%1000UL)/100UL),
-                  ok?1U:0U);
+                  (unsigned long)getCpuFrequencyMhz(),ok?1U:0U);
 #endif
     if(!ok){
         Serial.printf("[T5-STORE] ERROR writing journal record=%u\n",(unsigned)physical);
@@ -198,6 +219,7 @@ bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMess
 
 bool MeshInkMessageStore::begin(){
     if(initialized_)return true;
+    StoreCpuBoostScope cpu_boost;
 
     File f=SPIFFS.open(STORE_PATH,"r");
     if(!f){const bool ok=create_empty();initialized_=ok;return ok;}
@@ -251,6 +273,7 @@ bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
         return true;
     }
     if(!file_)return false;
+    StoreCpuBoostScope cpu_boost;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t started=micros();
 #endif
@@ -311,6 +334,7 @@ uint32_t MeshInkMessageStore::append(
     }
 
     if(!file_)return 0;
+    StoreCpuBoostScope cpu_boost;
 #if T5_TIMING_DIAGNOSTICS
     const uint32_t started=micros();
     uint32_t record_seek_us=0,record_write_us=0,header_seek_us=0,header_write_us=0,flush_us=0;
@@ -354,7 +378,7 @@ uint32_t MeshInkMessageStore::append(
     const uint32_t elapsed=(uint32_t)(micros()-started);
     perf_writes+=2;perf_write_us+=elapsed;
     if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
-    Serial.printf("[T5-STOREPERF] op=append record=%u rseek=%lu.%01lums rwrite=%lu.%01lums hseek=%lu.%01lums hwrite=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums ok=%u\n",
+    Serial.printf("[T5-STOREPERF] op=append record=%u rseek=%lu.%01lums rwrite=%lu.%01lums hseek=%lu.%01lums hwrite=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums cpu=%luMHz ok=%u\n",
                   (unsigned)physical,
                   (unsigned long)(record_seek_us/1000UL),(unsigned long)((record_seek_us%1000UL)/100UL),
                   (unsigned long)(record_write_us/1000UL),(unsigned long)((record_write_us%1000UL)/100UL),
@@ -362,6 +386,7 @@ uint32_t MeshInkMessageStore::append(
                   (unsigned long)(header_write_us/1000UL),(unsigned long)((header_write_us%1000UL)/100UL),
                   (unsigned long)(flush_us/1000UL),(unsigned long)((flush_us%1000UL)/100UL),
                   (unsigned long)(elapsed/1000UL),(unsigned long)((elapsed%1000UL)/100UL),
+                  (unsigned long)getCpuFrequencyMhz(),
                   (record_ok&&header_ok)?1U:0U);
 #endif
     if(!record_ok||!header_ok){
