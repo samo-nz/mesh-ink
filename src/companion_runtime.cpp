@@ -389,6 +389,25 @@ void local_mesh_setup() {
     companion_mode_active=false;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
     uint32_t bootperf_stage_started=millis();
+
+    // The H752-01 LoRa/GPS rail has already been settling throughout the
+    // splash. Mount internal SPIFFS before crossing the board settle barrier
+    // so this independent flash work consumes the otherwise idle remainder of
+    // LilyGO's required 1500 ms rail delay. Keep MeshCore datastore/core
+    // lifecycle ordering unchanged.
+    bool storage_mounted=SPIFFS.begin(false);
+    if(!storage_mounted){
+        T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
+        ui_show_storage_initializing();
+        storage_mounted=SPIFFS.begin(true);
+    }
+    if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
+    else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
+    Serial.printf("[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz\n",
+                  (unsigned long)(millis()-bootperf_stage_started),
+                  storage_mounted?1U:0U,(unsigned long)getCpuFrequencyMhz());
+
+    bootperf_stage_started=millis();
     meshink_board_begin_local();
     Serial.printf("[T5-BOOTPERF] mesh-board=%lums\n",
                   (unsigned long)(millis()-bootperf_stage_started));
@@ -406,22 +425,6 @@ void local_mesh_setup() {
     fast_rng.begin(meshink_radio_rng_seed());
     Serial.printf("[T5-BOOTPERF] mesh-rng=%lums\n",
                   (unsigned long)(millis()-bootperf_stage_started));
-    // Probe without formatting, so an existing filesystem gets the fast
-    // "STARTING UP..." splash. Only show "INITIALISING STORAGE..." if the
-    // partition does not mount and the original format-on-failure path is
-    // actually necessary (first install or filesystem recovery).
-    bootperf_stage_started=millis();
-    bool storage_mounted=SPIFFS.begin(false);
-    if(!storage_mounted){
-        T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
-        ui_show_storage_initializing();
-        storage_mounted=SPIFFS.begin(true);
-    }
-    if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
-    else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
-    Serial.printf("[T5-BOOTPERF] spiffs=%lums mounted=%u\n",
-                  (unsigned long)(millis()-bootperf_stage_started),storage_mounted?1U:0U);
-
     bootperf_stage_started=millis();
     store.begin();
     Serial.printf("[T5-BOOTPERF] mesh-datastore=%lums\n",
