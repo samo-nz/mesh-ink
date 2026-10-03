@@ -36,6 +36,10 @@ static const char* stage_name(uint8_t stage) {
         case MeshInkDeepSleepDiagStage::WakeRadio: return "wake-radio";
         case MeshInkDeepSleepDiagStage::WakeButton: return "wake-button";
         case MeshInkDeepSleepDiagStage::HeadlessStart: return "headless-start";
+        case MeshInkDeepSleepDiagStage::WakePacketCaptured: return "wake-packet-captured";
+        case MeshInkDeepSleepDiagStage::WakePacketCaptureFail: return "wake-packet-capture-fail";
+        case MeshInkDeepSleepDiagStage::RadioReinitOk: return "radio-reinit-ok";
+        case MeshInkDeepSleepDiagStage::RadioReinitFail: return "radio-reinit-fail";
         case MeshInkDeepSleepDiagStage::RadioResumeOk: return "radio-resume-ok";
         case MeshInkDeepSleepDiagStage::RadioResumeFail: return "radio-resume-fail";
         case MeshInkDeepSleepDiagStage::SpiffsOk: return "spiffs-ok";
@@ -45,6 +49,7 @@ static const char* stage_name(uint8_t stage) {
         case MeshInkDeepSleepDiagStage::RuntimeReady: return "runtime-ready";
         case MeshInkDeepSleepDiagStage::FirstLoop: return "first-loop";
         case MeshInkDeepSleepDiagStage::FirstMeshActivity: return "first-mesh-activity";
+        case MeshInkDeepSleepDiagStage::WakePacketInjected: return "wake-packet-injected";
         case MeshInkDeepSleepDiagStage::ReSleepAttempt: return "resleep-attempt";
         case MeshInkDeepSleepDiagStage::ButtonProbe: return "button-probe";
         default: return "unknown";
