@@ -97,7 +97,7 @@ inline Metrics make_metrics(int width,int height,bool landscape,
         : Row{82,54,52,7,80,460};
     const Row symbol_bottom_reference=landscape
         ? Row{146,84,80,8,144,816}
-        : Row{80,48,44,8,80,460};
+        : Row{80,48,43,8,80,460};
 
     const Rect entry_reference=landscape
         ? Rect{16,14,928,165}
