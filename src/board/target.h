@@ -23,6 +23,7 @@ class T5Board : public ESP32Board {
 public:
     void begin();
     void beginLocal();
+    void beginLocalRxWake();
     bool enableRadioGpsRail();
     uint16_t getBattMilliVolts() override;
     const char* getManufacturerName() const override { return T5_BOARD_H752_01 ? "LILYGO T5 E-Paper S3 Pro (H752-01)" : "LILYGO T5 E-Paper S3 Pro (H752)"; }
@@ -45,5 +46,6 @@ SPIClass& t5_shared_spi();
 
 
 bool radio_init();
+bool radio_resume_rx_wake();
 MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();
