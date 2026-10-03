@@ -134,13 +134,19 @@ assert "meshink_touch_reset_tracking();" in source, "UI resets backend tracking 
 assert "meshink_touch_set_power(false);" in board_target_source, "companion mode delegates touch disable to backend"
 assert "GT911" not in board_target_source, "board runtime must not name the touch controller outside its backend"
 
-# Test10 companion-mode power/logging policy: local UI keeps its validated
-# frequencies, while BT companion drops to 80 MHz only after radio/BLE/GPS
-# initialization. The companion ISR path must choose Arduino ownership before
+# Test10 companion-mode power/logging policy: both steady-state runtimes use
+# an 80 MHz cruise clock after initialization. Local UI separately bursts to
+# 240 MHz for rendering/display work. The companion ISR path must choose
+# Arduino ownership before
 # probing the deinitialized EPDiy ISR service, and BLE scan response data must
 # stay within the legacy 31-byte budget without duplicating the UART UUID.
 assert "COMPANION_CPU_MHZ=80" in companion_source, "BT companion steady-state CPU target is 80 MHz"
 assert 'companion_set_low_power_cpu();' in companion_source, "BT companion applies low-power CPU policy"
+assert "UI_IDLE_CPU_MHZ=80" in source and "UI_RENDER_CPU_MHZ=240" in source, "local UI uses 80 MHz cruise and 240 MHz render clocks"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")' in source, "local UI enters 80 MHz cruise after startup"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"wake")' in source, "wake returns to the 80 MHz interactive cruise clock before burst rendering"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"display-complete")' in source and 'set_cpu_target(UI_IDLE_CPU_MHZ,"display-area-complete")' in source, "display work immediately returns to 80 MHz"
+assert "set_cpu_target(160" not in source, "local UI no longer idles at 160 MHz"
 companion_setup_body = companion_source.split("void companion_setup() {",1)[1].split("void companion_loop()",1)[0]
 assert companion_setup_body.index("meshink_board_boot_complete();") < companion_setup_body.index("companion_set_low_power_cpu();"), "companion lowers CPU only after hardware/BLE setup"
 assert "board.begin();" not in companion_source and "board.beginLocal();" not in companion_source and "board.onBootComplete();" not in companion_source, "generic runtime must use board lifecycle abstraction"
@@ -435,10 +441,16 @@ contains("T5UiAction::StatusPoll", "status-poll timing attribution")
 contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
 assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
 
-# 1.8.10: full-screen framebuffer composition may use a short 240 MHz burst,
-# but must restore the previous clock immediately afterwards.
+# Local UI framebuffer composition uses short 240 MHz bursts from the 80 MHz
+# cruise clock, restoring the previous clock immediately afterwards.
 contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
+contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
 contains('set_cpu_target(previous_mhz,"ui-draw-complete");', "UI draw boost restores previous CPU clock")
+assert 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh")' in source and 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh")' in source, "e-paper updates still run at 240 MHz"
 contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
 contains("const bool stale_navigation_tap=", "UI filters touch releases queued during blocking navigation")
 contains("!keyboard_visible&&!keyboard_landscape&&!quick_panel_active&&", "stale-touch filter excludes keyboard and Quick Settings")
@@ -1000,6 +1012,7 @@ direct_retry_loop = runtime_source[
 ]
 assert "provider.update_message(" not in direct_retry_loop and "provider.confirm_direct_send(" not in direct_retry_loop, "direct retries never rewrite the journal"
 assert "provider.transient_direct_status(" in direct_retry_loop and "retry_state" in direct_retry_loop, "direct retry stages remain visible through the RAM-only UI overlay"
+assert "pending_direct_route(route_flood)" in direct_retry_loop, "each retry derives the route MeshCore will actually use from the current contact path"
 direct_delivery = runtime_source[
     runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)"):
     runtime_source.index("else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response)")
@@ -1142,13 +1155,19 @@ assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pen
 assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
 
 assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "legacy retry states remain readable after upgrading"
-assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "legacy flood-retry state remains readable after upgrading"
-assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer can still render legacy flood-retry records"
+assert 'case UiMessageState::Retrying3:return "SENDING"' in runtime_source, "final retry state remains route-neutral until actual route metadata is applied"
+assert 'case UiMessageState::Retrying3:state="SENDING"' in source, "chat footer fallback does not invent a flood route"
 assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "final runtime retry resets the stale saved path so MeshCore uses flood"
 assert "attempt==0?UiMessageState::Sending" in runtime_source and "provider.transient_direct_status(" in runtime_source and "journal=unchanged" in runtime_source, "radio attempt status is visible in RAM while the journal remains unchanged"
+assert "pending_direct.route_flood[attempt]=frame[1]!=0;" in runtime_source, "MeshCore RESP_CODE_SENT route flag is retained as the authoritative actual route"
+assert "pending_direct.route_flood[attempt]);" in direct_attempt_response, "actual MeshCore route is pushed into the RAM-only UI overlay"
+send_active=runtime_source[runtime_source.index("bool local_mesh_send_active("):runtime_source.index("bool local_mesh_send_direct(",runtime_source.index("bool local_mesh_send_active("))]
+assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.transient_direct_status(" in send_active, "initial UI route reflects the same saved-path decision MeshCore will use"
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
+assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
+assert '"SENDING %s"' in formatter, "send footer reports the actual direct/flood route"
 assert "state!=UiMessageState::Sending" not in formatter, "sending records and transient route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
