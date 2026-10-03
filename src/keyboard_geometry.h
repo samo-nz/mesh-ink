@@ -86,18 +86,18 @@ inline Metrics make_metrics(int width,int height,bool landscape,
     const int reference_number_top=landscape?198:618;
 
     const Row number_reference=landscape
-        ? Row{15,93,88,10,13,943}
-        : Row{15,52,49,10,14,534};
+        ? Row{2,96,92,10,0,960}
+        : Row{1,54,52,10,0,540};
     const Row top_reference=number_reference;
     const Row home_reference=landscape
-        ? Row{60,93,88,9,58,894}
-        : Row{41,52,49,9,40,508};
+        ? Row{50,96,92,9,0,960}
+        : Row{28,54,52,9,0,540};
     const Row bottom_reference=landscape
-        ? Row{153,93,88,7,149,805}
-        : Row{93,52,49,7,91,457};
+        ? Row{146,96,92,7,144,816}
+        : Row{82,54,52,7,80,460};
     const Row symbol_bottom_reference=landscape
-        ? Row{153,81,76,8,149,805}
-        : Row{93,45,42,8,91,457};
+        ? Row{146,84,80,8,144,816}
+        : Row{80,48,44,8,80,460};
 
     const Rect entry_reference=landscape
         ? Rect{16,14,928,165}
@@ -106,23 +106,23 @@ inline Metrics make_metrics(int width,int height,bool landscape,
     const int clear_top_reference=landscape?0:486;
 
     const Rect mode_reference=landscape
-        ? Rect{15,408,130,62}
-        : Rect{12,828,76,62};
+        ? Rect{0,408,142,62}
+        : Rect{0,828,78,62};
     const Rect delete_reference=landscape
-        ? Rect{812,408,133,62}
-        : Rect{460,828,68,62};
+        ? Rect{818,408,142,62}
+        : Rect{462,828,78,62};
     const Rect orientation_reference=landscape
-        ? Rect{15,478,180,62}
-        : Rect{12,898,100,62};
+        ? Rect{0,478,199,62}
+        : Rect{0,898,112,62};
     const Rect space_reference=landscape
-        ? Rect{203,478,500,62}
-        : Rect{120,898,298,62};
+        ? Rect{203,478,504,62}
+        : Rect{116,898,306,62};
     const Rect action_reference=landscape
-        ? Rect{711,478,234,62}
-        : Rect{426,898,102,62};
+        ? Rect{711,478,249,62}
+        : Rect{426,898,114,62};
     const Rect wide_action_reference=landscape
         ? action_reference
-        : Rect{120,898,408,62};
+        : Rect{116,898,424,62};
 
     Metrics metrics{};
     metrics.width=width;

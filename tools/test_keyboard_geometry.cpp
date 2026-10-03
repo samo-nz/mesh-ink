@@ -106,33 +106,46 @@ int main() {
     // Portrait remains pixel-identical; landscape intentionally reclaims the bottom gap.
     assert(portrait.key_height==62&&portrait.row_gap==8&&portrait.row_step==70);
     assert(portrait.number_top==618&&portrait.letter_top==688&&portrait.bottom_top==898);
-    assert(portrait.number_row.start==15&&portrait.number_row.pitch==52&&portrait.number_row.width==49);
-    assert(portrait.mode_key.x==12&&portrait.mode_key.y==828&&portrait.mode_key.width==76);
-    assert(portrait.delete_key.x==460&&portrait.delete_key.width==68);
-    assert(portrait.orientation_key.x==12&&portrait.orientation_key.width==100);
-    assert(portrait.space_key.x==120&&portrait.space_key.width==298);
-    assert(portrait.action_key.x==426&&portrait.action_key.width==102);
-    assert(portrait.wide_action_key.x==120&&portrait.wide_action_key.width==408);
+    assert(portrait.number_row.start==1&&portrait.number_row.pitch==54&&portrait.number_row.width==52);
+    assert(portrait.mode_key.x==0&&portrait.mode_key.y==828&&portrait.mode_key.width==78);
+    assert(portrait.delete_key.x==462&&portrait.delete_key.width==78);
+    assert(portrait.orientation_key.x==0&&portrait.orientation_key.width==112);
+    assert(portrait.space_key.x==116&&portrait.space_key.width==306);
+    assert(portrait.action_key.x==426&&portrait.action_key.width==114);
+    assert(portrait.wide_action_key.x==116&&portrait.wide_action_key.width==424);
     assert(portrait.entry.x==12&&portrait.entry.y==544&&portrait.entry.width==516&&portrait.entry.height==70);
     assert(portrait.history_bottom==526&&portrait.clear_top==486);
-    assert(meshink_keyboard::mode_split(portrait)==91);
-    assert(meshink_keyboard::delete_split(portrait)==457);
-    assert(meshink_keyboard::orientation_split(portrait)==116);
-    assert(meshink_keyboard::action_split(portrait)==422);
+    // Visual key widths now use the available surface while preserving the
+    // boxed/gapped style. The A-L row is centred by a half-key indent while
+    // retaining exactly the same key width/pitch as Q-P.
+    assert(portrait.letter_rows[0].width==portrait.letter_rows[1].width);
+    assert(portrait.letter_rows[0].pitch==portrait.letter_rows[1].pitch);
+    assert(portrait.letter_rows[1].start==28);
+    assert(portrait.letter_rows[0].start==1);
+    assert(portrait.letter_rows[0].start==1&&visible_right(portrait.letter_rows[0])==539);
+    assert(portrait.letter_rows[1].start==28&&visible_right(portrait.letter_rows[1])==512);
+    assert(meshink_keyboard::mode_split(portrait)==80);
+    assert(meshink_keyboard::delete_split(portrait)==460);
+    assert(meshink_keyboard::orientation_split(portrait)==114);
+    assert(meshink_keyboard::action_split(portrait)==424);
 
     assert(landscape.key_height==62&&landscape.row_gap==8&&landscape.row_step==70);
     assert(landscape.number_top==198&&landscape.letter_top==268&&landscape.bottom_top==478);
-    assert(landscape.number_row.start==15&&landscape.number_row.pitch==93&&landscape.number_row.width==88);
-    assert(landscape.mode_key.x==15&&landscape.mode_key.y==408&&landscape.mode_key.width==130);
-    assert(landscape.delete_key.x==812&&landscape.delete_key.width==133);
-    assert(landscape.orientation_key.x==15&&landscape.orientation_key.width==180);
-    assert(landscape.space_key.x==203&&landscape.space_key.width==500);
-    assert(landscape.action_key.x==711&&landscape.action_key.width==234);
+    assert(landscape.number_row.start==2&&landscape.number_row.pitch==96&&landscape.number_row.width==92);
+    assert(landscape.mode_key.x==0&&landscape.mode_key.y==408&&landscape.mode_key.width==142);
+    assert(landscape.delete_key.x==818&&landscape.delete_key.width==142);
+    assert(landscape.orientation_key.x==0&&landscape.orientation_key.width==199);
+    assert(landscape.space_key.x==203&&landscape.space_key.width==504);
+    assert(landscape.action_key.x==711&&landscape.action_key.width==249);
     assert(landscape.entry.x==16&&landscape.entry.y==14&&landscape.entry.width==928&&landscape.entry.height==165);
-    assert(meshink_keyboard::mode_split(landscape)==149);
-    assert(meshink_keyboard::delete_split(landscape)==805);
-    assert(meshink_keyboard::orientation_split(landscape)==199);
-    assert(meshink_keyboard::action_split(landscape)==707);
+    assert(landscape.letter_rows[0].width==landscape.letter_rows[1].width);
+    assert(landscape.letter_rows[0].pitch==landscape.letter_rows[1].pitch);
+    assert(landscape.letter_rows[0].start==2&&visible_right(landscape.letter_rows[0])==958);
+    assert(landscape.letter_rows[1].start==50&&visible_right(landscape.letter_rows[1])==910);
+    assert(meshink_keyboard::mode_split(landscape)==144);
+    assert(meshink_keyboard::delete_split(landscape)==816);
+    assert(meshink_keyboard::orientation_split(landscape)==201);
+    assert(meshink_keyboard::action_split(landscape)==709);
     assert(landscape.bottom_top+landscape.key_height==landscape.height);
 
     // Legacy helper overloads still expose the exact T5 reference rows.

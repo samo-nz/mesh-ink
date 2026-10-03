@@ -3333,16 +3333,14 @@ static void touch_sampler_task(void*){
                 const int16_t dx=(int16_t)(last_x-start_x);
                 const int16_t dy=(int16_t)(last_y-start_y);
                 int16_t event_x=last_x,event_y=last_y;
-                // Keyboard keys are small enough that normal thumb roll while
-                // lifting can move the final touch centroid into a neighbour.
-                // Keep small keyboard releases anchored to the initial
-                // touch-down point; a deliberate larger correction still uses
-                // the final position. Other UI and map gestures are unchanged.
+                // Keyboard taps are discrete selections, not drag gestures.
+                // Always resolve them from the original touch-down position so
+                // thumb roll on release, or one transient bad final sample,
+                // cannot move the event into a neighbour. Other UI and map
+                // gestures continue to use their release position unchanged.
                 const bool keyboard_touch=!quick_panel_active&&
                     (keyboard_landscape||keyboard_visible);
-                constexpr int16_t KEYBOARD_TOUCH_SLOP=28;
-                if(keyboard_touch&&abs(dx)<=KEYBOARD_TOUCH_SLOP&&
-                   abs(dy)<=KEYBOARD_TOUCH_SLOP){
+                if(keyboard_touch){
                     event_x=start_x;
                     event_y=start_y;
                 }
@@ -3356,7 +3354,7 @@ static void touch_sampler_task(void*){
         // cadence observes the brief release between two taps on the same key.
         // Poll more aggressively only while a keyboard is active; every other
         // screen keeps the lower-overhead 8 ms cadence.
-        const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;
+        const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?2:8;
         vTaskDelay(pdMS_TO_TICKS(sample_ms));
     }
 }
