@@ -2939,24 +2939,33 @@ static void draw_screen() {
 #endif
     t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
-    if(standby_active){draw_standby();#if T5_TIMING_DIAGNOSTICS
+    if(standby_active){
+        draw_standby();
+#if T5_TIMING_DIAGNOSTICS
         ui_render_perf_end(timing_draw_started);
 #else
         t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 #endif
-        return;}
-    if(quick_panel_active){draw_quick_panel();#if T5_TIMING_DIAGNOSTICS
+        return;
+    }
+    if(quick_panel_active){
+        draw_quick_panel();
+#if T5_TIMING_DIAGNOSTICS
         ui_render_perf_end(timing_draw_started);
 #else
         t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 #endif
-        return;}
-    if(keyboard_landscape){draw_landscape_keyboard();#if T5_TIMING_DIAGNOSTICS
+        return;
+    }
+    if(keyboard_landscape){
+        draw_landscape_keyboard();
+#if T5_TIMING_DIAGNOSTICS
         ui_render_perf_end(timing_draw_started);
 #else
         t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 #endif
-        return;}
+        return;
+    }
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
