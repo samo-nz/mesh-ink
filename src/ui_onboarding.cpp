@@ -3432,7 +3432,9 @@ static void touch_sampler_task(void*){
             // other UI releases remain unchanged.
             const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();
             const int16_t x=sample.x,y=sample.y;
-            const bool home=sample.home,pressed=sample.pressed;
+            const bool keyboard_active=keyboard_visible||keyboard_landscape;
+            const bool home=sample.home&&!keyboard_active;
+            const bool pressed=sample.pressed;
             if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;
@@ -4371,6 +4373,7 @@ void ui_loop() {
         if(stale_navigation_tap)continue;
         last_user_activity=millis();
         if(tap.home){
+            if(keyboard_visible||keyboard_landscape)continue;
             map_taps={};
             // Home changes the logical page, not just the e-paper frame.
             // Clear pending taps/refreshes so the previous page cannot be

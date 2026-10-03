@@ -101,7 +101,10 @@ non_map_sampler = source.split("// Non-Maps keeps the legacy single-contact sema
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
 assert "const bool home=sample.home,pressed=sample.pressed;" in non_map_sampler, "non-Maps preserves primary press/Home semantics"
-assert "held=false;\n            }else if(home_held){\n                if(!pressed)home_held=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
+assert "held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
+assert "const bool keyboard_active=keyboard_visible||keyboard_landscape;" in non_map_sampler, "keyboard state gates capacitive Home"
+assert "const bool home=sample.home&&!keyboard_active;" in non_map_sampler, "capacitive Home is disabled while either keyboard is active"
+contains("if(keyboard_visible||keyboard_landscape)continue;", "queued Home events are fenced while keyboard is active")
 assert "int16_t event_x=last_x,event_y=last_y;" in non_map_sampler, "ordinary non-keyboard UI release position remains the default"
 assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "keyboard-only release anchoring gate"
 assert "if(keyboard_touch){" in non_map_sampler, "all keyboard releases use touch-down ownership"
