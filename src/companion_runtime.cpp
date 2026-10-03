@@ -312,12 +312,8 @@ void companion_setup() {
     companion_configure_ble_scan_response(BLE_NAME_PREFIX,the_mesh.getNodePrefs()->node_name);
     interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
     the_mesh.startInterface(interface_manager);
-    bootperf_stage_started=millis();
     meshink_gps_service_begin();
-    Serial.printf("[T5-BOOTPERF] gps-service=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
 #if ENV_INCLUDE_GPS == 1
-    bootperf_stage_started=millis();
     the_mesh.applyGpsPrefs();
 #endif
     meshink_board_boot_complete();
@@ -443,8 +439,12 @@ void local_mesh_setup() {
     const uint8_t local_protocol_query[2]={22,3}; // CMD_DEVICE_QUERY, app protocol v3
     if(!local_interface.enqueue(local_protocol_query,sizeof(local_protocol_query)))
         Serial.println("[T5-ERROR] local MeshCore protocol negotiation queue busy");
+    bootperf_stage_started=millis();
     meshink_gps_service_begin();
+    Serial.printf("[T5-BOOTPERF] gps-service=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
 #if ENV_INCLUDE_GPS == 1
+    bootperf_stage_started=millis();
     // MeshCore defaults GPS off even though the receiver on this board shares
     // the always-on LoRa rail. For a NEW local-UI setup, default the SOFTWARE
     // GPS provider to ON with continuous reads (interval=0). Do not override
