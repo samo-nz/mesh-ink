@@ -171,8 +171,9 @@ bool MeshInkMessageStore::begin(){
        disk.capacity==MESHINK_MESSAGE_CAPACITY&&disk.head<MESHINK_MESSAGE_CAPACITY&&
        disk.count<=MESHINK_MESSAGE_CAPACITY&&file_size==expected_v3){
         header_=disk;
-        const bool cache_loaded=load_cache(f);
-        f.close();
+        File cache_source=SPIFFS.open(STORE_PATH,"r");
+        const bool cache_loaded=cache_source&&load_cache(cache_source);
+        if(cache_source)cache_source.close();
         file_=SPIFFS.open(STORE_PATH,"r+");if(!file_)return false;initialized_=true;
         Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB\n",
                       (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
