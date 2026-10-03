@@ -201,6 +201,43 @@ inline void meshink_display_fill_rect(MeshInkRect rect,uint8_t color,uint8_t* fr
     epd_fill_rect(meshink_display_native_rect(rect),color,framebuffer);
 }
 
+inline void meshink_display_fill_rounded_rect(
+    MeshInkRect rect,int radius,uint8_t color,uint8_t* framebuffer) {
+    if(framebuffer&&(color==0x00U||color==0xFFU)) {
+        meshink_t5_packed::fill_logical_rounded_gray4(
+            framebuffer,
+            meshink_display_physical_width(),
+            meshink_display_physical_height(),
+            meshink_display_get_rotation(),
+            rect,
+            radius,
+            color==0x00U?0x00U:0x0FU);
+        return;
+    }
+
+    // Generic grayscale fallback preserves the established UI geometry.
+    if(rect.width<=0||rect.height<=0)return;
+    const int max_radius=(rect.width<rect.height?rect.width:rect.height)/2;
+    int r=radius;
+    if(r<0)r=0;
+    if(r>max_radius)r=max_radius;
+    if(!r) {
+        meshink_display_fill_rect(rect,color,framebuffer);
+        return;
+    }
+    meshink_display_fill_rect(
+        {rect.x,rect.y+r,rect.width,rect.height-2*r},color,framebuffer);
+    for(int row=0;row<r;++row) {
+        const int inset=meshink_t5_packed::rounded_row_inset(r,row);
+        const int span=rect.width-2*inset;
+        if(span<=0)continue;
+        meshink_display_fill_rect(
+            {rect.x+inset,rect.y+row,span,1},color,framebuffer);
+        meshink_display_fill_rect(
+            {rect.x+inset,rect.y+rect.height-1-row,span,1},color,framebuffer);
+    }
+}
+
 // Maps bulk compositor. It preserves the current T5 cache64 fast path while
 // keeping EPDiy packing, physical dimensions and rotation out of map_tiles.cpp.
 inline void meshink_display_blit_gray4_dithered(
