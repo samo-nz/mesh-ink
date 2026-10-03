@@ -312,8 +312,12 @@ void companion_setup() {
     companion_configure_ble_scan_response(BLE_NAME_PREFIX,the_mesh.getNodePrefs()->node_name);
     interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
     the_mesh.startInterface(interface_manager);
+    bootperf_stage_started=millis();
     meshink_gps_service_begin();
+    Serial.printf("[T5-BOOTPERF] gps-service=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
 #if ENV_INCLUDE_GPS == 1
+    bootperf_stage_started=millis();
     the_mesh.applyGpsPrefs();
 #endif
     meshink_board_boot_complete();
@@ -385,21 +389,32 @@ void companion_prepare_exit() {
 }
 
 void local_mesh_setup() {
+    const uint32_t bootperf_total_started=millis();
     companion_mode_active=false;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
+    uint32_t bootperf_stage_started=millis();
     meshink_board_begin_local();
+    Serial.printf("[T5-BOOTPERF] mesh-board=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     const bool radio_ready=meshink_radio_initialize();
+    Serial.printf("[T5-BOOTPERF] mesh-radio=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
     if (!radio_ready) {
         const MeshInkRadioFailureClass failure=meshink_radio_classify_failure();
         Serial.printf("[T5-ERROR] %s unavailable; failure-class=%u\n",meshink_radio_name(),(unsigned)failure);
         ui_show_radio_failure(failure);
         return;
     }
+    bootperf_stage_started=millis();
     fast_rng.begin(meshink_radio_rng_seed());
+    Serial.printf("[T5-BOOTPERF] mesh-rng=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
     // Probe without formatting, so an existing filesystem gets the fast
     // "STARTING UP..." splash. Only show "INITIALISING STORAGE..." if the
     // partition does not mount and the original format-on-failure path is
     // actually necessary (first install or filesystem recovery).
+    bootperf_stage_started=millis();
     bool storage_mounted=SPIFFS.begin(false);
     if(!storage_mounted){
         T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
@@ -408,7 +423,21 @@ void local_mesh_setup() {
     }
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
-    store.begin(); the_mesh.begin(true); the_mesh.startInterface(local_interface);
+    Serial.printf("[T5-BOOTPERF] spiffs=%lums mounted=%u\n",
+                  (unsigned long)(millis()-bootperf_stage_started),storage_mounted?1U:0U);
+
+    bootperf_stage_started=millis();
+    store.begin();
+    Serial.printf("[T5-BOOTPERF] mesh-datastore=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
+    the_mesh.begin(true);
+    Serial.printf("[T5-BOOTPERF] mesh-core-begin=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
+    the_mesh.startInterface(local_interface);
+    Serial.printf("[T5-BOOTPERF] mesh-interface=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
     // Negotiate companion-protocol v3 for the internal standalone interface.
     // V3 receive frames add SNR and path metadata without changing on-air packets.
     const uint8_t local_protocol_query[2]={22,3}; // CMD_DEVICE_QUERY, app protocol v3
@@ -436,12 +465,22 @@ void local_mesh_setup() {
         initial_gps.end();
     }
     the_mesh.applyGpsPrefs();
+    Serial.printf("[T5-BOOTPERF] gps-prefs=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
 #endif
+    bootperf_stage_started=millis();
     local_mesh_runtime_begin();
+    Serial.printf("[T5-BOOTPERF] mesh-runtime=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     ui_use_data_provider(local_mesh_provider());
     ui_mesh_ready();
     ui_apply_initial_radio_preset(); // fix first boot's displayed-vs-active radio mismatch
+    Serial.printf("[T5-BOOTPERF] mesh-ui-handoff=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
     local_runtime_ready=true;
     T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
+    Serial.printf("[T5-BOOTPERF] local-mesh-total=%lums\n",
+                  (unsigned long)(millis()-bootperf_total_started));
 }
 bool local_mesh_is_running(){return local_runtime_ready;}
