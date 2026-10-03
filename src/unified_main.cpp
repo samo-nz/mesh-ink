@@ -155,7 +155,6 @@ void setup() {
                   (unsigned long)getCpuFrequencyMhz(),boot_cpu_ok?1U:0U);
     const uint32_t bootperf_total_started=millis();
     uint32_t bootperf_stage_started=millis();
-    Serial.begin(115200);
     meshink_buttons_begin();
     companion_mode = consume_companion_request();
     Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=%s\n",
@@ -217,8 +216,9 @@ void setup() {
 
         bootperf_stage_started=millis();
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
-        Serial.printf("[T5-BOOTPERF] maps-warm=%lums\n",
-                      (unsigned long)(millis()-bootperf_stage_started));
+        Serial.printf("[T5-BOOTPERF] maps-warm=%lums cpu=%luMHz\n",
+                      (unsigned long)(millis()-bootperf_stage_started),
+                      (unsigned long)getCpuFrequencyMhz());
 
         bootperf_stage_started=millis();
         ui_finish_startup();  // only now show a tappable setup/home screen
