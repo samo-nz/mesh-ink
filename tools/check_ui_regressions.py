@@ -21,6 +21,7 @@ pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 standalone_source = (root / "src" / "ui_standalone_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
+board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
 companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
@@ -1105,6 +1106,37 @@ for marker in (
 ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
 assert 'ui_centred("STARTING UP..."' in ui_setup_boot, "measurement build preserves the existing normal splash message"
 assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setup_boot and "LOADING MESSAGES" not in ui_setup_boot, "measurement build does not add progress refreshes before timings are known"
+
+# Test66: test.10 keeps the complete boot path at 240 MHz, including Maps
+# warm-up and panel refresh restore, then drops once to the validated 80 MHz
+# interactive cruise. The T5 GPS manager reuses the board-level NMEA probe
+# instead of paying upstream EnvironmentSensorManager's fixed 1000 ms detect.
+setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
+assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
+assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
+assert "[T5-BOOTPERF] cpu-boot-target=240MHz actual=%luMHz ok=%u" in setup_body, "boot clock is visible in field logs"
+assert "ui_boot_cpu_active=true;" in source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")], "UI boot phase explicitly stays at render clock"
+assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
+assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
+assert 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");' in source, "area refresh cannot drop boot to 80 MHz"
+finish_body=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()")]
+assert finish_body.index("ui_boot_cpu_active=false;") < finish_body.index('set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")'), "interactive-ready is the single boot-to-80 transition"
+assert setup_body.index("map_tiles_warm_storage();") < setup_body.index("ui_finish_startup();"), "Maps remains warmed before the interactive screen"
+assert "[T5-BOOTPERF] maps-warm=%lums cpu=%luMHz" in setup_body, "Maps warm-up records that it ran in the boot clock phase"
+
+assert "class T5EnvironmentSensorManager final : public EnvironmentSensorManager" in board_target_header_source, "T5 target exposes its fast GPS manager to MeshCore"
+assert "bool T5EnvironmentSensorManager::begin()" in board_target_source, "T5 target overrides MeshCore environment startup"
+fast_gps_begin=board_target_source[
+    board_target_source.index("bool T5EnvironmentSensorManager::begin()"):
+    board_target_source.index("static T5GPS gps;")
+]
+assert "gps_detected=true;" in fast_gps_begin and "gps_active=false;" in fast_gps_begin, "fast manager preserves ENV_SKIP_GPS_DETECT visibility and preference-driven activation"
+assert "delay(1000)" not in fast_gps_begin and "scanI2CBus" not in fast_gps_begin, "T5 GPS manager does not repeat upstream fixed detect wait or unused environment scan"
+assert "[T5-BOOTPERF] gps-manager-reuse=1" in fast_gps_begin, "field log confirms the board probe was reused"
+assert "T5EnvironmentSensorManager sensors(gps);" in board_target_source, "MeshCore global sensors object uses the T5 fast manager"
+assert platformio_source.count("-DENV_INCLUDE_")==1 and "-DENV_INCLUDE_GPS=1" in platformio_source, "fast T5 environment startup is valid only while GPS is the sole enabled environment provider"
+assert 'gps_send_pcas("PCAS02' not in board_target_source, "test.10 leaves GNSS positioning rate unchanged at the normal 1 Hz"
+assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS update-rate override"
 
 
 # Testing and release artifacts use the same versioned naming convention.
