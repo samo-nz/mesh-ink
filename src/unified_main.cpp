@@ -16,6 +16,10 @@
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
+static MeshInkDeepSleepRadioProbe deep_sleep_button_probe{};
+static bool deep_sleep_button_probe_pending=false;
+static uint32_t deep_sleep_probe_replay_until=0;
+static uint32_t deep_sleep_probe_replay_next=0;
 
 static char terminal_line[48]{};
 static uint8_t terminal_length=0;
@@ -133,6 +137,30 @@ static bool consume_companion_request() {
     return requested;
 }
 
+static void print_deep_sleep_probe() {
+    if(!deep_sleep_button_probe_pending)return;
+    Serial.printf("[T5-DEEPSLEEP] REPLAY retained-radio probe transport=%u dio1=%u busy=%u irq=0x%04x packet_len=%u status=0x%02x\n",
+                  deep_sleep_button_probe.transport_ok?1U:0U,
+                  (unsigned)deep_sleep_button_probe.dio1,
+                  (unsigned)deep_sleep_button_probe.busy,
+                  (unsigned)deep_sleep_button_probe.irq,
+                  (unsigned)deep_sleep_button_probe.packet_len,
+                  (unsigned)deep_sleep_button_probe.status);
+}
+
+static void service_deep_sleep_probe_replay() {
+    if(!deep_sleep_button_probe_pending||!deep_sleep_probe_replay_until)return;
+    const uint32_t now=millis();
+    if((int32_t)(now-deep_sleep_probe_replay_until)>=0){
+        deep_sleep_probe_replay_until=0;
+        return;
+    }
+    if((int32_t)(now-deep_sleep_probe_replay_next)>=0){
+        deep_sleep_probe_replay_next=now+2000UL;
+        print_deep_sleep_probe();
+    }
+}
+
 static void companion_exit_button() {
     static uint32_t pressed_at = 0;
     const bool pressed = meshink_primary_button_pressed();
@@ -163,7 +191,10 @@ void setup() {
         while(meshink_primary_button_pressed()&&millis()-hold_started<2000UL)delay(10);
         const bool long_hold=meshink_primary_button_pressed()&&millis()-hold_started>=2000UL;
         if(long_hold){
-            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; continuing into normal full UI boot");
+            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; probing retained SX1262 before normal boot");
+            meshink_board_probe_deep_sleep_radio(deep_sleep_button_probe);
+            deep_sleep_button_probe_pending=deep_sleep_button_probe.valid;
+            Serial.println("[T5-DEEPSLEEP] retained-radio snapshot captured; normal full UI boot will now reinitialize radio");
         }else{
             Serial.printf("[T5-DEEPSLEEP] BOOT released after %lums; treating as accidental/short wake and re-sleeping\n",
                           (unsigned long)(millis()-hold_started));
@@ -240,9 +271,20 @@ void setup() {
 
         if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
     }
+
+    if(deep_sleep_button_probe_pending){
+        // Native USB CDC disappears during deep sleep and many terminal tools do
+        // not reconnect automatically. Replay the pre-reset SX1262 snapshot long
+        // enough for the user to reopen the monitor after the full UI boot.
+        deep_sleep_probe_replay_until=millis()+30000UL;
+        deep_sleep_probe_replay_next=0;
+        print_deep_sleep_probe();
+        Serial.println("[T5-DEEPSLEEP] retained-radio probe will replay every 2s for 30s");
+    }
 }
 
 void loop() {
+    service_deep_sleep_probe_replay();
     if(cache64_psram_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         local_mesh_rx_wake_loop();
