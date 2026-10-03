@@ -55,6 +55,21 @@ static bool read_record(File& f,uint16_t physical,MeshInkStoredMessage& out){
     return f.read((uint8_t*)&out,sizeof(out))==sizeof(out);
 }
 
+static bool incomplete_direct_state(uint8_t state){
+    switch((UiMessageState)state){
+        case UiMessageState::Sending:
+        case UiMessageState::Sent:
+        case UiMessageState::Retrying1:
+        case UiMessageState::Retrying2:
+        case UiMessageState::Retrying3:
+        case UiMessageState::Retrying4:
+        case UiMessageState::Retrying5:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record,
                             uint32_t* seek_us=nullptr,uint32_t* write_us=nullptr){
 #if T5_TIMING_DIAGNOSTICS
@@ -239,10 +254,29 @@ bool MeshInkMessageStore::begin(){
         const bool cache_loaded=cache_source&&load_cache(cache_source);
         if(cache_source)cache_source.close();
         file_=SPIFFS.open(STORE_PATH,"r+");if(!file_)return false;initialized_=true;
-        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB\n",
+
+        // No in-flight direct-send runtime survives a reboot. Any journal
+        // record still in a transient sending/retry state is therefore stale
+        // and must become a durable FAILED record before history is exposed.
+        size_t recovered_failed=0;
+        size_t recovery_errors=0;
+        for(size_t logical=0;logical<header_.count;++logical){
+            const uint16_t physical=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
+            MeshInkStoredMessage item{};
+            if(records_)item=records_[physical];
+            else if(!read_record(file_,physical,item)){++recovery_errors;continue;}
+            if(item.kind!=(uint8_t)MeshInkMessageKind::Direct||
+               !incomplete_direct_state(item.state))continue;
+            item.state=(uint8_t)UiMessageState::Failed;
+            if(write_record(physical,item,"boot-fail"))++recovered_failed;
+            else ++recovery_errors;
+        }
+
+        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB recovered-failed=%u errors=%u\n",
                       (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
                       cache_loaded?(cache_in_psram_?"PSRAM":"RAM"):"NONE",
-                      (unsigned)sizeof(header_));
+                      (unsigned)sizeof(header_),(unsigned)recovered_failed,
+                      (unsigned)recovery_errors);
         return true;
     }
 
