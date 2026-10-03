@@ -291,57 +291,67 @@ uint32_t MeshInkMessageStore::append(
 void MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){item.state=(uint8_t)state;write_record_to(file_,p,item);file_.flush();}
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.state==(uint8_t)state)return;
+    item.state=(uint8_t)state;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){item.ack=ack;write_record_to(file_,p,item);file_.flush();}
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.ack==ack)return;
+    item.ack=ack;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
-        write_record_to(file_,p,item);file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.snr_q4==snr_q4&&item.path_len==path_len&&(item.flags&MESHINK_MESSAGE_HAS_RX))return;
+    item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
+    write_record(p,item);
 }
 
 void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
-        if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
-        else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
-        write_record_to(file_,p,item);file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    const uint8_t before=item.flags;
+    item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+    if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+    else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+    if(item.flags==before)return;
+    write_record(p,item);
 }
 
 void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.repeats=repeats;item.repeat_snr_q4=snr_q4;
-        write_record_to(file_,p,item);file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    if(item.repeats==repeats&&item.repeat_snr_q4==snr_q4)return;
+    item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_outgoing(
         uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
-    if(read_record(file_,p,item)){
-        item.state=(uint8_t)state;
-        item.ack=ack;
-        item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
-        if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
-        else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
-        write_record_to(file_,p,item);
-        file_.flush();
-    }
+    if(records_)item=records_[p];
+    else if(!read_record(file_,p,item))return;
+    const MeshInkStoredMessage before=item;
+    item.state=(uint8_t)state;
+    item.ack=ack;
+    item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+    if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+    else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+    if(!memcmp(&before,&item,sizeof(item)))return;
+    write_record(p,item);
 }
 
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
@@ -349,10 +359,12 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))break;
         if(item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
+            if(item.state==(uint8_t)UiMessageState::Delivered)return true;
             item.state=(uint8_t)UiMessageState::Delivered;
-            const bool ok=write_record_to(file_,p,item);file_.flush();return ok;
+            return write_record(p,item);
         }
     }
     return false;
@@ -365,7 +377,8 @@ uint32_t MeshInkMessageStore::find_matching_outgoing(
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))break;
         if(item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
            item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
            strncmp(item.text,text,sizeof(item.text)))continue;
