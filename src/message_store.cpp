@@ -1,5 +1,4 @@
 #include "message_store.h"
-#include "t5_timing.h"
 
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -35,15 +34,6 @@ struct StoreCpuBoostScope {
 };
 
 MeshInkMessageStore journal;
-#if T5_TIMING_DIAGNOSTICS
-uint32_t perf_reads=0;
-uint32_t perf_read_us=0;
-uint32_t perf_read_worst_us=0;
-uint32_t perf_cache_reads=0;
-uint32_t perf_writes=0;
-uint32_t perf_write_us=0;
-uint32_t perf_write_worst_us=0;
-#endif
 
 static size_t record_offset(uint16_t physical){
     return sizeof(MeshInkMessageStoreHeader)+
@@ -55,46 +45,30 @@ static bool read_record(File& f,uint16_t physical,MeshInkStoredMessage& out){
     return f.read((uint8_t*)&out,sizeof(out))==sizeof(out);
 }
 
-static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record,
-                            uint32_t* seek_us=nullptr,uint32_t* write_us=nullptr){
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t seek_started=micros();
-#endif
+static bool incomplete_direct_state(uint8_t state){
+    switch((UiMessageState)state){
+        case UiMessageState::Sending:
+        case UiMessageState::Sent:
+        case UiMessageState::Retrying1:
+        case UiMessageState::Retrying2:
+        case UiMessageState::Retrying3:
+        case UiMessageState::Retrying4:
+        case UiMessageState::Retrying5:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record){
     const bool seek_ok=f.seek(record_offset(physical));
-#if T5_TIMING_DIAGNOSTICS
-    if(seek_us)*seek_us=(uint32_t)(micros()-seek_started);
-#else
-    (void)seek_us;
-#endif
     if(!seek_ok)return false;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t write_started=micros();
-#endif
     const bool ok=f.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
-#if T5_TIMING_DIAGNOSTICS
-    if(write_us)*write_us=(uint32_t)(micros()-write_started);
-#else
-    (void)write_us;
-#endif
     return ok;
 }
 }
 
 MeshInkMessageStore& meshink_message_store(){return journal;}
-
-void meshink_message_store_perf_snapshot(MeshInkMessageStorePerf& out){
-#if T5_TIMING_DIAGNOSTICS
-    out.reads=perf_reads;
-    out.read_us=perf_read_us;
-    out.read_worst_us=perf_read_worst_us;
-    out.cache_reads=perf_cache_reads;
-    out.writes=perf_writes;
-    out.write_us=perf_write_us;
-    out.write_worst_us=perf_write_worst_us;
-#else
-    out=MeshInkMessageStorePerf{};
-#endif
-}
 
 bool MeshInkMessageStore::ensure_cache(){
     if(records_)return true;
@@ -118,19 +92,10 @@ bool MeshInkMessageStore::load_cache(File& source){
     const uint32_t started=micros();
     const size_t got=source.read((uint8_t*)records_,bytes);
     const uint32_t elapsed=(uint32_t)(micros()-started);
-#if T5_TIMING_DIAGNOSTICS
-    ++perf_reads;perf_read_us+=elapsed;
-    if(elapsed>perf_read_worst_us)perf_read_worst_us=elapsed;
-#endif
     if(got!=bytes){
         heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;
         return false;
     }
-    Serial.printf("[T5-STORE] cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz\n",
-                  (unsigned long)(elapsed/1000UL),
-                  (unsigned long)((elapsed%1000UL)/100UL),
-                  cache_in_psram_?"PSRAM":"RAM",(unsigned)bytes,
-                  (unsigned long)getCpuFrequencyMhz());
     return true;
 }
 
@@ -175,41 +140,13 @@ void MeshInkMessageStore::write_header(){
                       (unsigned)written,(unsigned)sizeof(header_));
 }
 
-bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record,const char* operation){
+bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record){
     if(!initialized_||!file_||physical>=MESHINK_MESSAGE_CAPACITY)return false;
     StoreCpuBoostScope cpu_boost;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t started=micros();
-    uint32_t seek_us=0,write_us=0,flush_us=0;
-#endif
-    const bool ok=write_record_to(file_,physical,record,
-#if T5_TIMING_DIAGNOSTICS
-                                  &seek_us,&write_us
-#else
-                                  nullptr,nullptr
-#endif
-    );
+    const bool ok=write_record_to(file_,physical,record);
     if(ok){
-#if T5_TIMING_DIAGNOSTICS
-        const uint32_t flush_started=micros();
-#endif
         file_.flush();
-#if T5_TIMING_DIAGNOSTICS
-        flush_us=(uint32_t)(micros()-flush_started);
-#endif
     }
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t elapsed=(uint32_t)(micros()-started);
-    ++perf_writes;perf_write_us+=elapsed;
-    if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
-    Serial.printf("[T5-STOREPERF] op=%s record=%u seek=%lu.%01lums write=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums cpu=%luMHz ok=%u\n",
-                  operation?operation:"update",(unsigned)physical,
-                  (unsigned long)(seek_us/1000UL),(unsigned long)((seek_us%1000UL)/100UL),
-                  (unsigned long)(write_us/1000UL),(unsigned long)((write_us%1000UL)/100UL),
-                  (unsigned long)(flush_us/1000UL),(unsigned long)((flush_us%1000UL)/100UL),
-                  (unsigned long)(elapsed/1000UL),(unsigned long)((elapsed%1000UL)/100UL),
-                  (unsigned long)getCpuFrequencyMhz(),ok?1U:0U);
-#endif
     if(!ok){
         Serial.printf("[T5-STORE] ERROR writing journal record=%u\n",(unsigned)physical);
         return false;
@@ -239,10 +176,29 @@ bool MeshInkMessageStore::begin(){
         const bool cache_loaded=cache_source&&load_cache(cache_source);
         if(cache_source)cache_source.close();
         file_=SPIFFS.open(STORE_PATH,"r+");if(!file_)return false;initialized_=true;
-        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB\n",
+
+        // No in-flight direct-send runtime survives a reboot. Any journal
+        // record still in a transient sending/retry state is therefore stale
+        // and must become a durable FAILED record before history is exposed.
+        size_t recovered_failed=0;
+        size_t recovery_errors=0;
+        for(size_t logical=0;logical<header_.count;++logical){
+            const uint16_t physical=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
+            MeshInkStoredMessage item{};
+            if(records_)item=records_[physical];
+            else if(!read_record(file_,physical,item)){++recovery_errors;continue;}
+            if(item.kind!=(uint8_t)MeshInkMessageKind::Direct||
+               !incomplete_direct_state(item.state))continue;
+            item.state=(uint8_t)UiMessageState::Failed;
+            if(write_record(physical,item))++recovered_failed;
+            else ++recovery_errors;
+        }
+
+        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB recovered-failed=%u errors=%u\n",
                       (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
                       cache_loaded?(cache_in_psram_?"PSRAM":"RAM"):"NONE",
-                      (unsigned)sizeof(header_));
+                      (unsigned)sizeof(header_),(unsigned)recovered_failed,
+                      (unsigned)recovery_errors);
         return true;
     }
 
@@ -268,22 +224,11 @@ bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
     const uint16_t physical=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
     if(records_){
         out=records_[physical];
-#if T5_TIMING_DIAGNOSTICS
-        ++perf_cache_reads;
-#endif
         return true;
     }
     if(!file_)return false;
     StoreCpuBoostScope cpu_boost;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t started=micros();
-#endif
     const bool ok=read_record(file_,physical,out);
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t elapsed=(uint32_t)(micros()-started);
-    ++perf_reads;perf_read_us+=elapsed;
-    if(elapsed>perf_read_worst_us)perf_read_worst_us=elapsed;
-#endif
     return ok;
 }
 
@@ -341,60 +286,17 @@ uint32_t MeshInkMessageStore::append(
 
     if(!file_)return 0;
     StoreCpuBoostScope cpu_boost;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t started=micros();
-    uint32_t record_seek_us=0,record_write_us=0,header_seek_us=0,header_write_us=0,flush_us=0;
-#endif
-    const bool record_ok=write_record_to(file_,physical,item,
-#if T5_TIMING_DIAGNOSTICS
-                                         &record_seek_us,&record_write_us
-#else
-                                         nullptr,nullptr
-#endif
-    );
+    const bool record_ok=write_record_to(file_,physical,item);
     bool header_ok=false;
     if(record_ok){
-#if T5_TIMING_DIAGNOSTICS
-        const uint32_t hs=micros();
-#endif
         const bool header_seek_ok=file_.seek(0);
-#if T5_TIMING_DIAGNOSTICS
-        header_seek_us=(uint32_t)(micros()-hs);
-#endif
         if(header_seek_ok){
-#if T5_TIMING_DIAGNOSTICS
-            const uint32_t hw=micros();
-#endif
             header_ok=file_.write((const uint8_t*)&next,sizeof(next))==sizeof(next);
-#if T5_TIMING_DIAGNOSTICS
-            header_write_us=(uint32_t)(micros()-hw);
-#endif
         }
     }
     if(record_ok&&header_ok){
-#if T5_TIMING_DIAGNOSTICS
-        const uint32_t fs=micros();
-#endif
         file_.flush();
-#if T5_TIMING_DIAGNOSTICS
-        flush_us=(uint32_t)(micros()-fs);
-#endif
     }
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t elapsed=(uint32_t)(micros()-started);
-    perf_writes+=2;perf_write_us+=elapsed;
-    if(elapsed>perf_write_worst_us)perf_write_worst_us=elapsed;
-    Serial.printf("[T5-STOREPERF] op=append record=%u rseek=%lu.%01lums rwrite=%lu.%01lums hseek=%lu.%01lums hwrite=%lu.%01lums flush=%lu.%01lums total=%lu.%01lums cpu=%luMHz ok=%u\n",
-                  (unsigned)physical,
-                  (unsigned long)(record_seek_us/1000UL),(unsigned long)((record_seek_us%1000UL)/100UL),
-                  (unsigned long)(record_write_us/1000UL),(unsigned long)((record_write_us%1000UL)/100UL),
-                  (unsigned long)(header_seek_us/1000UL),(unsigned long)((header_seek_us%1000UL)/100UL),
-                  (unsigned long)(header_write_us/1000UL),(unsigned long)((header_write_us%1000UL)/100UL),
-                  (unsigned long)(flush_us/1000UL),(unsigned long)((flush_us%1000UL)/100UL),
-                  (unsigned long)(elapsed/1000UL),(unsigned long)((elapsed%1000UL)/100UL),
-                  (unsigned long)getCpuFrequencyMhz(),
-                  (record_ok&&header_ok)?1U:0U);
-#endif
     if(!record_ok||!header_ok){
         Serial.println("[T5-STORE] ERROR appending journal record");
         return 0;
@@ -404,13 +306,19 @@ uint32_t MeshInkMessageStore::append(
     return item.sequence;
 }
 
-void MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
-    uint16_t p;if(!find_physical(sequence,p)||!file_)return;
+bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
+    uint16_t p;
+    if(!find_physical(sequence,p)||!file_){
+        Serial.printf("[T5-STORE] ERROR state update missing sequence=%lu\n",
+                      (unsigned long)sequence);
+        return false;
+    }
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
-    if(item.state==(uint8_t)state)return;
-    item.state=(uint8_t)state;write_record(p,item,"state");
+    else if(!read_record(file_,p,item))return false;
+    if(item.state==(uint8_t)state)return true;
+    item.state=(uint8_t)state;
+    return write_record(p,item);
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
@@ -419,7 +327,7 @@ void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
     if(records_)item=records_[p];
     else if(!read_record(file_,p,item))return;
     if(item.ack==ack)return;
-    item.ack=ack;write_record(p,item,"ack");
+    item.ack=ack;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len){
@@ -429,7 +337,7 @@ void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path
     else if(!read_record(file_,p,item))return;
     if(item.snr_q4==snr_q4&&item.path_len==path_len&&(item.flags&MESHINK_MESSAGE_HAS_RX))return;
     item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
-    write_record(p,item,"rx");
+    write_record(p,item);
 }
 
 void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
@@ -442,7 +350,7 @@ void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
     if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
     else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
     if(item.flags==before)return;
-    write_record(p,item,"route");
+    write_record(p,item);
 }
 
 void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
@@ -451,7 +359,7 @@ void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t
     if(records_)item=records_[p];
     else if(!read_record(file_,p,item))return;
     if(item.repeats==repeats&&item.repeat_snr_q4==snr_q4)return;
-    item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item,"repeat");
+    item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item);
 }
 
 void MeshInkMessageStore::update_outgoing(
@@ -467,7 +375,7 @@ void MeshInkMessageStore::update_outgoing(
     if(route_flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
     else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
     if(!memcmp(&before,&item,sizeof(item)))return;
-    write_record(p,item,"outgoing");
+    write_record(p,item);
 }
 
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
@@ -485,7 +393,7 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
             if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
             else{
                 item.state=(uint8_t)UiMessageState::Delivered;
-                delivered=write_record(p,item,"delivered");
+                delivered=write_record(p,item);
             }
             break;
         }

@@ -12,7 +12,6 @@
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
 #include "t5_logging.h"
-#include "t5_timing.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.h"
 
@@ -185,8 +184,8 @@ class MeshCoreUiProvider final:public UiDataProvider{
                 return;
             }
             if(state==UiMessageState::Retrying3){
-                if(route_known)snprintf(out,len,"SENDING %s",route);
-                else {strncpy(out,"SENDING",len-1);out[len-1]=0;}
+                if(route_known)snprintf(out,len,"FINAL %s",route);
+                else {strncpy(out,"FINAL",len-1);out[len-1]=0;}
                 return;
             }
             const char* base=(stored.kind==(uint8_t)MessageKind::Direct&&
@@ -292,12 +291,6 @@ class MeshCoreUiProvider final:public UiDataProvider{
         return direct_unread_[0].count;
     }
     void rebuild_active(){
-#if T5_TIMING_DIAGNOSTICS
-        MeshInkMessageStorePerf perf_before{},perf_after{};
-        meshink_message_store_perf_snapshot(perf_before);
-        const uint32_t perf_started=micros();
-        const size_t perf_journal_count=store_.count();
-#endif
         active_count_=0;
         StoredMessage item{};
         for(size_t i=0;i<store_.count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
@@ -305,21 +298,6 @@ class MeshCoreUiProvider final:public UiDataProvider{
             active_indices_[active_count_++]=(uint16_t)i;
         }
         ++active_revision_;
-#if T5_TIMING_DIAGNOSTICS
-        const uint32_t perf_elapsed=(uint32_t)(micros()-perf_started);
-        meshink_message_store_perf_snapshot(perf_after);
-        T5MessageRebuildPerf perf{};
-        perf.elapsed_us=perf_elapsed;
-        perf.store_read_us=perf_after.read_us-perf_before.read_us;
-        perf.store_read_worst_us=perf_after.read_worst_us;
-        const uint32_t perf_reads=perf_after.reads-perf_before.reads;
-        perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
-        const uint32_t perf_cache_reads=perf_after.cache_reads-perf_before.cache_reads;
-        perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
-        perf.journal_messages=(uint16_t)(perf_journal_count>0xFFFFU?0xFFFFU:perf_journal_count);
-        perf.active_messages=(uint16_t)(active_count_>0xFFFFU?0xFFFFU:active_count_);
-        t5_timing_note_message_rebuild(perf);
-#endif
     }
     bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
@@ -444,13 +422,12 @@ public:
         transient_direct_route_known_=false;
         transient_direct_route_flood_=false;
     }
-    void update_message(uint32_t sequence,UiMessageState state){
-        if(sequence){
-            store_.update_state(sequence,state);
-            clear_transient_direct(sequence);
-            ++active_revision_;
-        }
+    bool update_message(uint32_t sequence,UiMessageState state){
+        if(!sequence||!store_.update_state(sequence,state))return false;
+        clear_transient_direct(sequence);
+        ++active_revision_;
         ui_request_data_refresh("message-state");
+        return true;
     }
     void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state){
         if(sequence){
@@ -730,7 +707,7 @@ public:
 };
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
-struct PendingDirect{bool active=false;bool waiting_response=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,deadline=0;uint32_t acks[DIRECT_RETRY_LIMIT+1]{};bool route_flood[DIRECT_RETRY_LIMIT+1]{};uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
+struct PendingDirect{bool active=false;bool waiting_response=false;bool finalizing_failure=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,deadline=0;uint32_t acks[DIRECT_RETRY_LIMIT+1]{};bool route_flood[DIRECT_RETRY_LIMIT+1]{};uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
 struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
 struct RecentChannelSend{
@@ -778,11 +755,19 @@ static bool pending_direct_is_visible_chat(){
 
 static void fail_pending_direct(const char* reason){
     if(!pending_direct.active)return;
-    provider.update_message(pending_direct.sequence,UiMessageState::Failed);
+    pending_direct.finalizing_failure=true;
+    pending_direct.waiting_response=false;
+    if(!provider.update_message(pending_direct.sequence,UiMessageState::Failed)){
+        pending_direct.deadline=millis()+250;
+        T5_DEBUGF(T5_LOG_MESH,
+                  "[T5-MESH] WARN failed-state journal write sequence=%lu; retrying finalization\n",
+                  (unsigned long)pending_direct.sequence);
+        return;
+    }
     const bool restored=pending_direct_is_visible_chat()&&
                         ui_restore_failed_compose(pending_direct.text);
     T5_DEBUGF(T5_LOG_MESH,
-              "[T5-MESH] direct failed sequence=%lu retry=%u reason=%s draft_restored=%d\n",
+              "[T5-MESH] direct failed sequence=%lu retry=%u reason=%s draft_restored=%d journal=FAILED\n",
               (unsigned long)pending_direct.sequence,(unsigned)pending_direct.retry,
               reason?reason:"unknown",restored?1:0);
     pending_direct={};
@@ -1056,7 +1041,10 @@ void local_mesh_loop(){
     if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
     if(pending_stats.active&&(int32_t)(millis()-pending_stats.deadline)>=0)finish_stats(true);
-    if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
+    if(pending_direct.active&&pending_direct.finalizing_failure&&
+       pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
+        fail_pending_direct("persist retry");
+    }else if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){
         if(pending_direct.retry>=DIRECT_RETRY_LIMIT)fail_pending_direct("retry limit");
         else{
             pending_direct.retry++;

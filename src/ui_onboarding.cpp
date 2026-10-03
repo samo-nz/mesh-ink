@@ -21,7 +21,6 @@
 #include "map_gestures.h"
 #include "ui_layout.h"
 #include "t5_logging.h"
-#include "t5_timing.h"
 #include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
@@ -35,10 +34,6 @@
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.3.0"
-#endif
-
-#ifndef MESHINK_GEOMETRY_DIAGNOSTICS
-#define MESHINK_GEOMETRY_DIAGNOSTICS 0
 #endif
 
 void request_companion_mode() __attribute__((weak));
@@ -477,23 +472,6 @@ struct QueuedTap{
         x(px),y(py),dx(pdx),dy(pdy),home(is_home),queued_at_ms(millis()) {}
 };
 
-struct T5InputTimingScope{
-#if T5_TIMING_DIAGNOSTICS
-    uint32_t started_us;
-    uint32_t age_ms;
-    uint32_t queue_depth;
-    T5InputTimingScope(uint32_t queued_at,uint32_t depth):
-        started_us(micros()),age_ms(queued_at?(uint32_t)(millis()-queued_at):0),queue_depth(depth){
-        t5_timing_set_ui_action(T5UiAction::Touch);
-    }
-    ~T5InputTimingScope(){
-        t5_timing_note_ui_input((uint32_t)(micros()-started_us),age_ms,queue_depth);
-        t5_timing_set_ui_action(T5UiAction::None);
-    }
-#else
-    T5InputTimingScope(uint32_t,uint32_t){}
-#endif
-};
 struct MapTapSequence{
     uint8_t count=0;
     int16_t first_x=0,first_y=0;
@@ -621,45 +599,6 @@ static void ui_glyph_bounds(const uint8_t* rows,int& left,int& right) {
         }
     }
 }
-#if T5_TIMING_DIAGNOSTICS
-struct UiMessagePerfCounters {
-    uint32_t geometry_us=0;
-    uint32_t fill_us=0;
-    uint32_t smooth_us=0;
-    uint32_t wrap_calls=0;
-    uint32_t wrap_chars=0;
-    uint32_t advances=0;
-    uint32_t smooth_calls=0;
-    uint32_t smooth_chars=0;
-    uint32_t glyph_pixels=0;
-    uint32_t draw_ops=0;
-    uint16_t geometry_calls=0;
-    uint16_t fill_calls=0;
-};
-static UiMessagePerfCounters ui_message_perf{};
-static bool ui_message_perf_collect=false;
-static void ui_message_perf_reset(){ui_message_perf=UiMessagePerfCounters{};}
-
-static T5UiRenderPerf ui_render_perf{};
-static bool ui_render_perf_collect=false;
-static uint8_t ui_render_perf_depth=0;
-static void ui_render_perf_begin(){
-    if(ui_render_perf_depth++==0){
-        ui_render_perf=T5UiRenderPerf{};
-        ui_render_perf_collect=true;
-    }
-}
-static void ui_render_perf_end(uint32_t started_us){
-    const uint32_t elapsed=(uint32_t)(micros()-started_us);
-    if(ui_render_perf_depth) --ui_render_perf_depth;
-    if(!ui_render_perf_depth){
-        ui_render_perf.total_us=elapsed;
-        ui_render_perf_collect=false;
-        t5_timing_note_ui_render(ui_render_perf);
-    }
-    t5_timing_note_ui_draw(elapsed);
-}
-#endif
 
 struct UiSmoothFont {
     const MeshInkFontData* font;
@@ -688,9 +627,6 @@ static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint3
     return nullptr;
 }
 static int ui_smooth_char_advance(char c,int scale) {
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_message_perf_collect)++ui_message_perf.advances;
-#endif
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
     if(!glyph_data)return 0;
@@ -723,22 +659,12 @@ static int ui_text_width(const char* s,int scale) {
 }
 static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
     if(!s)return;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t perf_started=ui_message_perf_collect?micros():0;
-    if(ui_message_perf_collect)++ui_message_perf.smooth_calls;
-#endif
     const UiSmoothFont face=ui_smooth_font(scale);
     const int baseline=y+face.baseline_from_top;
     while(*s&&*s!='\n'){
         const char c=*s++;
         const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
         if(!glyph_data)continue;
-#if T5_TIMING_DIAGNOSTICS
-        if(ui_message_perf_collect){
-            ++ui_message_perf.smooth_chars;
-            ui_message_perf.glyph_pixels+=(uint32_t)glyph_data->width*glyph_data->height;
-        }
-#endif
         const int gx=x+glyph_data->left;
         const int gy=baseline-glyph_data->top;
         for(int sy=0;sy<glyph_data->height;++sy){
@@ -746,33 +672,46 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
                 const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
                 const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
                 if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
-#if T5_TIMING_DIAGNOSTICS
-                if(ui_message_perf_collect)ui_message_perf.draw_ops+=bold?2U:1U;
-#endif
                 meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
                 if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
             }
         }
         x+=ui_smooth_char_advance(c,scale);
     }
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_message_perf_collect)ui_message_perf.smooth_us+=(uint32_t)(micros()-perf_started);
-#endif
+}
+static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
+                                   uint8_t color,bool bold,
+                                   int clip_left,int clip_top,
+                                   int clip_right,int clip_bottom) {
+    if(!s||clip_right<=clip_left||clip_bottom<=clip_top)return;
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const int baseline=y+face.baseline_from_top;
+    while(*s&&*s!='\n'){
+        const char c=*s++;
+        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        if(!glyph_data)continue;
+        const int gx=x+glyph_data->left;
+        const int gy=baseline-glyph_data->top;
+        for(int sy=0;sy<glyph_data->height;++sy){
+            const int py=gy+sy;
+            if(py<clip_top||py>=clip_bottom)continue;
+            for(int sx=0;sx<glyph_data->width;++sx){
+                const int px=gx+sx;
+                if(px<clip_left||px>=clip_right)continue;
+                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
+                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
+                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+                meshink_display_draw_pixel(px,py,color,fb);
+                if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
+            }
+        }
+        x+=ui_smooth_char_advance(c,scale);
+    }
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t render_started=ui_render_perf_collect?micros():0;
-    if(ui_render_perf_collect){
-        ++ui_render_perf.text_calls;
-        for(const char* p=s;*p&&*p!='\n';++p)++ui_render_perf.text_chars;
-    }
-#endif
     if(scale>=3){
         ui_smooth_text(s,x,y,scale,color,bold);
-#if T5_TIMING_DIAGNOSTICS
-        if(ui_render_perf_collect)ui_render_perf.text_us+=(uint32_t)(micros()-render_started);
-#endif
         return;
     }
     while(*s&&*s!='\n'){
@@ -788,9 +727,6 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
                 }
         x+=(right-left+1)*scale+scale;
     }
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_render_perf_collect)ui_render_perf.text_us+=(uint32_t)(micros()-render_started);
-#endif
 }
 static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
                         uint8_t color=0,bool bold=false) {
@@ -842,14 +778,8 @@ static int ui_text_max_line_width(const char* value,int scale) {
 }
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_message_perf_collect)++ui_message_perf.wrap_calls;
-#endif
     size_t count=0,last_space=0;int width=0;
     while(value[count]&&value[count]!='\n'){
-#if T5_TIMING_DIAGNOSTICS
-        if(ui_message_perf_collect)++ui_message_perf.wrap_chars;
-#endif
         const int advance=ui_char_advance(value[count],scale);
         if(count&&width+advance>max_width)break;
         if(!count&&advance>max_width)return 1;
@@ -938,19 +868,113 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
     }
 }
 
+struct UiComposeLine { const char* start; size_t len; };
+
+static int ui_compose_wrap_lines(const char* value,int max_width,int scale,
+                                 UiComposeLine* lines,int capacity) {
+    if(!value||!lines||capacity<=0)return 0;
+    if(!*value){lines[0]={value,0};return 1;}
+    int count=0;
+    const char* cursor=value;
+    while(count<capacity){
+        const char* start=cursor;
+        const char* scan=cursor;
+        const char* last_space=nullptr;
+        int width=0;
+        while(*scan&&*scan!='\n'){
+            const int advance=ui_char_advance(*scan,scale);
+            if(scan>start&&width+advance>max_width)break;
+            width+=advance;
+            if(*scan==' ')last_space=scan;
+            ++scan;
+        }
+        if(*scan=='\n'){
+            lines[count++]={start,(size_t)(scan-start)};
+            cursor=scan+1;
+            if(!*cursor&&count<capacity)lines[count++]={cursor,0};
+            if(!*cursor)break;
+            continue;
+        }
+        if(!*scan){
+            lines[count++]={start,(size_t)(scan-start)};
+            break;
+        }
+
+        // If the character that overflowed is itself a space, put the caret
+        // on the next line rather than silently discarding the user's space.
+        if(*scan==' '){
+            lines[count++]={start,(size_t)(scan-start)};
+            cursor=scan+1;
+            if(!*cursor&&count<capacity)lines[count++]={cursor,0};
+            if(!*cursor)break;
+            continue;
+        }
+
+        // Prefer a word boundary when one exists. The separator space remains
+        // in compose_text, while rendering begins after it on the next line.
+        if(last_space&&last_space>start){
+            lines[count++]={start,(size_t)(last_space-start)};
+            cursor=last_space+1;
+        }else{
+            lines[count++]={start,(size_t)(scan-start)};
+            cursor=scan;
+        }
+        if(!*cursor&&count<capacity){
+            lines[count++]={cursor,0};
+            break;
+        }
+    }
+    return max(1,count);
+}
+
+static void ui_draw_compose_tail(const char* value,int x,int y,int max_width,
+                                 int max_height,int scale) {
+    if(!value||max_width<=0||max_height<=0)return;
+    UiComposeLine lines[64]{};
+    const int line_count=ui_compose_wrap_lines(
+        value,max_width,scale,lines,(int)(sizeof(lines)/sizeof(lines[0])));
+    if(!line_count)return;
+
+    const int glyph_height=ui_text_height(scale);
+    const int line_step=ui_text_line_step(scale);
+    if(max_height<glyph_height)return;
+
+    // One line remains vertically comfortable. Once wrapping starts, keep the
+    // newest line near the bottom but lift it slightly clear of the rounded
+    // field edge so descenders and the lower glyph row are never clipped.
+    const int multiline_lift=max(8,glyph_height/3);
+    const int current_y=line_count<=1
+        ?y+(max_height-glyph_height)/2
+        :y+max_height-glyph_height-multiline_lift;
+    for(int i=line_count-1;i>=0;--i){
+        const int line_y=current_y-(line_count-1-i)*line_step;
+        if(line_y+glyph_height<=y)break;
+        if(line_y>=y+max_height)continue;
+        char line_text[MESHINK_MESSAGE_TEXT_BYTES]{};
+        const size_t copy=min(lines[i].len,sizeof(line_text)-1);
+        if(copy)memcpy(line_text,lines[i].start,copy);
+        ui_smooth_text_clipped(line_text,x,line_y,scale,0,false,
+                               x,y,x+max_width,y+max_height);
+    }
+
+    // Keep the caret non-blinking and restrained, but large enough to remain
+    // legible after a direct e-paper update and to make trailing spaces obvious.
+    const UiComposeLine& current=lines[line_count-1];
+    const int caret_advance=ui_text_width_n(current.start,current.len,scale);
+    constexpr int caret_width=2;
+    const int caret_x=max(x,min(x+max_width-caret_width,x+caret_advance));
+    const int caret_height=min(max_height-4,max(14,(glyph_height*3)/2));
+    const int centred_caret_y=current_y+(glyph_height-caret_height)/2;
+    const int caret_y=max(y+2,min(y+max_height-2-caret_height,centred_caret_y));
+    meshink_display_fill_rect({caret_x,caret_y,caret_width,caret_height},0,fb);
+}
+
 // Rounded surfaces are composed directly in the selected display backend.
 // The T5 backend preserves these exact integer corner pixels while choosing
 // packed-framebuffer-friendly spans for the current rotation.
 static void rounded_fill(int x,int y,int w,int h,int radius,uint8_t color) {
     if(w<=0||h<=0)return;
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t render_started=ui_render_perf_collect?micros():0;
-    if(ui_render_perf_collect)++ui_render_perf.rounded_calls;
-#endif
     meshink_display_fill_rounded_rect({x,y,w,h},radius,color,fb);
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_render_perf_collect)ui_render_perf.rounded_us+=(uint32_t)(micros()-render_started);
-#endif
 }
 static void rounded_box(int x,int y,int w,int h,int radius,bool selected=false) {
     if(selected){rounded_fill(x,y,w,h,radius,0);return;}
@@ -993,181 +1017,6 @@ static meshink_keyboard::Metrics keyboard_metrics(bool landscape) {
         landscape,tuning);
 }
 
-#if MESHINK_GEOMETRY_DIAGNOSTICS
-static bool ui_rect_inside(int width,int height,const MeshInkUiRect& rect) {
-    return rect.x>=0&&rect.y>=0&&rect.width>0&&rect.height>0&&
-           rect.x+rect.width<=width&&rect.y+rect.height<=height;
-}
-static bool ui_rect_contains(const MeshInkUiRect& outer,const MeshInkUiRect& inner) {
-    return inner.x>=outer.x&&inner.y>=outer.y&&
-           inner.x+inner.width<=outer.x+outer.width&&
-           inner.y+inner.height<=outer.y+outer.height;
-}
-static bool keyboard_rect_inside(int width,int height,const meshink_keyboard::Rect& rect) {
-    return rect.x>=0&&rect.y>=0&&rect.width>0&&rect.height>0&&
-           rect.x+rect.width<=width&&rect.y+rect.height<=height;
-}
-static void audit_ui_geometry() {
-    const MeshInkUiLayout& layout=portrait_layout();
-    bool ok=layout.width>0&&layout.height>0&&
-            layout.status_height>0&&layout.bottom_nav_height>0&&
-            layout.bottom_nav_top+layout.bottom_nav_height==layout.height&&
-            layout.map_top==layout.status_height&&
-            layout.map_bottom==layout.bottom_nav_top;
-
-    struct NamedUiRect { const char* name; MeshInkUiRect rect; };
-    const NamedUiRect rects[]={
-        {"header-back",meshink_header_back_rect(layout)},
-        {"header-back-touch",meshink_header_back_touch_rect(layout)},
-        {"header-action",meshink_header_action_rect(layout)},
-        {"header-action-touch",meshink_header_action_touch_rect(layout)},
-        {"welcome-name",meshink_welcome_name_rect(layout)},
-        {"welcome-preset",meshink_welcome_preset_rect(layout)},
-        {"welcome-companion",meshink_welcome_companion_rect(layout)},
-        {"welcome-keyboard",meshink_welcome_show_keyboard_rect(layout)},
-        {"preset-back",meshink_preset_back_rect(layout)},
-        {"preset-prev",meshink_preset_prev_rect(layout)},
-        {"preset-next",meshink_preset_next_rect(layout)},
-        {"confirm-left",meshink_confirm_left_rect(layout,500)},
-        {"confirm-right",meshink_confirm_right_rect(layout,500)},
-        {"shutdown-confirm-left",meshink_confirm_left_rect(layout,650)},
-        {"shutdown-confirm-right",meshink_confirm_right_rect(layout,650)},
-        {"node-map",meshink_node_map_rect(layout)},
-        {"node-action",meshink_node_action_rect(layout)},
-        {"node-left",meshink_node_left_action_rect(layout)},
-        {"node-right",meshink_node_right_action_rect(layout)},
-        {"password-save",meshink_password_save_rect(layout)},
-        {"map-plus",meshink_map_control_rect(layout,0)},
-        {"map-minus",meshink_map_control_rect(layout,1)},
-        {"map-locate",meshink_map_control_rect(layout,2)},
-        {"quick-slider",meshink_quick_slider_track_rect(layout)},
-        {"quick-slider-touch",meshink_quick_slider_touch_rect(layout)},
-        {"quick-minus",meshink_quick_minus_rect(layout)},
-        {"quick-plus",meshink_quick_plus_rect(layout)},
-        {"quick-advert",meshink_quick_advert_rect(layout)},
-        {"quick-power",meshink_quick_power_rect(layout)},
-        {"display-edit-times",meshink_settings_inline_action_rect(layout,118)},
-        {"display-brightness",meshink_display_brightness_rect(layout)},
-        {"display-slider",meshink_display_slider_track_rect(layout)},
-        {"display-slider-touch",meshink_display_slider_touch_rect(layout)},
-        {"shutdown",meshink_shutdown_rect(layout)},
-        {"night-start",meshink_night_start_rect(layout)},
-        {"night-end",meshink_night_end_rect(layout)},
-        {"night-minus",meshink_night_minus_rect(layout)},
-        {"night-plus",meshink_night_plus_rect(layout)},
-        {"night-save",meshink_night_save_rect(layout)}
-    };
-    for(const auto& item:rects) {
-        if(!ui_rect_inside(layout.width,layout.height,item.rect)) {
-            ok=false;
-            Serial.printf("[T5-GEOM] ERROR ui %s rect=%d,%d %dx%d outside %dx%d\n",
-                          item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
-                          layout.width,layout.height);
-        }
-    }
-    for(int row=0;row<PRESETS_PER_PAGE;++row) {
-        const MeshInkUiRect preset=meshink_preset_row_rect(layout,row);
-        if(!ui_rect_inside(layout.width,layout.height,preset)) {
-            ok=false;
-            Serial.printf("[T5-GEOM] ERROR preset row=%d rect=%d,%d %dx%d outside %dx%d\n",
-                          row,preset.x,preset.y,preset.width,preset.height,
-                          layout.width,layout.height);
-        }
-    }
-    if(!ui_rect_contains(meshink_header_back_touch_rect(layout),
-                         meshink_header_back_rect(layout))) {
-        ok=false;Serial.println("[T5-GEOM] ERROR header-back touch does not contain visual");
-    }
-    if(!ui_rect_contains(meshink_header_action_touch_rect(layout),
-                         meshink_header_action_rect(layout))) {
-        ok=false;Serial.println("[T5-GEOM] ERROR header-action touch does not contain visual");
-    }
-    if(!ui_rect_contains(meshink_quick_slider_touch_rect(layout),
-                         meshink_quick_slider_track_rect(layout))) {
-        ok=false;Serial.println("[T5-GEOM] ERROR quick slider touch does not contain visual");
-    }
-    if(!ui_rect_contains(meshink_display_slider_touch_rect(layout),
-                         meshink_display_slider_track_rect(layout))) {
-        ok=false;Serial.println("[T5-GEOM] ERROR display slider touch does not contain visual");
-    }
-
-    for(int index=0;index<3;++index) {
-        const MeshInkUiRect control=meshink_map_control_rect(layout,index);
-        if(control.y<layout.map_top||control.y+control.height>layout.map_bottom) {
-            ok=false;
-            Serial.printf("[T5-GEOM] ERROR map control %d y=%d..%d outside viewport=%d..%d\n",
-                          index,control.y,control.y+control.height,
-                          layout.map_top,layout.map_bottom);
-        }
-    }
-
-    const auto portrait=keyboard_metrics(false);
-    const auto landscape=keyboard_metrics(true);
-    struct NamedKeyboardRect { const char* name; meshink_keyboard::Rect rect; };
-    const NamedKeyboardRect portrait_rects[]={
-        {"entry",portrait.entry},{"mode",portrait.mode_key},{"delete",portrait.delete_key},
-        {"orientation",portrait.orientation_key},{"space",portrait.space_key},
-        {"action",portrait.action_key},{"wide-action",portrait.wide_action_key}
-    };
-    const NamedKeyboardRect landscape_rects[]={
-        {"entry",landscape.entry},{"mode",landscape.mode_key},{"delete",landscape.delete_key},
-        {"orientation",landscape.orientation_key},{"space",landscape.space_key},
-        {"action",landscape.action_key}
-    };
-    for(const auto& item:portrait_rects) {
-        if(!keyboard_rect_inside(portrait.width,portrait.height,item.rect)) {
-            ok=false;
-            Serial.printf("[T5-GEOM] ERROR keyboard portrait %s=%d,%d %dx%d outside %dx%d\n",
-                          item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
-                          portrait.width,portrait.height);
-        }
-    }
-    for(const auto& item:landscape_rects) {
-        if(!keyboard_rect_inside(landscape.width,landscape.height,item.rect)) {
-            ok=false;
-            Serial.printf("[T5-GEOM] ERROR keyboard landscape %s=%d,%d %dx%d outside %dx%d\n",
-                          item.name,item.rect.x,item.rect.y,item.rect.width,item.rect.height,
-                          landscape.width,landscape.height);
-        }
-    }
-    if(portrait.number_top<0||
-       portrait.bottom_top+portrait.key_height>portrait.height||
-       landscape.number_top<0||
-       landscape.bottom_top+landscape.key_height>landscape.height) {
-        ok=false;
-        Serial.printf("[T5-GEOM] ERROR keyboard rows portrait=%d..%d/%d landscape=%d..%d/%d\n",
-                      portrait.number_top,portrait.bottom_top+portrait.key_height,portrait.height,
-                      landscape.number_top,landscape.bottom_top+landscape.key_height,landscape.height);
-    }
-
-    const bool reference=layout.width==540&&layout.height==960;
-    if(reference) {
-        const MeshInkUiRect quick=meshink_quick_slider_touch_rect(layout);
-        const MeshInkUiRect display_touch=meshink_display_slider_touch_rect(layout);
-        if(layout.status_height!=48||layout.bottom_nav_top!=900||
-           quick.x!=28||quick.y!=146||quick.width!=484||quick.height!=80||
-           display_touch.x!=40||display_touch.y!=420||
-           display_touch.width!=460||display_touch.height!=100) {
-            ok=false;
-            Serial.println("[T5-GEOM] ERROR T5 reference geometry no longer pixel-exact");
-        }
-    }
-
-    if(!fb) {
-        ok=false;
-        Serial.println("[T5-GEOM] ERROR display framebuffer is null");
-    }
-    Serial.printf("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d fb=%p bytes=%u ref=%u "
-                  "map=%d..%d kbP=%d..%d kbL=%d..%d result=%s\n",
-                  UI_VERSION,meshink_board_name(),layout.width,layout.height,
-                  meshink_display_physical_width(),meshink_display_physical_height(),
-                  (void*)fb,(unsigned)meshink_display_framebuffer_bytes(),reference?1U:0U,
-                  layout.map_top,layout.map_bottom,
-                  portrait.number_top,portrait.bottom_top+portrait.key_height,
-                  landscape.number_top,landscape.bottom_top+landscape.key_height,
-                  ok?"OK":"FAIL");
-}
-#endif
 
 static void key(const char* label,const meshink_keyboard::Rect& rect) {
     rounded_box(rect.x,rect.y,rect.width,rect.height,max(ui_w(7),ui_h(7)),false);
@@ -1234,8 +1083,11 @@ static void draw_landscape_keyboard(){
     const int entry_y=metrics.entry.y+inset_y;
     const int entry_width=metrics.entry.width-2*inset_x;
     const int entry_height=metrics.entry.height-2*inset_y;
-    ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
-                         entry_x,entry_y,entry_width,entry_height,4,0,false);
+    if(keyboard_message_mode&&value[0])
+        ui_draw_compose_tail(value,entry_x,entry_y,entry_width,entry_height,4);
+    else
+        ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
+                             entry_x,entry_y,entry_width,entry_height,4,0,false);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
@@ -1402,9 +1254,6 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 
 static void draw_status_bar() {
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t render_started=ui_render_perf_collect?micros():0;
-#endif
     const MeshInkUiLayout& layout=portrait_layout();
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
@@ -1456,9 +1305,6 @@ static void draw_status_bar() {
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] status-bar clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
         status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_render_perf_collect)ui_render_perf.status_us+=(uint32_t)(micros()-render_started);
-#endif
 }
 
 // Share the same small black notification style between ordinary settings
@@ -1571,9 +1417,6 @@ static void draw_shutdown_confirm() {
 }
 
 static void draw_bottom_nav(int selected) {
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t render_started=ui_render_perf_collect?micros():0;
-#endif
     static const char* labels[]={"CONTACTS","CHANNELS","MAPS","MORE"};
     const MeshInkUiLayout& layout=portrait_layout();
     meshink_display_fill_rect({0,layout.bottom_nav_top,layout.width,layout.bottom_nav_height},0xFF,fb);
@@ -1595,9 +1438,6 @@ static void draw_bottom_nav(int selected) {
                          d,d,d/2,color);
         }
     }
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_render_perf_collect)ui_render_perf.nav_us+=(uint32_t)(micros()-render_started);
-#endif
 }
 
 static void draw_app_header(const char* title,bool back=false,const char* action=nullptr) {
@@ -1974,7 +1814,7 @@ static void message_footer_text(const UiMessage& message,char out[72]) {
             case UiMessageState::Failed:state="FAILED";break;
             case UiMessageState::Retrying1:state="RETRYING 1/2";break;
             case UiMessageState::Retrying2:state="RETRYING 2/2";break;
-            case UiMessageState::Retrying3:state="SENDING";break;
+            case UiMessageState::Retrying3:state="FINAL FLOOD";break;
             case UiMessageState::Retrying4:state="RETRYING 4/5";break;
             case UiMessageState::Retrying5:state="RETRYING 5/5";break;
             default:break;
@@ -1993,11 +1833,6 @@ struct ChatGeometryCache {
 static ChatGeometryCache chat_geometry_cache{};
 
 static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t perf_started=ui_message_perf_collect?micros():0;
-    if(ui_message_perf_collect&&ui_message_perf.geometry_calls<0xFFFF)
-        ++ui_message_perf.geometry_calls;
-#endif
     char footer[72]{};message_footer_text(message,footer);
     const int screen_width=meshink_display_logical_width();
     const int pad=ui_w(18);
@@ -2013,10 +1848,6 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
     const MessageBubbleGeometry geometry={x,width,height,text_width};
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_message_perf_collect)
-        ui_message_perf.geometry_us+=(uint32_t)(micros()-perf_started);
-#endif
     return geometry;
 }
 
@@ -2067,11 +1898,6 @@ static void draw_message_bubble(const UiMessage& message,int y,
 }
 
 static size_t chat_fill_backwards(size_t end,int available){
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t perf_started=ui_message_perf_collect?micros():0;
-    if(ui_message_perf_collect&&ui_message_perf.fill_calls<0xFFFF)
-        ++ui_message_perf.fill_calls;
-#endif
     size_t candidate=end;int used=0;
     while(candidate>0){
         const int h=chat_message_geometry(candidate-1).height;
@@ -2080,10 +1906,6 @@ static size_t chat_fill_backwards(size_t end,int available){
         used+=needed;--candidate;
         if(used>=available)break;
     }
-#if T5_TIMING_DIAGNOSTICS
-    if(ui_message_perf_collect)
-        ui_message_perf.fill_us+=(uint32_t)(micros()-perf_started);
-#endif
     return candidate;
 }
 
@@ -2131,8 +1953,10 @@ static void draw_chat_page_indicator(size_t page,bool has_older,int y){
     const int text_width=ui_text_width(page_text,2);
     const int text_left=(meshink_display_logical_width()-text_width)/2;
     ui_centred(page_text,y,2,0,true);
-    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),false);
-    if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),true);
+    // Chat history follows the message stack: older content is above the
+    // current/newest page, so swipe down to reveal it and swipe up to return.
+    if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),true);
+    if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),false);
 }
 
 static int chat_compose_top(){
@@ -2159,28 +1983,18 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,540);
     const int inset_y=meshink_keyboard::scale_axis(8,metrics.height,960);
     const int text_x=metrics.entry.x+inset_x;
+    const int text_y=metrics.entry.y+inset_y;
     const int text_width=metrics.entry.width-2*inset_x;
-    const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;
-    const int text_y=line_count<=1
-        ?metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2
-        :metrics.entry.y+inset_y;
-    const int text_height=metrics.entry.y+metrics.entry.height-text_y-inset_y;
+    const int text_height=metrics.entry.height-2*inset_y;
     if(compose_text[0])
-        ui_draw_wrapped_tail(compose_text,text_x,text_y,text_width,text_height,3,0,false);
+        ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);
     else
-        ui_text("Write a message...",text_x,text_y,3,0,false);
+        ui_text("Write a message...",text_x,
+                metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2,3,0,false);
 }
 
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
-    const uint32_t timing_history_started=micros();
-#if T5_TIMING_DIAGNOSTICS
-    ui_message_perf_reset();
-    ui_message_perf_collect=true;
-    MeshInkMessageStorePerf perf_store_before{},perf_store_after{};
-    meshink_message_store_perf_snapshot(perf_store_before);
-    const uint32_t perf_layout_started=micros();
-#endif
     const size_t count=ui_data?ui_data->active_message_count():0;
     chat_geometry_sync(count);
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
@@ -2194,11 +2008,6 @@ static void draw_chat(bool channel) {
                                   chat_history_available_paged(),
                                   chat_page,first,end,has_older);
     }
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t perf_layout_us=(uint32_t)(micros()-perf_layout_started);
-    const uint32_t perf_render_started=micros();
-    uint16_t perf_visible=0;
-#endif
     if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
     else{
         int y=ui_y(126);
@@ -2207,50 +2016,8 @@ static void draw_chat(bool channel) {
             const MessageBubbleGeometry geometry=chat_message_geometry(i);
             draw_message_bubble(message,y,geometry);
             y+=geometry.height+ui_h(8);
-#if T5_TIMING_DIAGNOSTICS
-            if(perf_visible<0xFFFF)++perf_visible;
-#endif
         }
     }
-#if T5_TIMING_DIAGNOSTICS
-    const uint32_t perf_render_us=(uint32_t)(micros()-perf_render_started);
-#endif
-    const uint32_t timing_history_us=(uint32_t)(micros()-timing_history_started);
-#if T5_TIMING_DIAGNOSTICS
-    meshink_message_store_perf_snapshot(perf_store_after);
-    ui_message_perf_collect=false;
-    T5MessageDrawPerf perf{};
-    perf.history_us=timing_history_us;
-    perf.layout_us=perf_layout_us;
-    perf.render_us=perf_render_us;
-    perf.store_read_us=perf_store_after.read_us-perf_store_before.read_us;
-    perf.store_read_worst_us=perf_store_after.read_worst_us;
-    const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
-    perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
-    const uint32_t perf_cache_reads=perf_store_after.cache_reads-perf_store_before.cache_reads;
-    perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
-    const uint32_t perf_writes=perf_store_after.writes-perf_store_before.writes;
-    perf.store_writes=(uint16_t)(perf_writes>0xFFFFU?0xFFFFU:perf_writes);
-    perf.active_messages=(uint16_t)(count>0xFFFFU?0xFFFFU:count);
-    perf.visible_messages=perf_visible;
-    perf.geometry_calls=ui_message_perf.geometry_calls;
-    perf.fill_calls=ui_message_perf.fill_calls;
-    perf.geometry_us=ui_message_perf.geometry_us;
-    perf.fill_us=ui_message_perf.fill_us;
-    perf.smooth_us=ui_message_perf.smooth_us;
-    perf.wrap_calls=ui_message_perf.wrap_calls;
-    perf.wrap_chars=ui_message_perf.wrap_chars;
-    perf.advances=ui_message_perf.advances;
-    perf.smooth_calls=ui_message_perf.smooth_calls;
-    perf.smooth_chars=ui_message_perf.smooth_chars;
-    perf.glyph_pixels=ui_message_perf.glyph_pixels;
-    perf.draw_ops=ui_message_perf.draw_ops;
-    perf.page=(uint8_t)(chat_page+1);
-    perf.channel=channel;
-    perf.keyboard=keyboard;
-    t5_timing_note_message_draw(perf);
-#endif
-    const uint32_t timing_keyboard_started=micros();
     if(keyboard){
         draw_compose_entry(keyboard_layout);
         draw_keyboard();
@@ -2270,24 +2037,18 @@ static void draw_chat(bool channel) {
                         layout.outer_width-2*layout.text_inset,3,0,compose_text[0]);
         }
     }
-    t5_timing_note_chat_draw(timing_history_us,(uint32_t)(micros()-timing_keyboard_started));
 }
 
 static void draw_message_entry_fast() {
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
     // Typing does not change the chat history. Avoid rebuilding the status
     // bar, message bubbles and bottom navigation for every character.
-    const uint32_t timing_draw_started=micros();
-    const uint32_t timing_keyboard_started=micros();
     const auto metrics=keyboard_metrics(false);
     draw_compose_entry(metrics);
     if(message_keyboard_case_dirty){
         draw_keyboard();
         message_keyboard_case_dirty=false;
     }
-    const uint32_t keyboard_us=(uint32_t)(micros()-timing_keyboard_started);
-    t5_timing_note_chat_draw(0,keyboard_us);
-    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void draw_contact_details() {
@@ -2531,9 +2292,7 @@ static void draw_radio_settings() {
 
 static void draw_radio_name_fast() {
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
-    const uint32_t timing_draw_started=micros();
     settings_row("NODE NAME",node_name,120);
-    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
 }
 
 static void draw_gps_settings() {
@@ -2929,37 +2688,17 @@ static void draw_screen() {
     // caller decides whether to refresh the panel. Small standalone draw paths
     // (keyboard/status/quick panel/toasts) use the same short boost.
     T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
-    const uint32_t timing_draw_started=micros();
-#if T5_TIMING_DIAGNOSTICS
-    ui_render_perf_begin();
-#endif
-    t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     // Standby must take precedence over every transient/landscape UI layer.
     if(standby_active){
         draw_standby();
-#if T5_TIMING_DIAGNOSTICS
-        ui_render_perf_end(timing_draw_started);
-#else
-        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
-#endif
         return;
     }
     if(quick_panel_active){
         draw_quick_panel();
-#if T5_TIMING_DIAGNOSTICS
-        ui_render_perf_end(timing_draw_started);
-#else
-        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
-#endif
         return;
     }
     if(keyboard_landscape){
         draw_landscape_keyboard();
-#if T5_TIMING_DIAGNOSTICS
-        ui_render_perf_end(timing_draw_started);
-#else
-        t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
-#endif
         return;
     }
     switch(screen){
@@ -2978,15 +2717,9 @@ static void draw_screen() {
             (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
-#if T5_TIMING_DIAGNOSTICS
-    ui_render_perf_end(timing_draw_started);
-#else
-    t5_timing_note_ui_draw((uint32_t)(micros()-timing_draw_started));
-#endif
 }
 
 static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
-    const uint32_t timing_display_started=t5_timing_display_begin();
     if(wake_light&&!standby_active)frontlight_event();
     // Maps contains only black and white pixels. Use the direct DU waveform
     // for normal updates; the 1.3.24 device test confirmed it prevents the
@@ -2994,7 +2727,6 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     const MeshInkRefreshMode requested_mode=mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
-    t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err = meshink_display_update_screen(&display,mode,(int)meshink_display_ambient_temperature());
@@ -3004,17 +2736,14 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     set_cpu_target(ui_post_render_cpu_target(),"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
-    t5_timing_display_end(timing_display_started);
 }
 
 static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_light=true) {
-    const uint32_t timing_display_started=t5_timing_display_begin();
     const uint32_t started=millis();
     if(wake_light&&!standby_active)frontlight_event();
     const MeshInkRefreshMode requested_mode=mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
-    t5_timing_note_refresh((uint8_t)requested_mode,(uint8_t)mode);
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err=meshink_display_update_area(
@@ -3025,7 +2754,6 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
         (long)area.x,(long)area.y,(unsigned long)elapsed,(int)err);
-    t5_timing_display_end(timing_display_started);
 }
 
 static void invalidate_display_back_buffer() {
@@ -3205,6 +2933,8 @@ static bool update_status_hardware() {
 static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
     bool map_multi=false,map_pinch_allowed=false;
+    bool keyboard_delete_hold=false,keyboard_delete_repeated=false;
+    uint32_t keyboard_delete_repeat_at=0;
     int16_t start_x=0,start_y=0,last_x=0,last_y=0;
     int16_t pinch_x=0,pinch_y=0;
     int32_t initial_distance=0,final_distance=0;
@@ -3212,15 +2942,11 @@ static void touch_sampler_task(void*){
     for(;;){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
+            keyboard_delete_hold=false;keyboard_delete_repeated=false;
             meshink_touch_reset_tracking();
-            t5_timing_touch_reset();
-            T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler suspended");
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
-            t5_timing_touch_reset();
-            T5_DEBUGLN(T5_LOG_TOUCH,"[T5-POWER] touch sampler resumed");
             continue;
         }
-        const uint32_t timing_touch_started=t5_timing_touch_begin();
         // Maps owns the gesture-oriented two-point parser only while the
         // map itself is interactive. Quick Settings must fall back to the
         // ordinary single-touch parser so slider movement can preview PWM
@@ -3229,13 +2955,13 @@ static void touch_sampler_task(void*){
             !keyboard_landscape&&!quick_panel_active;
         if(on_map!=map_previous) {
             held=false;home_held=false;map_multi=false;
+            keyboard_delete_hold=false;keyboard_delete_repeated=false;
             meshink_touch_reset_tracking();
             map_previous=on_map;
         }
         if(on_map) {
             MeshInkTouchContacts contacts{};
             if(!meshink_touch_read_contacts(contacts)) {
-                t5_timing_touch_end(timing_touch_started);
                 vTaskDelay(pdMS_TO_TICKS(8));continue;
             }
             const uint8_t count=contacts.count;
@@ -3283,16 +3009,14 @@ static void touch_sampler_task(void*){
                         initial_distance,final_distance):0;
                 // Even a stationary two-finger gesture must cancel a pending
                 // single/double tap, without triggering a phantom pan.
-                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    t5_timing_note_touch_queue_drop();
+                xQueueSend(touch_queue,&tap,0);
             } else if(held) {
                 held=false;
                 QueuedTap tap{last_x,last_y,
                     (int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
                 tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                 tap.map_sampled=1;
-                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    t5_timing_note_touch_queue_drop();
+                xQueueSend(touch_queue,&tap,0);
             }
         } else {
             // Non-Maps keeps the legacy single-contact semantics supplied by the touch
@@ -3300,17 +3024,36 @@ static void touch_sampler_task(void*){
             // other UI releases remain unchanged.
             const MeshInkTouchPrimarySample sample=meshink_touch_read_primary();
             const int16_t x=sample.x,y=sample.y;
-            const bool home=sample.home,pressed=sample.pressed;
-            if(home){
+            const bool keyboard_active=keyboard_visible||keyboard_landscape;
+            const bool suppressed_home=sample.home&&keyboard_active;
+            const bool home=sample.home&&!keyboard_active;
+            const bool pressed=sample.pressed&&!suppressed_home;
+            if(suppressed_home){
+                // The capacitive HOME frame arrives as both home=true and
+                // pressed=true with no meaningful coordinate. Consume the
+                // entire frame while a keyboard is active so it cannot fall
+                // through as a (0,0) tap and dismiss the portrait keyboard.
+                held=false;home_held=false;quick_slider_dragging=false;
+                keyboard_delete_hold=false;keyboard_delete_repeated=false;
+            }else if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;
-                held=false;
+                held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;
             }else if(home_held){
                 if(!pressed)home_held=false;
             }else if(pressed){
                 last_x=x;last_y=y;
                 if(!held){
-                    held=true;start_x=x;start_y=y;frontlight_event();
+                    held=true;start_x=x;start_y=y;pressed_at=millis();frontlight_event();
+                    keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                    if(keyboard_message_mode&&(keyboard_visible||keyboard_landscape)){
+                        const auto delete_metrics=keyboard_metrics(keyboard_landscape);
+                        keyboard_delete_hold=
+                            meshink_keyboard::in_row(y,delete_metrics.mode_key.y,delete_metrics)&&
+                            x>=meshink_keyboard::delete_split(delete_metrics);
+                        if(keyboard_delete_hold)
+                            keyboard_delete_repeat_at=pressed_at+350;
+                    }
                     const MeshInkUiRect slider_touch=
                         meshink_quick_slider_touch_rect(portrait_layout());
                     quick_slider_dragging=quick_panel_active&&
@@ -3327,36 +3070,44 @@ static void touch_sampler_task(void*){
                     quick_slider_preview=(uint8_t)max(0,min(100,value));
                     frontlight_preview(quick_slider_preview);
                 }
+                if(keyboard_delete_hold&&!quick_panel_active&&
+                   (int32_t)(millis()-keyboard_delete_repeat_at)>=0){
+                    QueuedTap repeat{start_x,start_y,0,0,false};
+                    if(xQueueSend(touch_queue,&repeat,0)==pdTRUE)
+                        keyboard_delete_repeated=true;
+                    keyboard_delete_repeat_at=millis()+45;
+                }
             }else if(held){
                 held=false;
                 quick_slider_dragging=false;
                 const int16_t dx=(int16_t)(last_x-start_x);
                 const int16_t dy=(int16_t)(last_y-start_y);
                 int16_t event_x=last_x,event_y=last_y;
-                // Keyboard keys are small enough that normal thumb roll while
-                // lifting can move the final touch centroid into a neighbour.
-                // Keep small keyboard releases anchored to the initial
-                // touch-down point; a deliberate larger correction still uses
-                // the final position. Other UI and map gestures are unchanged.
+                // Keyboard taps are discrete selections, not drag gestures.
+                // Always resolve them from the original touch-down position so
+                // thumb roll on release, or one transient bad final sample,
+                // cannot move the event into a neighbour. Other UI and map
+                // gestures continue to use their release position unchanged.
                 const bool keyboard_touch=!quick_panel_active&&
                     (keyboard_landscape||keyboard_visible);
-                constexpr int16_t KEYBOARD_TOUCH_SLOP=28;
-                if(keyboard_touch&&abs(dx)<=KEYBOARD_TOUCH_SLOP&&
-                   abs(dy)<=KEYBOARD_TOUCH_SLOP){
+                if(keyboard_touch){
                     event_x=start_x;
                     event_y=start_y;
                 }
-                QueuedTap tap{event_x,event_y,dx,dy,false};
-                if(xQueueSend(touch_queue,&tap,0)!=pdTRUE)
-                    t5_timing_note_touch_queue_drop();
+                const bool suppress_release=
+                    keyboard_delete_hold&&keyboard_delete_repeated;
+                keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                if(!suppress_release){
+                    QueuedTap tap{event_x,event_y,dx,dy,false};
+                    xQueueSend(touch_queue,&tap,0);
+                }
             }
         }
-        t5_timing_touch_end(timing_touch_started);
         // Repeated letters can be typed faster than the ordinary 8 ms polling
         // cadence observes the brief release between two taps on the same key.
         // Poll more aggressively only while a keyboard is active; every other
         // screen keeps the lower-overhead 8 ms cadence.
-        const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;
+        const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?2:8;
         vTaskDelay(pdMS_TO_TICKS(sample_ms));
     }
 }
@@ -3491,7 +3242,6 @@ static void show_contacts_after_setup(){
 static bool handle_landscape_keyboard(int16_t x,int16_t y){
     if(!keyboard_landscape)return false;
     const auto metrics=keyboard_metrics(true);
-    T5_DEBUGF(T5_LOG_TOUCH,"[T5-UI] landscape tap logical=%d,%d\n",x,y);
     // Give the mode and Delete buttons the full third-row edge areas.
     if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
@@ -3837,17 +3587,6 @@ static bool handle_app_tap(int16_t x,int16_t y) {
 
 static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
-#if MESHINK_GEOMETRY_DIAGNOSTICS
-    // test.8 changed non-keyboard touch geometry. Log those consumer-side
-    // releases without slowing the 4 ms keyboard sampling/typing path.
-    if(!keyboard_visible&&!keyboard_landscape)
-        Serial.printf("[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u\n",
-                      timing_screen_name(),x,y,quick_panel_active?1U:0U);
-#endif
-    T5_DEBUGF(T5_LOG_TOUCH,
-        "[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u keyboard=%u landscape=%u\n",
-        timing_screen_name(),x,y,quick_panel_active?1U:0U,
-        keyboard_visible?1U:0U,keyboard_landscape?1U:0U);
     if(handle_quick_panel_tap(x,y))return;
     if(handle_landscape_keyboard(x,y))return;
     if(handle_app_tap(x,y))return;
@@ -4036,8 +3775,6 @@ static void service_primary_button(){
 void ui_setup() {
     ui_boot_cpu_active=true;
     set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
-    const uint32_t bootperf_total_started=millis();
-    uint32_t bootperf_stage_started=millis();
     // unified_main has already started USB CDC before entering the local UI
     // path. Keep begin() here for the standalone UI target, but do not burn a
     // fixed 200 ms delay before useful boot work.
@@ -4048,29 +3785,17 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
-    Serial.printf("[T5-BOOTPERF] ui-pre-display=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
-    bootperf_stage_started=millis();
     meshink_display_init();
-    Serial.printf("[T5-BOOTPERF] display-init=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
     // EPDiy has now established the shared board/I2C environment. Start the
     // LoRa/GPS rail before framebuffer, preferences and splash rendering so
     // those operations overlap its required settling time.
     meshink_board_start_local_radio_settle();
     set_ui_orientation(MeshInkOrientation::Portrait);
     Serial.println("[T5-INIT] display=initialized");
-    bootperf_stage_started=millis();
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     Serial.println("[T5-INIT] touch=initialized");
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
-    Serial.printf("[T5-BOOTPERF] touch-display-state=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
-#if MESHINK_GEOMETRY_DIAGNOSTICS
-    audit_ui_geometry();
-#endif
-    bootperf_stage_started=millis();
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
@@ -4111,9 +3836,6 @@ void ui_setup() {
     MeshInkPowerCriticalState boot_power{};
     if(meshink_power_boot_critical(boot_power))
         critical_battery_shutdown(boot_power,"boot");
-    Serial.printf("[T5-BOOTPERF] ui-prefs-status=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
-    bootperf_stage_started=millis();
     meshink_display_set_all_white(&display);
     draw_meshink_logo(ui_y(160),false);
     // Keep the original logo visible throughout MeshCore startup. Storage
@@ -4123,14 +3845,7 @@ void ui_setup() {
     ui_centred("STARTING UP...",ui_y(716),3,0,true);
     if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(885),2,0,true);
-    Serial.printf("[T5-BOOTPERF] splash-compose=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
-    bootperf_stage_started=millis();
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
-    Serial.printf("[T5-BOOTPERF] splash-refresh=%lums\n",
-                  (unsigned long)(millis()-bootperf_stage_started));
-    Serial.printf("[T5-BOOTPERF] ui-setup-total=%lums\n",
-                  (unsigned long)(millis()-bootperf_total_started));
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
 
@@ -4145,7 +3860,6 @@ void ui_show_storage_initializing() {
 
 void ui_finish_startup() {
     if(hardware_failure)return;
-    const uint32_t bootperf_started=millis();
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
@@ -4165,19 +3879,17 @@ void ui_finish_startup() {
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;status_bar_dirty=false;
-    t5_timing_begin();
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
-    if(touch_queue&&xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,&touch_task_handle,0)==pdPASS)T5_DEBUGLN(T5_LOG_TOUCH,"[T5-TOUCH] sampler running; interval=8ms queue depth=32");
-    else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
+    if(!touch_queue||
+       xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,
+                              &touch_task_handle,0)!=pdPASS)
+        Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
     ui_boot_cpu_active=false;
     set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
-    Serial.printf("[T5-BOOTPERF] ui-finish=%lums\n",
-                  (unsigned long)(millis()-bootperf_started));
 }
 
 void ui_loop() {
-    t5_timing_set_ui_context(timing_screen_name(),keyboard_visible,keyboard_landscape,standby_active);
     if(hardware_failure){
 
         delay(100);return;
@@ -4206,7 +3918,6 @@ void ui_loop() {
     if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
-        T5InputTimingScope timing_input(tap.queued_at_ms,(uint32_t)uxQueueMessagesWaiting(touch_queue));
         // Only ordinary portrait page navigation uses this stale-event fence.
         // Keyboard input, Quick Settings and Maps keep their existing queue /
         // gesture semantics and are never discarded by this rule.
@@ -4218,6 +3929,7 @@ void ui_loop() {
         if(stale_navigation_tap)continue;
         last_user_activity=millis();
         if(tap.home){
+            if(keyboard_visible||keyboard_landscape)continue;
             map_taps={};
             // Home changes the logical page, not just the e-paper frame.
             // Clear pending taps/refreshes so the previous page cannot be
@@ -4316,13 +4028,6 @@ void ui_loop() {
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
-#if T5_TIMING_DIAGNOSTICS
-            ui_message_perf_reset();
-            ui_message_perf_collect=true;
-            MeshInkMessageStorePerf perf_store_before{},perf_store_after{};
-            meshink_message_store_perf_snapshot(perf_store_before);
-            const uint32_t perf_nav_started=micros();
-#endif
             const size_t count=ui_data?ui_data->active_message_count():0;
             chat_geometry_sync(count);
             size_t first=count,end=count;bool has_older=false;
@@ -4331,32 +4036,9 @@ void ui_loop() {
                                       chat_history_available_paged(),
                                       chat_page,first,end,has_older);
             uint8_t next=chat_page;
-            if(tap.dy<0){
+            if(tap.dy>0){
                 if(has_older&&chat_page+1<CHAT_PAGE_ANCHORS)next=(uint8_t)(chat_page+1);
             }else if(chat_page>0)next=(uint8_t)(chat_page-1);
-#if T5_TIMING_DIAGNOSTICS
-            const uint32_t perf_nav_elapsed=(uint32_t)(micros()-perf_nav_started);
-            meshink_message_store_perf_snapshot(perf_store_after);
-            ui_message_perf_collect=false;
-            T5MessageNavPerf perf{};
-            perf.elapsed_us=perf_nav_elapsed;
-            perf.store_read_us=perf_store_after.read_us-perf_store_before.read_us;
-            perf.store_read_worst_us=perf_store_after.read_worst_us;
-            const uint32_t perf_reads=perf_store_after.reads-perf_store_before.reads;
-            perf.store_reads=(uint16_t)(perf_reads>0xFFFFU?0xFFFFU:perf_reads);
-            const uint32_t perf_cache_reads=perf_store_after.cache_reads-perf_store_before.cache_reads;
-            perf.store_cache_reads=(uint16_t)(perf_cache_reads>0xFFFFU?0xFFFFU:perf_cache_reads);
-            const uint32_t perf_writes=perf_store_after.writes-perf_store_before.writes;
-            perf.store_writes=(uint16_t)(perf_writes>0xFFFFU?0xFFFFU:perf_writes);
-            perf.geometry_calls=ui_message_perf.geometry_calls;
-            perf.fill_calls=ui_message_perf.fill_calls;
-            perf.geometry_us=ui_message_perf.geometry_us;
-            perf.fill_us=ui_message_perf.fill_us;
-            perf.wrap_calls=ui_message_perf.wrap_calls;
-            perf.wrap_chars=ui_message_perf.wrap_chars;
-            perf.advances=ui_message_perf.advances;
-            t5_timing_note_message_nav(perf);
-#endif
             if(next!=chat_page){
                 chat_page=next;
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] conversation page=%u%s\n",
@@ -4396,8 +4078,6 @@ void ui_loop() {
     const uint32_t status_poll_interval=standby_active?60000:15000;
     if(millis()-last_status_poll>=status_poll_interval){
         last_status_poll=millis();
-        t5_timing_set_ui_action(T5UiAction::StatusPoll);
-        const uint32_t timing_status_started=micros();
         update_status_hardware();
         // Normal UI keeps the visible clock current minute-by-minute.
         // Standby uses the lower-power five-minute wall-clock cadence.
@@ -4410,28 +4090,19 @@ void ui_loop() {
             ?(status_slot>=0&&status_slot!=status_bar_painted_slot)
             :(status_wall_minute>=0&&status_wall_minute!=status_bar_painted_minute);
         if(aligned_status_due)status_bar_dirty=true;
-        t5_timing_note_ui_status((uint32_t)(micros()-timing_status_started));
-        t5_timing_set_ui_action(T5UiAction::None);
     }
     const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
     if(status_dirty&&!message_alert_active){
         // Content changes retain the ordinary screen redraw. Refresh the
         // hardware snapshot first so clock and battery come along for free.
-        t5_timing_set_ui_action(T5UiAction::StatusRefresh);
         update_status_hardware();
         if(text_refresh_due){
-            const uint32_t timing_text_now=millis();
-            t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
             text_refresh_pending=false;
         }
         const bool wake=status_wake_light&&!standby_active;
         status_dirty=false;status_bar_dirty=false;status_wake_light=false;
         draw_screen();refresh(MeshInkRefreshMode::Direct,wake);
-        t5_timing_set_ui_action(T5UiAction::None);
     }else if(text_refresh_due){
-        t5_timing_set_ui_action(T5UiAction::TextRefresh);
-        const uint32_t timing_text_now=millis();
-        t5_timing_note_text_wait(text_refresh_queued_at?(uint32_t)(timing_text_now-text_refresh_queued_at):0);
         text_refresh_pending=false;
         if(status_bar_dirty&&!quick_panel_active&&!keyboard_landscape){
             // Coalesce a pending bar change into an update that is already
@@ -4447,9 +4118,7 @@ void ui_loop() {
         else
             draw_screen();
         refresh(MeshInkRefreshMode::Direct);
-        t5_timing_set_ui_action(T5UiAction::None);
     }else if(status_bar_dirty&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
-        t5_timing_set_ui_action(T5UiAction::StatusRefresh);
         // Event-driven updates still sample and display the exact clock and
         // battery, but they never move the next :00/:05/:10... periodic boundary.
         update_status_hardware();
@@ -4458,19 +4127,14 @@ void ui_loop() {
         draw_status_bar();
         refresh_area(MeshInkRefreshMode::Direct,
             {0,0,portrait_layout().width,portrait_layout().status_height},wake);
-        t5_timing_set_ui_action(T5UiAction::None);
     }
     if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
-        t5_timing_set_ui_action(T5UiAction::ToastRefresh);
         toast_visible=false;
         if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MeshInkRefreshMode::Direct,true);
-        t5_timing_set_ui_action(T5UiAction::None);
     }
     frontlight_service();
-    if(message_alert_active)t5_timing_set_ui_action(T5UiAction::MessageAlert);
     service_message_alert();
-    t5_timing_set_ui_action(T5UiAction::None);
     delay(12);
 }
 

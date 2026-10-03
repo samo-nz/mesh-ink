@@ -43,17 +43,6 @@ struct MeshInkMessageStoreHeader {
     uint32_t sequence;
 };
 
-struct MeshInkMessageStorePerf {
-    // Physical SPIFFS record reads after the boot cache load.
-    uint32_t reads=0;
-    uint32_t read_us=0;
-    uint32_t read_worst_us=0;
-    uint32_t cache_reads=0;
-    uint32_t writes=0;
-    uint32_t write_us=0;
-    uint32_t write_worst_us=0;
-};
-
 // SPIFFS is the persistent authority. A full physical-record mirror is loaded
 // once at startup and is the read path for the running session. Mutations are
 // synchronous write-through and update RAM only after flash succeeds.
@@ -68,7 +57,7 @@ class MeshInkMessageStore {
     bool load_cache(File& source);
     bool create_empty();
     void write_header();
-    bool write_record(uint16_t physical,const MeshInkStoredMessage& record,const char* operation);
+    bool write_record(uint16_t physical,const MeshInkStoredMessage& record);
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
@@ -83,7 +72,7 @@ public:
                     MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi,
                     bool has_rx=false,int8_t snr_q4=0,
                     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN);
-    void update_state(uint32_t sequence,UiMessageState state);
+    bool update_state(uint32_t sequence,UiMessageState state);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
     void update_route(uint32_t sequence,bool flood);
@@ -95,4 +84,3 @@ public:
 };
 
 MeshInkMessageStore& meshink_message_store();
-void meshink_message_store_perf_snapshot(MeshInkMessageStorePerf& out);

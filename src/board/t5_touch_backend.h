@@ -216,6 +216,12 @@ inline MeshInkTouchPrimarySample meshink_touch_read_primary() {
 
     uint8_t point[8]{};
     if(!read(GT911_FIRST_POINT,point,sizeof(point))) {
+        // Preserve the last valid contact position on a transient point-read
+        // failure. Returning the default (0,0) while still pressed can turn a
+        // normal keyboard release into a large false movement or wrong key.
+        const MeshInkTouchPoint cached=logical_point(s.cached_x,s.cached_y);
+        sample.x=cached.x;
+        sample.y=cached.y;
         sample.pressed=s.was_pressed;
         return sample;
     }

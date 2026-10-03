@@ -62,7 +62,6 @@ on:
       - 'tools/check_ui_regressions.py'
       - 'tools/test_keyboard_geometry.cpp'
       - 'src/keyboard_geometry.h'
-      - 'src/t5_timing.*'
       - 'src/unified_main.cpp'
       - 'src/cache64_compat.cpp'
       - 'src/CMakeLists.txt'

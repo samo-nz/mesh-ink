@@ -100,13 +100,20 @@ contains("key_index_edge_extended(", "outer keyboard rows use edge-expanded hit 
 non_map_sampler = source.split("// Non-Maps keeps the legacy single-contact semantics supplied by the touch", 1)[1].split(
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
-assert "const bool home=sample.home,pressed=sample.pressed;" in non_map_sampler, "non-Maps preserves primary press/Home semantics"
-assert "held=false;\n            }else if(home_held){\n                if(!pressed)home_held=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
+assert "const bool pressed=sample.pressed&&!suppressed_home;" in non_map_sampler, "non-Maps preserves primary press semantics while fully suppressing keyboard Home"
+assert "held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
+assert "const bool keyboard_active=keyboard_visible||keyboard_landscape;" in non_map_sampler, "keyboard state gates capacitive Home"
+assert "const bool suppressed_home=sample.home&&keyboard_active;" in non_map_sampler, "keyboard-active Home frame is explicitly consumed"
+assert "const bool home=sample.home&&!keyboard_active;" in non_map_sampler, "capacitive Home navigation is disabled while either keyboard is active"
+assert "const bool pressed=sample.pressed&&!suppressed_home;" in non_map_sampler, "suppressed Home cannot fall through as a normal pressed coordinate"
+assert "if(suppressed_home){" in non_map_sampler, "keyboard-active Home frame has a dedicated discard path"
+contains("if(keyboard_visible||keyboard_landscape)continue;", "queued Home events are fenced while keyboard is active")
 assert "int16_t event_x=last_x,event_y=last_y;" in non_map_sampler, "ordinary non-keyboard UI release position remains the default"
-assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "keyboard-only thumb-roll gate"
-assert "constexpr int16_t KEYBOARD_TOUCH_SLOP=28;" in non_map_sampler, "bounded keyboard thumb-roll tolerance"
-assert "event_x=start_x;" in non_map_sampler and "event_y=start_y;" in non_map_sampler, "small keyboard releases anchor to touch-down"
+assert "const bool keyboard_touch=!quick_panel_active&&" in non_map_sampler, "keyboard-only release anchoring gate"
+assert "if(keyboard_touch){" in non_map_sampler, "all keyboard releases use touch-down ownership"
+assert "event_x=start_x;" in non_map_sampler and "event_y=start_y;" in non_map_sampler, "keyboard releases anchor to touch-down"
 assert "QueuedTap tap{event_x,event_y,dx,dy,false};" in non_map_sampler, "stabilized non-Maps release event path"
+assert "const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?2:8;" in source, "keyboard sampler uses 2 ms test cadence"
 assert "quick_slider_dragging=quick_panel_active&&" in non_map_sampler, "Quick Settings slider enters live-drag mode"
 assert "frontlight_preview(quick_slider_preview);" in non_map_sampler, "Quick Settings slider previews brightness during movement"
 
@@ -279,6 +286,11 @@ contains("if(pages<=1)return;", "single-page Contacts/Channels hide the page foo
 contains("if(page>0)draw_page_arrow", "page indicator shows previous-page swipe-down arrow only when available")
 contains("if(page+1<pages)draw_page_arrow", "page indicator shows next-page swipe-up arrow only when available")
 contains("(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&!keyboard_visible&&abs(tap.dy)>60", "conversation history uses vertical swipe paging")
+contains("if(tap.dy>0){", "message history swipes down to older pages")
+contains("if(page>0)draw_page_arrow(text_left-ui_w(24),y+ui_h(7),true);", "message history newer-page hint points up")
+contains("if(has_older)draw_page_arrow(text_left+text_width+ui_w(24),y+ui_h(7),false);", "message history older-page hint points down")
+assert "int next=(int)page+(tap.dy<0?1:-1);" in source, "generic list paging keeps its original swipe direction"
+assert "int next=(int)details_page+(tap.dy<0?1:-1);" in source, "Node Info paging keeps its original swipe direction"
 contains("chat_page_bounds_lazy(count,chat_history_available_current(),", "conversation paging starts with the taskbar-aware current-page height")
 contains("chat_history_available_paged(),", "conversation paging gives older pages their larger taskbar-free height")
 contains("draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));", "older history page indicator uses the reclaimed lower screen area")
@@ -398,8 +410,9 @@ contains("MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET", "board profile exposes landscape
 contains("draw_compose_entry(keyboard_layout);", "chat compose box follows keyboard entry geometry")
 assert "static char compose_text[MESHINK_MESSAGE_TEXT_BYTES]" in source, "compose buffer accepts the full 160-byte message"
 assert "if(n<MESHINK_MESSAGE_TEXT_MAX)" in source, "portrait and landscape typing share the full message limit"
-assert "static void ui_draw_wrapped_tail(" in source, "compose rendering follows the newest wrapped lines"
-assert source.count("ui_draw_wrapped_tail(")>=3, "portrait and landscape entry rendering both use bounded tail wrapping"
+assert "static void ui_draw_wrapped_tail(" in source, "bounded tail rendering remains available for non-message keyboard entry"
+assert "static void ui_draw_compose_tail(" in source, "message composer has a dedicated clipped tail renderer"
+assert source.count("ui_draw_compose_tail(")>=3, "portrait and landscape message entry both use the clipped compose tail renderer"
 assert "landscape?198:618" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape keyboard is shifted to the bottom edge"
 assert "Rect{16,14,928,165}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compose viewport uses the reclaimed white space"
 
@@ -431,16 +444,11 @@ contains("if(status_dirty&&!message_alert_active)", "status redraw has priority 
 contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
 contains("draw_screen();refresh(MeshInkRefreshMode::Direct);return true;", "same-page keyboard transitions use DU")
 
-# 1.8.3 correlated timing instrumentation must remain wired without adding
-# synchronous Serial writes to the touch producer.
-contains("uint32_t queued_at_ms=0;", "queued touch events carry enqueue timestamps")
-contains("T5InputTimingScope timing_input", "UI measures touch event queue age and handler time")
-contains("t5_timing_note_ui_draw", "framebuffer draw timing hook")
-contains("t5_timing_note_chat_draw", "chat history/keyboard render split")
-contains("t5_timing_note_text_wait", "text debounce timing hook")
-contains("T5UiAction::StatusPoll", "status-poll timing attribution")
-contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
-assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
+# Temporary performance/touch instrumentation is removed after field tuning.
+contains("uint32_t queued_at_ms=0;", "queued touch timestamps remain for stale-navigation filtering")
+assert "T5InputTimingScope" not in source and "t5_timing_" not in source, "UI timing instrumentation is removed"
+assert "[T5-TOUCH] tap screen=" not in source, "temporary touch-coordinate logging is removed"
+assert "T5_LOG_TOUCH" not in source and "T5_LOG_TOUCH" not in platformio_source, "keyboard/touch diagnostic logging is removed from the application build"
 
 # Local UI framebuffer composition uses short 240 MHz bursts from the 80 MHz
 # cruise clock, restoring the previous clock immediately afterwards.
@@ -482,18 +490,25 @@ contains('if(result.native_pmtiles)return "PMT";', "native PMTiles wins over har
 contains('if(result.native_loose)return "PNG";', "native loose PNG wins over harmless parent fallback")
 contains('if(result.parent_pmtiles)return "E-M";', "parent-only PMTiles viewport gets enlarged-source badge")
 contains('if(result.parent_loose)return "E-P";', "parent-only loose viewport gets enlarged-source badge")
-contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?4:8;', "keyboard touch sampler uses faster cadence for rapid repeated letters")
+contains('const uint32_t sample_ms=(keyboard_visible||keyboard_landscape)?2:8;', "keyboard touch sampler uses 2 ms cadence for rapid repeated letters")
+contains("ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);", "message composer uses bottom-tail renderer")
+contains("const int multiline_lift=max(8,glyph_height/3);", "wrapped composer descenders are lifted clear of the lower field edge")
+contains("constexpr int caret_width=2;", "message composer caret is two pixels wide")
+contains("const int caret_height=min(max_height-4,max(14,(glyph_height*3)/2));", "message composer caret extends beyond character height")
+contains("const int caret_y=max(y+2,min(y+max_height-2-caret_height,centred_caret_y));", "message composer caret stays inside the entry viewport")
+contains("meshink_display_fill_rect({caret_x,caret_y,caret_width,caret_height},0,fb);", "message composer draws the enlarged subtle caret")
+contains("keyboard_delete_repeat_at=pressed_at+350;", "message delete hold delay")
+contains("keyboard_delete_repeat_at=millis()+45;", "message delete repeat cadence")
+contains("keyboard_delete_hold&&keyboard_delete_repeated", "repeated delete suppresses release double-delete")
 contains('"ZOOM %u (%s)"', "map displays compact source badge beside zoom")
 assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTiles v3 header"
 assert 'archive-scan entry=%s dir=%u base=%s' in map_source, "archive scan logs cache64 directory enumeration"
 assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan reports suffix and PMTiles header detection"
 board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
-timing_source = (root / "src" / "t5_timing.cpp").read_text(encoding="utf-8")
 assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
 assert "delay(1);" in companion, "Bluetooth companion loop must yield so cache64 watchdog does not starve IDLE1"
 assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
 assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
-assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics use 5 second warm-up"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, last GPS, brightness)")
@@ -579,21 +594,17 @@ contains("const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);", "zoom labe
 contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
 
-# Pre-hardware audit: external frames are bounded, and the field build
-# carries narrowly scoped geometry/touch observability.
+# External-frame safety remains, while temporary geometry/touch field logging is gone.
 assert "DISCOVERED_CONTACT_BASE_LEN" in runtime_source, "discovered advert parser must define a complete base frame length"
 assert 'len<DISCOVERED_CONTACT_BASE_LEN' in runtime_source, "truncated discovered adverts must be rejected"
 assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache must clear stale optional bytes"
 assert 'memset(&detail_contact_,0,sizeof(detail_contact_));' in runtime_source, "Node Info advert parse must start from zeroed contact state"
 assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malformed advert rejection must remain observable"
-contains("static void audit_ui_geometry()", "test8 boot-time geometry self-audit")
-contains("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d", "geometry audit emits versioned board/display summary")
-contains("[T5-TOUCH] tap screen=%s x=%d y=%d", "touch diagnostics identify screen and coordinates")
-assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build must not force geometry serial diagnostics"
-assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build must not force touch serial diagnostics"
-assert "-DT5_LOG_UI=1" not in cache64_build_flags, "release cache64 build must not force UI serial diagnostics"
-assert 'if(!keyboard_visible&&!keyboard_landscape)' in source and '[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u' in source, "test9 non-keyboard touch logging must remain consumer-side"
-assert "-DT5_LOG_MAP=1" not in cache64_build_flags, "test9 must not enable high-volume map diagnostics in cache64 build"
+assert "audit_ui_geometry" not in source and "[T5-GEOM]" not in source, "temporary geometry self-audit is removed"
+assert "[T5-TOUCH] tap screen=" not in source, "temporary touch coordinate logging is removed"
+assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build does not force geometry diagnostics"
+assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build does not force backend touch diagnostics"
+assert "-DT5_LOG_UI=1" not in cache64_build_flags and "-DT5_LOG_MAP=1" not in cache64_build_flags, "release cache64 build keeps optional verbose logging disabled"
 
 # Test18 remaining non-storage hardware boundaries.
 assert '#include "hardware/buttons.h"' in source, "UI includes generic button boundary"
@@ -701,7 +712,7 @@ for leaked_radio in ("radio_driver", "CustomSX1262Wrapper", "t5_classify_radio_f
     assert leaked_radio not in runtime_source, f"local runtime leaked T5 radio detail: {leaked_radio}"
     assert leaked_radio not in companion_source, f"companion runtime leaked T5 radio detail: {leaked_radio}"
 assert "MESHINK_BOARD_BACKEND_HEADER" in board_selector_source, "board capability backend is compile-time selectable"
-assert "meshink_board_name()" in source and "meshink_board_has_gps()" in source, "UI consumes generic board capabilities"
+assert "meshink_board_has_gps()" in source and "meshink_board_name()" not in source, "UI keeps functional GPS capability checks but removes diagnostic board-name queries"
 assert "T5_BOARD_LABEL" in board_backend_source and "T5_HAS_GPS" in board_backend_source, "T5 capability constants remain board-backend-owned"
 for leaked_board in ('#include "board/board_profile.h"', "T5_UI_HAS_GPS", "T5_BOARD_LABEL"):
     assert leaked_board not in source, f"UI leaked T5 board capability detail: {leaked_board}"
@@ -953,6 +964,10 @@ assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessa
 assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
 assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
 assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
+assert "static bool incomplete_direct_state(uint8_t state)" in message_store_source, "boot recovery identifies stale in-flight direct states"
+assert "item.kind!=(uint8_t)MeshInkMessageKind::Direct" in message_store_source, "boot recovery never rewrites channel sends"
+assert "write_record(physical,item)" in message_store_source, "stale in-flight direct sends are durably failed before history loads"
+assert "recovered-failed=%u errors=%u" in message_store_source, "boot reports stale-send recovery results"
 assert "meshink_message_store().begin()" in companion_source, "companion mode opens the same current-format journal"
 assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
 
@@ -999,6 +1014,7 @@ assert "if(has_rx){" in message_store_source and "item.flags|=MESHINK_MESSAGE_HA
 assert "MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len" in runtime_source, "standalone receives avoid a second metadata rewrite"
 assert "MeshInkMessageOrigin::CompanionApp," in companion_source and "pkt!=nullptr" in companion_source, "companion receives persist RF metadata in the same write"
 assert "void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);" in message_store_header, "direct send response has a coalesced metadata update"
+assert "bool update_state(uint32_t sequence,UiMessageState state);" in message_store_header, "message journal reports whether a durable final state update succeeded"
 assert "item.state=(uint8_t)state;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes state"
 assert "item.ack=ack;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes ACK"
 assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
@@ -1009,8 +1025,8 @@ direct_attempt_response = runtime_source[
 assert "provider.confirm_direct_send(" not in direct_attempt_response and "provider.update_message(" not in direct_attempt_response, "direct attempt ACK/route metadata never reaches persistent provider methods"
 assert "provider.transient_direct_status(" in direct_attempt_response, "direct attempt ACK/route metadata updates the RAM-only UI overlay"
 direct_retry_loop = runtime_source[
-    runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
-    runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
+    runtime_source.index("else if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
+    runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("else if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
 ]
 assert "provider.update_message(" not in direct_retry_loop and "provider.confirm_direct_send(" not in direct_retry_loop, "direct retries never rewrite the journal"
 assert "provider.transient_direct_status(" in direct_retry_loop and "retry_state" in direct_retry_loop, "direct retry stages remain visible through the RAM-only UI overlay"
@@ -1024,7 +1040,10 @@ fail_direct = runtime_source[
     runtime_source.index("static void fail_pending_direct("):
     runtime_source.index("static bool enqueue_info_request(")
 ]
-assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed);" in fail_direct, "direct failure persists one final state update"
+assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed)" in fail_direct, "direct failure persists one final state update"
+assert "pending_direct.finalizing_failure=true;" in fail_direct, "terminal failure enters durable finalization before runtime state is cleared"
+assert "pending_direct.deadline=millis()+250;" in fail_direct and "retrying finalization" in fail_direct, "failed-state persistence is retried instead of being forgotten"
+assert "journal=FAILED" in fail_direct, "terminal failure is only completed after durable journal confirmation"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
 
 # Test64: test.8 keeps the 80 MHz steady state but races actual message-store
@@ -1053,59 +1072,13 @@ find_body=message_store_source[
 ]
 assert "if(records_){" in find_body and find_body.index("if(records_){") < find_body.index("StoreCpuBoostScope cpu_boost;"), "sequence lookup stays RAM-only when the journal mirror exists"
 assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_boost" not in message_store_source, "storage race-to-idle adds no dynamic allocation"
-assert "cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz" in message_store_source, "boot cache timing logs the active storage CPU clock"
-assert "total=%lu.%01lums cpu=%luMHz ok=%u" in message_store_source, "runtime store timing logs the active storage CPU clock"
+assert "[T5-STOREPERF]" not in message_store_source and "meshink_message_store_perf_snapshot" not in message_store_source, "message-store profiling instrumentation is removed"
 
-# Test65: test.9 measures the existing splash/startup path before adding
-# progress-refresh UI. The measurements must separate LoRa from the GPS probe
-# and cover the outer setup phases without changing normal splash wording.
-for marker in (
-    "[T5-BOOTPERF] wireless-pre=%lums",
-    "[T5-BOOTPERF] ui-setup-call=%lums",
-    "[T5-BOOTPERF] local-mesh-call=%lums",
-    "[T5-BOOTPERF] wireless-post=%lums",
-    "[T5-BOOTPERF] maps-warm=%lums",
-    "[T5-BOOTPERF] ui-finish-call=%lums",
-    "[T5-BOOTPERF] startup-total=%lums",
-):
-    assert marker in unified_source, f"top-level boot timing missing {marker}"
-for marker in (
-    "[T5-BOOTPERF] mesh-board=%lums",
-    "[T5-BOOTPERF] mesh-radio=%lums",
-    "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz",
-    "[T5-BOOTPERF] mesh-datastore=%lums",
-    "[T5-BOOTPERF] mesh-core-begin=%lums",
-    "[T5-BOOTPERF] mesh-interface=%lums",
-    "[T5-BOOTPERF] gps-service=%lums",
-    "[T5-BOOTPERF] gps-prefs=%lums",
-    "[T5-BOOTPERF] mesh-runtime=%lums",
-    "[T5-BOOTPERF] mesh-ui-handoff=%lums",
-    "[T5-BOOTPERF] local-mesh-total=%lums",
-):
-    assert marker in companion_source, f"local MeshCore boot timing missing {marker}"
-for marker in (
-    "[T5-BOOTPERF] board-local=%lums",
-    "[T5-BOOTPERF] radio-rail-overlap=%lums remaining-wait=%lums required=%lums",
-    "[T5-BOOTPERF] rtc=%lums",
-    "[T5-BOOTPERF] lora=%lums ready=%u",
-    "[T5-BOOTPERF] gps-probe=%lums locked=%u baud=%lu",
-    "[T5-BOOTPERF] radio-init-total=%lums",
-):
-    assert marker in board_target_source, f"board/radio boot timing missing {marker}"
-for marker in (
-    "[T5-BOOTPERF] ui-pre-display=%lums",
-    "[T5-BOOTPERF] display-init=%lums",
-    "[T5-BOOTPERF] touch-display-state=%lums",
-    "[T5-BOOTPERF] ui-prefs-status=%lums",
-    "[T5-BOOTPERF] splash-compose=%lums",
-    "[T5-BOOTPERF] splash-refresh=%lums",
-    "[T5-BOOTPERF] ui-setup-total=%lums",
-    "[T5-BOOTPERF] ui-finish=%lums",
-):
-    assert marker in source, f"UI splash boot timing missing {marker}"
+# Test65 cleanup: temporary boot-stage timing probes are removed after tuning.
 ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
-assert 'ui_centred("STARTING UP..."' in ui_setup_boot, "measurement build preserves the existing normal splash message"
-assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setup_boot and "LOADING MESSAGES" not in ui_setup_boot, "measurement build does not add progress refreshes before timings are known"
+for tuned_source in (unified_source, companion_source, board_target_source, source):
+    assert "[T5-BOOTPERF]" not in tuned_source, "boot performance probes are removed from the field build"
+assert "bootperf_" not in unified_source and "bootperf_" not in companion_source and "bootperf_" not in board_target_source and "bootperf_" not in source, "boot timer scaffolding is removed"
 
 # Test66: test.10 keeps the complete boot path at 240 MHz, including Maps
 # warm-up and panel refresh restore, then drops once to the validated 80 MHz
@@ -1114,7 +1087,6 @@ assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setu
 setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
 assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
 assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
-assert "[T5-BOOTPERF] cpu-boot-target=240MHz actual=%luMHz ok=%u" in setup_body, "boot clock is visible in field logs"
 assert "ui_boot_cpu_active=true;" in source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")], "UI boot phase explicitly stays at render clock"
 assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
@@ -1122,7 +1094,7 @@ assert 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");' in
 finish_body=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()")]
 assert finish_body.index("ui_boot_cpu_active=false;") < finish_body.index('set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")'), "interactive-ready is the single boot-to-80 transition"
 assert setup_body.index("map_tiles_warm_storage();") < setup_body.index("ui_finish_startup();"), "Maps remains warmed before the interactive screen"
-assert "[T5-BOOTPERF] maps-warm=%lums cpu=%luMHz" in setup_body, "Maps warm-up records that it ran in the boot clock phase"
+assert "-DT5_TIMING_DIAGNOSTICS" not in platformio_source, "correlated timing diagnostics are no longer built"
 
 assert "class T5EnvironmentSensorManager final : public EnvironmentSensorManager" in board_target_header_source, "T5 target exposes its fast GPS manager to MeshCore"
 assert "bool T5EnvironmentSensorManager::begin()" in board_target_source, "T5 target overrides MeshCore environment startup"
@@ -1132,7 +1104,6 @@ fast_gps_begin=board_target_source[
 ]
 assert "gps_detected=true;" in fast_gps_begin and "gps_active=false;" in fast_gps_begin, "fast manager preserves ENV_SKIP_GPS_DETECT visibility and preference-driven activation"
 assert "delay(1000)" not in fast_gps_begin and "scanI2CBus" not in fast_gps_begin, "T5 GPS manager does not repeat upstream fixed detect wait or unused environment scan"
-assert "[T5-BOOTPERF] gps-manager-reuse=1" in fast_gps_begin, "field log confirms the board probe was reused"
 assert "T5EnvironmentSensorManager sensors(gps);" in board_target_source, "MeshCore global sensors object uses the T5 fast manager"
 assert platformio_source.count("-DENV_INCLUDE_")==1 and "-DENV_INCLUDE_GPS=1" in platformio_source, "fast T5 environment startup is valid only while GPS is the sole enabled environment provider"
 assert 'gps_send_pcas("PCAS02' not in board_target_source, "test.10 leaves GNSS positioning rate unchanged at the normal 1 Hz"
@@ -1143,7 +1114,6 @@ assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS up
 # still settling; MeshCore datastore/core lifecycle remains behind radio init.
 local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_is_running()")]
 assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
-assert "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz" in local_setup_body, "overlapped SPIFFS work is timed and confirms the 240 MHz boot clock"
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
 assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
@@ -1287,7 +1257,7 @@ assert "if(!local_mesh_send_active(compose_text))return true;" in source, "lands
 
 assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "legacy retry states remain readable after upgrading"
 assert 'case UiMessageState::Retrying3:return "SENDING"' in runtime_source, "final retry state remains route-neutral until actual route metadata is applied"
-assert 'case UiMessageState::Retrying3:state="SENDING"' in source, "chat footer fallback does not invent a flood route"
+assert 'case UiMessageState::Retrying3:state="FINAL FLOOD"' in source, "chat footer fallback uses compact final-flood wording"
 assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "final runtime retry resets the stale saved path so MeshCore uses flood"
 assert "attempt==0?UiMessageState::Sending" in runtime_source and "provider.transient_direct_status(" in runtime_source and "journal=unchanged" in runtime_source, "radio attempt status is visible in RAM while the journal remains unchanged"
 assert "pending_direct.route_flood[attempt]=frame[1]!=0;" in runtime_source, "MeshCore RESP_CODE_SENT route flag is retained as the authoritative actual route"
@@ -1296,9 +1266,13 @@ send_active=runtime_source[runtime_source.index("bool local_mesh_send_active("):
 assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.transient_direct_status(" in send_active, "initial UI route reflects the same saved-path decision MeshCore will use"
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
+assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
+assert "if(!sequence||!store_.update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
+assert "return write_record(p,item);" in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
-assert '"SENDING %s"' in formatter, "send footer reports the actual direct/flood route"
+assert '"FINAL %s"' in formatter, "final attempt uses compact route-aware wording"
+assert 'snprintf(out,len,"%s %s",base,route);' in formatter, "send footer reports the actual direct/flood route"
 assert "state!=UiMessageState::Sending" not in formatter, "sending records and transient route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
@@ -1333,7 +1307,7 @@ assert "local_mesh_refresh_ui_data();" in map_short, "physical Maps refresh obta
 assert "meshink_display_fill_framebuffer(&display,0x00);" in map_short and '"SHORT_BUTTON_MAP_BLACK"' in map_short, "physical Maps refresh flashes the ready screen black"
 assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);' in map_short, "physical Maps refresh restores the cached viewport with fresh overlays"
 assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
-assert "const int line_count=compose_text[0]?ui_wrapped_line_count(compose_text,text_width,3):1;" in source, "portrait composer detects a one-line entry"
+assert "ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);" in source, "portrait composer uses the clipped bottom-tail entry renderer"
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
 assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
 

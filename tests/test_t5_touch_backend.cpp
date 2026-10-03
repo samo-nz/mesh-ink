@@ -105,7 +105,7 @@ int main() {
     touch_stub::queue_read(GT911_STATUS,{0x81});
     touch_stub::queue_read_failure(GT911_FIRST_POINT);
     primary=meshink_touch_read_primary();
-    assert(primary.pressed&&primary.x==0&&primary.y==0);
+    assert(primary.pressed&&primary.x==50&&primary.y==60);
     assert(error_log_count()==1);
 
     touch_stub::now_ms=2000;
