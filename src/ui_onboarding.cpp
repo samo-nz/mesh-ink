@@ -4027,6 +4027,8 @@ static void service_primary_button(){
 }
 
 void ui_setup() {
+    const uint32_t bootperf_total_started=millis();
+    uint32_t bootperf_stage_started=millis();
     Serial.begin(115200); delay(200);
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
     meshink_buttons_begin();
@@ -4034,20 +4036,29 @@ void ui_setup() {
     // uses the saved brightness or the new 30% first-install default.
     meshink_power_frontlight_begin();
     meshink_touch_prepare_boot();
+    Serial.printf("[T5-BOOTPERF] ui-pre-display=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     meshink_display_init();
+    Serial.printf("[T5-BOOTPERF] display-init=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
     // EPDiy has now established the shared board/I2C environment. Start the
     // LoRa/GPS rail before framebuffer, preferences and splash rendering so
     // those operations overlap its required settling time.
     meshink_board_start_local_radio_settle();
     set_ui_orientation(MeshInkOrientation::Portrait);
     Serial.println("[T5-INIT] display=initialized");
+    bootperf_stage_started=millis();
     meshink_power_recover_boot_path();
     meshink_touch_finish_boot();
     Serial.println("[T5-INIT] touch=initialized");
     display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
+    Serial.printf("[T5-BOOTPERF] touch-display-state=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
 #if MESHINK_GEOMETRY_DIAGNOSTICS
     audit_ui_geometry();
 #endif
+    bootperf_stage_started=millis();
     prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
@@ -4088,6 +4099,9 @@ void ui_setup() {
     MeshInkPowerCriticalState boot_power{};
     if(meshink_power_boot_critical(boot_power))
         critical_battery_shutdown(boot_power,"boot");
+    Serial.printf("[T5-BOOTPERF] ui-prefs-status=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     meshink_display_set_all_white(&display);
     draw_meshink_logo(ui_y(160),false);
     // Keep the original logo visible throughout MeshCore startup. Storage
@@ -4097,7 +4111,14 @@ void ui_setup() {
     ui_centred("STARTING UP...",ui_y(716),3,0,true);
     if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(885),2,0,true);
+    Serial.printf("[T5-BOOTPERF] splash-compose=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    bootperf_stage_started=millis();
     meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
+    Serial.printf("[T5-BOOTPERF] splash-refresh=%lums\n",
+                  (unsigned long)(millis()-bootperf_stage_started));
+    Serial.printf("[T5-BOOTPERF] ui-setup-total=%lums\n",
+                  (unsigned long)(millis()-bootperf_total_started));
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
 }
 
@@ -4112,6 +4133,7 @@ void ui_show_storage_initializing() {
 
 void ui_finish_startup() {
     if(hardware_failure)return;
+    const uint32_t bootperf_started=millis();
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
@@ -4137,6 +4159,8 @@ void ui_finish_startup() {
     else Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
     set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
+    Serial.printf("[T5-BOOTPERF] ui-finish=%lums\n",
+                  (unsigned long)(millis()-bootperf_started));
 }
 
 void ui_loop() {
