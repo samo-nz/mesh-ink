@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <RTClib.h>
 #include "target.h"
+#include "t5_board_backend.h"
 #include "t5_logging.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
