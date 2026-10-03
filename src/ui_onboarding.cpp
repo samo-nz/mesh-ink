@@ -1422,8 +1422,10 @@ static void draw_status_bar() {
         if(!standby_active&&status_gps_enabled&&status_gps_fix) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-            text(satellites,ui_x(43),ui_y(17),2,0,true);
-            left=ui_x(43)+(int)strlen(satellites)*12+ui_w(8);
+            // Match the clock and battery percentage: the satellite count
+            // is primary status information, not compact secondary metadata.
+            text(satellites,ui_x(43),ui_y(13),3,0,true);
+            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(8);
         }
     }
     if(status_unread){
