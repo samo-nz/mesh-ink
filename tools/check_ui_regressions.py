@@ -1070,6 +1070,7 @@ assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_bo
 assert "[T5-STOREPERF]" not in message_store_source and "meshink_message_store_perf_snapshot" not in message_store_source, "message-store profiling instrumentation is removed"
 
 # Test65 cleanup: temporary boot-stage timing probes are removed after tuning.
+ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
 for tuned_source in (unified_source, companion_source, board_target_source, source):
     assert "[T5-BOOTPERF]" not in tuned_source, "boot performance probes are removed from the field build"
 assert "bootperf_" not in unified_source and "bootperf_" not in companion_source and "bootperf_" not in board_target_source and "bootperf_" not in source, "boot timer scaffolding is removed"
