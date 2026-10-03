@@ -68,7 +68,7 @@ class MeshInkMessageStore {
     bool load_cache(File& source);
     bool create_empty();
     void write_header();
-    bool write_record(uint16_t physical,const MeshInkStoredMessage& record);
+    bool write_record(uint16_t physical,const MeshInkStoredMessage& record,const char* operation);
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
