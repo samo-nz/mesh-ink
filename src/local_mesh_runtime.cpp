@@ -130,6 +130,12 @@ class MeshCoreUiProvider final:public UiDataProvider{
     size_t map_node_count_=0;
     size_t contact_count_=0,channel_count_=0,conversation_count_=0,advert_count_=0,active_count_=0;
     uint32_t active_revision_=1;
+    // One direct send can be in flight at a time. Retry/status presentation is
+    // session-only UI state: never write it to the flash-backed journal.
+    uint32_t transient_direct_sequence_=0;
+    UiMessageState transient_direct_state_=UiMessageState::Sending;
+    bool transient_direct_route_known_=false;
+    bool transient_direct_route_flood_=false;
     bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
     uint32_t conversation_store_revision_=0xFFFFFFFFUL;
     uint32_t conversation_contacts_signature_=0;
@@ -401,10 +407,49 @@ public:
         refresh(true);ui_notify_message_received(true);
     }
     uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
-    uint32_t queue_direct(const char* text,uint32_t timestamp){const uint32_t sequence=store_.append(MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);rebuild_active();return sequence;}
-    void update_message(uint32_t sequence,UiMessageState state){if(sequence){store_.update_state(sequence,state);++active_revision_;}ui_request_data_refresh("message-state");}
+    uint32_t queue_direct(const char* text,uint32_t timestamp){
+        const uint32_t sequence=store_.append(
+            MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);
+        transient_direct_sequence_=sequence;
+        transient_direct_state_=UiMessageState::Sending;
+        transient_direct_route_known_=false;
+        transient_direct_route_flood_=false;
+        rebuild_active();
+        return sequence;
+    }
+    void transient_direct_status(uint32_t sequence,UiMessageState state,
+                                 bool route_known=false,bool route_flood=false){
+        if(!sequence||sequence!=transient_direct_sequence_)return;
+        const bool changed=transient_direct_state_!=state||
+                           transient_direct_route_known_!=route_known||
+                           (route_known&&transient_direct_route_flood_!=route_flood);
+        transient_direct_state_=state;
+        transient_direct_route_known_=route_known;
+        transient_direct_route_flood_=route_flood;
+        if(changed)++active_revision_;
+        ui_request_data_refresh("message-transient");
+    }
+    void clear_transient_direct(uint32_t sequence){
+        if(!sequence||sequence!=transient_direct_sequence_)return;
+        transient_direct_sequence_=0;
+        transient_direct_state_=UiMessageState::Sending;
+        transient_direct_route_known_=false;
+        transient_direct_route_flood_=false;
+    }
+    void update_message(uint32_t sequence,UiMessageState state){
+        if(sequence){
+            store_.update_state(sequence,state);
+            clear_transient_direct(sequence);
+            ++active_revision_;
+        }
+        ui_request_data_refresh("message-state");
+    }
     void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state){
-        if(sequence){store_.update_outgoing(sequence,state,ack,flood);++active_revision_;}
+        if(sequence){
+            store_.update_outgoing(sequence,state,ack,flood);
+            clear_transient_direct(sequence);
+            ++active_revision_;
+        }
         ui_request_data_refresh("message-route");
     }
     void note_channel_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4){
@@ -649,6 +694,18 @@ public:
         if(i>=active_count_)return active_message_view_.entry;
         StoredMessage item{};
         if(!store_.read(active_indices_[i],item))return active_message_view_.entry;
+        if(item.sequence==transient_direct_sequence_&&
+           item.kind==(uint8_t)MessageKind::Direct) {
+            item.state=(uint8_t)transient_direct_state_;
+            if(transient_direct_route_known_) {
+                item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
+                if(transient_direct_route_flood_)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
+                else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
+            } else {
+                item.flags&=(uint8_t)~(MESHINK_MESSAGE_ROUTE_KNOWN|
+                                      MESHINK_MESSAGE_ROUTE_FLOOD);
+            }
+        }
         strncpy(active_message_view_.text,item.text,sizeof(active_message_view_.text)-1);
         format_time(item.timestamp,active_message_view_.time);
         active_message_view_.entry.outgoing=item.state!=(uint8_t)UiMessageState::Received;
@@ -883,9 +940,14 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         pending_direct.route_flood[attempt]=frame[1]!=0;
         pending_direct.deadline=millis()+max((uint32_t)500,timeout);
         pending_direct.waiting_response=false;
-        // ACK/route metadata is transient until the direct message reaches a
-        // durable final outcome. Keep retries in RAM and avoid rewriting the
-        // flash journal for every send attempt.
+        // ACK/route metadata and retry progress are transient UI state until
+        // the direct message reaches a durable final outcome.
+        const UiMessageState attempt_state=attempt==0?UiMessageState::Sending:
+            (attempt==1?UiMessageState::Retrying1:
+             (attempt==2?UiMessageState::Retrying2:UiMessageState::Retrying3));
+        provider.transient_direct_status(
+            pending_direct.sequence,attempt_state,true,
+            pending_direct.route_flood[attempt]);
         T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct attempt=%u route=%s ack=%08lx timeout=%lu journal=unchanged\n",
                   attempt,pending_direct.route_flood[attempt]?"flood":"direct",
                   (unsigned long)ack,(unsigned long)timeout);
@@ -987,8 +1049,15 @@ void local_mesh_loop(){
             if(pending_direct.retry==DIRECT_RETRY_LIMIT&&!force_pending_direct_flood()){
                 fail_pending_direct("flood fallback contact missing");
             }else{
-                // Retry progress is runtime state only. The journal remains
+                // Retry progress is runtime/UI state only. The journal remains
                 // Sending until one final Delivered or Failed update.
+                const UiMessageState retry_state=
+                    (UiMessageState)((uint8_t)UiMessageState::Retrying1+
+                                     pending_direct.retry-1);
+                provider.transient_direct_status(
+                    pending_direct.sequence,retry_state,
+                    pending_direct.retry==DIRECT_RETRY_LIMIT,
+                    pending_direct.retry==DIRECT_RETRY_LIMIT);
                 if(!enqueue_direct_attempt())fail_pending_direct("retry queue busy");
             }
         }
