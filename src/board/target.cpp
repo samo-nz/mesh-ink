@@ -740,11 +740,17 @@ bool meshink_board_enter_deep_sleep_standby() {
 
     // Keep the radio out of hardware reset while the ESP32 GPIO domain sleeps.
     // The H752-01's external PCA9535 keeps the shared LoRa/GPS 3V3 rail on.
+    pinMode(P_LORA_NSS,OUTPUT);
+    digitalWrite(P_LORA_NSS,HIGH);
     pinMode(P_LORA_RESET,OUTPUT);
     digitalWrite(P_LORA_RESET,HIGH);
-    const esp_err_t hold_state=gpio_hold_en((gpio_num_t)P_LORA_RESET);
-    if(hold_state!=ESP_OK){
-        Serial.printf("[T5-DEEPSLEEP] SX1262 RESET hold failed err=%d\n",(int)hold_state);
+    const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+    if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        Serial.printf("[T5-DEEPSLEEP] SX1262 pin hold failed nss=%d reset=%d\n",
+                      (int)nss_hold,(int)reset_hold);
         return false;
     }
     gpio_deep_sleep_hold_en();
@@ -752,13 +758,14 @@ bool meshink_board_enter_deep_sleep_standby() {
     // Close the race between the first level check and esp_deep_sleep_start().
     if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW||digitalRead(P_LORA_DIO_1)==HIGH){
         gpio_deep_sleep_hold_dis();
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
         gpio_hold_dis((gpio_num_t)P_LORA_RESET);
         Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d dio1=%d\n",
                       digitalRead(T5_PIN_BOOT_BUTTON),digitalRead(P_LORA_DIO_1));
         return false;
     }
 
-    Serial.printf("[T5-DEEPSLEEP] entering: DIO1(GPIO%d)=LOW BOOT(GPIO%d)=HIGH RESET=held-high\n",
+    Serial.printf("[T5-DEEPSLEEP] entering: DIO1(GPIO%d)=LOW BOOT(GPIO%d)=HIGH NSS/RESET=held-high\n",
                   P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
     Serial.flush();
     delay(20);
@@ -824,10 +831,10 @@ void T5Board::beginLocalRxWake() {
 bool radio_resume_rx_wake() {
     // Recreate only the ESP32-side SPI/GPIO transport. Do NOT call std_init(),
     // toggle RESET, change the shared rail, or ask the radio for RNG entropy.
-    pinMode(P_LORA_RESET,OUTPUT);
-    digitalWrite(P_LORA_RESET,HIGH);
     gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
     gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
     pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
     pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
     pinMode(P_LORA_DIO_1,INPUT);
