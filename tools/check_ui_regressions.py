@@ -210,7 +210,7 @@ for backend_detail in (
 ):
     assert backend_detail in wireless_backend_source, f"T5 wireless backend missing {backend_detail}"
 assert 'meshink_wireless_force_local_radios_off()' in unified_source, "local boot forces Wi-Fi and Bluetooth off"
-assert unified_source.count('meshink_wireless_force_local_radios_off()') == 2, "local wireless policy is enforced before and after MeshCore startup"
+assert unified_source.count('meshink_wireless_force_local_radios_off()') == 3, "local wireless policy is enforced for normal pre/post MeshCore startup and headless RX wake"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
 assert 'meshink_wireless_force_wifi_off()' in unified_source, "companion boot explicitly keeps unused Wi-Fi off"
