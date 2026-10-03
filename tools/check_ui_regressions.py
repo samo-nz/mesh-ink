@@ -1131,13 +1131,13 @@ assert 'fail_pending_direct("retry limit")' in runtime_source, "retry exhaustion
 assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pending_direct("initial queue busy")' in runtime_source, "local queue failures share the same safe terminal-failure path"
 assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
 
-assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "runtime shows two direct retries"
-assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "final retry is labelled as the flood fallback"
-assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer exposes flood fallback instead of a third direct retry"
-assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "third retry resets the stale saved path so MeshCore uses flood"
-assert "attempt==0?UiMessageState::Sending" in runtime_source, "radio SENT response remains an in-progress state until ACK"
+assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "legacy retry states remain readable after upgrading"
+assert 'case UiMessageState::Retrying3:return "SENDING FLOOD"' in runtime_source, "legacy flood-retry state remains readable after upgrading"
+assert 'case UiMessageState::Retrying3:state="SENDING FLOOD"' in source, "chat footer can still render legacy flood-retry records"
+assert "force_pending_direct_flood()" in runtime_source and "contact->out_path_len=OUT_PATH_UNKNOWN;" in runtime_source, "final runtime retry resets the stale saved path so MeshCore uses flood"
+assert "attempt==0?UiMessageState::Sending" not in runtime_source and "journal=unchanged" in runtime_source, "radio send-attempt responses remain RAM-only until final delivery/failure"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
-assert "state!=UiMessageState::Sending" not in formatter, "sending route is visible once MeshCore reports direct/flood"
+assert "state!=UiMessageState::Sending" not in formatter, "legacy sending records with route metadata remain displayable"
 assert '"SENT DIRECT"' not in source and '"SENT DIRECT"' not in runtime_source, "direct transmit acknowledgement is never presented as delivery"
 
 
