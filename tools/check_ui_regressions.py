@@ -961,7 +961,7 @@ assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source
 assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
 assert "static bool incomplete_direct_state(uint8_t state)" in message_store_source, "boot recovery identifies stale in-flight direct states"
 assert "item.kind!=(uint8_t)MeshInkMessageKind::Direct" in message_store_source, "boot recovery never rewrites channel sends"
-assert 'write_record(physical,item,"boot-fail")' in message_store_source, "stale in-flight direct sends are durably failed before history loads"
+assert "write_record(physical,item)" in message_store_source, "stale in-flight direct sends are durably failed before history loads"
 assert "recovered-failed=%u errors=%u" in message_store_source, "boot reports stale-send recovery results"
 assert "meshink_message_store().begin()" in companion_source, "companion mode opens the same current-format journal"
 assert "char text[MESHINK_MESSAGE_TEXT_BYTES]" in companion_source, "Bluetooth companion pending sends retain the full message"
@@ -1262,7 +1262,7 @@ assert "transient_direct_sequence_" in runtime_source and "item.sequence==transi
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
 assert "if(!sequence||!store_.update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
-assert 'return write_record(p,item,"state");' in message_store_source, "message-store state updates return the actual record-write result"
+assert "return write_record(p,item);" in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
 assert '"FINAL %s"' in formatter, "final attempt uses compact route-aware wording"
