@@ -987,7 +987,26 @@ assert "void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack
 assert "item.state=(uint8_t)state;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes state"
 assert "item.ack=ack;" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes ACK"
 assert "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_source[message_store_source.index("void MeshInkMessageStore::update_outgoing"):], "coalesced direct update writes route"
-assert "provider.confirm_direct_send(" in runtime_source, "local send response uses one persistent metadata update"
+direct_attempt_response = runtime_source[
+    runtime_source.index("else if(frame[0]==6&&len>=10&&pending_direct.active)"):
+    runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)")
+]
+assert "provider.confirm_direct_send(" not in direct_attempt_response and "provider.update_message(" not in direct_attempt_response, "direct attempt ACK/route metadata stays RAM-only"
+direct_retry_loop = runtime_source[
+    runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"):
+    runtime_source.index("#if ENV_INCLUDE_GPS == 1", runtime_source.index("if(pending_direct.active&&!pending_direct.waiting_response&&pending_direct.deadline"))
+]
+assert "provider.update_message(" not in direct_retry_loop and "provider.confirm_direct_send(" not in direct_retry_loop, "direct retries never rewrite the journal"
+direct_delivery = runtime_source[
+    runtime_source.index("else if(frame[0]==0x82&&len>=5&&pending_direct.active)"):
+    runtime_source.index("else if(frame[0]==1&&pending_direct.active&&pending_direct.waiting_response)")
+]
+assert "provider.confirm_direct_send(" in direct_delivery and "UiMessageState::Delivered" in direct_delivery, "direct delivery persists one final ACK/route/state update"
+fail_direct = runtime_source[
+    runtime_source.index("static void fail_pending_direct("):
+    runtime_source.index("static bool enqueue_info_request(")
+]
+assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed);" in fail_direct, "direct failure persists one final state update"
 assert "provider.note_direct_ack(" not in runtime_source and "provider.note_direct_route(" not in runtime_source, "old multi-write direct-send path is removed"
 
 
@@ -1003,12 +1022,15 @@ ui_text_body=source[source.index("static void ui_text("):source.index("static vo
 assert "if(scale>=3)" in ui_text_body and "ui_smooth_text(s,x,y,scale,color,bold);" in ui_text_body, "scale-three and larger primary text uses smooth raster glyphs"
 assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
 assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
-assert "static void rounded_fill(" in source and "xx*xx+yy*yy<=r*r" in source, "rounded panels use an integer framebuffer primitive"
-assert "sqrt(" not in source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))], "rounded corners avoid floating-point geometry"
+rounded_fill_body=source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))]
+assert "meshink_display_fill_rounded_rect({x,y,w,h},radius,color,fb);" in rounded_fill_body, "rounded panels delegate one shape to the display backend"
+assert "sqrt(" not in rounded_fill_body, "rounded UI path avoids floating-point geometry"
 assert "rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height" in source, "contacts/channels/discovery use rounded cards"
 assert '#include "board/t5_packed_framebuffer.h"' in display_backend_source, "T5 display backend owns packed framebuffer accelerator"
 assert "color==0x00U||color==0xFFU" in display_backend_source, "only exact monochrome fills bypass EPDiy"
 assert "meshink_t5_packed::fill_logical_gray4(" in display_backend_source, "monochrome rectangles use direct packed framebuffer fill"
+assert "meshink_t5_packed::fill_logical_rounded_gray4(" in display_backend_source, "rounded monochrome surfaces use orientation-aware packed fills"
+assert "meshink_t5_packed::rounded_row_inset" in display_backend_source, "grayscale rounded fallback preserves integer corner geometry"
 assert "epd_fill_rect(meshink_display_native_rect(rect),color,framebuffer);" in display_backend_source, "grayscale rectangle fallback remains EPDiy"
 assert "static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3)" in source, "list rows support compact secondary metadata without shrinking titles"
 assert "ui_data->contact(first+row),portrait_layout().list_top+row*portrait_layout().list_row_stride,2" in source, "Contacts secondary Last Heard text uses delivery-notice scale"
