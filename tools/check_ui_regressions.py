@@ -1045,7 +1045,7 @@ assert "ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,t
 assert "static int ui_text_max_line_width(" in source and "ui_text_max_line_width(message.text,3)" in source, "bubble width follows the longest explicit message line"
 assert "min(16,ui_wrapped_line_count(message.text,text_width,3))" in source, "bubble measurement cannot exceed the renderer's sixteen-line limit"
 assert "if(used+needed>available)break;" in source, "chat paging only admits complete bubbles into the visible viewport"
-assert "static bool chat_needs_paging(size_t count)" in source and "chat_history_available_current()" in source, "current conversation paging reserves the taskbar and composer"
+assert "chat_page_bounds_lazy(count,chat_history_available_current()," in source, "current conversation lazy paging reserves the taskbar and composer"
 assert "const int compose_y=chat_compose_top();" in source, "message composer drawing uses shared vertical geometry"
 assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
