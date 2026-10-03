@@ -177,6 +177,9 @@ static bool t5_wait_local_radio_settle(){
     const uint32_t remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0;
     T5_TRACE("radio: rail settle elapsed=%lums remaining=%lums\n",
         (unsigned long)elapsed,(unsigned long)remaining);
+    Serial.printf("[T5-BOOTPERF] radio-rail-overlap=%lums remaining-wait=%lums required=%lums\n",
+                  (unsigned long)elapsed,(unsigned long)remaining,
+                  (unsigned long)REQUIRED_SETTLE_MS);
     if(remaining)delay(remaining);
     return true;
 #endif
