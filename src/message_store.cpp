@@ -288,14 +288,19 @@ bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
 
 bool MeshInkMessageStore::find_physical(uint32_t sequence,uint16_t& physical) const{
     if(!initialized_||!sequence)return false;
+    if(records_){
+        for(size_t n=header_.count;n>0;--n){
+            const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
+            if(records_[p].sequence==sequence){physical=p;return true;}
+        }
+        return false;
+    }
+    if(!file_)return false;
+    StoreCpuBoostScope cpu_boost;
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(records_){
-            if(records_[p].sequence==sequence){physical=p;return true;}
-            continue;
-        }
-        if(!file_||!read_record(file_,p,item))break;
+        if(!read_record(file_,p,item))break;
         if(item.sequence==sequence){physical=p;return true;}
     }
     return false;
@@ -466,29 +471,49 @@ void MeshInkMessageStore::update_outgoing(
 
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
     if(!initialized_||!file_||!ack)return false;
+    // Normal operation scans the PSRAM/RAM journal mirror without changing
+    // CPU frequency. Only the cache-allocation fallback touches flash here.
+    StoreCpuBoostScope* flash_boost=nullptr;
+    if(!records_)flash_boost=new StoreCpuBoostScope();
     MeshInkStoredMessage item{};
+    bool delivered=false;
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
         else if(!read_record(file_,p,item))break;
         if(item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
-            if(item.state==(uint8_t)UiMessageState::Delivered)return true;
-            item.state=(uint8_t)UiMessageState::Delivered;
-            return write_record(p,item,"delivered");
+            if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
+            else{
+                item.state=(uint8_t)UiMessageState::Delivered;
+                delivered=write_record(p,item,"delivered");
+            }
+            break;
         }
     }
-    return false;
+    delete flash_boost;
+    return delivered;
 }
 
 uint32_t MeshInkMessageStore::find_matching_outgoing(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
         uint32_t timestamp,const char* text) const{
     if(!initialized_||!file_||!key||!text)return 0;
+    if(records_){
+        for(size_t n=header_.count;n>0;--n){
+            const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
+            const MeshInkStoredMessage& item=records_[p];
+            if(item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
+               item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
+               strncmp(item.text,text,sizeof(item.text)))continue;
+            return item.sequence;
+        }
+        return 0;
+    }
+    StoreCpuBoostScope cpu_boost;
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(records_)item=records_[p];
-        else if(!read_record(file_,p,item))break;
+        if(!read_record(file_,p,item))break;
         if(item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
            item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
            strncmp(item.text,text,sizeof(item.text)))continue;
