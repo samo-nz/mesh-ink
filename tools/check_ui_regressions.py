@@ -439,16 +439,11 @@ contains("if(status_dirty&&!message_alert_active)", "status redraw has priority 
 contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
 contains("draw_screen();refresh(MeshInkRefreshMode::Direct);return true;", "same-page keyboard transitions use DU")
 
-# 1.8.3 correlated timing instrumentation must remain wired without adding
-# synchronous Serial writes to the touch producer.
-contains("uint32_t queued_at_ms=0;", "queued touch events carry enqueue timestamps")
-contains("T5InputTimingScope timing_input", "UI measures touch event queue age and handler time")
-contains("t5_timing_note_ui_draw", "framebuffer draw timing hook")
-contains("t5_timing_note_chat_draw", "chat history/keyboard render split")
-contains("t5_timing_note_text_wait", "text debounce timing hook")
-contains("T5UiAction::StatusPoll", "status-poll timing attribution")
-contains("T5UiAction::TextRefresh", "text-refresh timing attribution")
-assert "[T5-TOUCH] input queue full" not in source, "touch producer must never print queue overflow synchronously"
+# Temporary performance/touch instrumentation is removed after field tuning.
+contains("uint32_t queued_at_ms=0;", "queued touch timestamps remain for stale-navigation filtering")
+assert "T5InputTimingScope" not in source and "t5_timing_" not in source, "UI timing instrumentation is removed"
+assert "[T5-TOUCH] tap screen=" not in source, "temporary touch-coordinate logging is removed"
+assert "T5_LOG_TOUCH" not in source and "T5_LOG_TOUCH" not in platformio_source, "keyboard/touch diagnostic logging is removed from the application build"
 
 # Local UI framebuffer composition uses short 240 MHz bursts from the 80 MHz
 # cruise clock, restoring the previous clock immediately afterwards.
@@ -505,12 +500,10 @@ assert 'has_pmtiles_magic' in map_source, "cache64 archive scan recognizes PMTil
 assert 'archive-scan entry=%s dir=%u base=%s' in map_source, "archive scan logs cache64 directory enumeration"
 assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan reports suffix and PMTiles header detection"
 board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
-timing_source = (root / "src" / "t5_timing.cpp").read_text(encoding="utf-8")
 assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
 assert "delay(1);" in companion, "Bluetooth companion loop must yield so cache64 watchdog does not starve IDLE1"
 assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
 assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
-assert "constexpr uint32_t LEARN_MS=5000;" in timing_source, "timing diagnostics use 5 second warm-up"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, last GPS, brightness)")
@@ -596,21 +589,17 @@ contains("const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);", "zoom labe
 contains("meshink_display_fill_rect({ui_x(18),ui_y(812),zoom_label_width,ui_h(30)},0xFF,fb);", "zoom label uses scaled dynamic white backing")
 assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fixed-width zoom backing must not return"
 
-# Pre-hardware audit: external frames are bounded, and the field build
-# carries narrowly scoped geometry/touch observability.
+# External-frame safety remains, while temporary geometry/touch field logging is gone.
 assert "DISCOVERED_CONTACT_BASE_LEN" in runtime_source, "discovered advert parser must define a complete base frame length"
 assert 'len<DISCOVERED_CONTACT_BASE_LEN' in runtime_source, "truncated discovered adverts must be rejected"
 assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache must clear stale optional bytes"
 assert 'memset(&detail_contact_,0,sizeof(detail_contact_));' in runtime_source, "Node Info advert parse must start from zeroed contact state"
 assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malformed advert rejection must remain observable"
-contains("static void audit_ui_geometry()", "test8 boot-time geometry self-audit")
-contains("[T5-GEOM] version=%s board=%s logical=%dx%d physical=%dx%d", "geometry audit emits versioned board/display summary")
-contains("[T5-TOUCH] tap screen=%s x=%d y=%d", "touch diagnostics identify screen and coordinates")
-assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build must not force geometry serial diagnostics"
-assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build must not force touch serial diagnostics"
-assert "-DT5_LOG_UI=1" not in cache64_build_flags, "release cache64 build must not force UI serial diagnostics"
-assert 'if(!keyboard_visible&&!keyboard_landscape)' in source and '[T5-TOUCH] tap screen=%s x=%d y=%d quick=%u' in source, "test9 non-keyboard touch logging must remain consumer-side"
-assert "-DT5_LOG_MAP=1" not in cache64_build_flags, "test9 must not enable high-volume map diagnostics in cache64 build"
+assert "audit_ui_geometry" not in source and "[T5-GEOM]" not in source, "temporary geometry self-audit is removed"
+assert "[T5-TOUCH] tap screen=" not in source, "temporary touch coordinate logging is removed"
+assert "-DMESHINK_GEOMETRY_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build does not force geometry diagnostics"
+assert "-DMESHINK_TOUCH_DIAGNOSTICS=1" not in cache64_build_flags, "release cache64 build does not force backend touch diagnostics"
+assert "-DT5_LOG_UI=1" not in cache64_build_flags and "-DT5_LOG_MAP=1" not in cache64_build_flags, "release cache64 build keeps optional verbose logging disabled"
 
 # Test18 remaining non-storage hardware boundaries.
 assert '#include "hardware/buttons.h"' in source, "UI includes generic button boundary"
@@ -1078,59 +1067,12 @@ find_body=message_store_source[
 ]
 assert "if(records_){" in find_body and find_body.index("if(records_){") < find_body.index("StoreCpuBoostScope cpu_boost;"), "sequence lookup stays RAM-only when the journal mirror exists"
 assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_boost" not in message_store_source, "storage race-to-idle adds no dynamic allocation"
-assert "cache-load=%lu.%01lums storage=%s bytes=%u cpu=%luMHz" in message_store_source, "boot cache timing logs the active storage CPU clock"
-assert "total=%lu.%01lums cpu=%luMHz ok=%u" in message_store_source, "runtime store timing logs the active storage CPU clock"
+assert "[T5-STOREPERF]" not in message_store_source and "meshink_message_store_perf_snapshot" not in message_store_source, "message-store profiling instrumentation is removed"
 
-# Test65: test.9 measures the existing splash/startup path before adding
-# progress-refresh UI. The measurements must separate LoRa from the GPS probe
-# and cover the outer setup phases without changing normal splash wording.
-for marker in (
-    "[T5-BOOTPERF] wireless-pre=%lums",
-    "[T5-BOOTPERF] ui-setup-call=%lums",
-    "[T5-BOOTPERF] local-mesh-call=%lums",
-    "[T5-BOOTPERF] wireless-post=%lums",
-    "[T5-BOOTPERF] maps-warm=%lums",
-    "[T5-BOOTPERF] ui-finish-call=%lums",
-    "[T5-BOOTPERF] startup-total=%lums",
-):
-    assert marker in unified_source, f"top-level boot timing missing {marker}"
-for marker in (
-    "[T5-BOOTPERF] mesh-board=%lums",
-    "[T5-BOOTPERF] mesh-radio=%lums",
-    "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz",
-    "[T5-BOOTPERF] mesh-datastore=%lums",
-    "[T5-BOOTPERF] mesh-core-begin=%lums",
-    "[T5-BOOTPERF] mesh-interface=%lums",
-    "[T5-BOOTPERF] gps-service=%lums",
-    "[T5-BOOTPERF] gps-prefs=%lums",
-    "[T5-BOOTPERF] mesh-runtime=%lums",
-    "[T5-BOOTPERF] mesh-ui-handoff=%lums",
-    "[T5-BOOTPERF] local-mesh-total=%lums",
-):
-    assert marker in companion_source, f"local MeshCore boot timing missing {marker}"
-for marker in (
-    "[T5-BOOTPERF] board-local=%lums",
-    "[T5-BOOTPERF] radio-rail-overlap=%lums remaining-wait=%lums required=%lums",
-    "[T5-BOOTPERF] rtc=%lums",
-    "[T5-BOOTPERF] lora=%lums ready=%u",
-    "[T5-BOOTPERF] gps-probe=%lums locked=%u baud=%lu",
-    "[T5-BOOTPERF] radio-init-total=%lums",
-):
-    assert marker in board_target_source, f"board/radio boot timing missing {marker}"
-for marker in (
-    "[T5-BOOTPERF] ui-pre-display=%lums",
-    "[T5-BOOTPERF] display-init=%lums",
-    "[T5-BOOTPERF] touch-display-state=%lums",
-    "[T5-BOOTPERF] ui-prefs-status=%lums",
-    "[T5-BOOTPERF] splash-compose=%lums",
-    "[T5-BOOTPERF] splash-refresh=%lums",
-    "[T5-BOOTPERF] ui-setup-total=%lums",
-    "[T5-BOOTPERF] ui-finish=%lums",
-):
-    assert marker in source, f"UI splash boot timing missing {marker}"
-ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
-assert 'ui_centred("STARTING UP..."' in ui_setup_boot, "measurement build preserves the existing normal splash message"
-assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setup_boot and "LOADING MESSAGES" not in ui_setup_boot, "measurement build does not add progress refreshes before timings are known"
+# Test65 cleanup: temporary boot-stage timing probes are removed after tuning.
+for tuned_source in (unified_source, companion_source, board_target_source, source):
+    assert "[T5-BOOTPERF]" not in tuned_source, "boot performance probes are removed from the field build"
+assert "bootperf_" not in unified_source and "bootperf_" not in companion_source and "bootperf_" not in board_target_source and "bootperf_" not in source, "boot timer scaffolding is removed"
 
 # Test66: test.10 keeps the complete boot path at 240 MHz, including Maps
 # warm-up and panel refresh restore, then drops once to the validated 80 MHz
@@ -1139,7 +1081,6 @@ assert "STARTING LORA" not in ui_setup_boot and "CONFIGURING GPS" not in ui_setu
 setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
 assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
 assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
-assert "[T5-BOOTPERF] cpu-boot-target=240MHz actual=%luMHz ok=%u" in setup_body, "boot clock is visible in field logs"
 assert "ui_boot_cpu_active=true;" in source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")], "UI boot phase explicitly stays at render clock"
 assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
@@ -1147,7 +1088,7 @@ assert 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");' in
 finish_body=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()")]
 assert finish_body.index("ui_boot_cpu_active=false;") < finish_body.index('set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready")'), "interactive-ready is the single boot-to-80 transition"
 assert setup_body.index("map_tiles_warm_storage();") < setup_body.index("ui_finish_startup();"), "Maps remains warmed before the interactive screen"
-assert "[T5-BOOTPERF] maps-warm=%lums cpu=%luMHz" in setup_body, "Maps warm-up records that it ran in the boot clock phase"
+assert "-DT5_TIMING_DIAGNOSTICS" not in platformio_source, "correlated timing diagnostics are no longer built"
 
 assert "class T5EnvironmentSensorManager final : public EnvironmentSensorManager" in board_target_header_source, "T5 target exposes its fast GPS manager to MeshCore"
 assert "bool T5EnvironmentSensorManager::begin()" in board_target_source, "T5 target overrides MeshCore environment startup"
@@ -1157,7 +1098,6 @@ fast_gps_begin=board_target_source[
 ]
 assert "gps_detected=true;" in fast_gps_begin and "gps_active=false;" in fast_gps_begin, "fast manager preserves ENV_SKIP_GPS_DETECT visibility and preference-driven activation"
 assert "delay(1000)" not in fast_gps_begin and "scanI2CBus" not in fast_gps_begin, "T5 GPS manager does not repeat upstream fixed detect wait or unused environment scan"
-assert "[T5-BOOTPERF] gps-manager-reuse=1" in fast_gps_begin, "field log confirms the board probe was reused"
 assert "T5EnvironmentSensorManager sensors(gps);" in board_target_source, "MeshCore global sensors object uses the T5 fast manager"
 assert platformio_source.count("-DENV_INCLUDE_")==1 and "-DENV_INCLUDE_GPS=1" in platformio_source, "fast T5 environment startup is valid only while GPS is the sole enabled environment provider"
 assert 'gps_send_pcas("PCAS02' not in board_target_source, "test.10 leaves GNSS positioning rate unchanged at the normal 1 Hz"
@@ -1168,7 +1108,6 @@ assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS up
 # still settling; MeshCore datastore/core lifecycle remains behind radio init.
 local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_is_running()")]
 assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
-assert "[T5-BOOTPERF] spiffs-overlap=%lums mounted=%u cpu=%luMHz" in local_setup_body, "overlapped SPIFFS work is timed and confirms the 240 MHz boot clock"
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
 assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
