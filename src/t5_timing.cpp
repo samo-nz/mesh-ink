@@ -44,6 +44,7 @@ struct CycleDetail {
     uint32_t mesh_us=0;
     uint32_t ui_us=0;
     uint32_t draw_us=0;          // longest draw_screen() in this loop
+    T5UiRenderPerf ui_render{};
     uint32_t chat_history_us=0;
     uint32_t keyboard_draw_us=0;
     T5MessageRebuildPerf message_rebuild{};
@@ -369,6 +370,17 @@ static void print_slow(const SlowCycleEvent& slow){
     Serial.printf(" text-wait=%lums",(unsigned long)d.text_wait_ms);
     Serial.println();
 
+    if(d.ui_render.total_us){
+        Serial.print("[T5-UIPERF] total=");print_ms_value(d.ui_render.total_us);
+        Serial.print(" status=");print_ms_value(d.ui_render.status_us);
+        Serial.print(" nav=");print_ms_value(d.ui_render.nav_us);
+        Serial.print(" rounded=");print_ms_value(d.ui_render.rounded_us);
+        Serial.print(" text=");print_ms_value(d.ui_render.text_us);
+        Serial.printf(" calls rounded=%lu text=%lu chars=%lu (categories nested)\n",
+            (unsigned long)d.ui_render.rounded_calls,
+            (unsigned long)d.ui_render.text_calls,
+            (unsigned long)d.ui_render.text_chars);
+    }
     if(d.message_rebuild.elapsed_us){
         Serial.printf("[T5-MSGPERF] rebuild journal=%u active=%u total=",
             (unsigned)d.message_rebuild.journal_messages,
@@ -548,6 +560,12 @@ void t5_timing_set_ui_action(T5UiAction action){
 void t5_timing_note_ui_draw(uint32_t elapsed_us){
     portENTER_CRITICAL(&timing_mux);
     if(elapsed_us>current_cycle.draw_us)current_cycle.draw_us=elapsed_us;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+void t5_timing_note_ui_render(const T5UiRenderPerf& perf){
+    portENTER_CRITICAL(&timing_mux);
+    if(perf.total_us>=current_cycle.ui_render.total_us)current_cycle.ui_render=perf;
     portEXIT_CRITICAL(&timing_mux);
 }
 
