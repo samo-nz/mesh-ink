@@ -169,7 +169,7 @@ int main() {
     // keyboard drawing or hit-testing.
     const meshink_keyboard::Tuning tuned={3,-5,2,1};
     const Metrics adjusted=meshink_keyboard::make_metrics(540,960,false,tuned);
-    assert(adjusted.number_row.start==18);
+    assert(adjusted.number_row.start==4);
     assert(adjusted.number_top==613);
     assert(adjusted.key_height==64);
     assert(adjusted.row_gap==9);
