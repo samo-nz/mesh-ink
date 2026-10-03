@@ -1038,12 +1038,13 @@ static void ui_draw_compose_tail(const char* value,int x,int y,int max_width,
     const int line_step=ui_text_line_step(scale);
     if(max_height<glyph_height)return;
 
-    // One line remains vertically comfortable. Once wrapping starts, pin the
-    // newest line to the bottom and let the preceding line peek through the
-    // clipped top of the viewport so text never appears to vanish.
+    // One line remains vertically comfortable. Once wrapping starts, keep the
+    // newest line near the bottom but lift it slightly clear of the rounded
+    // field edge so descenders and the lower glyph row are never clipped.
+    const int multiline_lift=max(4,glyph_height/6);
     const int current_y=line_count<=1
         ?y+(max_height-glyph_height)/2
-        :y+max_height-glyph_height;
+        :y+max_height-glyph_height-multiline_lift;
     for(int i=line_count-1;i>=0;--i){
         const int line_y=current_y-(line_count-1-i)*line_step;
         if(line_y+glyph_height<=y)break;
@@ -1055,14 +1056,15 @@ static void ui_draw_compose_tail(const char* value,int x,int y,int max_width,
                                x,y,x+max_width,y+max_height);
     }
 
-    // A 1 px, half-height non-blinking caret is enough to expose trailing
-    // spaces and the next insertion point without dominating an e-paper field.
+    // Keep the caret non-blinking and restrained, but large enough to remain
+    // legible after a direct e-paper update and to make trailing spaces obvious.
     const UiComposeLine& current=lines[line_count-1];
     const int caret_advance=ui_text_width_n(current.start,current.len,scale);
-    const int caret_x=max(x,min(x+max_width-1,x+caret_advance));
-    const int caret_height=max(8,glyph_height/2);
+    constexpr int caret_width=2;
+    const int caret_x=max(x,min(x+max_width-caret_width,x+caret_advance));
+    const int caret_height=max(14,(glyph_height*3)/4);
     const int caret_y=current_y+(glyph_height-caret_height)/2;
-    meshink_display_fill_rect({caret_x,caret_y,1,caret_height},0,fb);
+    meshink_display_fill_rect({caret_x,caret_y,caret_width,caret_height},0,fb);
 }
 
 // Rounded surfaces are composed directly in the selected display backend.
