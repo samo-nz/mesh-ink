@@ -210,6 +210,11 @@ for backend_detail in (
 ):
     assert backend_detail in wireless_backend_source, f"T5 wireless backend missing {backend_detail}"
 assert 'meshink_wireless_force_local_radios_off()' in unified_source, "local boot forces Wi-Fi and Bluetooth off"
+assert "message_sync_required" in companion_source and "message_sync_inflight" in companion_source, "local receive queue has explicit drain state"
+assert "frame[0]=10; // CMD_SYNC_NEXT_MESSAGE" in companion_source, "local receive queue polls CMD_SYNC_NEXT_MESSAGE"
+assert "sync-empty: MeshCore receive queue fully drained" in companion_source, "local receive queue drains until explicit empty response"
+assert "sleep deferred: received-message queue drain is still pending" in companion_source, "deep sleep waits for message persistence drain"
+assert "meshink_power_frontlight_set(100);" in companion_source and "local_rx_wake_indicator(false);" in companion_source, "headless RX test uses frontlight as awake indicator"
 assert unified_source.count('meshink_wireless_force_local_radios_off()') == 3, "local wireless policy is enforced for normal pre/post MeshCore startup and headless RX wake"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
