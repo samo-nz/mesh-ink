@@ -235,7 +235,7 @@ assert "return headless_alert_requested||message_alert_active;" in source, "idle
 assert "ui_quiesce_headless_display_for_deep_sleep" in source and "session retained until reset" in source, "display quiesce helper remains available for post-diagnostic low-power cleanup"
 sleep_entry = companion_source.split("bool local_mesh_enter_deep_sleep_standby()",1)[1].split("void local_mesh_rx_wake_loop()",1)[0]
 assert "ui_quiesce_headless_display_for_deep_sleep();" not in sleep_entry, "deepsleep23 A/B test leaves the display session untouched before retained-radio sleep"
-assert "deepsleep27: display untouched; wake packet captured then radio fully reset" in sleep_entry, "deepsleep27 keeps display isolated while restoring capture-reset-replay"
+assert "deepsleep38: display untouched; wake packet captured then radio fully reset" in sleep_entry, "deepsleep38 keeps display isolated while using raw-capture then clean-reset replay"
 headless_loop = companion_source.split("void local_mesh_rx_wake_loop()",1)[1].split("bool local_mesh_is_running",1)[0]
 assert "alert_was_busy" not in headless_loop and "alert_active" not in headless_loop, "display alert activity must not reset the genuine MeshCore quiet timer"
 notify_body = source.split("void ui_notify_message_received(bool channel)",1)[1].split("bool ui_restore_failed_compose",1)[0]
