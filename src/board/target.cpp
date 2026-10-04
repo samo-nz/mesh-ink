@@ -142,33 +142,39 @@ static SPIClass radio_spi(FSPI);
 SPIClass& t5_shared_spi() { return radio_spi; }
 
 static bool t5_release_held_radio_control_pins(const char* phase) {
-    // ESP-IDF warns that releasing a GPIO hold after deep sleep can expose the
-    // pad's reset/default state unless the desired GPIO configuration is set
-    // first. Program NSS and RESET HIGH while the hold is still active, then
-    // release them. This prevents an unintended SX1262 reset or chip-select
-    // assertion during the wake handoff.
+    // gpio_get_level() returns 0 when the input path is disabled, even for a
+    // correctly driven output. Use INPUT_OUTPUT here so the diagnostic reads
+    // the actual pad level while still driving NSS/RESET HIGH.
+    //
+    // ESP-IDF requires the desired state to be configured before gpio_hold_dis()
+    // after deep sleep. Program both pads HIGH first, verify the held physical
+    // levels, then release the individual holds and verify them again.
     gpio_deep_sleep_hold_dis();
 
-    const esp_err_t nss_dir=gpio_set_direction((gpio_num_t)P_LORA_NSS,GPIO_MODE_OUTPUT);
+    const esp_err_t nss_dir=gpio_set_direction((gpio_num_t)P_LORA_NSS,GPIO_MODE_INPUT_OUTPUT);
+    const esp_err_t reset_dir=gpio_set_direction((gpio_num_t)P_LORA_RESET,GPIO_MODE_INPUT_OUTPUT);
     const esp_err_t nss_high=gpio_set_level((gpio_num_t)P_LORA_NSS,1);
-    const esp_err_t reset_dir=gpio_set_direction((gpio_num_t)P_LORA_RESET,GPIO_MODE_OUTPUT);
     const esp_err_t reset_high=gpio_set_level((gpio_num_t)P_LORA_RESET,1);
     delayMicroseconds(10);
+
+    const int nss_before=gpio_get_level((gpio_num_t)P_LORA_NSS);
+    const int reset_before=gpio_get_level((gpio_num_t)P_LORA_RESET);
 
     const esp_err_t nss_release=gpio_hold_dis((gpio_num_t)P_LORA_NSS);
     const esp_err_t reset_release=gpio_hold_dis((gpio_num_t)P_LORA_RESET);
     delayMicroseconds(20);
 
-    const int nss_level=gpio_get_level((gpio_num_t)P_LORA_NSS);
-    const int reset_level=gpio_get_level((gpio_num_t)P_LORA_RESET);
-    Serial.printf("[T5-DEEPSLEEP] radio control holds released phase=%s nss=%d reset=%d cfg=%d/%d/%d/%d release=%d/%d\n",
-                  phase?phase:"unknown",nss_level,reset_level,
+    const int nss_after=gpio_get_level((gpio_num_t)P_LORA_NSS);
+    const int reset_after=gpio_get_level((gpio_num_t)P_LORA_RESET);
+    Serial.printf("[T5-DEEPSLEEP] radio control release phase=%s before=%d/%d after=%d/%d cfg=%d/%d/%d/%d release=%d/%d\n",
+                  phase?phase:"unknown",nss_before,reset_before,nss_after,reset_after,
                   (int)nss_dir,(int)nss_high,(int)reset_dir,(int)reset_high,
                   (int)nss_release,(int)reset_release);
 
     return nss_dir==ESP_OK&&nss_high==ESP_OK&&reset_dir==ESP_OK&&reset_high==ESP_OK&&
            nss_release==ESP_OK&&reset_release==ESP_OK&&
-           nss_level==HIGH&&reset_level==HIGH;
+           nss_before==HIGH&&reset_before==HIGH&&
+           nss_after==HIGH&&reset_after==HIGH;
 }
 
 static void t5_radio_shared_bus_idle(bool stop_spi){
