@@ -1031,6 +1031,13 @@ assert "direct_unread_count" in runtime_source and "direct_unread_peer(item.key,
 assert "if(auto* peer=direct_unread_peer(item.key,false))*peer=UnreadPeer{};" in runtime_source, "read-through markers release zero-count peer slots"
 assert "ui_status_set_unread(direct_total);" in runtime_source and "ui_status_set_channel_unread(channel_total);" in runtime_source, "journal-derived peer/channel counters drive global status totals"
 assert 'getUShort("unread_dm"' not in source and 'getUShort("unread_ch"' not in source, "legacy NVS aggregate unread values are no longer an authority"
+unread_load_body=source[source.index("static void ui_load_persistent_state()"):source.index("void ui_startup(const MeshInkUiStartupPlan& plan)")]
+assert "status_unread=0;" not in unread_load_body and "status_channel_unread=0;" not in unread_load_body, "ordinary UI preference loading must preserve journal-restored unread totals during the first headless alert"
+headless_prepare_body=source[source.index("void ui_prepare_headless_rx_wake()"):source.index("static void ui_load_persistent_state()")]
+assert "status_unread=0;" in headless_prepare_body and "status_channel_unread=0;" in headless_prepare_body, "retained RX wake still starts unread totals clean before journal replay"
+headless_alert_body=source[source.index("bool ui_service_headless_message_alert()"):source.index("bool ui_promote_headless_to_interactive()")]
+assert "MeshInkUiStartupPlan plan{};" in headless_alert_body and "ui_startup(plan);" in headless_alert_body, "first headless alert still initializes the display through normal UI startup"
+assert "plan.load_state=false;" not in headless_alert_body, "first headless alert may load ordinary UI preferences without erasing journal unread totals"
 assert "status_unread++" not in source and "status_channel_unread++" not in source, "UI notification code cannot maintain a second unread counter"
 assert "mark_read(MessageKind::Direct" in runtime_source and "mark_read(MessageKind::Channel" in runtime_source, "opening direct/channel conversations persists read state instead of only zeroing RAM"
 assert "path_len,unread)" in runtime_source, "RX append carries unread state directly into the durable record"

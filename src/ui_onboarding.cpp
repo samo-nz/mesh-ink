@@ -4061,10 +4061,10 @@ static void ui_load_persistent_state() {
     selected_preset=prefs.getUChar("preset_v2",17);
     setup_complete=prefs.getBool("complete",false);
     timezone_index=prefs.getUChar("timezone",0);
-    // Unread truth is reconstructed from the message journal after MeshCore
-    // storage opens. Do not seed it from the legacy aggregate NVS counters.
-    status_unread=0;
-    status_channel_unread=0;
+    // Unread truth is reconstructed from the message journal. Do not touch
+    // it while loading ordinary UI preferences: on the first retained-RX
+    // alert this function runs after journal replay and must preserve the
+    // already-restored direct/channel totals for the standby redraw.
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
     map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
