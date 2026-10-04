@@ -352,6 +352,109 @@ bool meshink_board_service_asserted_radio_irq() {
     return dispatched;
 }
 
+bool meshink_board_diag_radio_begin() {
+    // MeshCore has already applied the real preset, frequency and modem
+    // parameters. Detach its GPIO ISR so this diagnostic can observe the raw
+    // DIO1 level without the normal runtime consuming/clearing the IRQ first.
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    const int16_t armed=radio.startReceive();
+    delayMicroseconds(250);
+    Serial.printf("[T5-DIAG-RADIO] begin startReceive=%d dio1=%d busy=%d irq=0x%04x\n",
+                  (int)armed,digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY),
+                  (unsigned)((uint16_t)radio.getIrqFlags()));
+    return armed==RADIOLIB_ERR_NONE&&digitalRead(P_LORA_DIO_1)==LOW;
+}
+
+bool meshink_board_diag_radio_poll(uint32_t sequence) {
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(P_LORA_DIO_1)!=HIGH)return false;
+
+    const uint16_t irq=(uint16_t)radio.getIrqFlags();
+    uint8_t offset=0;
+    const size_t packet_len=radio.getPacketLength(true,&offset);
+    const uint8_t status=radio.getStatus();
+    Serial.printf("[T5-DIAG-RADIO] event=%lu DIO1=HIGH irq=0x%04x len=%u offset=%u status=0x%02x busy=%d\n",
+                  (unsigned long)sequence,(unsigned)irq,(unsigned)packet_len,
+                  (unsigned)offset,(unsigned)status,digitalRead(P_LORA_BUSY));
+
+    uint8_t packet[MAX_TRANS_UNIT]{};
+    int16_t consume=RADIOLIB_ERR_NONE;
+    if(packet_len){
+        const size_t read_len=packet_len>MAX_TRANS_UNIT?MAX_TRANS_UNIT:packet_len;
+        consume=radio.readData(packet,read_len);
+    }else{
+        consume=radio.clearIrqFlags();
+    }
+    delayMicroseconds(250);
+    const int after_clear=digitalRead(P_LORA_DIO_1);
+
+    const int16_t rearm=radio.startReceive();
+    delayMicroseconds(250);
+    const uint16_t irq_after=(uint16_t)radio.getIrqFlags();
+    const int after_rearm=digitalRead(P_LORA_DIO_1);
+    Serial.printf("[T5-DIAG-RADIO] event=%lu consume=%d DIO1-after-clear=%d rearm=%d DIO1-after-rearm=%d irq-after=0x%04x\n",
+                  (unsigned long)sequence,(int)consume,after_clear,(int)rearm,
+                  after_rearm,(unsigned)irq_after);
+    return true;
+}
+
+void meshink_board_diag_restore_button_wake() {
+    // The ESP-only half of the diagnostic uses BOOT/EXT0 exclusively. Release
+    // only the automatic deep-sleep hold and BOOT's RTC-IO routing. Leave the
+    // explicit SX1262 NSS/RESET holds alone so the radio/GPS rail and radio
+    // hardware remain undisturbed while the CPU exercises repeated sleep.
+    gpio_deep_sleep_hold_dis();
+    rtc_gpio_hold_dis((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+}
+
+bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry) {
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DIAG-ESP] sleep deferred: BOOT still LOW");
+        return false;
+    }
+
+    // On the first diagnostic sleep, freeze NSS/RESET HIGH so the already-live
+    // SX1262 remains powered/listening. On later cycles those individual holds
+    // deliberately remain in place; only the global deep-sleep hold is toggled.
+    if(first_entry){
+        pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+        pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
+        const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+        const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+        if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+            Serial.printf("[T5-DIAG-ESP] radio pin hold failed nss=%d reset=%d\n",
+                          (int)nss_hold,(int)reset_hold);
+            return false;
+        }
+    }
+
+    const esp_err_t clear=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    const esp_err_t button=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    if(clear!=ESP_OK||button!=ESP_OK){
+        Serial.printf("[T5-DIAG-ESP] BOOT-only wake setup failed clear=%d button=%d\n",
+                      (int)clear,(int)button);
+        return false;
+    }
+
+    gpio_deep_sleep_hold_en();
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        gpio_deep_sleep_hold_dis();
+        Serial.println("[T5-DIAG-ESP] sleep race avoided: BOOT went LOW");
+        return false;
+    }
+
+    Serial.printf("[T5-DIAG-ESP] entering deep sleep: ONLY BOOT EXT0 LOW armed; first=%u\n",
+                  first_entry?1U:0U);
+    Serial.flush();
+    delay(100);
+    esp_deep_sleep_start();
+    return true;
+}
+
 static T5RTCClock& t5_rtc_clock(){
     static T5RTCClock clock;
     return clock;

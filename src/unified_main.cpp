@@ -13,10 +13,93 @@
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
 #endif
+#ifndef T5_SPLIT_SLEEP_DIAG
+#define T5_SPLIT_SLEEP_DIAG 0
+#endif
 
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
+
+#if T5_SPLIT_SLEEP_DIAG
+static constexpr uint32_t SPLIT_DIAG_MAGIC=0x534C5038UL; // "SLP8"
+RTC_DATA_ATTR static uint32_t split_diag_magic=0;
+RTC_DATA_ATTR static uint32_t split_diag_phase=0;
+RTC_DATA_ATTR static uint32_t split_diag_boot_wakes=0;
+static bool split_diag_radio_active=false;
+static uint32_t split_diag_radio_events=0;
+static uint32_t split_diag_boot_hold_started=0;
+
+static void split_diag_wait_boot_release() {
+    while(meshink_primary_button_pressed())delay(20);
+}
+
+[[noreturn]] static void split_diag_button_wake_cycle() {
+    const esp_sleep_wakeup_cause_t cause=esp_sleep_get_wakeup_cause();
+    meshink_board_diag_restore_button_wake();
+    if(cause==ESP_SLEEP_WAKEUP_EXT0)++split_diag_boot_wakes;
+
+    Serial.printf("[T5-DIAG-ESP] WAKE #%lu cause=%d; release BOOT, then 30s monitor window\n",
+                  (unsigned long)split_diag_boot_wakes,(int)cause);
+    split_diag_wait_boot_release();
+
+    // Give native USB time to enumerate before display initialization begins.
+    for(int seconds=3;seconds>0;--seconds){
+        Serial.printf("[T5-DIAG-ESP] USB settle before display: %ds\n",seconds);
+        Serial.flush();
+        delay(1000);
+    }
+
+    MeshInkUiStartupPlan plan{};
+    plan.touch=false;
+    plan.load_state=false;
+    plan.radio_settle=false;
+    plan.recover_power_path=false;
+    plan.splash=false;
+    plan.sample_status=false;
+    plan.battery_guard=false;
+    plan.service_mesh_between_steps=false;
+    ui_startup(plan);
+
+    char wake_line[40]{};
+    snprintf(wake_line,sizeof(wake_line),"BOOT WAKE #%lu",
+             (unsigned long)split_diag_boot_wakes);
+    ui_show_split_sleep_diag("ESP DEEP SLEEP TEST",wake_line,
+                             "BOOT IS THE ONLY WAKE SOURCE",
+                             "30 SEC USB WINDOW");
+
+    for(int remaining=30;remaining>0;--remaining){
+        if(remaining==30||remaining==20||remaining==10||remaining<=5){
+            Serial.printf("[T5-DIAG-ESP] wake #%lu sleeping again in %ds\n",
+                          (unsigned long)split_diag_boot_wakes,remaining);
+            Serial.flush();
+        }
+        delay(1000);
+    }
+
+    split_diag_wait_boot_release();
+    Serial.printf("[T5-DIAG-ESP] wake #%lu re-arming BOOT EXT0 and sleeping again\n",
+                  (unsigned long)split_diag_boot_wakes);
+    Serial.flush();
+    while(!meshink_board_diag_enter_button_only_deep_sleep(false)){
+        split_diag_wait_boot_release();
+        delay(250);
+    }
+    while(true)delay(1000);
+}
+
+static bool split_diag_resume_if_needed() {
+    if(split_diag_magic!=SPLIT_DIAG_MAGIC||split_diag_phase!=2)return false;
+    if(esp_reset_reason()!=ESP_RST_DEEPSLEEP){
+        split_diag_magic=0;
+        split_diag_phase=0;
+        split_diag_boot_wakes=0;
+        return false;
+    }
+    split_diag_button_wake_cycle();
+    return true;
+}
+#endif
 
 static char terminal_line[48]{};
 static uint8_t terminal_length=0;
@@ -181,6 +264,10 @@ void setup() {
     Serial.begin(115200);
     meshink_buttons_begin();
 
+#if T5_SPLIT_SLEEP_DIAG
+    if(split_diag_resume_if_needed())return;
+#endif
+
     bool radio_wake=meshink_board_woke_from_radio();
     const bool button_wake=meshink_board_woke_from_primary_button();
     const bool timer_wake=meshink_board_woke_from_timer();
@@ -331,6 +418,17 @@ void setup() {
 
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
 
+#if T5_SPLIT_SLEEP_DIAG
+        split_diag_radio_active=meshink_board_diag_radio_begin();
+        ui_show_split_sleep_diag("SX1262 DIO1 TEST",
+                                 split_diag_radio_active?"WAITING FOR PACKETS":"RADIO ARM FAILED",
+                                 "SEND MULTIPLE LORA MESSAGES",
+                                 "HOLD BOOT 2S FOR ESP TEST");
+        Serial.println("[T5-DIAG-RADIO] diagnostic ready: send repeated packets; DIO1 HIGH/LOW will be logged");
+        Serial.println("[T5-DIAG-RADIO] hold BOOT for 2 seconds to switch to BOOT-only deep-sleep test");
+        return;
+#endif
+
         const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
         check_local_wireless_state("local-post-mesh",local_ready);
         if(meshink_wireless_local_radios_off(local_ready))
@@ -347,6 +445,44 @@ void setup() {
 }
 
 void loop() {
+#if T5_SPLIT_SLEEP_DIAG
+    if(split_diag_radio_active){
+        if(meshink_board_diag_radio_poll(split_diag_radio_events+1))
+            ++split_diag_radio_events;
+
+        const bool pressed=meshink_primary_button_pressed();
+        if(pressed&&!split_diag_boot_hold_started)
+            split_diag_boot_hold_started=millis();
+        if(!pressed)
+            split_diag_boot_hold_started=0;
+
+        if(pressed&&split_diag_boot_hold_started&&
+           millis()-split_diag_boot_hold_started>=2000UL){
+            split_diag_radio_active=false;
+            split_diag_magic=SPLIT_DIAG_MAGIC;
+            split_diag_phase=2;
+            split_diag_boot_wakes=0;
+            ui_show_split_sleep_diag("ESP DEEP SLEEP TEST","ARMED",
+                                     "RELEASE BOOT",
+                                     "FIRST SLEEP IN 3 SEC");
+            Serial.printf("[T5-DIAG] radio phase complete events=%lu; switching to BOOT-only wake test\n",
+                          (unsigned long)split_diag_radio_events);
+            split_diag_wait_boot_release();
+            for(int seconds=3;seconds>0;--seconds){
+                Serial.printf("[T5-DIAG-ESP] initial sleep in %ds\n",seconds);
+                Serial.flush();
+                delay(1000);
+            }
+            while(!meshink_board_diag_enter_button_only_deep_sleep(true)){
+                split_diag_wait_boot_release();
+                delay(250);
+            }
+            return;
+        }
+        delay(5);
+        return;
+    }
+#endif
     if(cache64_psram_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         local_mesh_rx_wake_loop();

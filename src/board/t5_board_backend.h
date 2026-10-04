@@ -36,5 +36,12 @@ void meshink_board_prepare_retained_aux_wake();
 void meshink_board_release_retained_radio_holds();
 bool meshink_board_enter_deep_sleep_standby();
 bool meshink_board_return_to_retained_deep_sleep();
+
+// deepsleep28 split diagnostic: isolate SX1262 DIO1 repeatability from
+// ESP32-S3 deep-sleep wake-source repeatability.
+bool meshink_board_diag_radio_begin();
+bool meshink_board_diag_radio_poll(uint32_t sequence);
+void meshink_board_diag_restore_button_wake();
+bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry);
 void meshink_board_companion_exit_feedback_begin();
 void meshink_board_companion_release_resources();
