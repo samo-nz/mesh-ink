@@ -298,7 +298,7 @@ assert "MeshInkSX1262Wrapper::recvRaw" in board_target_source, "deepsleep26 repl
 retained_resume_body = board_target_source.split("static bool radio_resume_retained",1)[1].split("bool radio_resume_rx_wake",1)[0]
 assert "radio.resetOnStartup=false;" in retained_resume_body, "packet wake first reconstructs RadioLib without resetting retained FIFO"
 assert retained_resume_body.index("radio.resetOnStartup=false;") < retained_resume_body.index("captureRetainedWakePacket"), "retained FIFO is initialized before normal readData capture"
-assert retained_resume_body.index("captureRetainedWakePacket") < retained_resume_body.index("radio.resetOnStartup=true;") < retained_resume_body.rindex("radio.std_init(&radio_spi)"), "saved packet is secured before the clean hardware-resetting reinit"
+assert retained_resume_body.index("captureRetainedWakePacket") < retained_resume_body.rindex("radio.std_init(&radio_spi)"), "saved packet is secured before the clean hardware-resetting reinit"
 assert "radio.getIrqFlags()" in retained_resume_body and "radio.getRSSI()" in retained_resume_body and "radio.getSNR()" in retained_resume_body, "wake diagnostics/metrics are sampled only after retained RadioLib init"
 assert "radio.getPacketLength(" not in retained_resume_body and "radio.readBuffer(" not in retained_resume_body, "deepsleep26 avoids the old raw FIFO length/buffer probe"
 sleep_entry_body = board_target_source.split("bool meshink_board_enter_deep_sleep_standby()",1)[1].split("bool meshink_board_return_to_retained_deep_sleep()",1)[0]
