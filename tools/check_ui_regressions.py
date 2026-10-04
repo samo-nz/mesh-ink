@@ -51,6 +51,7 @@ touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encodi
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
 platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
+epdiy_patch_source = (root / "tools" / "patch_epdiy_shared_gpio_isr.py").read_text(encoding="utf-8")
 testing_workflow_source = (root / ".github" / "workflows" / "testing-firmware.yml").read_text(encoding="utf-8")
 cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].split("; Generic portability", 1)[0]
 
@@ -218,7 +219,17 @@ assert "sleep deferred: received-message queue drain is still pending" in compan
 assert "sync_and_verify_for_deep_sleep" in companion_source, "headless deep sleep verifies message journal durability"
 assert "RX direct journal seq=" in runtime_source, "received direct messages log real journal append result"
 assert "deep-sleep verify expected seq=" in message_store_source, "journal verification logs expected and reopened durable state"
-assert "meshink_power_frontlight_set(100);" in companion_source and "local_rx_wake_indicator(false);" in companion_source, "headless RX test uses frontlight as awake indicator"
+assert "local_rx_wake_indicator" not in companion_source, "headless RX standby stays dark outside the notification alert"
+retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
+assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"
+assert "meshink_epdiy_existing_gpio_isr_service" in board_target_source, "board runtime exposes retained-radio ISR ownership to EPDiy"
+assert "companion_radio_uses_arduino_irq&&radio_gpio_isr_service_active" in board_target_source, "EPDiy sharing is enabled only after the retained radio ISR service is known active"
+assert "MESHINK_SHARED_GPIO_ISR_PATCH_V1" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR patch"
+assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
+assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
+assert "if (meshink_epdiy_owns_gpio_isr_service)" in epdiy_patch_source, "EPDiy only uninstalls a GPIO ISR service it created"
+assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
 assert "if(!deep_sleep_standby)draw_status_bar();" in source, "deep-sleep standby omits the normal status bar"
 assert '"DEEP SLEEP STANDBY"' in source, "deep-sleep standby visibly identifies its power state"
 assert "esp_sleep_enable_timer_wakeup" in board_target_source and "60ULL*60ULL*1000000ULL" in board_target_source, "deep-sleep standby has an hourly battery timer wake"

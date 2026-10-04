@@ -191,6 +191,17 @@ static bool t5_wait_local_radio_settle(){
 // ISR service on its first radio attachInterrupt(). Select the path explicitly
 // to avoid probing the wrong state and emitting a false ESP-IDF error.
 static bool companion_radio_uses_arduino_irq=false;
+static bool radio_gpio_isr_service_active=false;
+
+// EPDiy's board-v7 init normally assumes it is first to create the process-wide
+// ESP-IDF GPIO ISR service. Retained RX/button wake is intentionally the reverse:
+// RadioLib is restored first and already owns that service before a display-only
+// alert or in-place UI promotion. The patched EPDiy board init asks this hook
+// before touching the service, so it can share the known-live service without a
+// failing install probe and without later uninstalling the radio's ISR service.
+extern "C" bool meshink_epdiy_existing_gpio_isr_service() {
+    return companion_radio_uses_arduino_irq&&radio_gpio_isr_service_active;
+}
 
 // EPDiy's LilyGo-S3 board init installs the ESP-IDF GPIO ISR service for its
 // TPS65185 interrupt before MeshCore starts. Arduino's first attachInterrupt()
@@ -223,6 +234,7 @@ public:
             callbacks_[interruptNum]=nullptr;
             arduino_owned_[interruptNum]=true;
             ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
+            radio_gpio_isr_service_active=true;
             return;
         }
 
@@ -231,7 +243,10 @@ public:
         gpio_set_intr_type(pin,type);
         const esp_err_t added=gpio_isr_handler_add(
             pin,irq_bridge,(void*)(uintptr_t)interruptNum);
-        if(added==ESP_OK)return;
+        if(added==ESP_OK){
+            radio_gpio_isr_service_active=true;
+            return;
+        }
 
         // No global IDF service is active (normal in companion mode after
         // meshink_display_deinit), so let Arduino install and own it in the usual way.
@@ -239,6 +254,7 @@ public:
             callbacks_[interruptNum]=nullptr;
             arduino_owned_[interruptNum]=true;
             ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
+            radio_gpio_isr_service_active=true;
             return;
         }
         callbacks_[interruptNum]=nullptr;
@@ -902,6 +918,7 @@ bool meshink_board_return_to_retained_deep_sleep() {
 }
 
 void T5Board::begin() {
+    radio_gpio_isr_service_active=false;
     // The application renders and tears down the companion splash before this
     // board lifecycle entry. EPDiy has released I2C/GPIO resources, so the
     // upstream ESP32 board setup can safely take ownership here.
@@ -929,6 +946,7 @@ void T5Board::begin() {
 
 void T5Board::beginLocal() {
     companion_radio_uses_arduino_irq=false;
+    radio_gpio_isr_service_active=false;
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
@@ -949,6 +967,7 @@ void T5Board::beginLocal() {
 }
 
 void T5Board::beginLocalRxWake() {
+    radio_gpio_isr_service_active=false;
     // No display/I2C/GPS/battery startup here. MeshInk has already copied the
     // wake packet out of the retained SX1262 FIFO and then cleanly reinitialized
     // RadioLib. The MeshInk wrapper will inject that saved packet on first recvRaw().

@@ -321,17 +321,6 @@ static uint32_t local_rx_wake_button_started=0;
 static MeshInkRadioStats local_rx_wake_stats{};
 static constexpr uint32_t LOCAL_RX_WAKE_QUIET_MS=40000UL;
 
-static void local_rx_wake_indicator(bool on) {
-    if(on){
-        meshink_power_frontlight_begin();
-        meshink_power_frontlight_set(100);
-        Serial.println("[T5-DEEPSLEEP] RX-mode indicator: front light ON");
-    }else{
-        meshink_power_frontlight_set(0);
-        Serial.println("[T5-DEEPSLEEP] RX-mode indicator: front light OFF");
-    }
-}
-
 static void companion_set_low_power_cpu() {
     static constexpr uint32_t COMPANION_CPU_MHZ=80;
     const bool accepted=setCpuFrequencyMhz(COMPANION_CPU_MHZ);
@@ -545,7 +534,6 @@ void local_mesh_setup() {
 static bool local_mesh_setup_retained_wake(bool require_packet,const char* reason) {
     const uint32_t started=millis();
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::HeadlessStart);
-    local_rx_wake_indicator(true);
     local_interface.resetMessageSync();
     companion_mode_active=false;
     local_rx_wake_runtime=false;
@@ -562,7 +550,6 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioResumeFail,
                                      millis()-started);
         Serial.println("[T5-DEEPSLEEP] retained startup failed before MeshCore");
-        local_rx_wake_indicator(false);
         return false;
     }
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioResumeOk,
@@ -572,7 +559,6 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SpiffsFail,
                                      millis()-started);
         Serial.println("[T5-DEEPSLEEP] retained startup failed: SPIFFS mount unavailable");
-        local_rx_wake_indicator(false);
         return false;
     }
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SpiffsOk,
@@ -648,14 +634,11 @@ bool local_mesh_promote_to_ui(const char* source) {
                   wake_power.battery_mv_valid?"":"unavailable/",
                   wake_power.battery_mv_valid?(unsigned)wake_power.battery_mv:0U);
     if(wake_result==MeshInkPowerSleepCheck::Critical){
-        local_rx_wake_indicator(false);
         local_mesh_prepare_shutdown();
         meshink_board_companion_release_resources();
         SPIFFS.end();
         ui_minimal_low_battery_shutdown(wake_power,source?source:"deep-ui");
     }
-
-    local_rx_wake_indicator(false);
     if(!ui_promote_headless_to_interactive())return false;
 
     local_rx_wake_runtime=false;
@@ -706,7 +689,6 @@ bool local_mesh_enter_deep_sleep_standby() {
                   sleep_power.battery_mv_valid?(unsigned)sleep_power.battery_mv:0U);
     if(sleep_power_result==MeshInkPowerSleepCheck::Critical){
         Serial.println("[T5-DEEPSLEEP] critical battery before re-sleep; minimal shutdown path");
-        local_rx_wake_indicator(false);
         local_mesh_prepare_shutdown();
         meshink_board_companion_release_resources();
         SPIFFS.end();
@@ -720,13 +702,7 @@ bool local_mesh_enter_deep_sleep_standby() {
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SleepEnter,
                                  stats.packets_received,
                                  (uint16_t)(stats.packets_sent>65535?65535:stats.packets_sent));
-    local_rx_wake_indicator(false);
-    const bool entered=meshink_board_enter_deep_sleep_standby();
-    if(!entered){
-        // We stayed in the special RX runtime, so restore its visible marker.
-        local_rx_wake_indicator(true);
-    }
-    return entered;
+    return meshink_board_enter_deep_sleep_standby();
 }
 
 void local_mesh_rx_wake_loop() {
@@ -755,7 +731,6 @@ void local_mesh_rx_wake_loop() {
                       alert_power.battery_mv_valid?"":"unavailable/",
                       alert_power.battery_mv_valid?(unsigned)alert_power.battery_mv:0U);
         if(alert_power_result==MeshInkPowerSleepCheck::Critical){
-            local_rx_wake_indicator(false);
             local_mesh_prepare_shutdown();
             meshink_board_companion_release_resources();
             SPIFFS.end();
@@ -763,11 +738,8 @@ void local_mesh_rx_wake_loop() {
         }
     }
     const bool alert_active=ui_service_headless_message_alert();
-    if(alert_was_busy||alert_active){
+    if(alert_was_busy||alert_active)
         local_rx_wake_last_activity=millis();
-        if(alert_was_busy&&!ui_headless_display_busy())
-            local_rx_wake_indicator(true);
-    }
 
     const uint32_t now_ms=millis();
     const MeshInkRadioStats now=meshink_radio_stats();
@@ -814,7 +786,6 @@ void local_mesh_rx_wake_loop() {
         Serial.println("[T5-DEEPSLEEP] BOOT held during headless RX runtime; promoting running MeshCore into UI");
         if(local_mesh_promote_to_ui("deep-button-runtime"))return;
         Serial.println("[T5-DEEPSLEEP] UI promotion failed; staying in headless RX runtime");
-        local_rx_wake_indicator(true);
     }
     if(!pressed)local_rx_wake_button_started=0;
 

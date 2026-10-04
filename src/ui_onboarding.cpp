@@ -3862,6 +3862,8 @@ static void ui_close_headless_display_session() {
     }
     meshink_display_deinit();
     headless_display_session=false;
+    ui_boot_cpu_active=false;
+    set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle");
     Serial.println("[T5-DEEPSLEEP] headless display session closed; radio/MeshCore remain active");
 }
 
@@ -3877,6 +3879,7 @@ bool ui_service_headless_message_alert() {
     if(!headless_ui_state)return false;
 
     if(headless_alert_requested&&!headless_display_session){
+        Serial.println("[T5-DEEPSLEEP] headless display starting with retained radio GPIO ISR service");
         MeshInkUiStartupPlan plan{};
         plan.touch=false;
         plan.radio_settle=false;
