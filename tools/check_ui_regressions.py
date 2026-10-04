@@ -1102,7 +1102,7 @@ assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_bo
 assert "[T5-STOREPERF]" not in message_store_source and "meshink_message_store_perf_snapshot" not in message_store_source, "message-store profiling instrumentation is removed"
 
 # Test65 cleanup: temporary boot-stage timing probes are removed after tuning.
-ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
+ui_setup_boot=source[source.index("void ui_startup(const MeshInkUiStartupPlan& plan)"):source.index("void ui_setup()")]
 for tuned_source in (unified_source, companion_source, board_target_source, source):
     assert "[T5-BOOTPERF]" not in tuned_source, "boot performance probes are removed from the field build"
 assert "bootperf_" not in unified_source and "bootperf_" not in companion_source and "bootperf_" not in board_target_source and "bootperf_" not in source, "boot timer scaffolding is removed"
@@ -1114,7 +1114,7 @@ assert "bootperf_" not in unified_source and "bootperf_" not in companion_source
 setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
 assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
 assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
-assert "ui_boot_cpu_active=true;" in source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")], "UI boot phase explicitly stays at render clock"
+assert "ui_boot_cpu_active=true;" in source[source.index("void ui_startup(const MeshInkUiStartupPlan& plan)"):source.index("void ui_setup()")], "UI startup phase explicitly stays at render clock"
 assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");' in source, "area refresh cannot drop boot to 80 MHz"
