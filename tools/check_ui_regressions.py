@@ -265,9 +265,11 @@ assert 'if(require_packet)board.finishLocalRxWakeCapture();' in retained_setup, 
 assert retained_setup.index("the_mesh.begin(true);") < retained_setup.index("if(require_packet)board.finishLocalRxWakeCapture();"), "saved-packet ready flag is latched before startup reason is cleared"
 assert "esp_sleep_enable_ext1_wakeup" in board_target_source and "ESP_EXT1_WAKEUP_ANY_HIGH" in board_target_source, "production SX1262 DIO1 wake remains EXT1 ANY_HIGH"
 assert "return radio_gpio_irq_handler_active;" in board_target_source, "EPDiy sharing follows the actual SX1262 DIO1 handler lifetime"
-assert "MESHINK_SHARED_GPIO_ISR_PATCH_V2" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR V2 patch"
+assert "MESHINK_SHARED_GPIO_ISR_PATCH_V3" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR V2 patch"
 assert "meshink_radio_gpio_isr" in epdiy_patch_source and "&& !meshink_radio_gpio_isr" in epdiy_patch_source, "EPDiy teardown preserves a live radio handler even when EPDiy created the service first"
 assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
+assert "meshink_epdiy_note_gpio_isr_service" in epdiy_patch_source and "gpio_isr_service_ready" in board_target_source, "EPDiy and radio share explicit global ISR-service installed state"
+assert "if(gpio_isr_service_ready)return true;" in board_target_source, "radio skips duplicate gpio_install_isr_service calls when EPDiy already owns the service"
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
 assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
 assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
@@ -1017,6 +1019,16 @@ assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in so
 assert "rounded_box(rect,max(ui_w(22),ui_h(22)),false);" in source, "standby summary cards use the shared rounded visual language"
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
 assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_centred("TO WAKE",ui_y(892),3,0,true);' in source, "standby uses a lower divider and larger two-line smooth wake instruction"
+
+# Test44b: unread state is journal authority without growing the v3 record.
+assert "MESHINK_MESSAGE_UNREAD" in message_store_header and "MESHINK_MESSAGE_READ_THROUGH" in message_store_header, "v3 record flags persist unread arrival and read-through boundary"
+assert "static_assert(sizeof(MeshInkStoredMessage)==188" in message_store_source, "persistent unread reuses existing flags without growing the record cache"
+assert "if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;" in message_store_source, "incoming unread state is committed in the same append transaction"
+assert "MeshInkMessageStore::mark_read_through" in message_store_source and "MESHINK_MESSAGE_READ_THROUGH" in message_store_source, "opening a conversation persists a single read-through marker"
+assert "rebuild_unread_from_journal()" in runtime_source and "unread restored direct=" in runtime_source, "RAM unread counters are derived from journal state at startup"
+assert "mark_read(MessageKind::Direct" in runtime_source and "mark_read(MessageKind::Channel" in runtime_source, "opening direct/channel conversations persists read state instead of only zeroing RAM"
+assert "path_len,unread)" in runtime_source, "RX append carries unread state directly into the durable record"
+assert "if(sequence&&journal_full)rebuild_unread_from_journal();" in runtime_source, "ring overwrite reconciles derived unread counters with the 250-record journal"
 
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
