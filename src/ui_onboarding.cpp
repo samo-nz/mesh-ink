@@ -2922,6 +2922,13 @@ static void request_hardware_shutdown() {
     meshink_display_release_state(&display);
     fb=nullptr;
     meshink_display_deinit();
+
+    // EPDiy v7 teardown deletes the shared I2C driver. Re-establish only the
+    // minimal bus before commanding BQ25896 BATFET ship mode; otherwise the
+    // charger write would fail and low-battery shutdown would degrade to the
+    // ESP32-only deep-sleep fallback.
+    if(!meshink_power_begin_minimal_bus())
+        Serial.println("[T5-ERROR] low-battery ship-mode I2C restart failed");
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
 
