@@ -30,6 +30,8 @@ bool meshink_board_woke_from_primary_button();
 bool meshink_board_woke_from_timer();
 bool meshink_board_radio_irq_asserted();
 bool meshink_board_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe);
+void meshink_board_prepare_retained_aux_wake();
+void meshink_board_release_retained_radio_holds();
 bool meshink_board_enter_deep_sleep_standby();
 bool meshink_board_return_to_retained_deep_sleep();
 void meshink_board_companion_exit_feedback_begin();
