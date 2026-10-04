@@ -13,111 +13,11 @@
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
 #endif
-#ifndef T5_SPLIT_SLEEP_DIAG
-#define T5_SPLIT_SLEEP_DIAG 0
-#endif
 
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
 
-#if T5_SPLIT_SLEEP_DIAG
-static constexpr uint32_t SPLIT_DIAG_MAGIC=0x534C5038UL; // "SLP8"
-RTC_DATA_ATTR static uint32_t split_diag_magic=0;
-RTC_DATA_ATTR static uint32_t split_diag_phase=0;
-RTC_DATA_ATTR static uint32_t split_diag_boot_wakes=0;
-static bool split_diag_radio_active=false;
-static uint32_t split_diag_radio_events=0;
-static uint32_t split_diag_boot_hold_started=0;
-
-static void split_diag_wait_boot_release() {
-    while(meshink_primary_button_pressed())delay(20);
-}
-
-[[noreturn]] static void split_diag_button_wake_cycle() {
-    const esp_sleep_wakeup_cause_t cause=esp_sleep_get_wakeup_cause();
-    meshink_board_diag_restore_button_wake();
-    const uint64_t ext1_status=cause==ESP_SLEEP_WAKEUP_EXT1
-        ?esp_sleep_get_ext1_wakeup_status():0;
-    if(cause==ESP_SLEEP_WAKEUP_EXT1)++split_diag_boot_wakes;
-
-    Serial.printf("[T5-DIAG-ESP] WAKE #%lu cause=%d ext1=0x%llx; release BOOT, 15s USB reconnect, then 30s radio test\n",
-                  (unsigned long)split_diag_boot_wakes,(int)cause,
-                  (unsigned long long)ext1_status);
-    split_diag_wait_boot_release();
-
-    // Give native USB time to enumerate before touching the retained SX1262.
-    for(int seconds=15;seconds>0;--seconds){
-        Serial.printf("[T5-DIAG-ESP] USB settle before radio test: %ds\n",seconds);
-        Serial.flush();
-        delay(1000);
-    }
-
-    const bool gps_alive=meshink_board_diag_gps_activity();
-    Serial.printf("[T5-DIAG-ESP] wake #%lu shared-rail GPS witness=%u\n",
-                  (unsigned long)split_diag_boot_wakes,gps_alive?1U:0U);
-
-    meshink_board_diag_radio_transport_probe("post-sleep");
-
-    const bool radio_ready=meshink_board_diag_radio_begin();
-    Serial.printf("[T5-DIAG-ESP] wake #%lu retained radio test ready=%u; send LoRa packets now\n",
-                  (unsigned long)split_diag_boot_wakes,radio_ready?1U:0U);
-
-    uint32_t window_events=0;
-    const uint32_t window_started=millis();
-    int last_reported=-1;
-    while(millis()-window_started<30000UL){
-        if(meshink_board_diag_radio_poll(window_events+1))
-            ++window_events;
-
-        const uint32_t elapsed=millis()-window_started;
-        const int remaining=30-(int)(elapsed/1000UL);
-        if(remaining!=last_reported&&
-           (remaining==30||remaining==20||remaining==10||remaining<=5)){
-            last_reported=remaining;
-            Serial.printf("[T5-DIAG-ESP] wake #%lu radio-events=%lu sleeping again in %ds\n",
-                          (unsigned long)split_diag_boot_wakes,
-                          (unsigned long)window_events,remaining);
-            Serial.flush();
-        }
-        delay(5);
-    }
-
-    // Put the live SX1262 back into a known continuous-RX/DIO1-low state
-    // immediately before the next CPU deep-sleep interval.
-    const bool radio_rearmed=meshink_board_diag_radio_begin();
-    Serial.printf("[T5-DIAG-ESP] wake #%lu radio window complete events=%lu final-rearm=%u; sleeping\n",
-                  (unsigned long)split_diag_boot_wakes,
-                  (unsigned long)window_events,radio_rearmed?1U:0U);
-
-    // Initial sleep is #1, wake #1 returns to sleep #2, and wake #2 returns to
-    // sleep #3. Probe the retained SX1262 immediately before that third sleep.
-    if(split_diag_boot_wakes==2){
-        Serial.println("[T5-DIAG-SX] taking read-only SX1262 snapshot before deep sleep #3");
-        meshink_board_diag_radio_snapshot("before-sleep-3");
-    }
-
-    split_diag_wait_boot_release();
-    Serial.flush();
-    while(!meshink_board_diag_enter_button_only_deep_sleep(false)){
-        split_diag_wait_boot_release();
-        delay(250);
-    }
-    while(true)delay(1000);
-}
-
-static bool split_diag_resume_if_needed() {
-    if(split_diag_magic!=SPLIT_DIAG_MAGIC||split_diag_phase!=2)return false;
-    if(esp_reset_reason()!=ESP_RST_DEEPSLEEP){
-        split_diag_magic=0;
-        split_diag_phase=0;
-        split_diag_boot_wakes=0;
-        return false;
-    }
-    split_diag_button_wake_cycle();
-    return true;
-}
-#endif
 
 static char terminal_line[48]{};
 static uint8_t terminal_length=0;
@@ -282,9 +182,6 @@ void setup() {
     Serial.begin(115200);
     meshink_buttons_begin();
 
-#if T5_SPLIT_SLEEP_DIAG
-    if(split_diag_resume_if_needed())return;
-#endif
 
     bool radio_wake=meshink_board_woke_from_radio();
     const bool button_wake=meshink_board_woke_from_primary_button();
@@ -436,17 +333,6 @@ void setup() {
 
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
 
-#if T5_SPLIT_SLEEP_DIAG
-        const bool split_diag_radio_armed=meshink_board_diag_radio_begin();
-        split_diag_radio_active=true;
-        ui_show_split_sleep_diag("SX1262 DIO1 TEST",
-                                 split_diag_radio_armed?"WAITING FOR PACKETS":"RADIO ARM FAILED",
-                                 "SEND MULTIPLE LORA MESSAGES",
-                                 "HOLD BOOT 2S FOR ESP TEST");
-        Serial.println("[T5-DIAG-RADIO] diagnostic ready: send repeated packets; DIO1 HIGH/LOW will be logged");
-        Serial.println("[T5-DIAG-RADIO] hold BOOT for 2 seconds to switch to BOOT-only deep-sleep test");
-        return;
-#endif
 
         const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
         check_local_wireless_state("local-post-mesh",local_ready);
@@ -464,41 +350,6 @@ void setup() {
 }
 
 void loop() {
-#if T5_SPLIT_SLEEP_DIAG
-    if(split_diag_radio_active){
-        if(meshink_board_diag_radio_poll(split_diag_radio_events+1))
-            ++split_diag_radio_events;
-
-        const bool pressed=meshink_primary_button_pressed();
-        if(pressed&&!split_diag_boot_hold_started)
-            split_diag_boot_hold_started=millis();
-        if(!pressed)
-            split_diag_boot_hold_started=0;
-
-        if(pressed&&split_diag_boot_hold_started&&
-           millis()-split_diag_boot_hold_started>=2000UL){
-            split_diag_radio_active=false;
-            split_diag_magic=SPLIT_DIAG_MAGIC;
-            split_diag_phase=2;
-            split_diag_boot_wakes=0;
-            Serial.printf("[T5-DIAG] radio phase complete events=%lu; switching to BOOT-only wake test\n",
-                          (unsigned long)split_diag_radio_events);
-            split_diag_wait_boot_release();
-            for(int seconds=3;seconds>0;--seconds){
-                Serial.printf("[T5-DIAG-ESP] initial sleep in %ds\n",seconds);
-                Serial.flush();
-                delay(1000);
-            }
-            while(!meshink_board_diag_enter_button_only_deep_sleep(true)){
-                split_diag_wait_boot_release();
-                delay(250);
-            }
-            return;
-        }
-        delay(5);
-        return;
-    }
-#endif
     if(cache64_psram_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         local_mesh_rx_wake_loop();
