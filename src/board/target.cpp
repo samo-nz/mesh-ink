@@ -748,12 +748,12 @@ void meshink_board_begin_local_rx_wake(bool packet_wake){board.beginLocalRxWake(
 void meshink_board_boot_complete(){board.onBootComplete();}
 
 bool meshink_board_woke_from_radio() {
-    if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT1)return false;
-    return (esp_sleep_get_ext1_wakeup_status()&(1ULL<<P_LORA_DIO_1))!=0;
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
 }
 
 bool meshink_board_woke_from_primary_button() {
-    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+    if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT1)return false;
+    return (esp_sleep_get_ext1_wakeup_status()&(1ULL<<T5_PIN_BOOT_BUTTON))!=0;
 }
 
 bool meshink_board_woke_from_timer() {
@@ -766,18 +766,18 @@ bool meshink_board_radio_irq_asserted() {
 }
 
 void meshink_board_restore_deep_sleep_wake_pads() {
-    // ESP-IDF 4.4 leaves EXT0/EXT1 wake pads configured as RTC IO after wake.
-    // Return BOOT and DIO1 to the normal digital GPIO block before Arduino
-    // pinMode(), RadioLib GPIO interrupts, or a later EXT1 sleep cycle use them.
-    // This is especially important for the second deep-sleep cycle in one boot.
+    // EXT0/EXT1 route their wake pads through RTC IO. Explicitly release any
+    // per-pad RTC hold before returning DIO1/BOOT to normal digital GPIO.
     gpio_deep_sleep_hold_dis();
+    const esp_err_t radio_hold=rtc_gpio_hold_dis((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_hold=rtc_gpio_hold_dis((gpio_num_t)T5_PIN_BOOT_BUTTON);
     const esp_err_t radio_pad=rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
     const esp_err_t button_pad=rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON);
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
-    Serial.printf("[T5-DEEPSLEEP] wake pads restored to digital gpio dio1=%d boot=%d result=%d/%d\n",
+    Serial.printf("[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d\n",
                   digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
-                  (int)radio_pad,(int)button_pad);
+                  (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
 }
 
 void meshink_board_prepare_retained_aux_wake() {
@@ -796,70 +796,32 @@ void meshink_board_release_retained_radio_holds() {
 static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
     60ULL*60ULL*1000000ULL;
 
-static void t5_restore_radio_wake_pad_to_digital() {
-    rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
-    pinMode(P_LORA_DIO_1,INPUT);
-}
-
 static bool t5_enable_deep_sleep_wake_sources() {
-    // deepsleep24: explicitly move DIO1 into the RTC IO domain before EXT1 is
-    // armed. The first sleep previously relied on ESP-IDF doing this conversion
-    // internally, while later sleeps followed an RTC->digital->RTC pad history.
-    // Make both sleep entries identical and verify the RTC-domain level itself.
-    const gpio_num_t radio_gpio=(gpio_num_t)P_LORA_DIO_1;
-    const int digital_before=digitalRead(P_LORA_DIO_1);
-    if(!rtc_gpio_is_valid_gpio(radio_gpio)){
-        Serial.printf("[T5-DEEPSLEEP] RTC wake-pad setup failed: GPIO%d is not RTC-capable\n",
-                      P_LORA_DIO_1);
-        return false;
-    }
-
-    const esp_err_t rtc_init=rtc_gpio_init(radio_gpio);
-    const esp_err_t rtc_dir=rtc_init==ESP_OK
-        ?rtc_gpio_set_direction(radio_gpio,RTC_GPIO_MODE_INPUT_ONLY):rtc_init;
-    const esp_err_t rtc_pullup=rtc_dir==ESP_OK
-        ?rtc_gpio_pullup_dis(radio_gpio):rtc_dir;
-    const esp_err_t rtc_pulldown=rtc_pullup==ESP_OK
-        ?rtc_gpio_pulldown_dis(radio_gpio):rtc_pullup;
-    const uint32_t rtc_level=rtc_pulldown==ESP_OK
-        ?rtc_gpio_get_level(radio_gpio):0xFFFFFFFFUL;
-
-    Serial.printf("[T5-DEEPSLEEP] RTC wake pad GPIO%d digital-before=%d rtc-level=%lu init=%d dir=%d pullup=%d pulldown=%d\n",
-                  P_LORA_DIO_1,digital_before,(unsigned long)rtc_level,
-                  (int)rtc_init,(int)rtc_dir,(int)rtc_pullup,(int)rtc_pulldown);
-
-    if(rtc_init!=ESP_OK||rtc_dir!=ESP_OK||rtc_pullup!=ESP_OK||rtc_pulldown!=ESP_OK||
-       rtc_level!=LOW){
-        t5_restore_radio_wake_pad_to_digital();
-        Serial.println("[T5-DEEPSLEEP] sleep deferred: RTC DIO1 wake input is not cleanly LOW");
-        return false;
-    }
-
-    // Rebuild the wake-source set from scratch on every sleep entry.
+    // deepsleep25: move the radio wake off EXT1. EXT0 already proved it can
+    // wake the second deep-sleep interval, so DIO1 owns EXT0 HIGH. BOOT moves
+    // to EXT1 ANY_LOW. The hourly timer remains unchanged.
     const esp_err_t clear_wake=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
-        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
-    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
-        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
+    const esp_err_t radio_wake=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)P_LORA_DIO_1,1);
+    const esp_err_t button_wake=esp_sleep_enable_ext1_wakeup(
+        1ULL<<T5_PIN_BOOT_BUTTON,ESP_EXT1_WAKEUP_ANY_LOW);
     const esp_err_t timer_wake=esp_sleep_enable_timer_wakeup(
         T5_DEEP_SLEEP_BATTERY_CHECK_US);
-    if(clear_wake!=ESP_OK||button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
-        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed clear=%d button=%d radio=%d timer=%d\n",
-                      (int)clear_wake,(int)button_wake,(int)radio_wake,(int)timer_wake);
+    if(clear_wake!=ESP_OK||radio_wake!=ESP_OK||button_wake!=ESP_OK||timer_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed clear=%d radio-ext0=%d button-ext1=%d timer=%d\n",
+                      (int)clear_wake,(int)radio_wake,(int)button_wake,(int)timer_wake);
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-        t5_restore_radio_wake_pad_to_digital();
         return false;
     }
-
-    Serial.printf("[T5-DEEPSLEEP] EXT1 armed explicitly from RTC GPIO%d level=%lu mask=0x%llx mode=ANY_HIGH\n",
-                  P_LORA_DIO_1,(unsigned long)rtc_gpio_get_level(radio_gpio),
-                  (unsigned long long)(1ULL<<P_LORA_DIO_1));
+    Serial.printf("[T5-DEEPSLEEP] wake armed radio=EXT0 GPIO%d HIGH button=EXT1 GPIO%d ANY_LOW timer=1h dio1=%d boot=%d\n",
+                  P_LORA_DIO_1,T5_PIN_BOOT_BUTTON,
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON));
     return true;
 }
 
 bool meshink_board_enter_deep_sleep_standby() {
     // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
-    // sleeps; DIO1 is a level-high wake source and BOOT is a level-low source.
+    // sleeps; DIO1 wakes through EXT0 HIGH and BOOT through EXT1 ANY_LOW.
     pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
     pinMode(P_LORA_DIO_1,INPUT);
     if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
@@ -901,28 +863,28 @@ bool meshink_board_enter_deep_sleep_standby() {
         gpio_hold_dis((gpio_num_t)P_LORA_NSS);
         gpio_hold_dis((gpio_num_t)P_LORA_RESET);
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-        t5_restore_radio_wake_pad_to_digital();
         Serial.printf("[T5-DEEPSLEEP] SX1262 pin hold failed nss=%d reset=%d\n",
                       (int)nss_hold,(int)reset_hold);
         return false;
     }
     gpio_deep_sleep_hold_en();
 
-    // Close the race using the same RTC-domain signal EXT1 will observe.
-    const uint32_t rtc_dio1=rtc_gpio_get_level((gpio_num_t)P_LORA_DIO_1);
-    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW||rtc_dio1==HIGH){
+    // Close the race immediately before sleep. DIO1 must remain LOW for
+    // EXT0-HIGH and BOOT must remain HIGH for EXT1-ANY_LOW.
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
         gpio_deep_sleep_hold_dis();
         gpio_hold_dis((gpio_num_t)P_LORA_NSS);
         gpio_hold_dis((gpio_num_t)P_LORA_RESET);
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-        t5_restore_radio_wake_pad_to_digital();
-        Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d rtc-dio1=%lu\n",
-                      digitalRead(T5_PIN_BOOT_BUTTON),(unsigned long)rtc_dio1);
+        Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
         return false;
     }
 
-    Serial.printf("[T5-DEEPSLEEP] entering: RTC-DIO1(GPIO%d)=%lu BOOT(GPIO%d)=HIGH NSS/RESET=held-high\n",
-                  P_LORA_DIO_1,(unsigned long)rtc_dio1,T5_PIN_BOOT_BUTTON);
+    Serial.printf("[T5-DEEPSLEEP] entering: radio EXT0 GPIO%d=LOW button EXT1 GPIO%d=HIGH NSS/RESET=held-high\n",
+                  P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
     Serial.flush();
     delay(20);
     esp_deep_sleep_start();
@@ -950,13 +912,13 @@ bool meshink_board_return_to_retained_deep_sleep() {
     // interval without unholding or reconfiguring the retained radio.
     gpio_deep_sleep_hold_en();
 
-    const uint32_t rtc_dio1=rtc_gpio_get_level((gpio_num_t)P_LORA_DIO_1);
-    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW||rtc_dio1==HIGH){
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
         gpio_deep_sleep_hold_dis();
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-        t5_restore_radio_wake_pad_to_digital();
-        Serial.printf("[T5-DEEPSLEEP] retained re-sleep race avoided boot=%d rtc-dio1=%lu\n",
-                      digitalRead(T5_PIN_BOOT_BUTTON),(unsigned long)rtc_dio1);
+        Serial.printf("[T5-DEEPSLEEP] retained re-sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
         return false;
     }
 

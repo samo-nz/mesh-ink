@@ -744,16 +744,15 @@ bool local_mesh_enter_deep_sleep_standby() {
         ui_minimal_low_battery_shutdown(sleep_power,"deep-rx");
     }
 
-    // deepsleep24 keeps the deepsleep23 display A/B result in place: leave the
-    // initialized headless display session untouched so this build changes only
-    // the ESP32 RTC/EXT1 wake-pad setup.
+    // deepsleep25 keeps the display A/B result in place. The board-level
+    // experiment moves DIO1 from EXT1 to the proven EXT0 wake path.
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
         Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ appeared during handoff dispatched=%u\n",
                       dispatched?1U:0U);
         return false;
     }
-    Serial.println("[T5-DEEPSLEEP] deepsleep24: display session left untouched; testing explicit RTC EXT1 arm");
+    Serial.println("[T5-DEEPSLEEP] deepsleep25: display untouched; radio wake uses EXT0");
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
         Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived after display-preservation checkpoint dispatched=%u\n",
