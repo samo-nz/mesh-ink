@@ -270,9 +270,28 @@ assert "map_tiles_warm_storage();" in promotion_body and promotion_body.index("m
 assert "meshink_gps_prepare_runtime();" in companion_source and "retained UI promotion UART ready" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
 assert "restarting into full UI boot" not in companion_source, "headless BOOT promotion must not restart the ESP32"
 assert "meshink_radio_resume_retained_wake" in companion_source, "button wake uses retained-radio recovery before UI startup"
+assert "static Module radio_module(" in board_target_source, "SX1262 Module is retained explicitly so warm-wake SPI metadata can be initialized non-destructively"
+assert "t5_prepare_retained_sx1262_transport();" in board_target_source, "retained FIFO probe initializes SX126x Module SPI stream metadata before any RadioLib reads"
+transport_body = board_target_source.split("static void t5_prepare_retained_sx1262_transport()",1)[1].split("bool meshink_board_service_asserted_radio_irq",1)[0]
+for retained_transport_token in (
+    "RADIOLIB_MODULE_SPI_WIDTH_ADDR",
+    "RADIOLIB_MODULE_SPI_WIDTH_CMD",
+    "RADIOLIB_MODULE_SPI_WIDTH_STATUS",
+    "RADIOLIB_SX126X_CMD_READ_REGISTER",
+    "RADIOLIB_SX126X_CMD_WRITE_REGISTER",
+    "RADIOLIB_SX126X_CMD_NOP",
+    "RADIOLIB_SX126X_CMD_GET_STATUS",
+):
+    assert retained_transport_token in transport_body, f"retained SX1262 transport setup missing {retained_transport_token}"
+probe_body = board_target_source.split("static bool t5_probe_deep_sleep_radio",1)[1].split("bool meshink_board_probe_deep_sleep_radio",1)[0]
+assert probe_body.index("t5_prepare_retained_sx1262_transport();") < probe_body.index("radio.getIrqFlags()"), "SX1262 stream metadata must be installed before retained IRQ/FIFO queries"
+assert "probe.status==0x00||probe.status==0xFF" in probe_body, "retained probe rejects obviously invalid SPI status"
 wake_inject_body = board_target_source.split("int MeshInkSX1262Wrapper::recvRaw",1)[1].split("float MeshInkSX1262Wrapper::getLastRSSI",1)[0]
 assert "CustomSX1262Wrapper::recvRaw(&scratch,1)" not in wake_inject_body, "saved wake injection must never discard a pending follow-on packet through a one-byte scratch receive"
 retained_resume_body = board_target_source.split("static bool radio_resume_retained",1)[1].split("bool radio_resume_rx_wake",1)[0]
+assert "RADIOLIB_SX126X_IRQ_RX_DONE" in retained_resume_body and "RADIOLIB_SX126X_IRQ_CRC_ERR" in retained_resume_body, "wake FIFO is accepted only for completed CRC-clean SX1262 reception"
+assert "parsed.readFrom(packet,(uint8_t)packet_len)" in retained_resume_body, "retained FIFO bytes must pass MeshCore framing before replay"
+assert "route=%u type=%u" in retained_resume_body, "retained packet log identifies actual MeshCore route/type for wake verification"
 assert "const int16_t rx_state=radio.startReceive();" in retained_resume_body, "retained radio re-arms hardware RX immediately after reinit"
 assert retained_resume_body.index("radio.startReceive()") < retained_resume_body.index("retained-state reinit complete"), "early RX closes the startup blind window before MeshCore datastore/UI work"
 assert "hdr=0x%02x" in wake_inject_body, "saved wake packet header is logged for channel/direct wake diagnosis"
