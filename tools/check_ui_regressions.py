@@ -253,8 +253,9 @@ assert resume_body.index("t5_sx1262_raw_capture_wake_packet") < resume_body.inde
 assert "resetOnStartup=false" not in resume_body and "radio_driver.begin()" not in resume_body, "wake capture no longer relies on Heltec-style retained RadioLib state"
 assert "radio.resetOnStartup=true;" in resume_body and "radio.std_init(&radio_spi)" in resume_body, "each wake rebuilds SX1262 and RadioLib from the normal reset path"
 assert "0x12" in board_target_source and "0x13" in board_target_source and "0x14" in board_target_source and "0x1E" in board_target_source, "raw wake capture reads IRQ, RX buffer metadata, packet status and FIFO directly"
-assert 'if(require_packet)board.finishLocalRxWakeCapture();' in companion_source, "RX_PACKET startup reason remains set until Dispatcher has called the radio wrapper begin"
-assert companion_source.index("the_mesh.begin(true);") < companion_source.index("if(require_packet)board.finishLocalRxWakeCapture();"), "saved-packet ready flag is latched before startup reason is cleared"
+retained_setup=companion_source.split("static bool local_mesh_setup_retained_wake(bool require_packet,const char* reason)",1)[1].split("bool local_mesh_setup_rx_wake()",1)[0]
+assert 'if(require_packet)board.finishLocalRxWakeCapture();' in retained_setup, "RX_PACKET startup reason remains set until Dispatcher has called the radio wrapper begin"
+assert retained_setup.index("the_mesh.begin(true);") < retained_setup.index("if(require_packet)board.finishLocalRxWakeCapture();"), "saved-packet ready flag is latched before startup reason is cleared"
 assert "esp_sleep_enable_ext1_wakeup" in board_target_source and "ESP_EXT1_WAKEUP_ANY_HIGH" in board_target_source, "production SX1262 DIO1 wake remains EXT1 ANY_HIGH"
 assert "return radio_gpio_irq_handler_active;" in board_target_source, "EPDiy sharing follows the actual SX1262 DIO1 handler lifetime"
 assert "MESHINK_SHARED_GPIO_ISR_PATCH_V2" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR V2 patch"
