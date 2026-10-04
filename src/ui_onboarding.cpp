@@ -3867,31 +3867,14 @@ void ui_prepare_headless_rx_wake() {
                   (unsigned)status_unread,(unsigned)status_channel_unread);
 }
 
-void ui_setup() {
-    ui_boot_cpu_active=true;
-    set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
-    // unified_main has already started USB CDC before entering the local UI
-    // path. Keep begin() here for the standalone UI target, but do not burn a
-    // fixed 200 ms delay before useful boot work.
-    Serial.begin(115200);
-    T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
-    meshink_buttons_begin();
-    // Stay off until preferences have been loaded. The splash refresh then
-    // uses the saved brightness or the new 30% first-install default.
-    meshink_power_frontlight_begin();
-    meshink_touch_prepare_boot();
-    meshink_display_init();
-    // EPDiy has now established the shared board/I2C environment. Start the
-    // LoRa/GPS rail before framebuffer, preferences and splash rendering so
-    // those operations overlap its required settling time.
-    meshink_board_start_local_radio_settle();
-    set_ui_orientation(MeshInkOrientation::Portrait);
-    Serial.println("[T5-INIT] display=initialized");
-    meshink_power_recover_boot_path();
-    meshink_touch_finish_boot();
-    Serial.println("[T5-INIT] touch=initialized");
-    display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
-    prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
+static void ui_load_persistent_state() {
+    prefs.begin("t5-ui",true);
+    String saved_name=prefs.getString("name","");
+    selected_preset=prefs.getUChar("preset_v2",17);
+    setup_complete=prefs.getBool("complete",false);
+    timezone_index=prefs.getUChar("timezone",0);
+    status_unread=prefs.getUShort("unread_dm",0);
+    status_channel_unread=prefs.getUShort("unread_ch",0);
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
     map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
@@ -3901,20 +3884,35 @@ void ui_setup() {
     map_last_gps_saved=map_has_last_gps_position;
     map_saved_gps_latitude=map_last_gps_latitude;
     map_saved_gps_longitude=map_last_gps_longitude;
-    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);deep_sleep_standby=prefs.getBool("deep_standby",false);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
+    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);
+    frontlight_timeout_index=prefs.getUChar("light_timeout",2);
+    frontlight_brightness=prefs.getUChar("light_level",30);
+    standby_timeout_index=prefs.getUChar("standby_timeout",1);
+    deep_sleep_standby=prefs.getBool("deep_standby",false);
+    night_start_minutes=prefs.getUShort("night_start",20*60);
+    night_end_minutes=prefs.getUShort("night_end",7*60);
+    map_imperial=prefs.getBool("map_imperial",false);
+    prefs.end();
+
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
-    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness>100)frontlight_brightness=30;
+    if(frontlight_timeout_index>4)frontlight_timeout_index=2;
+    if(frontlight_brightness>100)frontlight_brightness=30;
     if(standby_timeout_index>3)standby_timeout_index=1;
-    if(night_start_minutes>=1440)night_start_minutes=20*60;if(night_end_minutes>=1440)night_end_minutes=7*60;
+    if(night_start_minutes>=1440)night_start_minutes=20*60;
+    if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
-    if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;apply_timezone();
+    if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;
+    apply_timezone();
+
     if(saved_name.length()){
         size_t out=0;
-        for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
+        for(size_t i=0;i<saved_name.length()&&out<20;++i){
+            const char ch=saved_name[i];
+            if(legal_name_character(ch))node_name[out++]=ch;
+            else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)ch);
+        }
         node_name[out]=0;
     }else if(!setup_complete){
-        // Generate once per new device and persist immediately: rebooting
-        // before pressing SAVE must not change the displayed MeshInk ID.
         static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         memcpy(node_name,"MeshInk-",8);
         for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];
@@ -3926,22 +3924,79 @@ void ui_setup() {
         }
         T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] generated first-setup device name: %s\n",node_name);
     }
-    if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
-    update_status_hardware();
-    MeshInkPowerCriticalState boot_power{};
-    if(meshink_power_boot_critical(boot_power))
-        critical_battery_shutdown(boot_power,"boot");
-    meshink_display_set_all_white(&display);
-    draw_meshink_logo(ui_y(160),false);
-    // Keep the original logo visible throughout MeshCore startup. Storage
-    // is normally already mounted, so use the generic boot status by default.
-    // local_mesh_setup() changes it only if SPIFFS fails to mount and must
-    // attempt first-time initialization/recovery.
-    ui_centred("STARTING UP...",ui_y(716),3,0,true);
-    if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
-    ui_centred(UI_VERSION,ui_y(885),2,0,true);
-    meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
-    T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
+
+    screen=setup_complete?Screen::Contacts:Screen::Welcome;
+    keyboard_visible=!setup_complete;
+}
+
+void ui_startup(const MeshInkUiStartupPlan& plan) {
+    ui_boot_cpu_active=true;
+    set_cpu_target(UI_RENDER_CPU_MHZ,"ui-startup");
+    Serial.begin(115200);
+    meshink_buttons_begin();
+
+    if(plan.display){
+        meshink_power_frontlight_begin();
+        meshink_power_frontlight_set(0);
+    }
+
+    if(plan.touch)meshink_touch_prepare_boot();
+
+    if(plan.display){
+        meshink_display_init();
+        if(plan.radio_settle)meshink_board_start_local_radio_settle();
+        if(plan.touch)set_ui_orientation(MeshInkOrientation::Portrait);
+        else meshink_display_set_orientation(MeshInkOrientation::Portrait);
+        Serial.println("[T5-INIT] display=initialized");
+    }
+
+    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+
+    if(plan.recover_power_path)meshink_power_recover_boot_path();
+
+    if(plan.touch){
+        meshink_touch_finish_boot();
+        touch_enabled=true;
+        Serial.println("[T5-INIT] touch=initialized");
+    }else{
+        touch_enabled=false;
+    }
+
+    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+
+    if(plan.display){
+        display=meshink_display_state_init();
+        fb=meshink_display_framebuffer(&display);
+    }
+
+    if(plan.load_state)ui_load_persistent_state();
+    if(plan.sample_status)update_status_hardware();
+
+    if(plan.battery_guard){
+        MeshInkPowerCriticalState boot_power{};
+        if(meshink_power_boot_critical(boot_power))
+            critical_battery_shutdown(boot_power,"ui-startup");
+    }
+
+    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+
+    if(plan.splash&&plan.display){
+        meshink_display_set_all_white(&display);
+        draw_meshink_logo(ui_y(160),false);
+        ui_centred("STARTING UP...",ui_y(716),3,0,true);
+        if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
+        ui_centred(UI_VERSION,ui_y(885),2,0,true);
+        meshink_display_poweron();
+        meshink_display_clear();
+        meshink_display_poweroff();
+        refresh(MeshInkRefreshMode::FastGray16);
+        T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
+    }
+}
+
+void ui_setup() {
+    MeshInkUiStartupPlan plan{};
+    ui_startup(plan);
 }
 
 void ui_show_storage_initializing() {
