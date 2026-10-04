@@ -64,5 +64,6 @@ SPIClass& t5_shared_spi();
 
 bool radio_init();
 bool radio_resume_rx_wake();
+bool radio_resume_retained_wake();
 MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();
