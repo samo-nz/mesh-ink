@@ -267,7 +267,7 @@ public:
                 message_sync_inflight=false;
                 message_sync_required=true;
                 local_mesh_on_frame(frame,len);
-                Serial.printf("[T5-DEEPSLEEP] message-persisted frame=0x%02x; continuing queue drain\n",
+                Serial.printf("[T5-DEEPSLEEP] message-frame-consumed frame=0x%02x; continuing queue drain\n",
                               (unsigned)frame[0]);
                 return len;
             }
@@ -625,6 +625,18 @@ bool local_mesh_enter_deep_sleep_standby() {
         return false;
     }
     local_mesh_flush_contacts_save_now();
+
+    uint32_t durable_sequence=0;
+    size_t durable_count=0;
+    if(!meshink_message_store().sync_and_verify_for_deep_sleep(
+            durable_sequence,durable_count)){
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: journal durability verify FAILED disk-seq=%lu disk-count=%u\n",
+                      (unsigned long)durable_sequence,(unsigned)durable_count);
+        return false;
+    }
+    Serial.printf("[T5-DEEPSLEEP] journal durable before sleep seq=%lu count=%u\n",
+                  (unsigned long)durable_sequence,(unsigned)durable_count);
+
     Serial.printf("[T5-DEEPSLEEP] sleep handoff rx=%lu err=%lu tx=%lu rxmode=%u\n",
                   (unsigned long)stats.packets_received,
                   (unsigned long)stats.receive_errors,
