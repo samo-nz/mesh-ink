@@ -302,6 +302,11 @@ for forbidden_pre_read in ("t5_probe_deep_sleep_radio(", "radio.getPacketLength(
     assert forbidden_pre_read not in retained_resume_body, f"upstream retained-RX handoff must not inspect FIFO before MeshCore: {forbidden_pre_read}"
 assert "radio.startReceive()" not in retained_resume_body, "packet-wake path must not start a fresh RX before upstream recvRaw consumes the retained packet"
 assert "upstream retained-RX handoff ready" in retained_resume_body, "retained wake logs the upstream MeshCore handoff path"
+sleep_entry_body = board_target_source.split("bool meshink_board_enter_deep_sleep_standby()",1)[1].split("bool meshink_board_return_to_retained_deep_sleep()",1)[0]
+assert "radio.startReceive()" not in sleep_entry_body, "deep-sleep handoff must not restart or otherwise mutate the already-running SX1262"
+assert "preserving MeshCore continuous RX unchanged before sleep" in sleep_entry_body, "sleep entry documents the always-listening radio invariant"
+assert "digitalRead(P_LORA_BUSY)==HIGH" in sleep_entry_body, "sleep entry checks BUSY non-destructively instead of issuing a radio command"
+assert "digitalRead(P_LORA_DIO_1)==HIGH" in sleep_entry_body, "sleep entry rejects a pending RX IRQ rather than disturbing it"
 assert "t5_prepare_retained_sx1262_transport" not in board_target_source, "unsafe partial RadioLib transport reconstruction stays removed"
 assert 'minimal_battery_check("cold-boot"' in unified_source, "cold boot performs battery guard before full UI/MeshCore startup"
 assert 'minimal_battery_check("deep-timer"' in unified_source, "timer wake performs minimal battery-only guard"
