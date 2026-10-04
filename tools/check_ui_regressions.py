@@ -1350,7 +1350,7 @@ assert 'meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect(
 # the empty and unread-card layouts without colliding with the wake footer.
 standby_body=source[source.index("static void draw_standby(){"):source.index("static void format_minutes",source.index("static void draw_standby(){"))]
 assert "const bool any_unread=has_direct||has_channel;" in standby_body, "standby layout branches only on whether any unread cards are present"
-assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in standby_body, "large smooth STANDBY heading moves below unread cards when needed"
+assert "const int standby_state_y=any_unread?ui_y(775):ui_y(620);" in standby_body and 'ui_centred("STANDBY",standby_state_y,5,0,true);' in standby_body, "standby state label moves below unread cards when needed"
 assert 'ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);' in standby_body, "wake instruction uses readable smooth scale-three text"
 assert "ui_y(830)" in standby_body and "ui_y(892)" in standby_body, "standby footer stays below the unread-card region"
 
