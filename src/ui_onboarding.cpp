@@ -3898,6 +3898,10 @@ bool ui_headless_display_busy() {
     return headless_alert_requested||message_alert_active;
 }
 
+bool ui_headless_display_session_active() {
+    return headless_display_session;
+}
+
 bool ui_service_headless_message_alert() {
     if(!headless_ui_state)return false;
 
@@ -3975,6 +3979,9 @@ bool ui_promote_headless_to_interactive() {
     plan.radio_settle=false;
     plan.splash=false;
     plan.battery_guard=false;
+    // ui_mesh_ready() takes the first useful status sample after retained RTC
+    // startup; do not deliberately paint --:-- before MeshCore is attached.
+    plan.sample_status=false;
     plan.service_mesh_between_steps=true;
     ui_startup(plan);
     if(!fb){
@@ -3982,9 +3989,16 @@ bool ui_promote_headless_to_interactive() {
         return false;
     }
 
+    local_mesh_prepare_interactive_services();
     ui_use_data_provider(local_mesh_provider());
     ui_mesh_ready();
     local_mesh_refresh_ui_data();
+
+    // Cold boot hides this shallow SD/PMTiles inventory behind the splash.
+    // Do the same before revealing retained BOOT promotion so first Maps open
+    // does not pay the one-time mount/archive discovery cost.
+    map_tiles_warm_storage();
+    local_mesh_service_startup();
 
     standby_active=false;
     deep_sleep_pending=false;

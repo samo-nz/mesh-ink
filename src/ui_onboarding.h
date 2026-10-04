@@ -23,6 +23,7 @@ void ui_prepare_headless_rx_wake();
 bool ui_headless_message_alert_pending();
 bool ui_service_headless_message_alert();
 bool ui_headless_display_busy();
+bool ui_headless_display_session_active();
 void ui_quiesce_headless_display_for_deep_sleep();
 bool ui_promote_headless_to_interactive();
 void ui_show_storage_initializing(); // update boot splash before formatting

@@ -669,6 +669,19 @@ bool T5EnvironmentSensorManager::begin() {
 static T5GPS gps;
 T5EnvironmentSensorManager sensors(gps);
 
+void meshink_gps_prepare_runtime(){
+#if ENV_INCLUDE_GPS == 1
+    // Retained radio wake skips T5Board::beginLocal(), so restore the GNSS UART
+    // only. The running SX1262 and its shared rail remain untouched.
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    Serial1.begin(detected_gps_baud);
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    T5_GPS_TRACE("gps: retained UI promotion UART ready baud=%lu\n",
+                 (unsigned long)Serial1.baudRate());
+#endif
+}
+
 void meshink_gps_service_begin(){
     sensors.begin();
 }

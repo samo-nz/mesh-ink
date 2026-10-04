@@ -199,8 +199,8 @@ protected:
 
     void onChannelMessageRecv(const mesh::GroupChannel& channel,mesh::Packet* pkt,
                               uint32_t timestamp,const char* text) override {
+        const int index=findChannelIdx(channel);
         if(companion_mode_active){
-            const int index=findChannelIdx(channel);
             if(index>=0&&index<MAX_GROUP_CHANNELS){
                 const uint8_t key=(uint8_t)index;
                 meshink_message_store().append(
@@ -209,7 +209,24 @@ protected:
                     pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
                     (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
             }
+            MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);
+            return;
         }
+
+        // Standalone MeshInk owns its journal directly. Persist at the exact
+        // callback where MeshCore has authenticated/decrypted the group packet,
+        // bypassing the companion offline-queue/serial-sync handoff. This is
+        // deliberately channel-only: the proven direct-message ACK path stays
+        // unchanged.
+        if(index>=0&&index<MAX_GROUP_CHANNELS){
+            local_mesh_receive_channel_from_core(
+                (uint8_t)index,timestamp,text,pkt!=nullptr,
+                pkt?(int8_t)(pkt->getSNR()*4.0f):0,
+                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+            return;
+        }
+
+        // Unknown-channel fallback preserves upstream diagnostic behavior.
         MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);
     }
 };
@@ -313,12 +330,29 @@ static LocalSerial local_interface;
 static bool local_runtime_ready=false;
 static bool local_rx_wake_runtime=false;
 static bool local_rx_wake_promoted_to_ui=false;
+static bool local_interactive_services_ready=false;
 static uint32_t local_rx_wake_last_activity=0;
 static uint32_t local_rx_wake_last_report=0;
 static uint32_t local_rx_wake_sleep_retry=0;
 static uint32_t local_rx_wake_button_started=0;
 static MeshInkRadioStats local_rx_wake_stats{};
 static constexpr uint32_t LOCAL_RX_WAKE_QUIET_MS=40000UL;
+
+static MeshInkPowerSleepCheck local_mesh_headless_power_check(
+        MeshInkPowerCriticalState& power) {
+    // EPDiy owns the shared IDF I2C driver while a retained display session is
+    // initialized. Reuse it instead of calling i2c_driver_install() again:
+    // ESP-IDF 4.4 otherwise logs "i2c driver install error" on this healthy path.
+    if(ui_headless_display_session_active())
+        return meshink_power_deep_sleep_check(power);
+
+    MeshInkPowerSleepCheck result=MeshInkPowerSleepCheck::Unavailable;
+    if(meshink_power_begin_minimal_bus()){
+        result=meshink_power_deep_sleep_check(power);
+        meshink_power_end_minimal_bus();
+    }
+    return result;
+}
 
 static void companion_set_low_power_cpu() {
     static constexpr uint32_t COMPANION_CPU_MHZ=80;
@@ -466,6 +500,7 @@ void companion_prepare_exit() {
 void local_mesh_setup() {
     companion_mode_active=false;
     local_rx_wake_runtime=false;
+    local_interactive_services_ready=false;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] starting upstream MeshCore runtime; Bluetooth disabled");
 
     // The H752-01 LoRa/GPS rail has already been settling throughout the
@@ -522,6 +557,7 @@ void local_mesh_setup() {
     }
     the_mesh.applyGpsPrefs();
 #endif
+    local_interactive_services_ready=true;
     local_mesh_runtime_begin();
     ui_use_data_provider(local_mesh_provider());
     ui_mesh_ready();
@@ -536,6 +572,7 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
     companion_mode_active=false;
     local_rx_wake_runtime=false;
     local_rx_wake_promoted_to_ui=false;
+    local_interactive_services_ready=false;
     local_runtime_ready=false;
     Serial.printf("[T5-DEEPSLEEP] retained startup: reason=%s require-packet=%u\n",
                   reason?reason:"unknown",require_packet?1U:0U);
@@ -603,15 +640,33 @@ bool local_mesh_rx_wake_promoted() {
     return local_rx_wake_promoted_to_ui;
 }
 
+void local_mesh_prepare_interactive_services() {
+    if(!local_runtime_ready||local_interactive_services_ready)return;
+
+    // Radio-first retained wake skipped RTC/GNSS startup. At UI promotion the
+    // display has already installed the shared I2C bus, so restore only the
+    // interactive RTC/GPS services without touching the running SX1262.
+    meshink_rtc_begin();
+#if ENV_INCLUDE_GPS == 1
+    meshink_gps_prepare_runtime();
+#endif
+    meshink_gps_service_begin();
+#if ENV_INCLUDE_GPS == 1
+    the_mesh.applyGpsPrefs();
+#endif
+    meshink_gps_service_loop();
+    local_interactive_services_ready=true;
+    Serial.printf("[T5-DEEPSLEEP] interactive peripherals ready rtc=%u gps=%u\n",
+                  meshink_rtc_valid()?1U:0U,
+                  meshink_gps_read_status().available?1U:0U);
+}
+
 bool local_mesh_promote_to_ui(const char* source) {
     if(!local_runtime_ready)return false;
 
     MeshInkPowerCriticalState wake_power{};
-    MeshInkPowerSleepCheck wake_result=MeshInkPowerSleepCheck::Unavailable;
-    if(meshink_power_begin_minimal_bus()){
-        wake_result=meshink_power_deep_sleep_check(wake_power);
-        meshink_power_end_minimal_bus();
-    }
+    const MeshInkPowerSleepCheck wake_result=
+        local_mesh_headless_power_check(wake_power);
     Serial.printf("[T5-DEEPSLEEP] pre-UI battery check source=%s result=%u voltage=%s%umV\n",
                   source?source:"unknown",(unsigned)wake_result,
                   wake_power.battery_mv_valid?"":"unavailable/",
@@ -665,13 +720,10 @@ bool local_mesh_enter_deep_sleep_standby() {
                   (unsigned long)durable_sequence,(unsigned)durable_count);
 
     MeshInkPowerCriticalState sleep_power{};
-    MeshInkPowerSleepCheck sleep_power_result=MeshInkPowerSleepCheck::Unavailable;
-    if(meshink_power_begin_minimal_bus()){
-        sleep_power_result=meshink_power_deep_sleep_check(sleep_power);
-        meshink_power_end_minimal_bus();
-    }else{
+    const MeshInkPowerSleepCheck sleep_power_result=
+        local_mesh_headless_power_check(sleep_power);
+    if(sleep_power_result==MeshInkPowerSleepCheck::Unavailable)
         Serial.println("[T5-DEEPSLEEP] pre-sleep battery check unavailable: I2C start failed");
-    }
     Serial.printf("[T5-DEEPSLEEP] pre-sleep battery check result=%u voltage=%s%umV\n",
                   (unsigned)sleep_power_result,
                   sleep_power.battery_mv_valid?"":"unavailable/",
@@ -723,11 +775,8 @@ void local_mesh_rx_wake_loop() {
 
     if(ui_headless_message_alert_pending()){
         MeshInkPowerCriticalState alert_power{};
-        MeshInkPowerSleepCheck alert_power_result=MeshInkPowerSleepCheck::Unavailable;
-        if(meshink_power_begin_minimal_bus()){
-            alert_power_result=meshink_power_deep_sleep_check(alert_power);
-            meshink_power_end_minimal_bus();
-        }
+        const MeshInkPowerSleepCheck alert_power_result=
+            local_mesh_headless_power_check(alert_power);
         Serial.printf("[T5-DEEPSLEEP] pre-alert battery check result=%u voltage=%s%umV\n",
                       (unsigned)alert_power_result,
                       alert_power.battery_mv_valid?"":"unavailable/",

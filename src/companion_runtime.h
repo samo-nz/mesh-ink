@@ -12,6 +12,7 @@ void local_mesh_loop();
 void local_mesh_service_startup();
 void local_mesh_rx_wake_loop();
 bool local_mesh_rx_wake_promoted();
+void local_mesh_prepare_interactive_services();
 bool local_mesh_promote_to_ui(const char* source);
 bool local_mesh_enter_deep_sleep_standby();
 bool local_mesh_is_running();

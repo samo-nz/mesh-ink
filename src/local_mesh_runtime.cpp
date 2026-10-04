@@ -908,6 +908,11 @@ bool MeshCoreUiProvider::login_active_node(const char* password,bool save_passwo
 
 UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_refresh_ui_data(){provider.refresh(true);}
+void local_mesh_receive_channel_from_core(
+        uint8_t channel,uint32_t timestamp,const char* text,
+        bool has_rf,int8_t snr_q4,uint8_t path_len){
+    provider.received_channel(channel,timestamp,text,has_rf,snr_q4,path_len);
+}
 void local_mesh_on_frame(const uint8_t* frame,size_t len){
     if(!frame||!len)return;char message[MESHINK_MESSAGE_TEXT_BYTES]{};
     if(frame[0]==0x88){handle_raw_repeat(frame,len);return;}
