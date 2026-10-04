@@ -600,7 +600,7 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
                   (unsigned long)(millis()-started));
 
     the_mesh.begin(true);
-    // Dispatcher::begin() has now called radio_driver.begin(), which sees
+    // Dispatcher::begin() has now called the radio wrapper begin(), which sees
     // BD_STARTUP_RX_PACKET and latches the staged-packet ready flag.
     if(require_packet)board.finishLocalRxWakeCapture();
     the_mesh.startInterface(local_interface);
