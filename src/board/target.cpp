@@ -783,7 +783,7 @@ void meshink_board_release_retained_radio_holds() {
 }
 
 static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
-    15ULL*60ULL*1000000ULL;
+    60ULL*60ULL*1000000ULL;
 
 static bool t5_enable_deep_sleep_wake_sources() {
     const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
@@ -894,7 +894,7 @@ bool meshink_board_return_to_retained_deep_sleep() {
         return false;
     }
 
-    Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 15m)");
+    Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 1h)");
     Serial.flush();
     delay(20);
     esp_deep_sleep_start();
