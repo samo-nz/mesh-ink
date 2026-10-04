@@ -395,15 +395,14 @@ bool meshink_board_diag_gps_activity() {
     Serial1.end();
     Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
     Serial1.begin(9600);
-    gps_stream.clearValidation();
 
     uint32_t bytes=0;
     uint32_t sentence_starts=0;
     uint32_t newlines=0;
     const uint32_t started=millis();
     while(millis()-started<3000UL){
-        while(gps_stream.available()>0){
-            const int ch=gps_stream.read();
+        while(Serial1.available()>0){
+            const int ch=Serial1.read();
             if(ch<0)break;
             ++bytes;
             if(ch==36)++sentence_starts;
@@ -411,13 +410,11 @@ bool meshink_board_diag_gps_activity() {
         }
         delay(2);
     }
-    const bool valid=gps_stream.hasValidSentence();
-    Serial.printf("[T5-DIAG-GPS] post-sleep UART bytes=%lu starts=%lu lines=%lu valid-nmea=%u baud=%lu\n",
+    Serial.printf("[T5-DIAG-GPS] post-sleep UART bytes=%lu starts=%lu lines=%lu baud=%lu\n",
                   (unsigned long)bytes,(unsigned long)sentence_starts,
-                  (unsigned long)newlines,valid?1U:0U,
-                  (unsigned long)Serial1.baudRate());
+                  (unsigned long)newlines,(unsigned long)Serial1.baudRate());
     Serial1.end();
-    return valid||bytes>0;
+    return bytes>0;
 #else
     Serial.println("[T5-DIAG-GPS] GPS not compiled in");
     return false;
