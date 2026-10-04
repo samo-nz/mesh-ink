@@ -1276,7 +1276,7 @@ assert "Serial.begin(115200);" in ui_setup_boot, "standalone UI target still ini
 # Satellite count is primary status information and matches clock/battery size.
 status_bar_body=source[source.index("static void draw_status_bar()"):source.index("static MeshInkRect toast_message_rect")]
 assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in status_bar_body, "satellite count uses the same scale and baseline as clock/battery status text"
-assert "strlen(satellites)*18" in status_bar_body, "satellite status spacing matches scale-three character width"
+assert "ui_text_width(satellites,3)" in status_bar_body, "satellite status spacing follows the primary proportional font metrics"
 
 
 # Testing and release artifacts use the same versioned naming convention.
