@@ -18,6 +18,8 @@ bool meshink_power_poll_critical(MeshInkPowerCriticalState& state);
 bool meshink_power_begin_minimal_bus();
 void meshink_power_end_minimal_bus();
 MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState& state);
+bool meshink_power_low_battery_latched();
+void meshink_power_set_low_battery_latched(bool latched);
 
 // Board-owned user guidance for restoring power after shutdown/deep sleep.
 const MeshInkPowerWakeInfo& meshink_power_wake_info();
