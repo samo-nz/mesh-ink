@@ -13,6 +13,7 @@ struct MeshInkUiStartupPlan {
     bool recover_power_path=true;
     bool splash=true;
     bool sample_status=true;
+    bool battery_guard=true;
     bool service_mesh_between_steps=false;
 };
 
