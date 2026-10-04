@@ -744,19 +744,21 @@ bool local_mesh_enter_deep_sleep_standby() {
         ui_minimal_low_battery_shutdown(sleep_power,"deep-rx");
     }
 
-    // Keep the initialized display session alive until sleep really wins the
-    // race. Quiescing powers the panel/frontlight down but deliberately avoids
-    // EPDiy teardown, so a late message can redraw without another init.
+    // deepsleep23 A/B diagnostic: leave the initialized headless display
+    // session completely untouched before deep sleep. In deepsleep22 this spot
+    // called ui_quiesce_headless_display_for_deep_sleep(), which powers the
+    // EPD panel down. Skipping it isolates display shutdown from the otherwise
+    // unchanged retained-SX1262 sleep handoff.
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
         Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ appeared during handoff dispatched=%u\n",
                       dispatched?1U:0U);
         return false;
     }
-    ui_quiesce_headless_display_for_deep_sleep();
+    Serial.println("[T5-DEEPSLEEP] deepsleep23: display session left untouched before sleep");
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
-        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived while display was quiescing dispatched=%u\n",
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived after display-preservation checkpoint dispatched=%u\n",
                       dispatched?1U:0U);
         return false;
     }
