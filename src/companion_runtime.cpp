@@ -637,6 +637,27 @@ bool local_mesh_enter_deep_sleep_standby() {
     Serial.printf("[T5-DEEPSLEEP] journal durable before sleep seq=%lu count=%u\n",
                   (unsigned long)durable_sequence,(unsigned)durable_count);
 
+    MeshInkPowerCriticalState sleep_power{};
+    MeshInkPowerSleepCheck sleep_power_result=MeshInkPowerSleepCheck::Unavailable;
+    if(meshink_power_begin_minimal_bus()){
+        sleep_power_result=meshink_power_deep_sleep_check(sleep_power);
+        meshink_power_end_minimal_bus();
+    }else{
+        Serial.println("[T5-DEEPSLEEP] pre-sleep battery check unavailable: I2C start failed");
+    }
+    Serial.printf("[T5-DEEPSLEEP] pre-sleep battery check result=%u voltage=%s%umV\n",
+                  (unsigned)sleep_power_result,
+                  sleep_power.battery_mv_valid?"":"unavailable/",
+                  sleep_power.battery_mv_valid?(unsigned)sleep_power.battery_mv:0U);
+    if(sleep_power_result==MeshInkPowerSleepCheck::Critical){
+        Serial.println("[T5-DEEPSLEEP] critical battery before re-sleep; minimal shutdown path");
+        local_rx_wake_indicator(false);
+        local_mesh_prepare_shutdown();
+        meshink_board_companion_release_resources();
+        SPIFFS.end();
+        ui_minimal_low_battery_shutdown(sleep_power,"deep-rx");
+    }
+
     Serial.printf("[T5-DEEPSLEEP] sleep handoff rx=%lu err=%lu tx=%lu rxmode=%u\n",
                   (unsigned long)stats.packets_received,
                   (unsigned long)stats.receive_errors,
