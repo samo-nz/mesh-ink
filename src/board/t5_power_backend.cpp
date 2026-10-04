@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <driver/i2c.h>
 #include <esp_sleep.h>
+#include <Preferences.h>
 
 #include "board_profile.h"
 #include "t5_power_backend.h"
@@ -18,6 +19,8 @@ static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL = 6;
 static constexpr uint16_t T5_CRITICAL_BATTERY_MV = 3300;
 static constexpr uint32_t T5_CRITICAL_POLL_MS = 5000;
 static constexpr uint8_t T5_CRITICAL_SAMPLES = 3;
+static constexpr char T5_POWER_PREFS[] = "t5-power";
+static constexpr char T5_LOW_BATTERY_LATCH_KEY[] = "low_latch";
 
 bool read_bytes(uint8_t device,uint8_t reg,uint8_t* data,size_t len,uint32_t timeout_ms=20) {
     return i2c_master_write_read_device(
@@ -246,6 +249,22 @@ const MeshInkPowerWakeInfo& meshink_power_wake_info() {
     return T5_WAKE_INFO;
 }
 
+bool meshink_power_low_battery_latched() {
+    Preferences prefs;
+    if(!prefs.begin(T5_POWER_PREFS,true))return false;
+    const bool latched=prefs.getBool(T5_LOW_BATTERY_LATCH_KEY,false);
+    prefs.end();
+    return latched;
+}
+
+void meshink_power_set_low_battery_latched(bool latched) {
+    Preferences prefs;
+    if(!prefs.begin(T5_POWER_PREFS,false))return;
+    if(latched)prefs.putBool(T5_LOW_BATTERY_LATCH_KEY,true);
+    else prefs.remove(T5_LOW_BATTERY_LATCH_KEY);
+    prefs.end();
+}
+
 void meshink_power_prepare_board() {
     gauge_apply_factory_profile_if_needed();
 }
@@ -338,7 +357,13 @@ bool meshink_power_read_status(MeshInkPowerStatus& status) {
 
 MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState& state) {
     state=MeshInkPowerCriticalState{};
-    if(meshink_power_external_present())return MeshInkPowerSleepCheck::ExternalPower;
+    if(meshink_power_external_present()){
+        if(meshink_power_low_battery_latched()){
+            meshink_power_set_low_battery_latched(false);
+            Serial.println("[T5-POWER] external power present; cleared low-battery latch");
+        }
+        return MeshInkPowerSleepCheck::ExternalPower;
+    }
 
     uint16_t first=0,second=0;
     if(!meshink_power_read_battery_mv(first))
@@ -421,6 +446,11 @@ void meshink_power_recover_boot_path() {
     const bool low_battery=reason==MeshInkPowerOffReason::LowBattery;
     uint8_t address=0,reg09=0;
 
+    if(low_battery){
+        meshink_power_set_low_battery_latched(true);
+        Serial.println("[T5-POWER] low-battery latch set before ship mode");
+    }
+
     if(!find_charger(address,reg09)) {
         if(low_battery)
             Serial.println("[T5-ERROR] low-battery PMIC unavailable; deep-sleep fallback");
@@ -430,8 +460,6 @@ void meshink_power_recover_boot_path() {
     }
 
     const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
-    if(low_battery) {
-    }
 
     Serial.flush();
     if(!write_byte(address,0x09,requested)) {
