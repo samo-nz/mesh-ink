@@ -747,18 +747,21 @@ bool local_mesh_enter_deep_sleep_standby() {
         ui_minimal_low_battery_shutdown(sleep_power,"deep-rx");
     }
 
-    // deepsleep38 restores the known-good repeated-wake sleep boundary while
-    // preserving the wake packet via capture -> clean radio reset -> replay.
+    // Preserve the proven capture -> clean radio reset -> replay sequence.
+    // Keep the display session initialized throughout the 40-second headless
+    // window, then power the physical panel/frontlight down only at the final
+    // deep-sleep handoff. If a packet races this step the initialized session
+    // remains reusable for the resulting unread redraw.
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
         Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ appeared during handoff dispatched=%u\n",
                       dispatched?1U:0U);
         return false;
     }
-    Serial.println("[T5-DEEPSLEEP] deepsleep38: display untouched; wake packet captured then radio fully reset");
+    ui_quiesce_display_for_deep_sleep();
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
-        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived after display-preservation checkpoint dispatched=%u\n",
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived during display quiesce dispatched=%u\n",
                       dispatched?1U:0U);
         return false;
     }
