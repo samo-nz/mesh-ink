@@ -645,6 +645,10 @@ bool local_mesh_enter_deep_sleep_standby() {
         Serial.println("[T5-DEEPSLEEP] sleep deferred: received-message queue drain is still pending");
         return false;
     }
+    if(ui_headless_display_busy()){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: headless display/alert session is active");
+        return false;
+    }
     local_mesh_flush_contacts_save_now();
 
     uint32_t durable_sequence=0;
@@ -707,6 +711,33 @@ void local_mesh_rx_wake_loop() {
 
     the_mesh.loop();
     local_mesh_flush_contacts_save_if_due();
+
+    const bool alert_was_busy=ui_headless_display_busy();
+    if(ui_headless_message_alert_pending()){
+        MeshInkPowerCriticalState alert_power{};
+        MeshInkPowerSleepCheck alert_power_result=MeshInkPowerSleepCheck::Unavailable;
+        if(meshink_power_begin_minimal_bus()){
+            alert_power_result=meshink_power_deep_sleep_check(alert_power);
+            meshink_power_end_minimal_bus();
+        }
+        Serial.printf("[T5-DEEPSLEEP] pre-alert battery check result=%u voltage=%s%umV\n",
+                      (unsigned)alert_power_result,
+                      alert_power.battery_mv_valid?"":"unavailable/",
+                      alert_power.battery_mv_valid?(unsigned)alert_power.battery_mv:0U);
+        if(alert_power_result==MeshInkPowerSleepCheck::Critical){
+            local_rx_wake_indicator(false);
+            local_mesh_prepare_shutdown();
+            meshink_board_companion_release_resources();
+            SPIFFS.end();
+            ui_minimal_low_battery_shutdown(alert_power,"deep-message-alert");
+        }
+    }
+    const bool alert_active=ui_service_headless_message_alert();
+    if(alert_was_busy||alert_active){
+        local_rx_wake_last_activity=millis();
+        if(alert_was_busy&&!ui_headless_display_busy())
+            local_rx_wake_indicator(true);
+    }
 
     const uint32_t now_ms=millis();
     const MeshInkRadioStats now=meshink_radio_stats();
