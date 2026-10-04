@@ -267,19 +267,22 @@ void setup() {
         while(meshink_primary_button_pressed()&&millis()-hold_started<2000UL)delay(10);
         const bool long_hold=meshink_primary_button_pressed()&&millis()-hold_started>=2000UL;
         if(long_hold){
-            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; probing retained SX1262 before normal boot");
-            meshink_board_probe_deep_sleep_radio(deep_sleep_button_probe);
-            deep_sleep_button_probe_pending=deep_sleep_button_probe.valid;
-            if(deep_sleep_button_probe.valid){
-                const uint32_t packed=((uint32_t)deep_sleep_button_probe.irq<<16)|
-                                      (uint32_t)deep_sleep_button_probe.packet_len;
-                const uint16_t flags=(uint16_t)(((uint16_t)deep_sleep_button_probe.status<<8)|
-                                      ((deep_sleep_button_probe.dio1?1U:0U)<<1)|
-                                      (deep_sleep_button_probe.transport_ok?1U:0U));
-                meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::ButtonProbe,
-                                             packed,flags);
+            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; restoring retained radio/MeshCore before UI");
+            deep_sleep_rx_mode=true;
+            companion_mode=false;
+            check_local_wireless_state("deep-button-pre",
+                meshink_wireless_force_local_radios_off());
+            if(!local_mesh_setup_button_wake()){
+                Serial.println("[T5-DEEPSLEEP] retained BOOT startup failed; restarting into normal recovery boot");
+                Serial.flush();delay(100);ESP.restart();return;
             }
-            Serial.println("[T5-DEEPSLEEP] retained-radio snapshot captured; normal full UI boot will now reinitialize radio");
+            if(local_mesh_promote_to_ui("deep-button-wake")){
+                deep_sleep_rx_mode=false;
+                Serial.println("[T5-DEEPSLEEP] BOOT wake interactive UI ready; retained radio runtime preserved");
+                return;
+            }
+            Serial.println("[T5-DEEPSLEEP] BOOT wake UI promotion failed; remaining in headless MeshCore mode");
+            return;
         }else{
             Serial.printf("[T5-DEEPSLEEP] BOOT released after %lums; treating as accidental/short wake and re-sleeping\n",
                           (unsigned long)(millis()-hold_started));
@@ -385,6 +388,7 @@ void loop() {
     if(cache64_psram_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         local_mesh_rx_wake_loop();
+        if(local_mesh_rx_wake_promoted())deep_sleep_rx_mode=false;
         return;
     }
     if (companion_mode) {
