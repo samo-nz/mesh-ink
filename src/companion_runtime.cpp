@@ -27,6 +27,7 @@
 #include "hardware/rtc.h"
 #include "hardware/radio.h"
 #include "hardware/buttons.h"
+#include "hardware/power.h"
 
 // Device-owned composition root around the upstream MeshCore companion
 // classes. MeshInk adds persistence hooks without changing the phone protocol.
@@ -223,21 +224,89 @@ void local_mesh_on_frame(const uint8_t*, size_t);
 
 class LocalSerial final : public BaseSerialInterface {
     bool enabled=false;
-    uint8_t pending=0;
+    bool message_sync_required=false;
+    bool message_sync_inflight=false;
     uint8_t command[MAX_FRAME_SIZE+1]{};
     size_t command_len=0;
-public:
-    void enable() override { enabled=true; } void disable() override { enabled=false; }
-    bool isEnabled() const override { return enabled; } bool isConnected() const override { return true; }
-    bool isWriteBusy() const override { return false; }
-    size_t writeFrame(const uint8_t* frame,size_t len) override { if(len==1&&frame[0]==0x83){if(pending<255)pending++;}else local_mesh_on_frame(frame,len);return len; }
-    size_t checkRecvFrame(uint8_t* frame) override {
-        if(command_len){const size_t len=command_len;memcpy(frame,command,len);command_len=0;return len;}
-        if(!pending)return 0;pending--;frame[0]=10;return 1;
+
+    static bool is_sync_message_response(uint8_t code) {
+        return code==7||code==8||code==16||code==17||code==27;
     }
+
+public:
+    void enable() override { enabled=true; }
+    void disable() override { enabled=false; }
+    bool isEnabled() const override { return enabled; }
+    bool isConnected() const override { return true; }
+    bool isWriteBusy() const override { return false; }
+
+    size_t writeFrame(const uint8_t* frame,size_t len) override {
+        if(!frame||!len)return 0;
+
+        if(len==1&&frame[0]==0x83){
+            // PUSH_CODE_MSG_WAITING is only a hint that MeshCore's RAM queue is
+            // non-empty. Drain until CMD_SYNC_NEXT_MESSAGE explicitly returns
+            // RESP_CODE_NO_MORE_MESSAGES instead of counting push notifications.
+            message_sync_required=true;
+            Serial.println("[T5-DEEPSLEEP] msg-waiting: MeshCore receive queue requires drain");
+            return len;
+        }
+
+        if(message_sync_inflight){
+            if(frame[0]==10){ // RESP_CODE_NO_MORE_MESSAGES
+                message_sync_inflight=false;
+                message_sync_required=false;
+                Serial.println("[T5-DEEPSLEEP] sync-empty: MeshCore receive queue fully drained");
+                local_mesh_on_frame(frame,len);
+                return len;
+            }
+            if(is_sync_message_response(frame[0])){
+                // Persist the returned message first, then immediately request
+                // another one on the next MeshCore loop. This guarantees the
+                // queue is empty before headless deep sleep is allowed.
+                message_sync_inflight=false;
+                message_sync_required=true;
+                local_mesh_on_frame(frame,len);
+                Serial.printf("[T5-DEEPSLEEP] message-persisted frame=0x%02x; continuing queue drain\n",
+                              (unsigned)frame[0]);
+                return len;
+            }
+        }
+
+        local_mesh_on_frame(frame,len);
+        return len;
+    }
+
+    size_t checkRecvFrame(uint8_t* frame) override {
+        if(command_len){
+            const size_t len=command_len;
+            memcpy(frame,command,len);
+            command_len=0;
+            return len;
+        }
+        if(message_sync_required&&!message_sync_inflight){
+            frame[0]=10; // CMD_SYNC_NEXT_MESSAGE
+            message_sync_inflight=true;
+            Serial.println("[T5-DEEPSLEEP] sync-request: CMD_SYNC_NEXT_MESSAGE");
+            return 1;
+        }
+        return 0;
+    }
+
     bool enqueue(const uint8_t* frame,size_t len){
         if(!frame||!len||len>sizeof(command)||command_len)return false;
-        memcpy(command,frame,len);command_len=len;return true;
+        memcpy(command,frame,len);
+        command_len=len;
+        return true;
+    }
+
+    bool messageSyncPending() const {
+        return message_sync_required||message_sync_inflight;
+    }
+
+    void resetMessageSync() {
+        message_sync_required=false;
+        message_sync_inflight=false;
     }
 };
 
@@ -250,6 +319,17 @@ static uint32_t local_rx_wake_sleep_retry=0;
 static uint32_t local_rx_wake_button_started=0;
 static MeshInkRadioStats local_rx_wake_stats{};
 static constexpr uint32_t LOCAL_RX_WAKE_QUIET_MS=40000UL;
+
+static void local_rx_wake_indicator(bool on) {
+    if(on){
+        meshink_power_frontlight_begin();
+        meshink_power_frontlight_set(100);
+        Serial.println("[T5-DEEPSLEEP] RX-mode indicator: front light ON");
+    }else{
+        meshink_power_frontlight_set(0);
+        Serial.println("[T5-DEEPSLEEP] RX-mode indicator: front light OFF");
+    }
+}
 
 static void companion_set_low_power_cpu() {
     static constexpr uint32_t COMPANION_CPU_MHZ=80;
@@ -464,6 +544,8 @@ void local_mesh_setup() {
 bool local_mesh_setup_rx_wake() {
     const uint32_t started=millis();
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::HeadlessStart);
+    local_rx_wake_indicator(true);
+    local_interface.resetMessageSync();
     companion_mode_active=false;
     local_rx_wake_runtime=false;
     local_runtime_ready=false;
@@ -474,6 +556,7 @@ bool local_mesh_setup_rx_wake() {
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioResumeFail,
                                      millis()-started);
         Serial.println("[T5-DEEPSLEEP] headless RX boot failed before MeshCore: warm radio transport unavailable");
+        local_rx_wake_indicator(false);
         return false;
     }
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioResumeOk,
@@ -483,6 +566,7 @@ bool local_mesh_setup_rx_wake() {
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SpiffsFail,
                                      millis()-started);
         Serial.println("[T5-DEEPSLEEP] headless RX boot failed: SPIFFS mount unavailable (no format attempted)");
+        local_rx_wake_indicator(false);
         return false;
     }
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SpiffsOk,
@@ -536,6 +620,10 @@ bool local_mesh_enter_deep_sleep_standby() {
     }
     const MeshInkRadioStats stats=meshink_radio_stats();
     if(!stats.continuous_rx)return false;
+    if(local_interface.messageSyncPending()){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: received-message queue drain is still pending");
+        return false;
+    }
     local_mesh_flush_contacts_save_now();
     Serial.printf("[T5-DEEPSLEEP] sleep handoff rx=%lu err=%lu tx=%lu rxmode=%u\n",
                   (unsigned long)stats.packets_received,
@@ -544,7 +632,13 @@ bool local_mesh_enter_deep_sleep_standby() {
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SleepEnter,
                                  stats.packets_received,
                                  (uint16_t)(stats.packets_sent>65535?65535:stats.packets_sent));
-    return meshink_board_enter_deep_sleep_standby();
+    local_rx_wake_indicator(false);
+    const bool entered=meshink_board_enter_deep_sleep_standby();
+    if(!entered){
+        // We stayed in the special RX runtime, so restore its visible marker.
+        local_rx_wake_indicator(true);
+    }
+    return entered;
 }
 
 void local_mesh_rx_wake_loop() {
@@ -603,6 +697,7 @@ void local_mesh_rx_wake_loop() {
     if(pressed&&!local_rx_wake_button_started)local_rx_wake_button_started=now_ms;
     if(pressed&&local_rx_wake_button_started&&now_ms-local_rx_wake_button_started>=2000UL){
         Serial.println("[T5-DEEPSLEEP] BOOT held during headless RX runtime; restarting into full UI boot");
+        local_rx_wake_indicator(false);
         Serial.flush();delay(20);ESP.restart();
     }
     if(!pressed)local_rx_wake_button_started=0;
