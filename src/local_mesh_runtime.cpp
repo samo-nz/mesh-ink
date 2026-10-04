@@ -19,6 +19,7 @@ extern MyMesh& t5_mesh();
 
 namespace {
 constexpr size_t MAX_UI_CONTACTS=16;
+constexpr size_t MAX_UNREAD_PEERS=MAX_CONTACTS;
 constexpr size_t MAX_MAP_NODES=50;
 constexpr size_t MAX_UI_CHANNELS=8;
 constexpr size_t MAX_UI_ADVERTS=16;
@@ -138,7 +139,10 @@ class MeshCoreUiProvider final:public UiDataProvider{
     bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
     uint32_t conversation_store_revision_=0xFFFFFFFFUL;
     uint32_t conversation_contacts_signature_=0;
-    UnreadPeer direct_unread_[MAX_UI_CONTACTS]{};
+    // Unread cache is tiny (one entry per configured MeshCore contact) and
+    // contains only peers that are currently unread. Historical read-neutral
+    // journal records never consume a slot.
+    UnreadPeer direct_unread_[MAX_UNREAD_PEERS]{};
     uint8_t channel_unread_[MAX_UI_CHANNELS]{};
     DiscoveredContact discovered_[MAX_UI_ADVERTS]{};
     ContactInfo detail_contact_{};bool detail_valid_=false;bool detail_saved_=false;
@@ -267,7 +271,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
             strncpy(summary.subtitle,item.text,sizeof(summary.subtitle)-1);
             format_time(item.timestamp,summary.time);
             memcpy(summary.key,contacts_[contact].key,sizeof(summary.key));
-            summary.entry.unread=direct_unread(summary.key);
+            summary.entry.unread=direct_unread_count(summary.key);
             summary.entry.node_type=contacts_[contact].entry.node_type;
         }
         conversation_store_revision_=store_.revision();
@@ -275,7 +279,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     }
     void refresh_conversation_labels(){
         for(size_t i=0;i<conversation_count_;++i){
-            conversations_[i].entry.unread=direct_unread(conversations_[i].key);
+            conversations_[i].entry.unread=direct_unread_count(conversations_[i].key);
             for(size_t contact=0;contact<contact_count_;++contact){
                 if(memcmp(conversations_[i].key,contacts_[contact].key,6))continue;
                 strncpy(conversations_[i].title,contacts_[contact].title,
@@ -285,10 +289,32 @@ class MeshCoreUiProvider final:public UiDataProvider{
             }
         }
     }
-    uint8_t& direct_unread(const uint8_t* key){
-        for(auto& item:direct_unread_)if(item.used&&!memcmp(item.key,key,6))return item.count;
-        for(auto& item:direct_unread_)if(!item.used){item.used=true;memcpy(item.key,key,6);item.count=0;return item.count;}
-        return direct_unread_[0].count;
+    uint8_t direct_unread_count(const uint8_t* key)const{
+        if(!key)return 0;
+        for(const auto& item:direct_unread_)
+            if(item.used&&!memcmp(item.key,key,6))return item.count;
+        return 0;
+    }
+    UnreadPeer* direct_unread_peer(const uint8_t* key,bool create){
+        if(!key)return nullptr;
+        for(auto& item:direct_unread_)
+            if(item.used&&!memcmp(item.key,key,6))return &item;
+        if(!create)return nullptr;
+        for(auto& item:direct_unread_)if(!item.used){
+            item=UnreadPeer{};
+            item.used=true;
+            memcpy(item.key,key,6);
+            return &item;
+        }
+        Serial.println("[T5-STORE] WARNING unread peer cache full");
+        return nullptr;
+    }
+    void sync_unread_status(){
+        uint16_t direct_total=0,channel_total=0;
+        for(const auto& item:direct_unread_)direct_total+=item.count;
+        for(const auto count:channel_unread_)channel_total+=count;
+        ui_status_set_unread(direct_total);
+        ui_status_set_channel_unread(channel_total);
     }
     void rebuild_unread_from_journal(){
         memset(direct_unread_,0,sizeof(direct_unread_));
@@ -299,9 +325,14 @@ class MeshCoreUiProvider final:public UiDataProvider{
             const bool read_through=(item.flags&MESHINK_MESSAGE_READ_THROUGH)!=0;
             const bool unread=(item.flags&MESHINK_MESSAGE_UNREAD)!=0;
             if(item.kind==(uint8_t)MessageKind::Direct){
-                auto& count=direct_unread(item.key);
-                if(read_through)count=0;
-                else if(unread&&count<255)++count;
+                // Old build-39 records have neither bit and are deliberately
+                // treated as read. Never allocate cache slots for them.
+                if(read_through){
+                    if(auto* peer=direct_unread_peer(item.key,false))*peer=UnreadPeer{};
+                }else if(unread){
+                    if(auto* peer=direct_unread_peer(item.key,true))
+                        if(peer->count<255)++peer->count;
+                }
             }else if(item.kind==(uint8_t)MessageKind::Channel){
                 const uint8_t channel=item.key[0];
                 if(channel>=MAX_UI_CHANNELS)continue;
@@ -310,17 +341,20 @@ class MeshCoreUiProvider final:public UiDataProvider{
             }
         }
         for(size_t i=0;i<contact_count_;++i)
-            contacts_[i].entry.unread=direct_unread(contacts_[i].key);
+            contacts_[i].entry.unread=direct_unread_count(contacts_[i].key);
         for(size_t i=0;i<conversation_count_;++i)
-            conversations_[i].entry.unread=direct_unread(conversations_[i].key);
+            conversations_[i].entry.unread=direct_unread_count(conversations_[i].key);
         for(size_t i=0;i<channel_count_;++i){
             const uint8_t channel=channels_[i].channel_index;
             channels_[i].entry.unread=channel<MAX_UI_CHANNELS?channel_unread_[channel]:0;
         }
+        // The journal-derived totals are the UI truth as well: status bar,
+        // bottom-nav dots and standby summary all follow the same counters.
+        sync_unread_status();
     }
     void mark_read(MessageKind kind,const uint8_t* key,size_t key_len){
         const uint8_t pending=kind==MessageKind::Direct
-            ?direct_unread(key)
+            ?direct_unread_count(key)
             :(key&&key[0]<MAX_UI_CHANNELS?channel_unread_[key[0]]:0);
         if(!pending)return;
         if(!store_.mark_read_through(kind,key,key_len))
@@ -361,7 +395,7 @@ public:
         while(contact_count_<MAX_UI_CONTACTS&&iterator.hasNext(&t5_mesh(),contact)){
             auto& item=contacts_[contact_count_++];memset(&item,0,sizeof(item));bind(item);strncpy(item.title,contact.name[0]?contact.name:"UNNAMED NODE",sizeof(item.title)-1);
             char role[20]{},heard[72]{};format_node_role(contact.type,role,sizeof(role));format_last_heard(contact.lastmod,heard);
-            snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard);if(contact.lastmod)format_time(contact.lastmod,item.time);else strcpy(item.time,"--:--");memcpy(item.key,contact.id.pub_key,7);item.entry.unread=direct_unread(item.key);item.entry.node_type=contact.type;
+            snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard);if(contact.lastmod)format_time(contact.lastmod,item.time);else strcpy(item.time,"--:--");memcpy(item.key,contact.id.pub_key,7);item.entry.unread=direct_unread_count(item.key);item.entry.node_type=contact.type;
 
         }
         const uint32_t contact_signature=contacts_signature();
@@ -430,7 +464,13 @@ public:
                       (unsigned long)timestamp,unread?1U:0U,sequence?"OK":"FAIL");
         if(sequence){
             if(journal_full)rebuild_unread_from_journal();
-            else if(unread){auto& count=direct_unread(key);if(count<255)++count;}
+            else{
+                if(unread){
+                    if(auto* peer=direct_unread_peer(key,true))
+                        if(peer->count<255)++peer->count;
+                }
+                sync_unread_status();
+            }
             if(!active_channel_&&!memcmp(active_key_,key,6))rebuild_active();
         }
         refresh(true);ui_notify_message_received(false);
@@ -447,8 +487,11 @@ public:
                       (unsigned long)timestamp,unread?1U:0U,sequence?"OK":"FAIL");
         if(sequence){
             if(journal_full)rebuild_unread_from_journal();
-            else if(unread&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)
-                ++channel_unread_[channel];
+            else{
+                if(unread&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)
+                    ++channel_unread_[channel];
+                sync_unread_status();
+            }
             if(active_channel_&&active_key_[0]==channel)rebuild_active();
         }
         refresh(true);ui_notify_message_received(true);

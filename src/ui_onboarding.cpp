@@ -1276,25 +1276,28 @@ static void draw_status_bar() {
         else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
         else draw_search_icon(ui_x(6),ui_y(9));
         left=ui_x(46);
-        if(!standby_active&&status_gps_enabled&&status_gps_fix) {
+        // All numeric status values use the same primary face/size as the
+        // clock and battery percentage. If both unread classes are present,
+        // reserve the left half for their two counters and keep only the GPS
+        // state icon so the enlarged numbers cannot collide with the clock.
+        if(!standby_active&&status_gps_enabled&&status_gps_fix&&
+           !(status_unread&&status_channel_unread)) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-            // Match the clock and battery percentage: the satellite count
-            // is primary status information, not compact secondary metadata.
             text(satellites,ui_x(43),ui_y(13),3,0,true);
-            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(8);
+            left=ui_x(43)+ui_text_width(satellites,3)+ui_w(8);
         }
     }
     if(status_unread){
         draw_envelope_icon(left,ui_y(9));left+=ui_w(36);
         char count[5];compact_count(status_unread,count);
-        text(count,left,ui_y(17),2,0,true);
-        left+=(int)strlen(count)*12+ui_w(8);
+        text(count,left,ui_y(13),3,0,true);
+        left+=ui_text_width(count,3)+ui_w(6);
     }
     if(status_channel_unread){
         draw_channel_status_icon(left,ui_y(9));left+=ui_w(34);
         char count[5];compact_count(status_channel_unread,count);
-        text(count,left,ui_y(17),2,0,true);
+        text(count,left,ui_y(13),3,0,true);
     }
     char clock_text[8];
     if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
@@ -3274,7 +3277,6 @@ static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
     open_screen(Screen::Maps);
 }
 
-static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
 static void queue_text_refresh(){
     // Throttle/coalesce rather than debounce. The first character schedules
     // the next paint; later characters join it instead of pushing it farther
@@ -3469,7 +3471,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
+                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
                 }
             }
             break;
@@ -3482,7 +3484,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
+                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
                 }
             }
             break;
@@ -4034,14 +4036,14 @@ bool ui_promote_headless_to_interactive() {
 }
 
 void ui_prepare_headless_rx_wake() {
-    Preferences wake_prefs;
-    if(wake_prefs.begin("t5-ui",true)){
-        status_unread=wake_prefs.getUShort("unread_dm",0);
-        status_channel_unread=wake_prefs.getUShort("unread_ch",0);
-        wake_prefs.end();
-    }
-    // Existing receive hooks can now persist unread counts without starting
-    // framebuffer, display, touch or frontlight resources.
+    // Journal replay runs immediately after storage opens and replaces these
+    // zeroes before any message alert is rendered. NVS unread keys from older
+    // builds are intentionally ignored so they cannot disagree with per-node
+    // journal truth.
+    status_unread=0;
+    status_channel_unread=0;
+    // Existing receive hooks can now update journal-derived unread counts
+    // without starting framebuffer, display, touch or frontlight resources.
     standby_active=true;
     touch_enabled=false;
     message_alert_active=false;
@@ -4059,8 +4061,10 @@ static void ui_load_persistent_state() {
     selected_preset=prefs.getUChar("preset_v2",17);
     setup_complete=prefs.getBool("complete",false);
     timezone_index=prefs.getUChar("timezone",0);
-    status_unread=prefs.getUShort("unread_dm",0);
-    status_channel_unread=prefs.getUShort("unread_ch",0);
+    // Unread truth is reconstructed from the message journal after MeshCore
+    // storage opens. Do not seed it from the legacy aggregate NVS counters.
+    status_unread=0;
+    status_channel_unread=0;
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
     map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
@@ -4615,11 +4619,9 @@ bool ui_chat_is_visible(bool channel){
 
 void ui_notify_message_received(bool channel){
     const bool visible=ui_chat_is_visible(channel);
-    if(!visible){
-        if(channel){if(status_channel_unread<65535)status_channel_unread++;}
-        else if(status_unread<65535)status_unread++;
-        persist_unread();
-    }
+    // The provider has already committed the RX record and synchronized these
+    // totals from its journal-derived counters. Notification code must never
+    // maintain a second unread truth.
     status_dirty=true;
     if(standby_active){
         if(headless_ui_state){
