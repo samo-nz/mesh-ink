@@ -338,27 +338,52 @@ bool meshink_power_read_status(MeshInkPowerStatus& status) {
 
 MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState& state) {
     state=MeshInkPowerCriticalState{};
-    if(meshink_power_external_present())return MeshInkPowerSleepCheck::ExternalPower;
 
+    const bool external_first=meshink_power_external_present();
     uint16_t first=0,second=0;
-    if(!meshink_power_read_battery_mv(first))
+    bool first_ok=false;
+    for(uint8_t attempt=0;attempt<3&&!first_ok;++attempt){
+        first_ok=meshink_power_read_battery_mv(first);
+        if(!first_ok)delay(25);
+    }
+    if(!first_ok){
+        Serial.printf("[T5-POWER] critical check unavailable ext1=%u\n",
+                      external_first?1U:0U);
         return MeshInkPowerSleepCheck::Unavailable;
-    state.battery_mv_valid=true;
-    state.battery_mv=first;
-    if(first>=T5_CRITICAL_BATTERY_MV)
-        return MeshInkPowerSleepCheck::Safe;
+    }
 
+    // Always take a second sample. Apart from rejecting a transient low value,
+    // this makes external-power suppression require a stable charger reading
+    // instead of one potentially stale/early power-good bit.
     delay(80);
-    if(meshink_power_external_present())return MeshInkPowerSleepCheck::ExternalPower;
-    if(!meshink_power_read_battery_mv(second))
+    const bool external_second=meshink_power_external_present();
+    bool second_ok=false;
+    for(uint8_t attempt=0;attempt<3&&!second_ok;++attempt){
+        second_ok=meshink_power_read_battery_mv(second);
+        if(!second_ok)delay(25);
+    }
+    if(!second_ok){
+        state.battery_mv_valid=true;
+        state.battery_mv=first;
+        Serial.printf("[T5-POWER] critical check partial first=%umV ext=%u/%u\n",
+                      (unsigned)first,external_first?1U:0U,external_second?1U:0U);
         return MeshInkPowerSleepCheck::Unavailable;
+    }
 
+    state.battery_mv_valid=true;
     state.battery_mv=(uint16_t)(((uint32_t)first+second)/2U);
-    if(second>=T5_CRITICAL_BATTERY_MV)
-        return MeshInkPowerSleepCheck::Safe;
+    const bool external_stable=external_first&&external_second;
+    const bool low=first<T5_CRITICAL_BATTERY_MV&&second<T5_CRITICAL_BATTERY_MV;
 
-    state.critical=state.battery_mv<T5_CRITICAL_BATTERY_MV;
-    return state.critical?MeshInkPowerSleepCheck::Critical:MeshInkPowerSleepCheck::Safe;
+    Serial.printf("[T5-POWER] critical check first=%umV second=%umV avg=%umV ext=%u/%u threshold=%umV result=%s\n",
+                  (unsigned)first,(unsigned)second,(unsigned)state.battery_mv,
+                  external_first?1U:0U,external_second?1U:0U,
+                  (unsigned)T5_CRITICAL_BATTERY_MV,
+                  external_stable?"EXTERNAL":(low?"CRITICAL":"SAFE"));
+
+    if(external_stable)return MeshInkPowerSleepCheck::ExternalPower;
+    state.critical=low;
+    return low?MeshInkPowerSleepCheck::Critical:MeshInkPowerSleepCheck::Safe;
 }
 
 bool meshink_power_boot_critical(MeshInkPowerCriticalState& state) {
