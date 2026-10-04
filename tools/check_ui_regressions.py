@@ -239,7 +239,7 @@ assert "MESHINK_SHARED_GPIO_ISR_PATCH_V2" in epdiy_patch_source, "build carries 
 assert "meshink_radio_gpio_isr" in epdiy_patch_source and "&& !meshink_radio_gpio_isr" in epdiy_patch_source, "EPDiy teardown preserves a live radio handler even when EPDiy created the service first"
 assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
-assert "if (meshink_epdiy_owns_gpio_isr_service)" in epdiy_patch_source, "EPDiy only uninstalls a GPIO ISR service it created"
+assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
 assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
 assert "if(!deep_sleep_standby)draw_status_bar();" in source, "deep-sleep standby omits the normal status bar"
 assert '"DEEP SLEEP STANDBY"' in source, "deep-sleep standby visibly identifies its power state"
