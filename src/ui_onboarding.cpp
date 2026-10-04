@@ -3850,6 +3850,97 @@ static void service_primary_button(){
     }pressed_at=0;handled=false;}
 }
 
+static void ui_close_headless_display_session() {
+    if(!headless_display_session)return;
+    message_alert_active=false;
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
+    frontlight_deadline=0;
+    if(fb){
+        meshink_display_release_state(&display);
+        fb=nullptr;
+    }
+    meshink_display_deinit();
+    headless_display_session=false;
+    Serial.println("[T5-DEEPSLEEP] headless display session closed; radio/MeshCore remain active");
+}
+
+bool ui_headless_message_alert_pending() {
+    return headless_ui_state&&headless_alert_requested&&!headless_display_session;
+}
+
+bool ui_headless_display_busy() {
+    return headless_display_session||headless_alert_requested||message_alert_active;
+}
+
+bool ui_service_headless_message_alert() {
+    if(!headless_ui_state)return false;
+
+    if(headless_alert_requested&&!headless_display_session){
+        MeshInkUiStartupPlan plan{};
+        plan.touch=false;
+        plan.radio_settle=false;
+        plan.recover_power_path=false;
+        plan.splash=false;
+        plan.sample_status=false;
+        plan.battery_guard=false;
+        plan.service_mesh_between_steps=true;
+        ui_startup(plan);
+        if(!fb){
+            Serial.println("[T5-DEEPSLEEP] headless message display unavailable");
+            headless_alert_requested=false;
+            ui_close_headless_display_session();
+            return false;
+        }
+        headless_display_session=true;
+        headless_alert_requested=false;
+        standby_active=true;
+        start_message_alert();
+        Serial.println("[T5-DEEPSLEEP] headless message alert display session started");
+    }
+
+    if(!headless_display_session)return false;
+    service_message_alert();
+    if(!message_alert_active){
+        ui_close_headless_display_session();
+        return false;
+    }
+    return true;
+}
+
+bool ui_promote_headless_to_interactive() {
+    if(!headless_ui_state)return false;
+
+    if(headless_display_session)ui_close_headless_display_session();
+    headless_alert_requested=false;
+    message_alert_active=false;
+
+    MeshInkUiStartupPlan plan{};
+    plan.radio_settle=false;
+    plan.splash=false;
+    plan.battery_guard=false;
+    plan.service_mesh_between_steps=true;
+    ui_startup(plan);
+    if(!fb){
+        Serial.println("[T5-DEEPSLEEP] interactive promotion failed: display framebuffer unavailable");
+        return false;
+    }
+
+    ui_use_data_provider(local_mesh_provider());
+    ui_mesh_ready();
+    local_mesh_refresh_ui_data();
+
+    standby_active=false;
+    deep_sleep_pending=false;
+    headless_ui_state=false;
+    message_alert_active=false;
+    screen=setup_complete?Screen::Contacts:Screen::Welcome;
+    keyboard_visible=!setup_complete;
+    ui_finish_startup();
+    Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing MeshCore runtime");
+    return true;
+}
+
 void ui_prepare_headless_rx_wake() {
     Preferences wake_prefs;
     if(wake_prefs.begin("t5-ui",true)){
@@ -3862,6 +3953,9 @@ void ui_prepare_headless_rx_wake() {
     standby_active=true;
     touch_enabled=false;
     message_alert_active=false;
+    headless_ui_state=true;
+    headless_alert_requested=false;
+    headless_display_session=false;
     deep_sleep_pending=false;
     Serial.printf("[T5-DEEPSLEEP] headless UI state only: unread_dm=%u unread_ch=%u; display/touch not initialized\n",
                   (unsigned)status_unread,(unsigned)status_channel_unread);
@@ -4428,8 +4522,25 @@ bool ui_chat_is_visible(bool channel){
 
 void ui_notify_message_received(bool channel){
     const bool visible=ui_chat_is_visible(channel);
-    if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
-    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d visible=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active,visible);
+    if(!visible){
+        if(channel){if(status_channel_unread<65535)status_channel_unread++;}
+        else if(status_unread<65535)status_unread++;
+        persist_unread();
+    }
+    status_dirty=true;
+    if(standby_active){
+        if(headless_ui_state){
+            if(!headless_display_session&&!message_alert_active)
+                headless_alert_requested=true;
+        }else{
+            start_message_alert();
+        }
+    }else{
+        status_wake_light=true;
+    }
+    T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d headless=%d visible=%d\n",
+              channel?"channel":"direct",channel?status_channel_unread:status_unread,
+              standby_active,headless_ui_state,visible);
 }
 
 bool ui_restore_failed_compose(const char* text){
