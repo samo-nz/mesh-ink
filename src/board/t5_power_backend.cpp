@@ -250,7 +250,10 @@ void meshink_power_prepare_board() {
     gauge_apply_factory_profile_if_needed();
 }
 
+static bool minimal_bus_owned=false;
+
 bool meshink_power_begin_minimal_bus() {
+    minimal_bus_owned=false;
     i2c_config_t config{};
     config.mode=I2C_MODE_MASTER;
     config.sda_io_num=(gpio_num_t)T5_PIN_I2C_SDA;
@@ -265,14 +268,26 @@ bool meshink_power_begin_minimal_bus() {
         return false;
     }
     const esp_err_t installed=i2c_driver_install(I2C_NUM_0,I2C_MODE_MASTER,0,0,0);
-    if(installed!=ESP_OK){
-        Serial.printf("[T5-DEEPSLEEP] battery I2C install failed code=%d\n",(int)installed);
-        return false;
+    if(installed==ESP_OK){
+        minimal_bus_owned=true;
+        return true;
     }
-    return true;
+
+    // ESP-IDF 4.4.x returns ESP_FAIL and logs "i2c driver install error"
+    // when this port already has a driver. That is the normal full-UI case:
+    // reuse the existing shared bus and never delete it from the minimal probe.
+    if(installed==ESP_FAIL){
+        Serial.println("[T5-DEEPSLEEP] battery I2C already active; reusing shared bus");
+        return true;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] battery I2C install failed code=%d\n",(int)installed);
+    return false;
 }
 
 void meshink_power_end_minimal_bus() {
+    if(!minimal_bus_owned)return;
+    minimal_bus_owned=false;
     const esp_err_t stopped=i2c_driver_delete(I2C_NUM_0);
     if(stopped!=ESP_OK)
         Serial.printf("[T5-DEEPSLEEP] battery I2C stop code=%d\n",(int)stopped);
