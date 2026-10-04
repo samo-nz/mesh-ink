@@ -227,6 +227,8 @@ assert 'minimal_battery_check("deep-timer"' in unified_source, "timer wake perfo
 assert "critical check first=" in power_backend_source and "threshold=%umV" in power_backend_source, "battery guard logs both voltage samples and threshold"
 assert "meshink_power_low_battery_latched" not in power_backend_source and "low_latch" not in power_backend_source, "low-battery policy must not persist a latch across recovery"
 assert "ui_minimal_low_battery_shutdown" in source and "minimal low-battery shutdown" in source, "critical deep-sleep battery path uses minimal persistent EPD notice"
+minimal_low_battery_body=source[source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"):source.index("static void critical_battery_shutdown",source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"))]
+assert minimal_low_battery_body.index("meshink_display_deinit();") < minimal_low_battery_body.index("meshink_power_begin_minimal_bus()") < minimal_low_battery_body.index("meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery)"), "minimal low-battery path restores shared I2C after EPDiy teardown before BATFET ship command"
 assert unified_source.count('meshink_wireless_force_local_radios_off()') == 3, "local wireless policy is enforced for normal pre/post MeshCore startup and headless RX wake"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
