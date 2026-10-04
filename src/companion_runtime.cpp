@@ -528,6 +528,7 @@ void local_mesh_setup() {
     fast_rng.begin(meshink_radio_rng_seed());
     store.begin();
     the_mesh.begin(true);
+    if(require_packet)board.finishLocalRxWakeCapture();
     the_mesh.startInterface(local_interface);
     // Negotiate companion-protocol v3 for the internal standalone interface.
     // V3 receive frames add SNR and path metadata without changing on-air packets.
@@ -744,7 +745,7 @@ bool local_mesh_enter_deep_sleep_standby() {
         ui_minimal_low_battery_shutdown(sleep_power,"deep-rx");
     }
 
-    // deepsleep27 restores the known-good repeated-wake sleep boundary while
+    // deepsleep38 restores the known-good repeated-wake sleep boundary while
     // preserving the wake packet via capture -> clean radio reset -> replay.
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
@@ -752,7 +753,7 @@ bool local_mesh_enter_deep_sleep_standby() {
                       dispatched?1U:0U);
         return false;
     }
-    Serial.println("[T5-DEEPSLEEP] deepsleep27: display untouched; wake packet captured then radio fully reset");
+    Serial.println("[T5-DEEPSLEEP] deepsleep38: display untouched; wake packet captured then radio fully reset");
     if(meshink_board_radio_irq_asserted()){
         const bool dispatched=meshink_board_service_asserted_radio_irq();
         Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived after display-preservation checkpoint dispatched=%u\n",

@@ -1158,7 +1158,7 @@ static bool t5_enable_deep_sleep_wake_sources() {
 
 bool meshink_board_enter_deep_sleep_standby() {
     // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
-    // sleeps; DIO1 wakes through EXT0 HIGH and BOOT through EXT1 ANY_LOW.
+    // sleeps; DIO1 wakes through EXT1 ANY_HIGH and BOOT through EXT0 LOW.
     pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
     pinMode(P_LORA_DIO_1,INPUT);
     if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
@@ -1328,11 +1328,125 @@ void T5Board::finishLocalRxWakeCapture() {
     Serial.println("[T5-DEEPSLEEP] retained wake packet secured; startup reason returned to NORMAL");
 }
 
-static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
+static bool t5_sx1262_raw_wait_busy(uint32_t timeout_ms=50) {
+    const uint32_t started=millis();
+    while(digitalRead(P_LORA_BUSY)==HIGH){
+        if(millis()-started>=timeout_ms)return false;
+        delayMicroseconds(100);
+    }
+    return true;
+}
+
+static bool t5_sx1262_raw_read(const uint8_t* command,size_t command_len,
+                               uint8_t* data,size_t data_len,uint8_t* status_out=nullptr) {
+    if(!command||!command_len)return false;
+    if(!t5_sx1262_raw_wait_busy())return false;
+
+    radio_spi.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));
+    digitalWrite(P_LORA_NSS,LOW);
+    delayMicroseconds(2);
+    for(size_t i=0;i<command_len;++i)(void)radio_spi.transfer(command[i]);
+
+    // SX126x read commands return one status byte between the command bytes
+    // and the requested data. deepsleep37 proved this exact raw framing works
+    // both bit-banged and through FSPI after ESP32-S3 deep sleep.
+    const uint8_t status=radio_spi.transfer(0x00);
+    for(size_t i=0;i<data_len;++i)data[i]=radio_spi.transfer(0x00);
+
+    delayMicroseconds(2);
+    digitalWrite(P_LORA_NSS,HIGH);
+    radio_spi.endTransaction();
+    if(status_out)*status_out=status;
+    return t5_sx1262_raw_wait_busy();
+}
+
+static bool t5_sx1262_raw_probe(MeshInkDeepSleepRadioProbe& probe) {
     probe={};
-    // Recreate only the ESP32-side SPI/GPIO transport. Do NOT call std_init(),
-    // toggle RESET, change the shared rail, clear IRQs, read FIFO contents or
-    // ask the radio for RNG entropy. This is deliberately non-destructive.
+    probe.valid=true;
+    probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
+    probe.busy=(uint8_t)digitalRead(P_LORA_BUSY);
+    if(probe.busy==HIGH&&!t5_sx1262_raw_wait_busy()){
+        Serial.println("[T5-DEEPSLEEP] raw SX1262 probe failed: BUSY stayed high");
+        return false;
+    }
+
+    uint8_t irq_data[2]{};
+    uint8_t rx_status[2]{};
+    uint8_t status=0;
+    const uint8_t get_irq[]={0x12};             // GetIrqStatus
+    const uint8_t get_rx_buffer[]={0x13};       // GetRxBufferStatus
+    const uint8_t get_status[]={0xC0};          // GetStatus
+
+    if(!t5_sx1262_raw_read(get_status,sizeof(get_status),nullptr,0,&status)||
+       !t5_sx1262_raw_read(get_irq,sizeof(get_irq),irq_data,sizeof(irq_data))||
+       !t5_sx1262_raw_read(get_rx_buffer,sizeof(get_rx_buffer),rx_status,sizeof(rx_status))){
+        Serial.println("[T5-DEEPSLEEP] raw SX1262 probe SPI read failed");
+        return false;
+    }
+
+    probe.status=status;
+    probe.irq=(uint16_t)(((uint16_t)irq_data[0]<<8)|irq_data[1]);
+    probe.packet_len=rx_status[0];
+    probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
+    probe.busy=(uint8_t)digitalRead(P_LORA_BUSY);
+    probe.transport_ok=true;
+    return true;
+}
+
+static bool t5_sx1262_raw_capture_wake_packet(bool require_packet,uint16_t& captured_len) {
+    captured_len=0;
+
+    uint8_t irq_data[2]{};
+    uint8_t rx_status[2]{};
+    uint8_t packet_status[3]{};
+    uint8_t command_status=0;
+    const uint8_t get_irq[]={0x12};             // GetIrqStatus
+    const uint8_t get_rx_buffer[]={0x13};       // GetRxBufferStatus
+    const uint8_t get_packet_status[]={0x14};   // GetPacketStatus
+
+    if(!t5_sx1262_raw_read(get_irq,sizeof(get_irq),irq_data,sizeof(irq_data),&command_status)||
+       !t5_sx1262_raw_read(get_rx_buffer,sizeof(get_rx_buffer),rx_status,sizeof(rx_status))||
+       !t5_sx1262_raw_read(get_packet_status,sizeof(get_packet_status),
+                           packet_status,sizeof(packet_status))){
+        Serial.println("[T5-DEEPSLEEP] raw wake capture failed: SX1262 status/FIFO metadata unavailable");
+        return false;
+    }
+
+    const uint16_t irq=(uint16_t)(((uint16_t)irq_data[0]<<8)|irq_data[1]);
+    const uint16_t packet_len=rx_status[0];
+    const uint8_t offset=rx_status[1];
+    constexpr uint16_t IRQ_RX_DONE=0x0002U;
+
+    if(!(irq&IRQ_RX_DONE)||packet_len==0||packet_len>MAX_TRANS_UNIT){
+        Serial.printf("[T5-DEEPSLEEP] raw wake capture has no valid RX packet status=0x%02x irq=0x%04x len=%u offset=%u dio1=%u\n",
+                      (unsigned)command_status,(unsigned)irq,(unsigned)packet_len,
+                      (unsigned)offset,digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
+        return !require_packet;
+    }
+
+    uint8_t packet[MAX_TRANS_UNIT]{};
+    const uint8_t read_buffer[]={0x1E,offset};   // ReadBuffer(offset)
+    if(!t5_sx1262_raw_read(read_buffer,sizeof(read_buffer),packet,packet_len)){
+        Serial.printf("[T5-DEEPSLEEP] raw wake FIFO read failed irq=0x%04x len=%u offset=%u\n",
+                      (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
+        return false;
+    }
+
+    // RadioLib uses packet-status byte 2 for packet RSSI and byte 1 for SNR.
+    const float wake_rssi=-((float)packet_status[2])/2.0f;
+    const float wake_snr=((float)(int8_t)packet_status[1])/4.0f;
+    radio_driver.stageWakePacket(packet,packet_len,wake_rssi,wake_snr);
+    captured_len=packet_len;
+    Serial.printf("[T5-DEEPSLEEP] raw wake packet captured BEFORE RadioLib init len=%u offset=%u irq=0x%04x status=0x%02x rssi=%d snr_x4=%d\n",
+                  (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
+                  (unsigned)command_status,(int)wake_rssi,(int)(wake_snr*4.0f));
+    return true;
+}
+
+static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
+    // Deep sleep resets the RadioLib C++/Module state while leaving SX1262
+    // hardware alive. Recreate only GPIO/SPI transport and use raw SX1262
+    // command framing; no RadioLib method is legal until std_init() has run.
     if(!t5_release_held_radio_control_pins("warm-probe")){
         Serial.println("[T5-DEEPSLEEP] warm radio probe failed: control-pin hold release");
         return false;
@@ -1341,25 +1455,7 @@ static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(P_LORA_BUSY,INPUT);
     radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
-
-    probe.valid=true;
-    probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
-    probe.busy=(uint8_t)digitalRead(P_LORA_BUSY);
-
-    const uint32_t busy_started=millis();
-    while(digitalRead(P_LORA_BUSY)==HIGH&&millis()-busy_started<50)delayMicroseconds(100);
-    probe.busy=(uint8_t)digitalRead(P_LORA_BUSY);
-    if(probe.busy==HIGH){
-        Serial.println("[T5-DEEPSLEEP] warm radio probe failed: BUSY stayed high for 50ms");
-        return false;
-    }
-
-    probe.irq=(uint16_t)radio.getIrqFlags();
-    probe.packet_len=(uint16_t)radio.getPacketLength();
-    probe.status=radio.getStatus();
-    probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
-    probe.transport_ok=true;
-    return true;
+    return t5_sx1262_raw_probe(probe);
 }
 
 bool meshink_board_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
@@ -1392,49 +1488,31 @@ static bool radio_resume_retained(bool packet_wake) {
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(P_LORA_BUSY,INPUT);
     radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
 
+    uint16_t captured_len=0;
     if(packet_wake){
-        radio.resetOnStartup=false;
-        const bool retained_ready=radio.std_init(&radio_spi);
-        radio.resetOnStartup=true;
-        if(!retained_ready){
-            Serial.println("[T5-DEEPSLEEP] retained FIFO transport init failed");
+        // Critical ordering: copy the retained FIFO using raw SX1262 commands
+        // before RadioLib touches the chip. deepsleep37 proved the radio, DIO1,
+        // BUSY, power rail, NSS/RESET and raw FSPI all survive deep sleep; only
+        // RadioLib's process-local Module/SX126x framing state is lost.
+        if(!t5_sx1262_raw_capture_wake_packet(true,captured_len)){
+            Serial.println("[T5-DEEPSLEEP] raw retained wake packet capture failed");
             return false;
         }
-        if(!radio_apply_post_init_board_settings())return false;
-
-        const uint16_t irq=(uint16_t)radio.getIrqFlags();
-        const float wake_rssi=radio.getRSSI();
-        const float wake_snr=radio.getSNR();
-        if(!radio_hal.ensureIsrService("retained-capture"))return false;
-        radio_driver.begin();
-        if(!radio_driver.captureRetainedWakePacket(wake_rssi,wake_snr)){
-            Serial.printf("[T5-DEEPSLEEP] retained wake capture failed irq=0x%04x dio1=%u\n",
-                          (unsigned)irq,digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
-            return false;
-        }
-        Serial.printf("[T5-DEEPSLEEP] retained wake packet captured via normal readData irq=0x%04x saved=%u\n",
-                      (unsigned)irq,radio_driver.hasWakePacket()?1U:0U);
-
-        radio_hal.detachInterrupt(P_LORA_DIO_1);
-        radio.resetOnStartup=true;
-        if(!radio.std_init(&radio_spi)){
-            Serial.println("[T5-DEEPSLEEP] clean SX1262 reset/reinit failed after wake capture");
-            return false;
-        }
-        if(!radio_apply_post_init_board_settings())return false;
-        board.finishLocalRxWakeCapture();
-        Serial.println("[T5-DEEPSLEEP] clean SX1262 reset/reinit complete; saved wake packet pending");
-        return true;
     }
 
+    // The packet is now safe in ESP RAM. Rebuild the radio from a completely
+    // normal baseline, including RadioLib's SX126x-specific SPI framing.
     radio.resetOnStartup=true;
     if(!radio.std_init(&radio_spi)){
-        Serial.println("[T5-DEEPSLEEP] retained button-wake radio init failed");
+        Serial.println("[T5-DEEPSLEEP] clean SX1262 reset/reinit failed after raw wake capture");
         return false;
     }
     if(!radio_apply_post_init_board_settings())return false;
-    Serial.println("[T5-DEEPSLEEP] button-wake SX1262 clean init complete");
+
+    Serial.printf("[T5-DEEPSLEEP] clean SX1262/RadioLib init complete saved-packet=%u len=%u\n",
+                  radio_driver.hasWakePacket()?1U:0U,(unsigned)captured_len);
     return true;
 }
 
