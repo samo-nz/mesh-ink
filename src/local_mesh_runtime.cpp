@@ -290,6 +290,43 @@ class MeshCoreUiProvider final:public UiDataProvider{
         for(auto& item:direct_unread_)if(!item.used){item.used=true;memcpy(item.key,key,6);item.count=0;return item.count;}
         return direct_unread_[0].count;
     }
+    void rebuild_unread_from_journal(){
+        memset(direct_unread_,0,sizeof(direct_unread_));
+        memset(channel_unread_,0,sizeof(channel_unread_));
+        StoredMessage item{};
+        for(size_t i=0;i<store_.count();++i){
+            if(!store_.read(i,item)||item.sequence==0)continue;
+            const bool read_through=(item.flags&MESHINK_MESSAGE_READ_THROUGH)!=0;
+            const bool unread=(item.flags&MESHINK_MESSAGE_UNREAD)!=0;
+            if(item.kind==(uint8_t)MessageKind::Direct){
+                auto& count=direct_unread(item.key);
+                if(read_through)count=0;
+                else if(unread&&count<255)++count;
+            }else if(item.kind==(uint8_t)MessageKind::Channel){
+                const uint8_t channel=item.key[0];
+                if(channel>=MAX_UI_CHANNELS)continue;
+                if(read_through)channel_unread_[channel]=0;
+                else if(unread&&channel_unread_[channel]<255)++channel_unread_[channel];
+            }
+        }
+        for(size_t i=0;i<contact_count_;++i)
+            contacts_[i].entry.unread=direct_unread(contacts_[i].key);
+        for(size_t i=0;i<conversation_count_;++i)
+            conversations_[i].entry.unread=direct_unread(conversations_[i].key);
+        for(size_t i=0;i<channel_count_;++i){
+            const uint8_t channel=channels_[i].channel_index;
+            channels_[i].entry.unread=channel<MAX_UI_CHANNELS?channel_unread_[channel]:0;
+        }
+    }
+    void mark_read(MessageKind kind,const uint8_t* key,size_t key_len){
+        const uint8_t pending=kind==MessageKind::Direct
+            ?direct_unread(key)
+            :(key&&key[0]<MAX_UI_CHANNELS?channel_unread_[key[0]]:0);
+        if(!pending)return;
+        if(!store_.mark_read_through(kind,key,key_len))
+            Serial.println("[T5-STORE] ERROR persisting unread read-through marker");
+        rebuild_unread_from_journal();
+    }
     void rebuild_active(){
         active_count_=0;
         StoredMessage item{};
@@ -306,7 +343,14 @@ public:
         for(auto& i:conversations_)bind(i);for(auto& i:adverts_)bind(i);
         bind(active_message_view_);
     }
-    void begin(){if(!store_.begin())return;refresh(true);}
+    void begin(){
+        if(!store_.begin())return;
+        rebuild_unread_from_journal();
+        Serial.printf("[T5-STORE] unread restored direct=%u channel=%u\n",
+                      (unsigned)direct_unread_total(),
+                      (unsigned)channel_unread_total());
+        refresh(true);
+    }
     void heard(const uint8_t* key,size_t key_len){note_heard(key,key_len);}
     void refresh(bool force=false){
         const uint32_t interval=ui_is_standby()?60000:10000;
@@ -376,32 +420,53 @@ public:
     void received_direct(const uint8_t* key,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         note_heard(key,6); // includes CLI/direct payloads that upstream does not bump
         const bool already_seen=ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6);
-        if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}
+        const bool unread=!already_seen;
+        const bool journal_full=store_.count()>=MESHINK_MESSAGE_CAPACITY;
         const uint32_t sequence=store_.append(
             MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received,0,
-            MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
-        Serial.printf("[T5-STORE] RX direct journal seq=%lu count=%u ts=%lu result=%s\n",
+            MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len,unread);
+        Serial.printf("[T5-STORE] RX direct journal seq=%lu count=%u ts=%lu unread=%u result=%s\n",
                       (unsigned long)sequence,(unsigned)store_.count(),
-                      (unsigned long)timestamp,sequence?"OK":"FAIL");
-        if(sequence&&!active_channel_&&!memcmp(active_key_,key,6))rebuild_active();
+                      (unsigned long)timestamp,unread?1U:0U,sequence?"OK":"FAIL");
+        if(sequence){
+            if(journal_full)rebuild_unread_from_journal();
+            else if(unread){auto& count=direct_unread(key);if(count<255)++count;}
+            if(!active_channel_&&!memcmp(active_key_,key,6))rebuild_active();
+        }
         refresh(true);ui_notify_message_received(false);
     }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
-        if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;
+        const bool unread=!already_seen;
+        const bool journal_full=store_.count()>=MESHINK_MESSAGE_CAPACITY;
         const uint32_t sequence=store_.append(
             MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received,0,
-            MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
-        Serial.printf("[T5-STORE] RX channel journal seq=%lu count=%u ts=%lu result=%s\n",
+            MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len,unread);
+        Serial.printf("[T5-STORE] RX channel journal seq=%lu count=%u ts=%lu unread=%u result=%s\n",
                       (unsigned long)sequence,(unsigned)store_.count(),
-                      (unsigned long)timestamp,sequence?"OK":"FAIL");
-        if(sequence&&active_channel_&&active_key_[0]==channel)rebuild_active();
+                      (unsigned long)timestamp,unread?1U:0U,sequence?"OK":"FAIL");
+        if(sequence){
+            if(journal_full)rebuild_unread_from_journal();
+            else if(unread&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)
+                ++channel_unread_[channel];
+            if(active_channel_&&active_key_[0]==channel)rebuild_active();
+        }
         refresh(true);ui_notify_message_received(true);
     }
-    uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){const uint32_t sequence=store_.append(active_channel_?MessageKind::Channel:MessageKind::Direct,active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);rebuild_active();return sequence;}
+    uint32_t sent(const char* text,uint32_t timestamp,uint32_t ack){
+        const bool journal_full=store_.count()>=MESHINK_MESSAGE_CAPACITY;
+        const uint32_t sequence=store_.append(
+            active_channel_?MessageKind::Channel:MessageKind::Direct,
+            active_key_,active_channel_?1:6,text,timestamp,UiMessageState::Sent,ack);
+        if(sequence&&journal_full)rebuild_unread_from_journal();
+        rebuild_active();
+        return sequence;
+    }
     uint32_t queue_direct(const char* text,uint32_t timestamp){
+        const bool journal_full=store_.count()>=MESHINK_MESSAGE_CAPACITY;
         const uint32_t sequence=store_.append(
             MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);
+        if(sequence&&journal_full)rebuild_unread_from_journal();
         transient_direct_sequence_=sequence;
         transient_direct_state_=UiMessageState::Sending;
         transient_direct_route_known_=false;
@@ -466,9 +531,9 @@ public:
         memcpy(item.key,map_nodes_[index].key,sizeof(item.key));return activate(item,false);
     }
     size_t conversation_count()const override{return conversation_count_;}const UiListEntry& conversation(size_t i)const override{return conversations_[i].entry;}
-    bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;direct_unread(conversations_[i].key)=0;conversations_[i].entry.unread=0;return activate(conversations_[i],false);}
-    size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;direct_unread(contacts_[i].key)=0;contacts_[i].entry.unread=0;return activate(contacts_[i],false);}
-    size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;if(channels_[i].channel_index<MAX_UI_CHANNELS)channel_unread_[channels_[i].channel_index]=0;channels_[i].entry.unread=0;return activate(channels_[i],true);}
+    bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;mark_read(MessageKind::Direct,conversations_[i].key,6);return activate(conversations_[i],false);}
+    size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;mark_read(MessageKind::Direct,contacts_[i].key,6);return activate(contacts_[i],false);}
+    size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;mark_read(MessageKind::Channel,&channels_[i].channel_index,1);return activate(channels_[i],true);}
     size_t advert_count()const override{return advert_count_;}const UiListEntry& advert(size_t i)const override{return adverts_[i].entry;}
     bool cache_discovered(const uint8_t* frame,size_t len){
         if(!frame||len<DISCOVERED_CONTACT_BASE_LEN||len>sizeof(discovered_[0].frame)){
