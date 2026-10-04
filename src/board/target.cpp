@@ -769,6 +769,19 @@ bool meshink_board_radio_irq_asserted() {
     return digitalRead(P_LORA_DIO_1)==HIGH;
 }
 
+void meshink_board_prepare_retained_aux_wake() {
+    // Release only the automatic digital-pad hold so I2C/EPD pins can be used.
+    // Keep the explicit SX1262 NSS/RESET holds intact while a timer wake merely
+    // checks battery state.
+    gpio_deep_sleep_hold_dis();
+}
+
+void meshink_board_release_retained_radio_holds() {
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+}
+
 static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
     15ULL*60ULL*1000000ULL;
 
