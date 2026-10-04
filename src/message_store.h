@@ -79,6 +79,7 @@ public:
     void update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4);
     void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);
     bool mark_delivered_by_ack(uint32_t ack);
+    bool sync_and_verify_for_deep_sleep(uint32_t& disk_sequence,size_t& disk_count);
     uint32_t find_matching_outgoing(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                                     uint32_t timestamp,const char* text) const;
 };
