@@ -383,7 +383,7 @@ bool meshink_board_diag_radio_poll(uint32_t sequence) {
         const size_t read_len=packet_len>MAX_TRANS_UNIT?MAX_TRANS_UNIT:packet_len;
         consume=radio.readData(packet,read_len);
     }else{
-        consume=radio.clearIrqFlags();
+        consume=radio.clearIrqFlags(0xFFFFU);
     }
     delayMicroseconds(250);
     const int after_clear=digitalRead(P_LORA_DIO_1);
