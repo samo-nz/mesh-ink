@@ -378,6 +378,76 @@ void MeshInkMessageStore::update_outgoing(
     write_record(p,item);
 }
 
+bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
+        uint32_t& disk_sequence,size_t& disk_count){
+    disk_sequence=0;
+    disk_count=0;
+    if(!initialized_||!file_){
+        Serial.println("[T5-STORE] deep-sleep verify failed: journal not open");
+        return false;
+    }
+
+    StoreCpuBoostScope cpu_boost;
+    const MeshInkMessageStoreHeader expected=header_;
+
+    // Force all stdio/VFS buffers out, then close the writer handle. Reopening
+    // from SPIFFS makes this a session-boundary durability check rather than
+    // trusting the still-live File object's in-memory state.
+    file_.flush();
+    file_.close();
+
+    File verify=SPIFFS.open(STORE_PATH,"r");
+    MeshInkMessageStoreHeader disk{};
+    bool header_ok=false;
+    bool tail_ok=true;
+    uint32_t tail_sequence=0;
+
+    if(verify){
+        header_ok=verify.read((uint8_t*)&disk,sizeof(disk))==sizeof(disk) &&
+                  disk.magic==STORE_MAGIC &&
+                  disk.version==STORE_VERSION &&
+                  disk.capacity==MESHINK_MESSAGE_CAPACITY &&
+                  disk.head<MESHINK_MESSAGE_CAPACITY &&
+                  disk.count<=MESHINK_MESSAGE_CAPACITY;
+        if(header_ok&&disk.count){
+            const uint16_t physical=
+                (uint16_t)((disk.head+disk.count-1)%MESHINK_MESSAGE_CAPACITY);
+            MeshInkStoredMessage tail{};
+            tail_ok=read_record(verify,physical,tail);
+            if(tail_ok)tail_sequence=tail.sequence;
+        }
+        verify.close();
+    }
+
+    disk_sequence=header_ok?disk.sequence:0;
+    disk_count=header_ok?disk.count:0;
+
+    // Keep the journal usable if board-level sleep is refused after this check.
+    file_=SPIFFS.open(STORE_PATH,"r+");
+    const bool reopen_ok=(bool)file_;
+
+    const bool header_matches=
+        header_ok &&
+        disk.magic==expected.magic &&
+        disk.version==expected.version &&
+        disk.capacity==expected.capacity &&
+        disk.head==expected.head &&
+        disk.count==expected.count &&
+        disk.sequence==expected.sequence;
+    const bool tail_matches=
+        !expected.count || (tail_ok&&tail_sequence==expected.sequence);
+    const bool ok=header_matches&&tail_matches&&reopen_ok;
+
+    Serial.printf(
+        "[T5-STORE] deep-sleep verify expected seq=%lu count=%u; disk seq=%lu count=%u tail=%lu header=%u tailok=%u reopen=%u result=%s\n",
+        (unsigned long)expected.sequence,(unsigned)expected.count,
+        (unsigned long)disk_sequence,(unsigned)disk_count,
+        (unsigned long)tail_sequence,header_ok?1U:0U,tail_ok?1U:0U,
+        reopen_ok?1U:0U,ok?"OK":"FAIL");
+
+    return ok;
+}
+
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
     if(!initialized_||!file_||!ack)return false;
     // Normal operation scans the PSRAM/RAM journal mirror without changing
