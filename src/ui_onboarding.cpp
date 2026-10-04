@@ -3895,6 +3895,10 @@ bool ui_service_headless_message_alert() {
         }
         headless_alert_requested=false;
         standby_active=true;
+        // Headless standby must always leave the persistent unread image current.
+        // Coalesce messages that arrive during an active flash, but do not let
+        // the normal interactive-UI cooldown suppress a later display session.
+        message_alert_cooldown_until=0;
         start_message_alert();
         Serial.println("[T5-DEEPSLEEP] headless message alert display session started");
     }
