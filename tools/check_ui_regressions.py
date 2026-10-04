@@ -9,6 +9,7 @@ import re
 
 root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
+ui_header_source = (root / "src" / "ui_onboarding.h").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
 message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
