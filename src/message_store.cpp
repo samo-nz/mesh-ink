@@ -256,7 +256,7 @@ uint32_t MeshInkMessageStore::append(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
         const char* text,uint32_t timestamp,UiMessageState state,
         uint32_t ack,MeshInkMessageOrigin origin,
-        bool has_rx,int8_t snr_q4,uint8_t path_len){
+        bool has_rx,int8_t snr_q4,uint8_t path_len,bool unread){
     if(!initialized_&&!begin())return 0;
 
     uint16_t physical;
@@ -283,6 +283,7 @@ uint32_t MeshInkMessageStore::append(
         item.snr_q4=snr_q4;
         item.flags|=MESHINK_MESSAGE_HAS_RX;
     }
+    if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;
 
     if(!file_)return 0;
     StoreCpuBoostScope cpu_boost;
@@ -319,6 +320,31 @@ bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     if(item.state==(uint8_t)state)return true;
     item.state=(uint8_t)state;
     return write_record(p,item);
+}
+
+bool MeshInkMessageStore::mark_read_through(
+        MeshInkMessageKind kind,const uint8_t* key,size_t key_len){
+    if(!initialized_&&!begin())return false;
+    MeshInkStoredMessage item{};
+    if(!file_||!key||!key_len||key_len>sizeof(item.key))return false;
+
+    // A single marker on the newest record for this conversation means every
+    // older record for the same peer/channel is read. This keeps "mark read"
+    // to one record write regardless of how many unread messages accumulated.
+    for(size_t n=header_.count;n>0;--n){
+        const uint16_t p=(header_.head+(uint16_t)n-1)%MESHINK_MESSAGE_CAPACITY;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))return false;
+        if(item.kind!=(uint8_t)kind||memcmp(item.key,key,key_len))continue;
+
+        const uint8_t next_flags=(uint8_t)(
+            (item.flags|MESHINK_MESSAGE_READ_THROUGH)&
+            (uint8_t)~MESHINK_MESSAGE_UNREAD);
+        if(next_flags==item.flags)return true;
+        item.flags=next_flags;
+        return write_record(p,item);
+    }
+    return true;
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
