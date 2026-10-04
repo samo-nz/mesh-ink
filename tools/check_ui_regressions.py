@@ -146,10 +146,9 @@ assert "GT911" not in board_target_source, "board runtime must not name the touc
 
 # Test10 companion-mode power/logging policy: both steady-state runtimes use
 # an 80 MHz cruise clock after initialization. Local UI separately bursts to
-# 240 MHz for rendering/display work. The companion ISR path must choose
-# Arduino ownership before
-# probing the deinitialized EPDiy ISR service, and BLE scan response data must
-# stay within the legacy 31-byte budget without duplicating the UART UUID.
+# 240 MHz for rendering/display work. SX1262 DIO1 uses one explicit IDF handler
+# lifetime in every mode so EPDiy cannot invalidate Arduino IRQ bookkeeping.
+# BLE scan response data stays within the legacy 31-byte budget.
 assert "COMPANION_CPU_MHZ=80" in companion_source, "BT companion steady-state CPU target is 80 MHz"
 assert 'companion_set_low_power_cpu();' in companion_source, "BT companion applies low-power CPU policy"
 assert "UI_IDLE_CPU_MHZ=80" in source and "UI_RENDER_CPU_MHZ=240" in source, "local UI uses 80 MHz cruise and 240 MHz render clocks"
@@ -163,10 +162,10 @@ assert "board.begin();" not in companion_source and "board.beginLocal();" not in
 assert "t5_companion_" not in companion_source, "generic runtime must not call T5-specific companion lifecycle hooks"
 local_setup_body = companion_source.split("void local_mesh_setup() {",1)[1]
 assert "companion_set_low_power_cpu();" not in local_setup_body, "local UI must not inherit companion CPU policy"
-assert "companion_radio_uses_arduino_irq=true;" in board_target_source, "companion selects Arduino-owned radio IRQ service"
-assert "companion_radio_uses_arduino_irq=false;" in board_target_source, "local UI selects EPDiy-owned radio IRQ service"
 attach_body = board_target_source.split("void attachInterrupt(uint32_t interruptNum",1)[1].split("void detachInterrupt",1)[0]
-assert attach_body.index("if(companion_radio_uses_arduino_irq)") < attach_body.index("gpio_isr_handler_add"), "companion must bypass missing-service probe before gpio_isr_handler_add"
+assert "gpio_isr_handler_add(" in attach_body, "all modes attach SX1262 DIO1 directly to the IDF ISR service"
+assert "gpio_install_isr_service(ESP_INTR_FLAG_EDGE)" in attach_body, "radio creates the process-wide ISR service when no owner exists yet"
+assert "ArduinoHal::attachInterrupt" not in attach_body, "radio IRQ lifetime must not depend on Arduino hidden bookkeeping"
 assert "BLEAdvertisementData scan_response;" in companion_source, "companion supplies bounded custom BLE scan response"
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
@@ -220,6 +219,9 @@ assert "sync_and_verify_for_deep_sleep" in companion_source, "headless deep slee
 assert "RX direct journal seq=" in runtime_source, "received direct messages log real journal append result"
 assert "deep-sleep verify expected seq=" in message_store_source, "journal verification logs expected and reopened durable state"
 assert "local_rx_wake_indicator" not in companion_source, "headless RX standby stays dark outside the notification alert"
+assert "deep_sleep_diag" not in companion_source and "deep_sleep_diag" not in unified_source and "deep_sleep_diag" not in board_target_source, "retired deep-sleep flash journal has no runtime hooks"
+assert "+<deep_sleep_diag.cpp>" not in platformio_source, "retired deep-sleep flash journal is not built"
+assert "retained diagnostics will replay" not in unified_source and "service_deep_sleep_probe_replay" not in unified_source, "next boot no longer repeats retained diagnostics"
 retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
 assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"

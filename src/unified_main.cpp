@@ -4,7 +4,6 @@
 #include <string.h>
 #include "ui_onboarding.h"
 #include "companion_runtime.h"
-#include "deep_sleep_diag.h"
 #include "map_tiles.h"
 #include "hardware/wireless.h"
 #include "hardware/buttons.h"
@@ -18,11 +17,6 @@
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
-static MeshInkDeepSleepRadioProbe deep_sleep_button_probe{};
-static bool deep_sleep_button_probe_pending=false;
-static uint32_t deep_sleep_probe_replay_until=0;
-static uint32_t deep_sleep_probe_replay_next=0;
-static uint32_t deep_sleep_flash_replay_next=0;
 
 static char terminal_line[48]{};
 static uint8_t terminal_length=0;
@@ -167,35 +161,6 @@ static bool consume_companion_request() {
     return requested;
 }
 
-static void print_deep_sleep_probe() {
-    if(!deep_sleep_button_probe_pending)return;
-    Serial.printf("[T5-DEEPSLEEP] REPLAY retained-radio probe transport=%u dio1=%u busy=%u irq=0x%04x packet_len=%u status=0x%02x\n",
-                  deep_sleep_button_probe.transport_ok?1U:0U,
-                  (unsigned)deep_sleep_button_probe.dio1,
-                  (unsigned)deep_sleep_button_probe.busy,
-                  (unsigned)deep_sleep_button_probe.irq,
-                  (unsigned)deep_sleep_button_probe.packet_len,
-                  (unsigned)deep_sleep_button_probe.status);
-}
-
-static void service_deep_sleep_probe_replay() {
-    if(!deep_sleep_probe_replay_until)return;
-    const uint32_t now=millis();
-    if((int32_t)(now-deep_sleep_probe_replay_until)>=0){
-        deep_sleep_probe_replay_until=0;
-        return;
-    }
-    if(deep_sleep_button_probe_pending&&(int32_t)(now-deep_sleep_probe_replay_next)>=0){
-        deep_sleep_probe_replay_next=now+2000UL;
-        print_deep_sleep_probe();
-    }
-    if(meshink_deep_sleep_diag_has_history()&&
-       (int32_t)(now-deep_sleep_flash_replay_next)>=0){
-        deep_sleep_flash_replay_next=now+5000UL;
-        meshink_deep_sleep_diag_replay();
-    }
-}
-
 static void companion_exit_button() {
     static uint32_t pressed_at = 0;
     const bool pressed = meshink_primary_button_pressed();
@@ -231,8 +196,6 @@ void setup() {
         }
     }
 
-    if(radio_wake)meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakeRadio);
-    if(button_wake)meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakeButton);
     if(radio_wake||button_wake||timer_wake)
         Serial.printf("[T5-DEEPSLEEP] reset wake radio=%u button=%u timer=%u\n",
                       radio_wake?1U:0U,button_wake?1U:0U,timer_wake?1U:0U);
@@ -370,21 +333,10 @@ void setup() {
         if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
     }
 
-    if(deep_sleep_button_probe_pending||meshink_deep_sleep_diag_has_history()){
-        // Native USB CDC disappears during deep sleep and many terminal tools do
-        // not reconnect automatically. Repeat both the pre-reset SX1262 snapshot
-        // and the flash breadcrumbs long enough for a fresh monitor to attach.
-        deep_sleep_probe_replay_until=millis()+30000UL;
-        deep_sleep_probe_replay_next=0;
-        deep_sleep_flash_replay_next=0;
-        print_deep_sleep_probe();
-        meshink_deep_sleep_diag_replay();
-        Serial.println("[T5-DEEPSLEEP] retained diagnostics will replay for 30s (radio 2s, flash journal 5s)");
-    }
+
 }
 
 void loop() {
-    service_deep_sleep_probe_replay();
     if(cache64_psram_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         local_mesh_rx_wake_loop();

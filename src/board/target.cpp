@@ -16,7 +16,6 @@
 #include "target.h"
 #include "t5_board_backend.h"
 #include "t5_logging.h"
-#include "../deep_sleep_diag.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
 
@@ -323,8 +322,6 @@ int MeshInkSX1262Wrapper::recvRaw(uint8_t* bytes,int sz){
         (void)CustomSX1262Wrapper::recvRaw(&scratch,1);
         Serial.printf("[T5-DEEPSLEEP] injected saved wake packet into MeshCore len=%d rxmode=%u\n",
                       len,isInRecvMode()?1U:0U);
-        meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketInjected,
-                                     (uint32_t)len,isInRecvMode()?1U:0U);
         return len;
     }
     wake_metrics_active_=false;
@@ -1028,7 +1025,6 @@ static bool radio_resume_retained(bool require_packet) {
     MeshInkDeepSleepRadioProbe probe{};
     if(!t5_probe_deep_sleep_radio(probe)){
         Serial.println("[T5-DEEPSLEEP] retained radio resume failed: transport unavailable");
-        meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,1);
         return false;
     }
 
@@ -1046,8 +1042,6 @@ static bool radio_resume_retained(bool require_packet) {
             if(read_state!=RADIOLIB_ERR_NONE){
                 Serial.printf("[T5-DEEPSLEEP] retained FIFO read failed code=%d irq=0x%04x len=%u offset=%u\n",
                               (int)read_state,(unsigned)irq,(unsigned)packet_len,(unsigned)offset);
-                meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,
-                                             (uint32_t)(uint16_t)read_state,irq);
                 return false;
             }
             radio_driver.stageWakePacket(packet,(uint16_t)packet_len,wake_rssi,wake_snr);
@@ -1055,13 +1049,9 @@ static bool radio_resume_retained(bool require_packet) {
             Serial.printf("[T5-DEEPSLEEP] retained packet captured len=%u offset=%u irq=0x%04x rssi=%d snr_x4=%d\n",
                           (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
                           (int)wake_rssi,(int)(wake_snr*4.0f));
-            meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptured,
-                                         (uint32_t)packet_len,irq);
         }else if(require_packet){
             Serial.printf("[T5-DEEPSLEEP] wake packet capture failed irq=0x%04x len=%u offset=%u\n",
                           (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
-            meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,
-                                         (uint32_t)packet_len,irq);
             return false;
         }else{
             Serial.printf("[T5-DEEPSLEEP] retained wake has no packet to preserve irq=0x%04x len=%u\n",
@@ -1076,7 +1066,6 @@ static bool radio_resume_retained(bool require_packet) {
     const bool ready=radio.std_init(&radio_spi);
     if(!ready){
         Serial.println("[T5-DEEPSLEEP] SX1262 retained-state reinit failed");
-        meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioReinitFail);
         return false;
     }
     constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
@@ -1086,15 +1075,11 @@ static bool radio_resume_retained(bool require_packet) {
     if(tcxo_state!=RADIOLIB_ERR_NONE||rf_switch_state!=RADIOLIB_ERR_NONE){
         Serial.printf("[T5-DEEPSLEEP] SX1262 post-wake board init failed tcxo=%d rf-switch=%d\n",
                       (int)tcxo_state,(int)rf_switch_state);
-        meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioReinitFail,
-                                     (uint32_t)(uint16_t)tcxo_state,(uint16_t)rf_switch_state);
         return false;
     }
 
     Serial.printf("[T5-DEEPSLEEP] SX1262 retained-state reinit complete saved-packet=%u\n",
                   radio_driver.hasWakePacket()?1U:0U);
-    meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioReinitOk,
-                                 (uint32_t)captured_len);
     return true;
 }
 
