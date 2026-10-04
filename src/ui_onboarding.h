@@ -2,11 +2,14 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "hardware/radio_types.h"
+#include "hardware/power_types.h"
 class UiDataProvider;
 
 void ui_setup();
 void ui_prepare_headless_rx_wake();
 void ui_show_storage_initializing(); // update boot splash before formatting
+[[noreturn]] void ui_minimal_low_battery_shutdown(
+    const MeshInkPowerCriticalState& critical,const char* source);
 void ui_finish_startup(); // reveal interactive UI after storage/mesh initialization
 void ui_loop();
 void ui_status_set_unread(uint16_t count);
