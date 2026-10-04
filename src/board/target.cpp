@@ -268,37 +268,9 @@ void (*T5RadioHal::callbacks_[GPIO_NUM_MAX])(void)={};
 bool T5RadioHal::attached_[GPIO_NUM_MAX]={};
 
 static T5RadioHal radio_hal(radio_spi);
-static Module radio_module(
+static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
-static CustomSX1262 radio(&radio_module);
 MeshInkSX1262Wrapper radio_driver(radio, board);
-
-static void t5_prepare_retained_sx1262_transport() {
-    // ESP deep sleep reconstructs the C++ RadioLib objects while the physical
-    // SX1262 remains powered. Before SX126x::begin()/modSetup() runs, Module's
-    // default SPI metadata still describes a register-style radio, not SX126x
-    // command streams. Using getIrqFlags/getPacketLength/readBuffer in that
-    // state returns deterministic garbage (observed as length 0xAA/170).
-    //
-    // Recreate only the non-destructive Module::spiConfig portion of
-    // SX126x::modSetup(). Do NOT call begin/std_init/reset before copying the
-    // retained RX FIFO, because those operations would destroy the wake packet.
-    radio_module.spiConfig.stream=true;
-    radio_module.spiConfig.err=RADIOLIB_ERR_UNKNOWN;
-    radio_module.spiConfig.widths[RADIOLIB_MODULE_SPI_WIDTH_ADDR]=Module::BITS_16;
-    radio_module.spiConfig.widths[RADIOLIB_MODULE_SPI_WIDTH_CMD]=Module::BITS_8;
-    radio_module.spiConfig.widths[RADIOLIB_MODULE_SPI_WIDTH_STATUS]=Module::BITS_8;
-    radio_module.spiConfig.statusPos=1;
-    radio_module.spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_READ]=RADIOLIB_SX126X_CMD_READ_REGISTER;
-    radio_module.spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_WRITE]=RADIOLIB_SX126X_CMD_WRITE_REGISTER;
-    radio_module.spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_NOP]=RADIOLIB_SX126X_CMD_NOP;
-    radio_module.spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_STATUS]=RADIOLIB_SX126X_CMD_GET_STATUS;
-    // Status parsing is unnecessary for these read-only retained-FIFO commands.
-    // std_init() installs SX126x::SPIparseStatus immediately afterwards.
-    radio_module.spiConfig.parseStatusCb=nullptr;
-    radio_module.spiConfig.checkStatusCb=nullptr;
-    radio_module.spiConfig.timeout=1000;
-}
 
 bool meshink_board_service_asserted_radio_irq() {
     pinMode(P_LORA_DIO_1,INPUT);
@@ -1033,7 +1005,6 @@ static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(P_LORA_BUSY,INPUT);
     radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
-    t5_prepare_retained_sx1262_transport();
 
     probe.valid=true;
     probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
@@ -1051,11 +1022,6 @@ static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
     probe.packet_len=(uint16_t)radio.getPacketLength();
     probe.status=radio.getStatus();
     probe.dio1=(uint8_t)digitalRead(P_LORA_DIO_1);
-    if(probe.status==0x00||probe.status==0xFF){
-        Serial.printf("[T5-DEEPSLEEP] retained radio probe invalid status=0x%02x\n",
-                      (unsigned)probe.status);
-        return false;
-    }
     probe.transport_ok=true;
     return true;
 }
@@ -1081,22 +1047,9 @@ static bool radio_resume_retained(bool require_packet) {
         uint8_t offset=0;
         const size_t packet_len=radio.getPacketLength(true,&offset);
         const uint16_t irq=(uint16_t)radio.getIrqFlags();
-        const bool rx_done=(irq&RADIOLIB_SX126X_IRQ_RX_DONE)!=0;
-        const bool crc_error=(irq&RADIOLIB_SX126X_IRQ_CRC_ERR)!=0;
         const float wake_rssi=radio.getRSSI();
         const float wake_snr=radio.getSNR();
-
-        // Deep-sleep DIO1 is mapped to RX_DONE. Refuse to stage FIFO contents
-        // unless the retained chip itself confirms a completed, CRC-clean RX.
-        // This prevents stale FIFO metadata from being treated as the wake packet.
-        if(require_packet&&(!rx_done||crc_error)){
-            Serial.printf("[T5-DEEPSLEEP] wake packet IRQ invalid irq=0x%04x rx_done=%u crc_error=%u len=%u offset=%u\n",
-                          (unsigned)irq,rx_done?1U:0U,crc_error?1U:0U,
-                          (unsigned)packet_len,(unsigned)offset);
-            return false;
-        }
-
-        if(packet_len&&packet_len<=MAX_TRANS_UNIT&&rx_done&&!crc_error){
+        if(packet_len&&packet_len<=MAX_TRANS_UNIT){
             uint8_t packet[MAX_TRANS_UNIT]{};
             const int16_t read_state=radio.readBuffer(packet,(uint8_t)packet_len,offset);
             if(read_state!=RADIOLIB_ERR_NONE){
@@ -1104,20 +1057,10 @@ static bool radio_resume_retained(bool require_packet) {
                               (int)read_state,(unsigned)irq,(unsigned)packet_len,(unsigned)offset);
                 return false;
             }
-
-            mesh::Packet parsed;
-            if(!parsed.readFrom(packet,(uint8_t)packet_len)){
-                Serial.printf("[T5-DEEPSLEEP] retained FIFO packet failed MeshCore framing len=%u hdr=0x%02x offset=%u\n",
-                              (unsigned)packet_len,(unsigned)packet[0],(unsigned)offset);
-                return false;
-            }
-
             radio_driver.stageWakePacket(packet,(uint16_t)packet_len,wake_rssi,wake_snr);
             captured_len=(uint16_t)packet_len;
-            Serial.printf("[T5-DEEPSLEEP] retained packet captured len=%u offset=%u irq=0x%04x hdr=0x%02x route=%u type=%u rssi=%d snr_x4=%d\n",
+            Serial.printf("[T5-DEEPSLEEP] retained packet captured len=%u offset=%u irq=0x%04x rssi=%d snr_x4=%d\n",
                           (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
-                          (unsigned)packet[0],(unsigned)parsed.getRouteType(),
-                          (unsigned)parsed.getPayloadType(),
                           (int)wake_rssi,(int)(wake_snr*4.0f));
         }else if(require_packet){
             Serial.printf("[T5-DEEPSLEEP] wake packet capture failed irq=0x%04x len=%u offset=%u\n",
