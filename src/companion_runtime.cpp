@@ -664,6 +664,14 @@ void local_mesh_prepare_interactive_services() {
 bool local_mesh_promote_to_ui(const char* source) {
     if(!local_runtime_ready)return false;
 
+    // Accepted BOOT-to-UI promotion gets immediate visible acknowledgement.
+    // This PWM path is independent of EPDiy/I2C, so it is safe whether the
+    // headless display session already exists or has never been initialized.
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(100);
+    Serial.printf("[T5-DEEPSLEEP] UI boot requested source=%s; frontlight=100%%\n",
+                  source?source:"unknown");
+
     MeshInkPowerCriticalState wake_power{};
     const MeshInkPowerSleepCheck wake_result=
         local_mesh_headless_power_check(wake_power);

@@ -3980,8 +3980,11 @@ bool ui_promote_headless_to_interactive() {
     const bool reuse_display=headless_display_session&&display_session_active&&fb;
     headless_alert_requested=false;
     message_alert_active=false;
-    meshink_power_frontlight_set(0);
-    frontlight_lit=false;
+    // local_mesh_promote_to_ui() has already acknowledged the accepted BOOT
+    // request at full brightness. Keep that acknowledgement lit through the
+    // retained-to-interactive startup instead of extinguishing it here.
+    meshink_power_frontlight_set(100);
+    frontlight_lit=true;
     frontlight_deadline=0;
 
     MeshInkUiStartupPlan plan{};

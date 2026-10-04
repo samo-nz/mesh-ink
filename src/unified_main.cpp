@@ -230,7 +230,11 @@ void setup() {
         while(meshink_primary_button_pressed()&&millis()-hold_started<2000UL)delay(10);
         const bool long_hold=meshink_primary_button_pressed()&&millis()-hold_started>=2000UL;
         if(long_hold){
-            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; restoring retained radio/MeshCore before UI");
+            // Give the user immediate confirmation as soon as the long hold is
+            // accepted. Retained MeshCore/radio restoration may take a moment.
+            meshink_power_frontlight_begin();
+            meshink_power_frontlight_set(100);
+            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; frontlight=100%; restoring retained radio/MeshCore before UI");
             deep_sleep_rx_mode=true;
             companion_mode=false;
             check_local_wireless_state("deep-button-pre",

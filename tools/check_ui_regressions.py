@@ -259,7 +259,15 @@ assert "ui_display_session_active()" in companion_source, "battery guard detects
 power_check_body = companion_source.split("static MeshInkPowerSleepCheck local_mesh_headless_power_check",1)[1].split("static void companion_set_low_power_cpu",1)[0]
 assert power_check_body.index("ui_display_session_active()") < power_check_body.index("meshink_power_begin_minimal_bus()"), "normal or headless EPDiy I2C is reused before attempting another driver install"
 assert "local_mesh_setup_button_wake" in unified_source and "local_mesh_promote_to_ui" in unified_source, "BOOT wake restores retained MeshCore before attaching full UI"
+runtime_promotion_body = companion_source.split("bool local_mesh_promote_to_ui(const char* source)",1)[1].split("bool local_mesh_enter_deep_sleep_standby()",1)[0]
+assert "meshink_power_frontlight_begin();" in runtime_promotion_body and "meshink_power_frontlight_set(100);" in runtime_promotion_body, "awake/headless BOOT promotion immediately acknowledges with full frontlight"
+assert runtime_promotion_body.index("meshink_power_frontlight_set(100);") < runtime_promotion_body.index("local_mesh_headless_power_check"), "awake BOOT acknowledgement precedes promotion battery/startup work"
+deep_button_body = unified_source.split("if(button_wake){",1)[1].split("if(radio_wake){",1)[0]
+assert "meshink_power_frontlight_begin();" in deep_button_body and "meshink_power_frontlight_set(100);" in deep_button_body, "deep-sleep BOOT hold immediately acknowledges with full frontlight"
+assert deep_button_body.index("meshink_power_frontlight_set(100);") < deep_button_body.index("local_mesh_setup_button_wake()"), "deep-sleep BOOT acknowledgement precedes retained MeshCore restoration"
 promotion_body = source.split("bool ui_promote_headless_to_interactive()",1)[1].split("void ui_prepare_headless_rx_wake()",1)[0]
+assert "meshink_power_frontlight_set(100);" in promotion_body and "frontlight_lit=true;" in promotion_body, "interactive promotion keeps the BOOT acknowledgement lit through startup"
+assert "meshink_power_frontlight_set(0);" not in promotion_body, "interactive promotion must not extinguish accepted BOOT feedback"
 assert "plan.sample_status=false;" in promotion_body, "retained promotion avoids a premature --:-- status sample"
 assert "plan.display=!reuse_display;" in promotion_body, "retained promotion reuses an existing EPDiy session instead of initializing it twice"
 assert "ui_close_headless_display_session();" not in promotion_body, "BOOT promotion must not deinit/reinit EPDiy high-level singleton state"
