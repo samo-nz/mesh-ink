@@ -235,7 +235,7 @@ assert "return headless_alert_requested||message_alert_active;" in source, "idle
 assert "ui_quiesce_headless_display_for_deep_sleep" in source and "session retained until reset" in source, "display quiesce helper remains available for post-diagnostic low-power cleanup"
 sleep_entry = companion_source.split("bool local_mesh_enter_deep_sleep_standby()",1)[1].split("void local_mesh_rx_wake_loop()",1)[0]
 assert "ui_quiesce_headless_display_for_deep_sleep();" not in sleep_entry, "deepsleep23 A/B test leaves the display session untouched before retained-radio sleep"
-assert "deepsleep25: display untouched; radio wake uses EXT0" in sleep_entry, "deepsleep25 preserves the display A/B result while moving radio wake off EXT1"
+assert "deepsleep26: display untouched; wake packet captured then radio fully reset" in sleep_entry, "deepsleep26 keeps display isolated while restoring capture-reset-replay"
 headless_loop = companion_source.split("void local_mesh_rx_wake_loop()",1)[1].split("bool local_mesh_is_running",1)[0]
 assert "alert_was_busy" not in headless_loop and "alert_active" not in headless_loop, "display alert activity must not reset the genuine MeshCore quiet timer"
 notify_body = source.split("void ui_notify_message_received(bool channel)",1)[1].split("bool ui_restore_failed_compose",1)[0]
@@ -299,19 +299,18 @@ retained_resume_body = board_target_source.split("static bool radio_resume_retai
 assert "radio.std_init(&radio_spi)" in retained_resume_body, "retained wake performs the normal upstream RadioLib initialization"
 assert "radio.resetOnStartup=!packet_wake;" in retained_resume_body, "packet wakes use RadioLib's supported ESP32 deep-sleep restore mode without hardware reset"
 assert retained_resume_body.index("radio.resetOnStartup=!packet_wake;") < retained_resume_body.index("radio.std_init(&radio_spi)"), "reset suppression is active before retained std_init"
-assert retained_resume_body.index("radio.std_init(&radio_spi)") < retained_resume_body.index("radio.resetOnStartup=true;"), "normal reset-on-startup policy is restored only after retained initialization"
-assert "reset-skipped=%u" in retained_resume_body, "retained wake log exposes whether hardware reset was suppressed"
 for forbidden_pre_read in ("t5_probe_deep_sleep_radio(", "radio.getPacketLength(", "radio.getIrqFlags(", "radio.readBuffer(", "radio.getRSSI(", "radio.getSNR("):
     assert forbidden_pre_read not in retained_resume_body, f"upstream retained-RX handoff must not inspect FIFO before MeshCore: {forbidden_pre_read}"
-assert "radio.startReceive()" not in retained_resume_body, "packet-wake path must not start a fresh RX before upstream recvRaw consumes the retained packet"
-assert "upstream retained-RX handoff ready" in retained_resume_body, "retained wake logs the upstream MeshCore handoff path"
 sleep_entry_body = board_target_source.split("bool meshink_board_enter_deep_sleep_standby()",1)[1].split("bool meshink_board_return_to_retained_deep_sleep()",1)[0]
-assert "radio.startReceive()" not in sleep_entry_body, "deep-sleep handoff must not restart or otherwise mutate the already-running SX1262"
 assert "preserving MeshCore continuous RX unchanged before sleep" in sleep_entry_body, "sleep entry documents the always-listening radio invariant"
 assert "digitalRead(P_LORA_BUSY)==HIGH" in sleep_entry_body, "sleep entry checks BUSY non-destructively instead of issuing a radio command"
 assert "digitalRead(P_LORA_DIO_1)==HIGH" in sleep_entry_body, "sleep entry rejects a pending RX IRQ rather than disturbing it"
-assert "esp_sleep_enable_ext0_wakeup" in board_target_source and "(gpio_num_t)P_LORA_DIO_1,1" in board_target_source, "deepsleep25 gives DIO1 the EXT0 HIGH wake path"
-assert "1ULL<<T5_PIN_BOOT_BUTTON,ESP_EXT1_WAKEUP_ANY_LOW" in board_target_source, "deepsleep25 moves BOOT to EXT1 ANY_LOW"
+assert "radio.startReceive()" in sleep_entry_body, "deepsleep26 re-arms SX1262 RX/DIO1 mapping at every sleep boundary"
+assert "1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH" in board_target_source, "deepsleep26 restores the known-good DIO1 EXT1 wake assignment"
+assert "(gpio_num_t)T5_PIN_BOOT_BUTTON,0" in board_target_source, "deepsleep26 restores BOOT EXT0 LOW"
+assert "captureRetainedWakePacket" in board_target_source and "retained wake packet captured via normal readData" in board_target_source, "wake packet is copied before hardware reset using normal RadioLib receive semantics"
+assert "clean SX1262 reset/reinit complete; saved wake packet pending" in board_target_source, "wake path deliberately returns radio hardware to a clean baseline after capture"
+assert "injected saved wake packet after clean radio reset" in board_target_source, "captured wake packet is replayed into MeshCore after clean reinit"
 assert "rtc_gpio_hold_dis((gpio_num_t)P_LORA_DIO_1)" in board_target_source, "wake restoration explicitly releases any RTC DIO1 hold"
 assert "t5_prepare_retained_sx1262_transport" not in board_target_source, "unsafe partial RadioLib transport reconstruction stays removed"
 assert 'minimal_battery_check("cold-boot"' in unified_source, "cold boot performs battery guard before full UI/MeshCore startup"
