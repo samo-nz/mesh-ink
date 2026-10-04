@@ -8,6 +8,7 @@
 mesh::Radio& meshink_radio_meshcore();
 bool meshink_radio_initialize();
 bool meshink_radio_resume_rx_wake();
+bool meshink_radio_resume_retained_wake();
 uint32_t meshink_radio_rng_seed();
 void meshink_radio_apply_params(float freq,float bw,uint8_t sf,uint8_t cr);
 void meshink_radio_power_off();
