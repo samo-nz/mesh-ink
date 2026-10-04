@@ -3886,13 +3886,13 @@ bool ui_service_headless_message_alert() {
         plan.battery_guard=false;
         plan.service_mesh_between_steps=true;
         ui_startup(plan);
+        headless_display_session=true;
         if(!fb){
             Serial.println("[T5-DEEPSLEEP] headless message display unavailable");
             headless_alert_requested=false;
             ui_close_headless_display_session();
             return false;
         }
-        headless_display_session=true;
         headless_alert_requested=false;
         standby_active=true;
         start_message_alert();
