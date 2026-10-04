@@ -164,7 +164,7 @@ local_setup_body = companion_source.split("void local_mesh_setup() {",1)[1]
 assert "companion_set_low_power_cpu();" not in local_setup_body, "local UI must not inherit companion CPU policy"
 attach_body = board_target_source.split("void attachInterrupt(uint32_t interruptNum",1)[1].split("void detachInterrupt",1)[0]
 assert "gpio_isr_handler_add(" in attach_body, "all modes attach SX1262 DIO1 directly to the IDF ISR service"
-assert "gpio_install_isr_service(ESP_INTR_FLAG_EDGE)" in attach_body, "radio creates the process-wide ISR service when no owner exists yet"
+assert "if(!ensureIsrService(nullptr))" in attach_body, "radio ensures the process-wide ISR service exists before adding its handler"
 assert "ArduinoHal::attachInterrupt" not in attach_body, "radio IRQ lifetime must not depend on Arduino hidden bookkeeping"
 assert "BLEAdvertisementData scan_response;" in companion_source, "companion supplies bounded custom BLE scan response"
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
