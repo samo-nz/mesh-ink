@@ -85,6 +85,13 @@ static void split_diag_wait_boot_release() {
                   (unsigned long)split_diag_boot_wakes,
                   (unsigned long)window_events,radio_rearmed?1U:0U);
 
+    // Initial sleep is #1, wake #1 returns to sleep #2, and wake #2 returns to
+    // sleep #3. Probe the retained SX1262 immediately before that third sleep.
+    if(split_diag_boot_wakes==2){
+        Serial.println("[T5-DIAG-SX] taking read-only SX1262 snapshot before deep sleep #3");
+        meshink_board_diag_radio_snapshot("before-sleep-3");
+    }
+
     split_diag_wait_boot_release();
     Serial.flush();
     while(!meshink_board_diag_enter_button_only_deep_sleep(false)){

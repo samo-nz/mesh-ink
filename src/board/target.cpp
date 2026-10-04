@@ -430,6 +430,29 @@ bool meshink_board_diag_gps_activity() {
     return armed==RADIOLIB_ERR_NONE&&digitalRead(P_LORA_DIO_1)==LOW;
 }
 
+void meshink_board_diag_radio_snapshot(const char* phase) {
+    // Read-only SX1262 snapshot for comparison immediately before sleep.
+    // These commands deliberately do not clear IRQs, reset the chip, or change
+    // receive mode. If SPI transport is already broken, the returned patterns
+    // are still useful evidence.
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    uint8_t offset=0;
+    const uint8_t status=radio.getStatus();
+    const uint16_t irq=(uint16_t)radio.getIrqFlags();
+    const uint16_t errors=radio.getDeviceErrors();
+    const uint32_t packet_status=radio.getPacketStatus();
+    const size_t packet_len=radio.getPacketLength(true,&offset);
+    const int dio1=digitalRead(P_LORA_DIO_1);
+    const int busy=digitalRead(P_LORA_BUSY);
+    const int nss=gpio_get_level((gpio_num_t)P_LORA_NSS);
+    const int reset=gpio_get_level((gpio_num_t)P_LORA_RESET);
+    Serial.printf("[T5-DIAG-SX] phase=%s status=0x%02x irq=0x%04x errors=0x%04x packet-status=0x%08lx len=%u offset=%u dio1=%d busy=%d nss=%d reset=%d\n",
+                  phase?phase:"unknown",(unsigned)status,(unsigned)irq,
+                  (unsigned)errors,(unsigned long)packet_status,
+                  (unsigned)packet_len,(unsigned)offset,dio1,busy,nss,reset);
+}
+
 bool meshink_board_diag_radio_poll(uint32_t sequence) {
     pinMode(P_LORA_DIO_1,INPUT);
     if(digitalRead(P_LORA_DIO_1)!=HIGH)return false;
