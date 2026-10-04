@@ -282,6 +282,7 @@ static bool message_alert_active=false;
 static bool headless_ui_state=false;
 static bool headless_alert_requested=false;
 static bool headless_display_session=false;
+static bool display_session_active=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
 static volatile bool quick_slider_dragging=false;
@@ -3866,6 +3867,7 @@ static void ui_close_headless_display_session() {
         fb=nullptr;
     }
     meshink_display_deinit();
+    display_session_active=false;
     headless_display_session=false;
     ui_boot_cpu_active=false;
     set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle");
@@ -3900,6 +3902,10 @@ bool ui_headless_display_busy() {
 
 bool ui_headless_display_session_active() {
     return headless_display_session;
+}
+
+bool ui_display_session_active() {
+    return display_session_active;
 }
 
 bool ui_service_headless_message_alert() {
@@ -3971,11 +3977,19 @@ bool ui_service_headless_message_alert() {
 bool ui_promote_headless_to_interactive() {
     if(!headless_ui_state)return false;
 
-    if(headless_display_session)ui_close_headless_display_session();
+    const bool reuse_display=headless_display_session&&display_session_active&&fb;
     headless_alert_requested=false;
     message_alert_active=false;
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
+    frontlight_deadline=0;
 
     MeshInkUiStartupPlan plan{};
+    // EPDiy high-level state is process-singleton state: epd_deinit() does not
+    // make epd_hl_init() legal a second time in the same boot. When a message
+    // alert already initialized EPDiy, transfer that exact framebuffer/session
+    // into interactive UI rather than tearing it down and reinitializing it.
+    plan.display=!reuse_display;
     plan.radio_settle=false;
     plan.splash=false;
     plan.battery_guard=false;
@@ -3984,6 +3998,11 @@ bool ui_promote_headless_to_interactive() {
     plan.sample_status=false;
     plan.service_mesh_between_steps=true;
     ui_startup(plan);
+    if(reuse_display){
+        headless_display_session=false;
+        set_ui_orientation(MeshInkOrientation::Portrait);
+        Serial.println("[T5-DEEPSLEEP] interactive promotion reusing initialized EPDiy session");
+    }
     if(!fb){
         Serial.println("[T5-DEEPSLEEP] interactive promotion failed: display framebuffer unavailable");
         return false;
@@ -4108,6 +4127,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
 
     if(plan.display){
         meshink_display_init();
+        display_session_active=true;
         if(plan.radio_settle)meshink_board_start_local_radio_settle();
         if(plan.touch)set_ui_orientation(MeshInkOrientation::Portrait);
         else meshink_display_set_orientation(MeshInkOrientation::Portrait);

@@ -316,12 +316,12 @@ int MeshInkSX1262Wrapper::recvRaw(uint8_t* bytes,int sz){
         wake_metrics_active_=true;
         n_recv++;
 
-        // RadioLib's wrapper begins in IDLE after a clean reboot. Start normal
-        // continuous RX now, but return the packet copied from the pre-reset FIFO.
-        uint8_t scratch=0;
-        (void)CustomSX1262Wrapper::recvRaw(&scratch,1);
-        Serial.printf("[T5-DEEPSLEEP] injected saved wake packet into MeshCore len=%d rxmode=%u\n",
-                      len,isInRecvMode()?1U:0U);
+        // Hardware RX was re-armed immediately after the retained radio reinit.
+        // Do not call the base recvRaw() here: if a follow-on packet asserted
+        // DIO1 during MeshCore startup, a one-byte scratch read would clear and
+        // destroy that packet. Leave it pending for the next full recvRaw().
+        Serial.printf("[T5-DEEPSLEEP] injected saved wake packet into MeshCore len=%d hdr=0x%02x rxmode=%u\n",
+                      len,(unsigned)wake_packet_[0],isInRecvMode()?1U:0U);
         return len;
     }
     wake_metrics_active_=false;
@@ -1091,7 +1091,17 @@ static bool radio_resume_retained(bool require_packet) {
         return false;
     }
 
-    Serial.printf("[T5-DEEPSLEEP] SX1262 retained-state reinit complete saved-packet=%u\n",
+    // Close the retained-startup receive blind spot immediately. MeshCore's
+    // wrapper/software state is rebuilt later, but the SX1262 can already hold
+    // one follow-on packet in FIFO with DIO1 asserted until that state is ready.
+    const int16_t rx_state=radio.startReceive();
+    if(rx_state!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] SX1262 immediate post-wake RX arm failed code=%d\n",
+                      (int)rx_state);
+        return false;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] SX1262 retained-state reinit complete saved-packet=%u early-rx=1\n",
                   radio_driver.hasWakePacket()?1U:0U);
     return true;
 }

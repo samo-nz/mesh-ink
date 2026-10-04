@@ -340,10 +340,10 @@ static constexpr uint32_t LOCAL_RX_WAKE_QUIET_MS=40000UL;
 
 static MeshInkPowerSleepCheck local_mesh_headless_power_check(
         MeshInkPowerCriticalState& power) {
-    // EPDiy owns the shared IDF I2C driver while a retained display session is
-    // initialized. Reuse it instead of calling i2c_driver_install() again:
-    // ESP-IDF 4.4 otherwise logs "i2c driver install error" on this healthy path.
-    if(ui_headless_display_session_active())
+    // EPDiy owns the shared IDF I2C driver whenever any UI display session is
+    // initialized (normal interactive UI or retained headless alert). Reuse it
+    // instead of provoking ESP-IDF's duplicate "i2c driver install error".
+    if(ui_display_session_active())
         return meshink_power_deep_sleep_check(power);
 
     MeshInkPowerSleepCheck result=MeshInkPowerSleepCheck::Unavailable;
