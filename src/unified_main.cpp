@@ -419,9 +419,10 @@ void setup() {
         local_mesh_setup();   // includes first-boot SPIFFS mount / format
 
 #if T5_SPLIT_SLEEP_DIAG
-        split_diag_radio_active=meshink_board_diag_radio_begin();
+        const bool split_diag_radio_armed=meshink_board_diag_radio_begin();
+        split_diag_radio_active=true;
         ui_show_split_sleep_diag("SX1262 DIO1 TEST",
-                                 split_diag_radio_active?"WAITING FOR PACKETS":"RADIO ARM FAILED",
+                                 split_diag_radio_armed?"WAITING FOR PACKETS":"RADIO ARM FAILED",
                                  "SEND MULTIPLE LORA MESSAGES",
                                  "HOLD BOOT 2S FOR ESP TEST");
         Serial.println("[T5-DIAG-RADIO] diagnostic ready: send repeated packets; DIO1 HIGH/LOW will be logged");
