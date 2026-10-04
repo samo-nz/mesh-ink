@@ -207,6 +207,19 @@ class T5RadioHal final : public ArduinoHal {
 public:
     explicit T5RadioHal(SPIClass& spi):ArduinoHal(spi) {}
 
+    bool ensureIsrService(const char* phase=nullptr) {
+        const esp_err_t installed=gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
+        if(installed==ESP_OK||installed==ESP_ERR_INVALID_STATE){
+            if(phase)
+                Serial.printf("[T5-DEEPSLEEP] GPIO ISR service ready phase=%s result=%d\n",
+                              phase,(int)installed);
+            return true;
+        }
+        Serial.printf("[T5-ERROR] GPIO ISR service unavailable phase=%s err=%d\n",
+                      phase?phase:"attach",(int)installed);
+        return false;
+    }
+
     void attachInterrupt(uint32_t interruptNum,void (*interruptCb)(void),
                          uint32_t mode) override {
         if(interruptNum==RADIOLIB_NC||interruptNum>=GPIO_NUM_MAX)return;
@@ -218,21 +231,14 @@ public:
         if(attached_[interruptNum])detachInterrupt(interruptNum);
         callbacks_[interruptNum]=interruptCb;
         attached_[interruptNum]=false;
-        gpio_set_intr_type(pin,type);
 
-        esp_err_t added=gpio_isr_handler_add(
-            pin,irq_bridge,(void*)(uintptr_t)interruptNum);
-        if(added==ESP_ERR_INVALID_STATE){
-            const esp_err_t installed=gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
-            if(installed!=ESP_OK&&installed!=ESP_ERR_INVALID_STATE){
-                callbacks_[interruptNum]=nullptr;
-                Serial.printf("[T5-ERROR] radio GPIO ISR service install failed gpio=%lu err=%d\n",
-                              (unsigned long)interruptNum,(int)installed);
-                return;
-            }
-            added=gpio_isr_handler_add(
-                pin,irq_bridge,(void*)(uintptr_t)interruptNum);
+        if(!ensureIsrService(nullptr)){
+            callbacks_[interruptNum]=nullptr;
+            return;
         }
+        gpio_set_intr_type(pin,type);
+        const esp_err_t added=gpio_isr_handler_add(
+            pin,irq_bridge,(void*)(uintptr_t)interruptNum);
 
         if(added==ESP_OK){
             attached_[interruptNum]=true;
@@ -1121,6 +1127,7 @@ static bool radio_resume_retained(bool packet_wake) {
         const uint16_t irq=(uint16_t)radio.getIrqFlags();
         const float wake_rssi=radio.getRSSI();
         const float wake_snr=radio.getSNR();
+        if(!radio_hal.ensureIsrService("retained-capture"))return false;
         radio_driver.begin();
         if(!radio_driver.captureRetainedWakePacket(wake_rssi,wake_snr)){
             Serial.printf("[T5-DEEPSLEEP] retained wake capture failed irq=0x%04x dio1=%u\n",
