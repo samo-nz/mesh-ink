@@ -1,23 +1,21 @@
-"""Patch pinned EPDiy v7 GPIO-ISR ownership for MeshInk retained wake.
+"""Patch pinned EPDiy v7 GPIO-ISR ownership for MeshInk.
 
-Normal MeshInk boot initializes EPDiy before the SX1262, so EPDiy creates the
-process-wide ESP-IDF GPIO ISR service. Deep-sleep retained wake intentionally
-does the reverse: RadioLib is restored first and owns the service before a
-display-only message alert or in-place BOOT promotion.
+The GPIO ISR service is process-wide. On retained wake the SX1262 creates it
+before EPDiy; on a normal cold UI boot EPDiy creates it before the SX1262.
+Either way, once MeshInk has a live DIO1 handler EPDiy must only remove its own
+CFG_INTR handler and must not uninstall the global service.
 
-The pinned EPDiy board-v7 implementation otherwise calls
-gpio_install_isr_service() unconditionally and later uninstalls the whole
-service. That is unsafe when the radio already owns it. This deterministic
-build patch makes EPDiy ask MeshInk's weak ownership hook first, attach only its
-own CFG_INTR handler when the service is shared, and uninstall the global
-service only when EPDiy created it itself.
+This deterministic build patch also upgrades an already-patched local V1
+PlatformIO dependency, so incremental developer builds get the corrected
+teardown semantics without deleting .pio manually.
 """
 
 from pathlib import Path
 
 Import("env")
 
-MARKER = "MESHINK_SHARED_GPIO_ISR_PATCH_V1"
+MARKER = "MESHINK_SHARED_GPIO_ISR_PATCH_V2"
+OLD_MARKER = "MESHINK_SHARED_GPIO_ISR_PATCH_V1"
 env_name = env.subst("$PIOENV")
 source_path = (
     Path(env.subst("$PROJECT_LIBDEPS_DIR"))
@@ -32,11 +30,43 @@ if not source_path.exists():
     raise RuntimeError(f"MeshInk EPDiy patch target not found: {source_path}")
 
 source = source_path.read_text(encoding="utf-8")
-if MARKER not in source:
+
+old_v1_deinit = """    // Remove only EPDiy's panel handler from a shared service. The retained
+    // SX1262 DIO1 handler must survive the display-only alert teardown.
+    gpio_isr_handler_remove(CFG_INTR);
+    if (meshink_epdiy_owns_gpio_isr_service) {
+        gpio_uninstall_isr_service();
+    }
+    meshink_epdiy_owns_gpio_isr_service = false;
+"""
+
+new_v2_deinit = """    // Remove only EPDiy's panel handler. If MeshInk reports a live radio DIO1
+    // handler, preserve the process-wide ISR service even when EPDiy created
+    // that service first during a cold UI boot.
+    gpio_isr_handler_remove(CFG_INTR);
+    const bool meshink_radio_gpio_isr =
+        meshink_epdiy_existing_gpio_isr_service &&
+        meshink_epdiy_existing_gpio_isr_service();
+    if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr) {
+        gpio_uninstall_isr_service();
+    }
+    meshink_epdiy_owns_gpio_isr_service = false;
+"""
+
+if MARKER in source:
+    print(f"[MeshInk] EPDiy shared GPIO ISR ownership V2 already patched: {source_path}")
+elif OLD_MARKER in source:
+    if source.count(old_v1_deinit) != 1:
+        raise RuntimeError("Unexpected EPDiy V1 patch: GPIO ISR deinit block changed")
+    source = source.replace(OLD_MARKER, MARKER, 1)
+    source = source.replace(old_v1_deinit, new_v2_deinit, 1)
+    source_path.write_text(source, encoding="utf-8")
+    print(f"[MeshInk] upgraded EPDiy shared GPIO ISR ownership V1 -> V2: {source_path}")
+else:
     state_anchor = "static bool interrupt_done = false;\n"
     state_patch = """static bool interrupt_done = false;
 
-// MESHINK_SHARED_GPIO_ISR_PATCH_V1
+// MESHINK_SHARED_GPIO_ISR_PATCH_V2
 extern bool meshink_epdiy_existing_gpio_isr_service(void) __attribute__((weak));
 static bool meshink_epdiy_owns_gpio_isr_service = false;
 """
@@ -70,19 +100,10 @@ static bool meshink_epdiy_owns_gpio_isr_service = false;
 """
     deinit_patch = """    i2c_driver_delete(EPDIY_I2C_PORT);
 
-    // Remove only EPDiy's panel handler from a shared service. The retained
-    // SX1262 DIO1 handler must survive the display-only alert teardown.
-    gpio_isr_handler_remove(CFG_INTR);
-    if (meshink_epdiy_owns_gpio_isr_service) {
-        gpio_uninstall_isr_service();
-    }
-    meshink_epdiy_owns_gpio_isr_service = false;
-"""
+""" + new_v2_deinit
     if source.count(deinit_anchor) != 1:
         raise RuntimeError("Unexpected EPDiy v7 source: GPIO ISR deinit anchor changed")
     source = source.replace(deinit_anchor, deinit_patch, 1)
 
     source_path.write_text(source, encoding="utf-8")
-    print(f"[MeshInk] patched EPDiy shared GPIO ISR ownership: {source_path}")
-else:
-    print(f"[MeshInk] EPDiy shared GPIO ISR ownership already patched: {source_path}")
+    print(f"[MeshInk] patched EPDiy shared GPIO ISR ownership V2: {source_path}")

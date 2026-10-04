@@ -3869,20 +3869,39 @@ static void ui_close_headless_display_session() {
     headless_display_session=false;
     ui_boot_cpu_active=false;
     set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle");
-    Serial.println("[T5-DEEPSLEEP] headless display session closed; radio/MeshCore remain active");
+    Serial.println("[T5-DEEPSLEEP] headless display session fully closed");
+}
+
+void ui_quiesce_headless_display_for_deep_sleep() {
+    if(!headless_display_session)return;
+    // Keep EPDiy, its framebuffer and shared GPIO ISR service alive until the
+    // ESP32 actually enters deep sleep. If a packet races the sleep handoff,
+    // the same display session is immediately reusable without another init.
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
+    frontlight_deadline=0;
+    meshink_display_poweroff();
+    ui_boot_cpu_active=false;
+    set_cpu_target(UI_IDLE_CPU_MHZ,"headless-sleep-ready");
+    Serial.println("[T5-DEEPSLEEP] headless display quiesced for sleep; session retained until reset");
 }
 
 bool ui_headless_message_alert_pending() {
-    return headless_ui_state&&headless_alert_requested&&!headless_display_session;
+    // A later message while EPDiy is already initialized still needs an
+    // alert/redraw. Only an alert already in progress coalesces the request.
+    return headless_ui_state&&headless_alert_requested&&!message_alert_active;
 }
 
 bool ui_headless_display_busy() {
-    return headless_display_session||headless_alert_requested||message_alert_active;
+    // An initialized but idle display deliberately stays live during the
+    // 40-second radio cooldown and does not block the eventual sleep attempt.
+    return headless_alert_requested||message_alert_active;
 }
 
 bool ui_service_headless_message_alert() {
     if(!headless_ui_state)return false;
 
+    bool started_session=false;
     if(headless_alert_requested&&!headless_display_session){
         Serial.println("[T5-DEEPSLEEP] headless display starting with retained radio GPIO ISR service");
         MeshInkUiStartupPlan plan{};
@@ -3895,43 +3914,54 @@ bool ui_service_headless_message_alert() {
         plan.service_mesh_between_steps=true;
         ui_startup(plan);
         headless_display_session=true;
+        started_session=true;
         if(!fb){
             Serial.println("[T5-DEEPSLEEP] headless message display unavailable");
             headless_alert_requested=false;
             ui_close_headless_display_session();
             return false;
         }
-        headless_alert_requested=false;
         standby_active=true;
-        // Headless standby must always leave the persistent unread image current.
-        // Coalesce messages that arrive during an active flash, but do not let
-        // the normal interactive-UI cooldown suppress a later display session.
+    }
+
+    if(headless_alert_requested&&headless_display_session&&!message_alert_active){
+        headless_alert_requested=false;
+        // Headless notifications are driven by actual message arrival rather
+        // than the interactive UI cooldown. Reuse the already-live EPDiy
+        // session for every subsequent DM/channel unread update.
         message_alert_cooldown_until=0;
+        ui_boot_cpu_active=true;
+        set_cpu_target(UI_RENDER_CPU_MHZ,"headless-alert");
         start_message_alert();
-        Serial.println("[T5-DEEPSLEEP] headless message alert display session started");
+        Serial.println(started_session
+            ?"[T5-DEEPSLEEP] headless message alert display session started"
+            :"[T5-DEEPSLEEP] reusing initialized headless display for unread update");
     }
 
     if(!headless_display_session)return false;
+
+    const bool was_active=message_alert_active;
     service_message_alert();
-    if(!message_alert_active){
-        // The final GC16 refresh is synchronous. Give MeshCore one immediate
-        // service pass before tearing EPDiy/I2C back down so any packet held
-        // by the SX1262 during that refresh is handled without waiting for the
-        // next outer headless loop iteration.
+    if(was_active&&!message_alert_active){
+        // The final GC16 refresh is synchronous. Service MeshCore immediately
+        // while keeping EPDiy initialized. A packet landing during that redraw
+        // can therefore update unread counts and reuse the same session.
         local_mesh_service_startup();
         if(headless_alert_requested){
-            // This message was processed after the persistent standby image was
-            // committed, so it must get its own notification cycle/redraw.
             headless_alert_requested=false;
             message_alert_cooldown_until=0;
+            ui_boot_cpu_active=true;
+            set_cpu_target(UI_RENDER_CPU_MHZ,"headless-alert");
             start_message_alert();
             Serial.println("[T5-DEEPSLEEP] message arrived during final standby redraw; restarting headless alert");
             return true;
         }
-        ui_close_headless_display_session();
-        return false;
+
+        ui_boot_cpu_active=false;
+        set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle");
+        Serial.println("[T5-DEEPSLEEP] headless display session retained through 40s cooldown");
     }
-    return true;
+    return message_alert_active;
 }
 
 bool ui_promote_headless_to_interactive() {

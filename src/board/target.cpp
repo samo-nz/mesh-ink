@@ -186,32 +186,20 @@ static bool t5_wait_local_radio_settle(){
 #endif
 }
 
-// Local UI keeps EPDiy's already-installed GPIO ISR service alive. Companion
-// mode tears EPDiy down before radio startup, so Arduino must install/own the
-// ISR service on its first radio attachInterrupt(). Select the path explicitly
-// to avoid probing the wrong state and emitting a false ESP-IDF error.
-static bool companion_radio_uses_arduino_irq=false;
-static bool radio_gpio_isr_service_active=false;
+// The ESP-IDF GPIO ISR service is process-wide. MeshInk keeps the SX1262
+// DIO1 callback under one explicit IDF lifetime in every runtime mode instead
+// of relying on Arduino's hidden attachInterrupt bookkeeping.
+static bool radio_gpio_irq_handler_active=false;
 
-// EPDiy's board-v7 init normally assumes it is first to create the process-wide
-// ESP-IDF GPIO ISR service. Retained RX/button wake is intentionally the reverse:
-// RadioLib is restored first and already owns that service before a display-only
-// alert or in-place UI promotion. The patched EPDiy board init asks this hook
-// before touching the service, so it can share the known-live service without a
-// failing install probe and without later uninstalling the radio's ISR service.
+// EPDiy asks this hook at init and teardown. A true value means the global ISR
+// service contains a live SX1262 handler and must be shared/preserved.
 extern "C" bool meshink_epdiy_existing_gpio_isr_service() {
-    return companion_radio_uses_arduino_irq&&radio_gpio_isr_service_active;
+    return radio_gpio_irq_handler_active;
 }
 
-// EPDiy's LilyGo-S3 board init installs the ESP-IDF GPIO ISR service for its
-// TPS65185 interrupt before MeshCore starts. Arduino's first attachInterrupt()
-// then tries to install the same global service again and ESP-IDF prints
-// "GPIO isr service already installed". Keep both handlers on the one service:
-// use it directly when already present, but fall back to ArduinoHal in
-// companion mode where EPDiy has been deinitialized and removed the service.
 class T5RadioHal final : public ArduinoHal {
     static void (*callbacks_[GPIO_NUM_MAX])(void);
-    static bool arduino_owned_[GPIO_NUM_MAX];
+    static bool attached_[GPIO_NUM_MAX];
     static void irq_bridge(void* arg) {
         const uint32_t pin=(uint32_t)(uintptr_t)arg;
         if(pin<GPIO_NUM_MAX&&callbacks_[pin])callbacks_[pin]();
@@ -227,36 +215,31 @@ public:
         if(mode==GpioInterruptRising)type=GPIO_INTR_POSEDGE;
         else if(mode==GpioInterruptFalling)type=GPIO_INTR_NEGEDGE;
 
-        if(callbacks_[interruptNum]||arduino_owned_[interruptNum])
-            detachInterrupt(interruptNum);
-
-        if(companion_radio_uses_arduino_irq){
-            callbacks_[interruptNum]=nullptr;
-            arduino_owned_[interruptNum]=true;
-            ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
-            radio_gpio_isr_service_active=true;
-            return;
-        }
-
+        if(attached_[interruptNum])detachInterrupt(interruptNum);
         callbacks_[interruptNum]=interruptCb;
-        arduino_owned_[interruptNum]=false;
+        attached_[interruptNum]=false;
         gpio_set_intr_type(pin,type);
-        const esp_err_t added=gpio_isr_handler_add(
+
+        esp_err_t added=gpio_isr_handler_add(
             pin,irq_bridge,(void*)(uintptr_t)interruptNum);
+        if(added==ESP_ERR_INVALID_STATE){
+            const esp_err_t installed=gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
+            if(installed!=ESP_OK&&installed!=ESP_ERR_INVALID_STATE){
+                callbacks_[interruptNum]=nullptr;
+                Serial.printf("[T5-ERROR] radio GPIO ISR service install failed gpio=%lu err=%d\n",
+                              (unsigned long)interruptNum,(int)installed);
+                return;
+            }
+            added=gpio_isr_handler_add(
+                pin,irq_bridge,(void*)(uintptr_t)interruptNum);
+        }
+
         if(added==ESP_OK){
-            radio_gpio_isr_service_active=true;
+            attached_[interruptNum]=true;
+            if(interruptNum==P_LORA_DIO_1)radio_gpio_irq_handler_active=true;
             return;
         }
 
-        // No global IDF service is active (normal in companion mode after
-        // meshink_display_deinit), so let Arduino install and own it in the usual way.
-        if(added==ESP_ERR_INVALID_STATE){
-            callbacks_[interruptNum]=nullptr;
-            arduino_owned_[interruptNum]=true;
-            ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
-            radio_gpio_isr_service_active=true;
-            return;
-        }
         callbacks_[interruptNum]=nullptr;
         Serial.printf("[T5-ERROR] radio DIO interrupt attach failed gpio=%lu err=%d\n",
                       (unsigned long)interruptNum,(int)added);
@@ -264,24 +247,53 @@ public:
 
     void detachInterrupt(uint32_t interruptNum) override {
         if(interruptNum==RADIOLIB_NC||interruptNum>=GPIO_NUM_MAX)return;
-        if(!callbacks_[interruptNum]&&!arduino_owned_[interruptNum])return;
-        if(arduino_owned_[interruptNum]){
-            ArduinoHal::detachInterrupt(interruptNum);
-            arduino_owned_[interruptNum]=false;
-        }else{
-            gpio_isr_handler_remove((gpio_num_t)interruptNum);
-            gpio_set_intr_type((gpio_num_t)interruptNum,GPIO_INTR_DISABLE);
-        }
+        if(!attached_[interruptNum])return;
+        gpio_isr_handler_remove((gpio_num_t)interruptNum);
+        gpio_set_intr_type((gpio_num_t)interruptNum,GPIO_INTR_DISABLE);
+        attached_[interruptNum]=false;
         callbacks_[interruptNum]=nullptr;
+        if(interruptNum==P_LORA_DIO_1)radio_gpio_irq_handler_active=false;
+    }
+
+    bool handlerActive(uint32_t interruptNum) const {
+        return interruptNum<GPIO_NUM_MAX&&attached_[interruptNum]&&callbacks_[interruptNum];
+    }
+
+    bool dispatchInterrupt(uint32_t interruptNum) {
+        if(!handlerActive(interruptNum))return false;
+        callbacks_[interruptNum]();
+        return true;
     }
 };
 void (*T5RadioHal::callbacks_[GPIO_NUM_MAX])(void)={};
-bool T5RadioHal::arduino_owned_[GPIO_NUM_MAX]={};
+bool T5RadioHal::attached_[GPIO_NUM_MAX]={};
 
 static T5RadioHal radio_hal(radio_spi);
 static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
 MeshInkSX1262Wrapper radio_driver(radio, board);
+
+bool meshink_board_service_asserted_radio_irq() {
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(P_LORA_DIO_1)!=HIGH)return false;
+
+    // These reads do not clear the IRQ. Invoke the exact callback that the
+    // missing GPIO edge would have invoked; MeshCore then performs its normal
+    // readData()/finishTransmit() path and clears the radio IRQ itself.
+    const uint16_t irq=(uint16_t)radio.getIrqFlags();
+    const uint16_t packet_len=(uint16_t)radio.getPacketLength();
+    const bool handler=radio_hal.handlerActive(P_LORA_DIO_1);
+    const bool dispatched=radio_hal.dispatchInterrupt(P_LORA_DIO_1);
+
+    static uint32_t last_report=0;
+    const uint32_t now=millis();
+    if(!last_report||now-last_report>=250UL){
+        last_report=now;
+        Serial.printf("[T5-DEEPSLEEP] DIO1 level recovery irq=0x%04x packet_len=%u handler=%u dispatched=%u\n",
+                      (unsigned)irq,(unsigned)packet_len,handler?1U:0U,dispatched?1U:0U);
+    }
+    return dispatched;
+}
 
 void MeshInkSX1262Wrapper::stageWakePacket(const uint8_t* data,uint16_t len,float rssi,float snr){
     if(!data||!len){
@@ -758,7 +770,6 @@ void meshink_board_companion_release_resources() {
     // unlike test10, no same-boot EPDiy reinitialization needs that service.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     radio_spi.end();
-    companion_radio_uses_arduino_irq=false;
     T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
 }
 
@@ -918,11 +929,9 @@ bool meshink_board_return_to_retained_deep_sleep() {
 }
 
 void T5Board::begin() {
-    radio_gpio_isr_service_active=false;
     // The application renders and tears down the companion splash before this
     // board lifecycle entry. EPDiy has released I2C/GPIO resources, so the
     // upstream ESP32 board setup can safely take ownership here.
-    companion_radio_uses_arduino_irq=true;
     T5_TRACE("board: companion display released; MeshCore board/I2C begin\n");
     ESP32Board::begin();
     T5_TRACE("board: MeshCore I2C ready\n");
@@ -945,8 +954,6 @@ void T5Board::begin() {
 }
 
 void T5Board::beginLocal() {
-    companion_radio_uses_arduino_irq=false;
-    radio_gpio_isr_service_active=false;
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
@@ -967,11 +974,9 @@ void T5Board::beginLocal() {
 }
 
 void T5Board::beginLocalRxWake() {
-    radio_gpio_isr_service_active=false;
     // No display/I2C/GPS/battery startup here. MeshInk has already copied the
     // wake packet out of the retained SX1262 FIFO and then cleanly reinitialized
     // RadioLib. The MeshInk wrapper will inject that saved packet on first recvRaw().
-    companion_radio_uses_arduino_irq=true;
     startup_reason=BD_STARTUP_NORMAL;
     Serial.println("[T5-DEEPSLEEP] board startup uses saved-packet replay; full board init skipped");
 }

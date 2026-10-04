@@ -223,16 +223,20 @@ assert "local_rx_wake_indicator" not in companion_source, "headless RX standby s
 retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
 assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"
-assert "local_mesh_service_startup();" in source, "final standby redraw services MeshCore before display teardown"
+assert "local_mesh_service_startup();" in source, "final standby redraw services MeshCore while retaining the display session"
+assert "headless display session retained through 40s cooldown" in source, "headless display remains initialized for later unread/channel redraws"
+assert "return headless_alert_requested||message_alert_active;" in source, "idle initialized headless display does not block deep sleep"
+assert "ui_quiesce_headless_display_for_deep_sleep" in source and "session retained until reset" in source, "sleep handoff powers down the panel without deinitializing EPDiy"
 headless_loop = companion_source.split("void local_mesh_rx_wake_loop()",1)[1].split("bool local_mesh_is_running",1)[0]
 assert "alert_was_busy" not in headless_loop and "alert_active" not in headless_loop, "display alert activity must not reset the genuine MeshCore quiet timer"
 notify_body = source.split("void ui_notify_message_received(bool channel)",1)[1].split("bool ui_restore_failed_compose",1)[0]
 assert "if(!headless_display_session&&!message_alert_active)" not in notify_body and "headless_alert_requested=true;" in notify_body, "messages received during a headless alert stay latched"
 assert "if(headless_ui_state)headless_alert_requested=false;" in source, "final GC16 redraw coalesces messages already represented on the standby screen"
 assert "message arrived during final standby redraw; restarting headless alert" in source, "messages processed after the final redraw trigger another notification cycle"
-assert "meshink_epdiy_existing_gpio_isr_service" in board_target_source, "board runtime exposes retained-radio ISR ownership to EPDiy"
-assert "companion_radio_uses_arduino_irq&&radio_gpio_isr_service_active" in board_target_source, "EPDiy sharing is enabled only after the retained radio ISR service is known active"
-assert "MESHINK_SHARED_GPIO_ISR_PATCH_V1" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR patch"
+assert "meshink_epdiy_existing_gpio_isr_service" in board_target_source, "board runtime exposes live radio ISR ownership to EPDiy"
+assert "return radio_gpio_irq_handler_active;" in board_target_source, "EPDiy sharing follows the actual SX1262 DIO1 handler lifetime"
+assert "MESHINK_SHARED_GPIO_ISR_PATCH_V2" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR V2 patch"
+assert "meshink_radio_gpio_isr" in epdiy_patch_source and "&& !meshink_radio_gpio_isr" in epdiy_patch_source, "EPDiy teardown preserves a live radio handler even when EPDiy created the service first"
 assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
 assert "if (meshink_epdiy_owns_gpio_isr_service)" in epdiy_patch_source, "EPDiy only uninstalls a GPIO ISR service it created"
@@ -552,8 +556,10 @@ assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan r
 board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
 assert "delay(1);" in companion, "Bluetooth companion loop must yield so cache64 watchdog does not starve IDLE1"
-assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
-assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
+assert "gpio_isr_handler_add(" in board_source and "gpio_install_isr_service(ESP_INTR_FLAG_EDGE)" in board_source, "radio directly owns an IDF DIO1 handler and creates the global service when needed"
+assert "ArduinoHal::attachInterrupt" not in board_source, "retained radio IRQ lifetime must not depend on Arduino hidden interrupt bookkeeping"
+assert "meshink_board_service_asserted_radio_irq" in board_source and "DIO1 level recovery" in board_source, "asserted DIO1 has a polling recovery path when an edge is missed"
+assert "meshink_board_service_asserted_radio_irq();" in headless_loop, "headless runtime polls asserted DIO1 before every MeshCore pass"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, last GPS, brightness)")

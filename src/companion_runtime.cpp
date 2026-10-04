@@ -658,6 +658,12 @@ bool local_mesh_enter_deep_sleep_standby() {
         Serial.println("[T5-DEEPSLEEP] sleep deferred: received-message queue drain is still pending");
         return false;
     }
+    if(meshink_board_radio_irq_asserted()){
+        const bool dispatched=meshink_board_service_asserted_radio_irq();
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: pending SX1262 IRQ dispatched=%u before persistence checks\n",
+                      dispatched?1U:0U);
+        return false;
+    }
     if(ui_headless_display_busy()){
         Serial.println("[T5-DEEPSLEEP] sleep deferred: headless display/alert session is active");
         return false;
@@ -695,13 +701,31 @@ bool local_mesh_enter_deep_sleep_standby() {
         ui_minimal_low_battery_shutdown(sleep_power,"deep-rx");
     }
 
+    // Keep the initialized display session alive until sleep really wins the
+    // race. Quiescing powers the panel/frontlight down but deliberately avoids
+    // EPDiy teardown, so a late message can redraw without another init.
+    if(meshink_board_radio_irq_asserted()){
+        const bool dispatched=meshink_board_service_asserted_radio_irq();
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ appeared during handoff dispatched=%u\n",
+                      dispatched?1U:0U);
+        return false;
+    }
+    ui_quiesce_headless_display_for_deep_sleep();
+    if(meshink_board_radio_irq_asserted()){
+        const bool dispatched=meshink_board_service_asserted_radio_irq();
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 IRQ arrived while display was quiescing dispatched=%u\n",
+                      dispatched?1U:0U);
+        return false;
+    }
+
+    const MeshInkRadioStats handoff_stats=meshink_radio_stats();
     Serial.printf("[T5-DEEPSLEEP] sleep handoff rx=%lu err=%lu tx=%lu rxmode=%u\n",
-                  (unsigned long)stats.packets_received,
-                  (unsigned long)stats.receive_errors,
-                  (unsigned long)stats.packets_sent,stats.continuous_rx?1U:0U);
+                  (unsigned long)handoff_stats.packets_received,
+                  (unsigned long)handoff_stats.receive_errors,
+                  (unsigned long)handoff_stats.packets_sent,handoff_stats.continuous_rx?1U:0U);
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SleepEnter,
-                                 stats.packets_received,
-                                 (uint16_t)(stats.packets_sent>65535?65535:stats.packets_sent));
+                                 handoff_stats.packets_received,
+                                 (uint16_t)(handoff_stats.packets_sent>65535?65535:handoff_stats.packets_sent));
     return meshink_board_enter_deep_sleep_standby();
 }
 
@@ -714,6 +738,12 @@ void local_mesh_rx_wake_loop() {
         flash_first_loop_logged=true;
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::FirstLoop);
     }
+
+    // DIO1 is normally edge/ISR driven. Retained operation also polls its
+    // level before every MeshCore pass so a missed GPIO edge cannot leave a
+    // received packet stuck in the SX1262 and unacknowledged.
+    if(meshink_board_radio_irq_asserted())
+        meshink_board_service_asserted_radio_irq();
 
     the_mesh.loop();
     local_mesh_flush_contacts_save_if_due();
@@ -791,7 +821,7 @@ void local_mesh_rx_wake_loop() {
     // RX/TX/error activity, before attempting to re-enter deep sleep.
     if(now_ms-local_rx_wake_last_activity>=LOCAL_RX_WAKE_QUIET_MS&&
        (int32_t)(now_ms-local_rx_wake_sleep_retry)>=0){
-        local_rx_wake_sleep_retry=now_ms+250;
+        local_rx_wake_sleep_retry=now_ms+1000;
         if(now.continuous_rx){
             Serial.printf("[T5-DEEPSLEEP] headless quiet for %lums; re-entering deep sleep\n",
                           (unsigned long)LOCAL_RX_WAKE_QUIET_MS);
