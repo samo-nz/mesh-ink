@@ -42,6 +42,7 @@ bool meshink_board_return_to_retained_deep_sleep();
 bool meshink_board_diag_radio_begin();
 bool meshink_board_diag_radio_poll(uint32_t sequence);
 bool meshink_board_diag_gps_activity();
+void meshink_board_diag_radio_transport_probe(const char* phase);
 void meshink_board_diag_radio_snapshot(const char* phase);
 void meshink_board_diag_restore_button_wake();
 bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry);

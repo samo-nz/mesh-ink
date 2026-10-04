@@ -421,6 +421,85 @@ bool meshink_board_diag_gps_activity() {
 #endif
 }
 
+static uint8_t t5_diag_soft_spi_transfer(uint8_t out) {
+    uint8_t in=0;
+    for(int bit=7;bit>=0;--bit){
+        gpio_set_level((gpio_num_t)P_LORA_MOSI,(out>>bit)&1U);
+        delayMicroseconds(2);
+        gpio_set_level((gpio_num_t)P_LORA_SCLK,1);
+        delayMicroseconds(2);
+        in=(uint8_t)((in<<1)|(gpio_get_level((gpio_num_t)P_LORA_MISO)&1));
+        gpio_set_level((gpio_num_t)P_LORA_SCLK,0);
+        delayMicroseconds(2);
+    }
+    return in;
+}
+
+static void t5_diag_soft_spi_read(uint8_t cmd,uint8_t* rx,size_t count) {
+    gpio_set_level((gpio_num_t)P_LORA_NSS,0);
+    delayMicroseconds(2);
+    for(size_t i=0;i<count;++i){
+        rx[i]=t5_diag_soft_spi_transfer(i==0?cmd:0x00);
+    }
+    delayMicroseconds(2);
+    gpio_set_level((gpio_num_t)P_LORA_NSS,1);
+}
+
+static void t5_diag_hw_spi_read(uint8_t cmd,uint8_t* rx,size_t count) {
+    radio_spi.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));
+    digitalWrite(P_LORA_NSS,LOW);
+    delayMicroseconds(2);
+    for(size_t i=0;i<count;++i){
+        rx[i]=radio_spi.transfer(i==0?cmd:0x00);
+    }
+    delayMicroseconds(2);
+    digitalWrite(P_LORA_NSS,HIGH);
+    radio_spi.endTransaction();
+}
+
+void meshink_board_diag_radio_transport_probe(const char* phase) {
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    Serial.printf("[T5-DIAG-TRANSPORT] phase=%s raw-pins dio1=%d busy=%d\n",
+                  phase?phase:"unknown",
+                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY));
+
+    if(!t5_release_held_radio_control_pins("transport-probe")){
+        Serial.println("[T5-DIAG-TRANSPORT] control-pin release failed");
+        return;
+    }
+
+    gpio_set_direction((gpio_num_t)P_LORA_SCLK,GPIO_MODE_OUTPUT);
+    gpio_set_direction((gpio_num_t)P_LORA_MOSI,GPIO_MODE_OUTPUT);
+    gpio_set_direction((gpio_num_t)P_LORA_MISO,GPIO_MODE_INPUT);
+    gpio_set_level((gpio_num_t)P_LORA_SCLK,0);
+    gpio_set_level((gpio_num_t)P_LORA_MOSI,0);
+    gpio_set_level((gpio_num_t)P_LORA_NSS,1);
+    delayMicroseconds(10);
+
+    uint8_t soft_status[2]={0,0};
+    uint8_t soft_irq[4]={0,0,0,0};
+    t5_diag_soft_spi_read(0xC0,soft_status,sizeof(soft_status));
+    t5_diag_soft_spi_read(0x12,soft_irq,sizeof(soft_irq));
+    Serial.printf("[T5-DIAG-TRANSPORT] phase=%s softspi status=%02x/%02x irq=%02x/%02x/%02x/%02x\n",
+                  phase?phase:"unknown",
+                  soft_status[0],soft_status[1],
+                  soft_irq[0],soft_irq[1],soft_irq[2],soft_irq[3]);
+
+    radio_spi.end();
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+
+    uint8_t hw_status[2]={0,0};
+    uint8_t hw_irq[4]={0,0,0,0};
+    t5_diag_hw_spi_read(0xC0,hw_status,sizeof(hw_status));
+    t5_diag_hw_spi_read(0x12,hw_irq,sizeof(hw_irq));
+    Serial.printf("[T5-DIAG-TRANSPORT] phase=%s hwspi status=%02x/%02x irq=%02x/%02x/%02x/%02x\n",
+                  phase?phase:"unknown",
+                  hw_status[0],hw_status[1],
+                  hw_irq[0],hw_irq[1],hw_irq[2],hw_irq[3]);
+}
+
 bool meshink_board_diag_radio_begin() {
     // Restore only the ESP-side transport after deep-sleep reset. The SX1262
     // itself was never reset or powered down, so its modem configuration stays

@@ -54,6 +54,8 @@ static void split_diag_wait_boot_release() {
     Serial.printf("[T5-DIAG-ESP] wake #%lu shared-rail GPS witness=%u\n",
                   (unsigned long)split_diag_boot_wakes,gps_alive?1U:0U);
 
+    meshink_board_diag_radio_transport_probe("post-sleep");
+
     const bool radio_ready=meshink_board_diag_radio_begin();
     Serial.printf("[T5-DIAG-ESP] wake #%lu retained radio test ready=%u; send LoRa packets now\n",
                   (unsigned long)split_diag_boot_wakes,radio_ready?1U:0U);
