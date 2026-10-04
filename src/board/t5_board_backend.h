@@ -41,6 +41,7 @@ bool meshink_board_return_to_retained_deep_sleep();
 // ESP32-S3 deep-sleep wake-source repeatability.
 bool meshink_board_diag_radio_begin();
 bool meshink_board_diag_radio_poll(uint32_t sequence);
+bool meshink_board_diag_gps_activity();
 void meshink_board_diag_restore_button_wake();
 bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry);
 void meshink_board_companion_exit_feedback_begin();
