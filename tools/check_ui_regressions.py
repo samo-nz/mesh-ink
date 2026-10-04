@@ -1058,8 +1058,9 @@ assert "bool ui_chat_is_visible(bool channel)" in source, "UI exposes a single v
 assert "return !standby_active&&(channel?screen==Screen::ChannelChat:screen==Screen::ContactChat);" in source, "visible chat excludes standby and distinguishes private/channel chats"
 assert "ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6)" in runtime_source, "matching visible private chat suppresses provider unread increment"
 assert "ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel" in runtime_source, "matching visible channel chat suppresses provider unread increment"
-assert "if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}" in runtime_source, "private unread increments only when unseen"
-assert "if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;" in runtime_source, "channel unread increments only when unseen"
+assert runtime_source.count("const bool unread=!already_seen;")>=2, "private/channel unread state is derived from the visible-chat predicate"
+assert "else if(unread){auto& count=direct_unread(key);if(count<255)++count;}" in runtime_source, "private RAM unread cache increments only after a durable unseen RX append"
+assert "else if(unread&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)" in runtime_source and "++channel_unread_[channel];" in runtime_source, "channel RAM unread cache increments only after a durable unseen RX append"
 assert "const bool visible=ui_chat_is_visible(channel);" in source, "bottom-tab unread uses the same visible-chat predicate"
 
 
