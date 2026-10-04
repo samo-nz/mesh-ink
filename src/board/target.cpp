@@ -226,11 +226,19 @@ static bool t5_wait_local_radio_settle(){
 // DIO1 callback under one explicit IDF lifetime in every runtime mode instead
 // of relying on Arduino's hidden attachInterrupt bookkeeping.
 static bool radio_gpio_irq_handler_active=false;
+static bool gpio_isr_service_ready=false;
 
 // EPDiy asks this hook at init and teardown. A true value means the global ISR
 // service contains a live SX1262 handler and must be shared/preserved.
 extern "C" bool meshink_epdiy_existing_gpio_isr_service() {
     return radio_gpio_irq_handler_active;
+}
+
+// EPDiy owns the service on cold UI startup, while the radio owns first creation
+// on retained headless wake. Keep that process-wide fact explicit so the second
+// subsystem never probes gpio_install_isr_service() just to discover it exists.
+extern "C" void meshink_epdiy_note_gpio_isr_service(bool installed) {
+    gpio_isr_service_ready=installed;
 }
 
 class T5RadioHal final : public ArduinoHal {
@@ -244,11 +252,18 @@ public:
     explicit T5RadioHal(SPIClass& spi):ArduinoHal(spi) {}
 
     bool ensureIsrService(const char* phase=nullptr) {
+        if(gpio_isr_service_ready)return true;
         const esp_err_t installed=gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
-        if(installed==ESP_OK||installed==ESP_ERR_INVALID_STATE){
+        if(installed==ESP_OK){
+            gpio_isr_service_ready=true;
             if(phase)
-                Serial.printf("[T5-DEEPSLEEP] GPIO ISR service ready phase=%s result=%d\n",
-                              phase,(int)installed);
+                Serial.printf("[T5-DEEPSLEEP] GPIO ISR service created phase=%s\n",phase);
+            return true;
+        }
+        if(installed==ESP_ERR_INVALID_STATE){
+            // Compatibility fallback for an unexpected third-party owner. The
+            // EPDiy V3 handshake prevents this probe on normal MeshInk paths.
+            gpio_isr_service_ready=true;
             return true;
         }
         Serial.printf("[T5-ERROR] GPIO ISR service unavailable phase=%s err=%d\n",
