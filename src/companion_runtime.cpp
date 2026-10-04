@@ -577,7 +577,7 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
     Serial.printf("[T5-DEEPSLEEP] retained startup: reason=%s require-packet=%u\n",
                   reason?reason:"unknown",require_packet?1U:0U);
 
-    meshink_board_begin_local_rx_wake();
+    meshink_board_begin_local_rx_wake(require_packet);
     const bool radio_ready=require_packet
         ?meshink_radio_resume_rx_wake()
         :meshink_radio_resume_retained_wake();

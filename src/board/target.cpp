@@ -294,48 +294,6 @@ bool meshink_board_service_asserted_radio_irq() {
     return dispatched;
 }
 
-void MeshInkSX1262Wrapper::stageWakePacket(const uint8_t* data,uint16_t len,float rssi,float snr){
-    if(!data||!len){
-        wake_packet_len_=0;
-        wake_metrics_active_=false;
-        return;
-    }
-    if(len>MAX_TRANS_UNIT)len=MAX_TRANS_UNIT;
-    memcpy(wake_packet_,data,len);
-    wake_packet_len_=len;
-    wake_rssi_=rssi;
-    wake_snr_=snr;
-    wake_metrics_active_=false;
-}
-
-int MeshInkSX1262Wrapper::recvRaw(uint8_t* bytes,int sz){
-    if(wake_packet_len_&&bytes&&sz>0){
-        const int len=(wake_packet_len_<(uint16_t)sz)?(int)wake_packet_len_:sz;
-        memcpy(bytes,wake_packet_,len);
-        wake_packet_len_=0;
-        wake_metrics_active_=true;
-        n_recv++;
-
-        // Hardware RX was re-armed immediately after the retained radio reinit.
-        // Do not call the base recvRaw() here: if a follow-on packet asserted
-        // DIO1 during MeshCore startup, a one-byte scratch read would clear and
-        // destroy that packet. Leave it pending for the next full recvRaw().
-        Serial.printf("[T5-DEEPSLEEP] injected saved wake packet into MeshCore len=%d hdr=0x%02x rxmode=%u\n",
-                      len,(unsigned)wake_packet_[0],isInRecvMode()?1U:0U);
-        return len;
-    }
-    wake_metrics_active_=false;
-    return CustomSX1262Wrapper::recvRaw(bytes,sz);
-}
-
-float MeshInkSX1262Wrapper::getLastRSSI() const {
-    return wake_metrics_active_?wake_rssi_:CustomSX1262Wrapper::getLastRSSI();
-}
-
-float MeshInkSX1262Wrapper::getLastSNR() const {
-    return wake_metrics_active_?wake_snr_:CustomSX1262Wrapper::getLastSNR();
-}
-
 static T5RTCClock& t5_rtc_clock(){
     static T5RTCClock clock;
     return clock;
@@ -785,7 +743,7 @@ void meshink_board_companion_release_resources() {
 
 void meshink_board_begin_companion(){board.begin();}
 void meshink_board_begin_local(){board.beginLocal();}
-void meshink_board_begin_local_rx_wake(){board.beginLocalRxWake();}
+void meshink_board_begin_local_rx_wake(bool packet_wake){board.beginLocalRxWake(packet_wake);}
 void meshink_board_boot_complete(){board.onBootComplete();}
 
 bool meshink_board_woke_from_radio() {
@@ -983,12 +941,14 @@ void T5Board::beginLocal() {
     T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
 }
 
-void T5Board::beginLocalRxWake() {
-    // No display/I2C/GPS/battery startup here. MeshInk has already copied the
-    // wake packet out of the retained SX1262 FIFO and then cleanly reinitialized
-    // RadioLib. The MeshInk wrapper will inject that saved packet on first recvRaw().
-    startup_reason=BD_STARTUP_NORMAL;
-    Serial.println("[T5-DEEPSLEEP] board startup uses saved-packet replay; full board init skipped");
+void T5Board::beginLocalRxWake(bool packet_wake) {
+    // Match upstream MeshCore's Heltec deep-sleep handoff exactly: the board
+    // records only that DIO1 woke the MCU. RadioLibWrapper::begin() later sees
+    // BD_STARTUP_RX_PACKET, calls setFlag(), and its first normal recvRaw()
+    // consumes the packet through getPacketLength()/readData().
+    startup_reason=packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL;
+    Serial.printf("[T5-DEEPSLEEP] board startup reason=%s; upstream retained-RX handoff\n",
+                  packet_wake?"RX_PACKET":"NORMAL");
 }
 
 static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
@@ -1034,53 +994,25 @@ bool meshink_board_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
     return ok;
 }
 
-static bool radio_resume_retained(bool require_packet) {
-    MeshInkDeepSleepRadioProbe probe{};
-    if(!t5_probe_deep_sleep_radio(probe)){
-        Serial.println("[T5-DEEPSLEEP] retained radio resume failed: transport unavailable");
-        return false;
-    }
+static bool radio_resume_retained(bool packet_wake) {
+    // Follow upstream MeshCore's Heltec retained-RX design. Do not query or
+    // copy the SX1262 FIFO before RadioLib initialization and do not start a
+    // fresh receive here. The board's startup_reason is the entire handoff.
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
 
-    uint16_t captured_len=0;
-    const bool packet_hint=probe.dio1||probe.packet_len;
-    if(packet_hint||require_packet){
-        uint8_t offset=0;
-        const size_t packet_len=radio.getPacketLength(true,&offset);
-        const uint16_t irq=(uint16_t)radio.getIrqFlags();
-        const float wake_rssi=radio.getRSSI();
-        const float wake_snr=radio.getSNR();
-        if(packet_len&&packet_len<=MAX_TRANS_UNIT){
-            uint8_t packet[MAX_TRANS_UNIT]{};
-            const int16_t read_state=radio.readBuffer(packet,(uint8_t)packet_len,offset);
-            if(read_state!=RADIOLIB_ERR_NONE){
-                Serial.printf("[T5-DEEPSLEEP] retained FIFO read failed code=%d irq=0x%04x len=%u offset=%u\n",
-                              (int)read_state,(unsigned)irq,(unsigned)packet_len,(unsigned)offset);
-                return false;
-            }
-            radio_driver.stageWakePacket(packet,(uint16_t)packet_len,wake_rssi,wake_snr);
-            captured_len=(uint16_t)packet_len;
-            Serial.printf("[T5-DEEPSLEEP] retained packet captured len=%u offset=%u irq=0x%04x rssi=%d snr_x4=%d\n",
-                          (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
-                          (int)wake_rssi,(int)(wake_snr*4.0f));
-        }else if(require_packet){
-            Serial.printf("[T5-DEEPSLEEP] wake packet capture failed irq=0x%04x len=%u offset=%u\n",
-                          (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
-            return false;
-        }else{
-            Serial.printf("[T5-DEEPSLEEP] retained wake has no packet to preserve irq=0x%04x len=%u\n",
-                          (unsigned)irq,(unsigned)packet_len);
-        }
-    }
-
-    // Deep sleep reset RadioLib's cached software state. Re-synchronise the
-    // object immediately, before display/touch startup. Any retained packet was
-    // copied to ESP RAM first, so the unavoidable radio init cannot lose it.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     const bool ready=radio.std_init(&radio_spi);
     if(!ready){
         Serial.println("[T5-DEEPSLEEP] SX1262 retained-state reinit failed");
         return false;
     }
+
     constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
     const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
     const int16_t rf_switch_state=tcxo_state==RADIOLIB_ERR_NONE
@@ -1091,18 +1023,9 @@ static bool radio_resume_retained(bool require_packet) {
         return false;
     }
 
-    // Close the retained-startup receive blind spot immediately. MeshCore's
-    // wrapper/software state is rebuilt later, but the SX1262 can already hold
-    // one follow-on packet in FIFO with DIO1 asserted until that state is ready.
-    const int16_t rx_state=radio.startReceive();
-    if(rx_state!=RADIOLIB_ERR_NONE){
-        Serial.printf("[T5-DEEPSLEEP] SX1262 immediate post-wake RX arm failed code=%d\n",
-                      (int)rx_state);
-        return false;
-    }
-
-    Serial.printf("[T5-DEEPSLEEP] SX1262 retained-state reinit complete saved-packet=%u early-rx=1\n",
-                  radio_driver.hasWakePacket()?1U:0U);
+    Serial.printf("[T5-DEEPSLEEP] SX1262 upstream retained-RX handoff ready packet-wake=%u startup-reason=%u dio1=%u\n",
+                  packet_wake?1U:0U,(unsigned)board.getStartupReason(),
+                  digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
     return true;
 }
 

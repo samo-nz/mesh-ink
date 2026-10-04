@@ -278,14 +278,19 @@ assert "map_tiles_warm_storage();" in promotion_body and promotion_body.index("m
 assert "meshink_gps_prepare_runtime();" in companion_source and "retained UI promotion UART ready" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
 assert "restarting into full UI boot" not in companion_source, "headless BOOT promotion must not restart the ESP32"
 assert "meshink_radio_resume_retained_wake" in companion_source, "button wake uses retained-radio recovery before UI startup"
-wake_inject_body = board_target_source.split("int MeshInkSX1262Wrapper::recvRaw",1)[1].split("float MeshInkSX1262Wrapper::getLastRSSI",1)[0]
-assert "CustomSX1262Wrapper::recvRaw(&scratch,1)" not in wake_inject_body, "saved wake injection must never discard a pending follow-on packet through a one-byte scratch receive"
+assert "meshink_board_begin_local_rx_wake(require_packet);" in companion_source, "retained startup passes packet-wake state into the board startup reason"
+board_rx_wake_body = board_target_source.split("void T5Board::beginLocalRxWake(bool packet_wake)",1)[1].split("static bool t5_probe_deep_sleep_radio",1)[0]
+assert "BD_STARTUP_RX_PACKET" in board_rx_wake_body and "BD_STARTUP_NORMAL" in board_rx_wake_body, "T5 retained startup mirrors upstream MeshCore board startup-reason handoff"
+assert "packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL" in board_rx_wake_body, "only radio wakes advertise an already-received packet"
+assert "stageWakePacket" not in board_target_source and "wake_packet_" not in board_target_header_source, "custom ESP-RAM wake packet staging is removed"
+assert "MeshInkSX1262Wrapper::recvRaw" not in board_target_source, "retained wake uses upstream RadioLibWrapper recvRaw without a MeshInk replay override"
 retained_resume_body = board_target_source.split("static bool radio_resume_retained",1)[1].split("bool radio_resume_rx_wake",1)[0]
-assert "const int16_t rx_state=radio.startReceive();" in retained_resume_body, "retained radio re-arms hardware RX immediately after reinit"
-assert "t5_prepare_retained_sx1262_transport" not in board_target_source, "retained wake must not synthesize RadioLib Module state before std_init"
-assert "static Module radio_module(" not in board_target_source, "retained wake uses the previously stable RadioLib construction path"
-assert retained_resume_body.index("radio.startReceive()") < retained_resume_body.index("retained-state reinit complete"), "early RX closes the startup blind window before MeshCore datastore/UI work"
-assert "hdr=0x%02x" in wake_inject_body, "saved wake packet header is logged for channel/direct wake diagnosis"
+assert "radio.std_init(&radio_spi)" in retained_resume_body, "retained wake performs the normal upstream RadioLib initialization"
+for forbidden_pre_read in ("t5_probe_deep_sleep_radio(", "radio.getPacketLength(", "radio.getIrqFlags(", "radio.readBuffer(", "radio.getRSSI(", "radio.getSNR("):
+    assert forbidden_pre_read not in retained_resume_body, f"upstream retained-RX handoff must not inspect FIFO before MeshCore: {forbidden_pre_read}"
+assert "radio.startReceive()" not in retained_resume_body, "packet-wake path must not start a fresh RX before upstream recvRaw consumes the retained packet"
+assert "upstream retained-RX handoff ready" in retained_resume_body, "retained wake logs the upstream MeshCore handoff path"
+assert "t5_prepare_retained_sx1262_transport" not in board_target_source, "unsafe partial RadioLib transport reconstruction stays removed"
 assert 'minimal_battery_check("cold-boot"' in unified_source, "cold boot performs battery guard before full UI/MeshCore startup"
 assert 'minimal_battery_check("deep-timer"' in unified_source, "timer wake performs minimal battery-only guard"
 assert "critical check first=" in power_backend_source and "threshold=%umV" in power_backend_source, "battery guard logs both voltage samples and threshold"
