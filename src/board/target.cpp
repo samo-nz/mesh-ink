@@ -1000,52 +1000,58 @@ bool meshink_board_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
     return ok;
 }
 
-bool radio_resume_rx_wake() {
+static bool radio_resume_retained(bool require_packet) {
     MeshInkDeepSleepRadioProbe probe{};
     if(!t5_probe_deep_sleep_radio(probe)){
-        Serial.println("[T5-DEEPSLEEP] wake packet capture failed: retained radio transport unavailable");
+        Serial.println("[T5-DEEPSLEEP] retained radio resume failed: transport unavailable");
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,1);
         return false;
     }
 
-    uint8_t offset=0;
-    const size_t packet_len=radio.getPacketLength(true,&offset);
-    const uint16_t irq=(uint16_t)radio.getIrqFlags();
-    const float wake_rssi=radio.getRSSI();
-    const float wake_snr=radio.getSNR();
-    if(!packet_len||packet_len>MAX_TRANS_UNIT){
-        Serial.printf("[T5-DEEPSLEEP] wake packet capture failed irq=0x%04x len=%u offset=%u\n",
-                      (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
-        meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,
-                                     (uint32_t)packet_len,irq);
-        return false;
+    uint16_t captured_len=0;
+    const bool packet_hint=probe.dio1||probe.packet_len;
+    if(packet_hint||require_packet){
+        uint8_t offset=0;
+        const size_t packet_len=radio.getPacketLength(true,&offset);
+        const uint16_t irq=(uint16_t)radio.getIrqFlags();
+        const float wake_rssi=radio.getRSSI();
+        const float wake_snr=radio.getSNR();
+        if(packet_len&&packet_len<=MAX_TRANS_UNIT){
+            uint8_t packet[MAX_TRANS_UNIT]{};
+            const int16_t read_state=radio.readBuffer(packet,(uint8_t)packet_len,offset);
+            if(read_state!=RADIOLIB_ERR_NONE){
+                Serial.printf("[T5-DEEPSLEEP] retained FIFO read failed code=%d irq=0x%04x len=%u offset=%u\n",
+                              (int)read_state,(unsigned)irq,(unsigned)packet_len,(unsigned)offset);
+                meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,
+                                             (uint32_t)(uint16_t)read_state,irq);
+                return false;
+            }
+            radio_driver.stageWakePacket(packet,(uint16_t)packet_len,wake_rssi,wake_snr);
+            captured_len=(uint16_t)packet_len;
+            Serial.printf("[T5-DEEPSLEEP] retained packet captured len=%u offset=%u irq=0x%04x rssi=%d snr_x4=%d\n",
+                          (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
+                          (int)wake_rssi,(int)(wake_snr*4.0f));
+            meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptured,
+                                         (uint32_t)packet_len,irq);
+        }else if(require_packet){
+            Serial.printf("[T5-DEEPSLEEP] wake packet capture failed irq=0x%04x len=%u offset=%u\n",
+                          (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
+            meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,
+                                         (uint32_t)packet_len,irq);
+            return false;
+        }else{
+            Serial.printf("[T5-DEEPSLEEP] retained wake has no packet to preserve irq=0x%04x len=%u\n",
+                          (unsigned)irq,(unsigned)packet_len);
+        }
     }
 
-    uint8_t packet[MAX_TRANS_UNIT]{};
-    const int16_t read_state=radio.readBuffer(packet,(uint8_t)packet_len,offset);
-    if(read_state!=RADIOLIB_ERR_NONE){
-        Serial.printf("[T5-DEEPSLEEP] wake FIFO read failed code=%d irq=0x%04x len=%u offset=%u\n",
-                      (int)read_state,(unsigned)irq,(unsigned)packet_len,(unsigned)offset);
-        meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptureFail,
-                                     (uint32_t)(uint16_t)read_state,irq);
-        return false;
-    }
-
-    radio_driver.stageWakePacket(packet,(uint16_t)packet_len,wake_rssi,wake_snr);
-    Serial.printf("[T5-DEEPSLEEP] wake packet captured len=%u offset=%u irq=0x%04x rssi=%d snr_x4=%d\n",
-                  (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
-                  (int)wake_rssi,(int)(wake_snr*4.0f));
-    meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::WakePacketCaptured,
-                                 (uint32_t)packet_len,irq);
-
-    // ESP deep sleep reset the RadioLib object's cached configuration even
-    // though the SX1262 hardware and FIFO survived. Now that the packet is safe
-    // in ESP RAM, perform a normal hardware init so software and radio state
-    // agree before MeshCore starts.
+    // Deep sleep reset RadioLib's cached software state. Re-synchronise the
+    // object immediately, before display/touch startup. Any retained packet was
+    // copied to ESP RAM first, so the unavoidable radio init cannot lose it.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     const bool ready=radio.std_init(&radio_spi);
     if(!ready){
-        Serial.println("[T5-DEEPSLEEP] SX1262 reinit failed after wake packet capture");
+        Serial.println("[T5-DEEPSLEEP] SX1262 retained-state reinit failed");
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioReinitFail);
         return false;
     }
@@ -1061,11 +1067,19 @@ bool radio_resume_rx_wake() {
         return false;
     }
 
-    Serial.printf("[T5-DEEPSLEEP] SX1262 clean reinit complete; saved packet pending=%u\n",
+    Serial.printf("[T5-DEEPSLEEP] SX1262 retained-state reinit complete saved-packet=%u\n",
                   radio_driver.hasWakePacket()?1U:0U);
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioReinitOk,
-                                 (uint32_t)packet_len);
+                                 (uint32_t)captured_len);
     return true;
+}
+
+bool radio_resume_rx_wake() {
+    return radio_resume_retained(true);
+}
+
+bool radio_resume_retained_wake() {
+    return radio_resume_retained(false);
 }
 
 bool radio_init() {
