@@ -791,9 +791,10 @@ assert "void meshink_board_start_local_radio_settle() {}" in standalone_source, 
 assert "constexpr float LILYGO_TCXO_VOLTAGE=2.4f;" in board_target_source, "T5 backend uses LilyGO's 2.4 V post-init TCXO setting"
 assert "radio.setTCXO(LILYGO_TCXO_VOLTAGE)" in board_target_source, "T5 backend explicitly applies LilyGO TCXO voltage"
 assert "radio.setDio2AsRfSwitch(true)" in board_target_source, "T5 backend explicitly enables LilyGO DIO2 RF switch"
-tcxo_at=board_target_source.index("radio.setTCXO(LILYGO_TCXO_VOLTAGE)")
-rf_switch_at=board_target_source.index("radio.setDio2AsRfSwitch(true)")
-std_init_at=board_target_source.index("ready=radio.std_init(&radio_spi)")
+radio_init_body=board_target_source.split("bool radio_init()",1)[1]
+tcxo_at=radio_init_body.index("radio.setTCXO(LILYGO_TCXO_VOLTAGE)")
+rf_switch_at=radio_init_body.index("radio.setDio2AsRfSwitch(true)")
+std_init_at=radio_init_body.index("ready=radio.std_init(&radio_spi)")
 assert std_init_at < tcxo_at < rf_switch_at, "radio hardware order must be begin -> TCXO 2.4 V -> DIO2 RF switch"
 assert "post-init TCXO=%.1fV result=%d" in board_target_source, "TCXO post-init result remains available to targeted diagnostics"
 assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch post-init result remains available to targeted diagnostics"
