@@ -235,7 +235,7 @@ assert "return headless_alert_requested||message_alert_active;" in source, "idle
 assert "ui_quiesce_headless_display_for_deep_sleep" in source and "session retained until reset" in source, "display quiesce helper remains available for post-diagnostic low-power cleanup"
 sleep_entry = companion_source.split("bool local_mesh_enter_deep_sleep_standby()",1)[1].split("void local_mesh_rx_wake_loop()",1)[0]
 assert "ui_quiesce_headless_display_for_deep_sleep();" not in sleep_entry, "deepsleep23 A/B test leaves the display session untouched before retained-radio sleep"
-assert "deepsleep23: display session left untouched before sleep" in sleep_entry, "deepsleep23 logs the display-shutdown isolation point"
+assert "deepsleep24: display session left untouched; testing explicit RTC EXT1 arm" in sleep_entry, "deepsleep24 preserves the display A/B result while isolating RTC wake arming"
 headless_loop = companion_source.split("void local_mesh_rx_wake_loop()",1)[1].split("bool local_mesh_is_running",1)[0]
 assert "alert_was_busy" not in headless_loop and "alert_active" not in headless_loop, "display alert activity must not reset the genuine MeshCore quiet timer"
 notify_body = source.split("void ui_notify_message_received(bool channel)",1)[1].split("bool ui_restore_failed_compose",1)[0]
@@ -310,6 +310,11 @@ assert "radio.startReceive()" not in sleep_entry_body, "deep-sleep handoff must 
 assert "preserving MeshCore continuous RX unchanged before sleep" in sleep_entry_body, "sleep entry documents the always-listening radio invariant"
 assert "digitalRead(P_LORA_BUSY)==HIGH" in sleep_entry_body, "sleep entry checks BUSY non-destructively instead of issuing a radio command"
 assert "digitalRead(P_LORA_DIO_1)==HIGH" in sleep_entry_body, "sleep entry rejects a pending RX IRQ rather than disturbing it"
+assert "rtc_gpio_init(radio_gpio)" in board_target_source and "RTC_GPIO_MODE_INPUT_ONLY" in board_target_source, "deepsleep24 explicitly moves DIO1 into the RTC input domain before EXT1"
+assert "rtc_gpio_pullup_dis(radio_gpio)" in board_target_source and "rtc_gpio_pulldown_dis(radio_gpio)" in board_target_source, "RTC DIO1 wake input is left externally driven without internal pulls"
+assert "rtc_gpio_get_level(radio_gpio)" in board_target_source, "deepsleep24 verifies the same RTC-domain level that EXT1 observes"
+assert "EXT1 armed explicitly from RTC GPIO" in board_target_source, "sleep logs explicit RTC-domain EXT1 arming"
+assert "t5_restore_radio_wake_pad_to_digital" in board_target_source, "aborted sleep attempts return DIO1 to the normal digital/ISR domain"
 assert "t5_prepare_retained_sx1262_transport" not in board_target_source, "unsafe partial RadioLib transport reconstruction stays removed"
 assert 'minimal_battery_check("cold-boot"' in unified_source, "cold boot performs battery guard before full UI/MeshCore startup"
 assert 'minimal_battery_check("deep-timer"' in unified_source, "timer wake performs minimal battery-only guard"
