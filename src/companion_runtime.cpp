@@ -528,7 +528,6 @@ void local_mesh_setup() {
     fast_rng.begin(meshink_radio_rng_seed());
     store.begin();
     the_mesh.begin(true);
-    if(require_packet)board.finishLocalRxWakeCapture();
     the_mesh.startInterface(local_interface);
     // Negotiate companion-protocol v3 for the internal standalone interface.
     // V3 receive frames add SNR and path metadata without changing on-air packets.
@@ -601,6 +600,9 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
                   (unsigned long)(millis()-started));
 
     the_mesh.begin(true);
+    // Dispatcher::begin() has now called radio_driver.begin(), which sees
+    // BD_STARTUP_RX_PACKET and latches the staged-packet ready flag.
+    if(require_packet)board.finishLocalRxWakeCapture();
     the_mesh.startInterface(local_interface);
     const uint8_t local_protocol_query[2]={22,3};
     if(!local_interface.enqueue(local_protocol_query,sizeof(local_protocol_query)))
