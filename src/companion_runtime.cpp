@@ -634,6 +634,36 @@ bool local_mesh_rx_wake_promoted() {
     return local_rx_wake_promoted_to_ui;
 }
 
+bool local_mesh_promote_to_ui(const char* source) {
+    if(!local_runtime_ready)return false;
+
+    MeshInkPowerCriticalState wake_power{};
+    MeshInkPowerSleepCheck wake_result=MeshInkPowerSleepCheck::Unavailable;
+    if(meshink_power_begin_minimal_bus()){
+        wake_result=meshink_power_deep_sleep_check(wake_power);
+        meshink_power_end_minimal_bus();
+    }
+    Serial.printf("[T5-DEEPSLEEP] pre-UI battery check source=%s result=%u voltage=%s%umV\n",
+                  source?source:"unknown",(unsigned)wake_result,
+                  wake_power.battery_mv_valid?"":"unavailable/",
+                  wake_power.battery_mv_valid?(unsigned)wake_power.battery_mv:0U);
+    if(wake_result==MeshInkPowerSleepCheck::Critical){
+        local_rx_wake_indicator(false);
+        local_mesh_prepare_shutdown();
+        meshink_board_companion_release_resources();
+        SPIFFS.end();
+        ui_minimal_low_battery_shutdown(wake_power,source?source:"deep-ui");
+    }
+
+    local_rx_wake_indicator(false);
+    if(!ui_promote_headless_to_interactive())return false;
+
+    local_rx_wake_runtime=false;
+    local_rx_wake_promoted_to_ui=true;
+    Serial.println("[T5-DEEPSLEEP] retained MeshCore promoted to interactive UI without radio restart");
+    return true;
+}
+
 bool local_mesh_enter_deep_sleep_standby() {
     if(!local_runtime_ready){
         Serial.println("[T5-DEEPSLEEP] sleep deferred: local MeshCore is not running");
@@ -782,26 +812,7 @@ void local_mesh_rx_wake_loop() {
     if(pressed&&!local_rx_wake_button_started)local_rx_wake_button_started=now_ms;
     if(pressed&&local_rx_wake_button_started&&now_ms-local_rx_wake_button_started>=2000UL){
         Serial.println("[T5-DEEPSLEEP] BOOT held during headless RX runtime; promoting running MeshCore into UI");
-        local_rx_wake_indicator(false);
-        MeshInkPowerCriticalState wake_power{};
-        MeshInkPowerSleepCheck wake_result=MeshInkPowerSleepCheck::Unavailable;
-        if(meshink_power_begin_minimal_bus()){
-            wake_result=meshink_power_deep_sleep_check(wake_power);
-            meshink_power_end_minimal_bus();
-        }
-        if(wake_result==MeshInkPowerSleepCheck::Critical){
-            local_mesh_prepare_shutdown();
-            meshink_board_companion_release_resources();
-            SPIFFS.end();
-            ui_minimal_low_battery_shutdown(wake_power,"deep-button");
-        }
-
-        if(ui_promote_headless_to_interactive()){
-            local_rx_wake_runtime=false;
-            local_rx_wake_promoted_to_ui=true;
-            Serial.println("[T5-DEEPSLEEP] headless runtime promoted to interactive UI; radio/MeshCore retained");
-            return;
-        }
+        if(local_mesh_promote_to_ui("deep-button-runtime"))return;
         Serial.println("[T5-DEEPSLEEP] UI promotion failed; staying in headless RX runtime");
         local_rx_wake_indicator(true);
     }
