@@ -760,6 +760,33 @@ bool meshink_board_woke_from_primary_button() {
     return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
 }
 
+bool meshink_board_woke_from_timer() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_TIMER;
+}
+
+bool meshink_board_radio_irq_asserted() {
+    pinMode(P_LORA_DIO_1,INPUT);
+    return digitalRead(P_LORA_DIO_1)==HIGH;
+}
+
+static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
+    15ULL*60ULL*1000000ULL;
+
+static bool t5_enable_deep_sleep_wake_sources() {
+    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
+        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
+    const esp_err_t timer_wake=esp_sleep_enable_timer_wakeup(
+        T5_DEEP_SLEEP_BATTERY_CHECK_US);
+    if(button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed button=%d radio=%d timer=%d\n",
+                      (int)button_wake,(int)radio_wake,(int)timer_wake);
+        return false;
+    }
+    return true;
+}
+
 bool meshink_board_enter_deep_sleep_standby() {
     // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
     // sleeps; DIO1 is a level-high wake source and BOOT is a level-low source.
@@ -790,15 +817,7 @@ bool meshink_board_enter_deep_sleep_standby() {
         return false;
     }
 
-    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
-        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
-    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
-        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
-    if(button_wake!=ESP_OK||radio_wake!=ESP_OK){
-        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed button=%d radio=%d\n",
-                      (int)button_wake,(int)radio_wake);
-        return false;
-    }
+    if(!t5_enable_deep_sleep_wake_sources())return false;
 
     // Keep the radio out of hardware reset while the ESP32 GPIO domain sleeps.
     // The H752-01's external PCA9535 keeps the shared LoRa/GPS 3V3 rail on.
@@ -829,6 +848,40 @@ bool meshink_board_enter_deep_sleep_standby() {
 
     Serial.printf("[T5-DEEPSLEEP] entering: DIO1(GPIO%d)=LOW BOOT(GPIO%d)=HIGH NSS/RESET=held-high\n",
                   P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
+
+bool meshink_board_return_to_retained_deep_sleep() {
+    // Timer and accidental short-BOOT wakes reset the ESP32 but leave the
+    // retained SX1262 hardware listening. Do not issue RadioLib commands here:
+    // its C++ object state was reset and no packet needs to be consumed.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: BOOT is held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: DIO1 is asserted");
+        return false;
+    }
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // NSS and RESET were individually held when the original deep sleep began.
+    // Keep the global automatic deep-sleep hold policy enabled for this next
+    // interval without unholding or reconfiguring the retained radio.
+    gpio_deep_sleep_hold_en();
+
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW||digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.printf("[T5-DEEPSLEEP] retained re-sleep race avoided boot=%d dio1=%d\n",
+                      digitalRead(T5_PIN_BOOT_BUTTON),digitalRead(P_LORA_DIO_1));
+        return false;
+    }
+
+    Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 15m)");
     Serial.flush();
     delay(20);
     esp_deep_sleep_start();
