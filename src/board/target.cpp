@@ -141,6 +141,36 @@ bool T5Board::enableRadioGpsRail(){
 static SPIClass radio_spi(FSPI);
 SPIClass& t5_shared_spi() { return radio_spi; }
 
+static bool t5_release_held_radio_control_pins(const char* phase) {
+    // ESP-IDF warns that releasing a GPIO hold after deep sleep can expose the
+    // pad's reset/default state unless the desired GPIO configuration is set
+    // first. Program NSS and RESET HIGH while the hold is still active, then
+    // release them. This prevents an unintended SX1262 reset or chip-select
+    // assertion during the wake handoff.
+    gpio_deep_sleep_hold_dis();
+
+    const esp_err_t nss_dir=gpio_set_direction((gpio_num_t)P_LORA_NSS,GPIO_MODE_OUTPUT);
+    const esp_err_t nss_high=gpio_set_level((gpio_num_t)P_LORA_NSS,1);
+    const esp_err_t reset_dir=gpio_set_direction((gpio_num_t)P_LORA_RESET,GPIO_MODE_OUTPUT);
+    const esp_err_t reset_high=gpio_set_level((gpio_num_t)P_LORA_RESET,1);
+    delayMicroseconds(10);
+
+    const esp_err_t nss_release=gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_release=gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    delayMicroseconds(20);
+
+    const int nss_level=gpio_get_level((gpio_num_t)P_LORA_NSS);
+    const int reset_level=gpio_get_level((gpio_num_t)P_LORA_RESET);
+    Serial.printf("[T5-DEEPSLEEP] radio control holds released phase=%s nss=%d reset=%d cfg=%d/%d/%d/%d release=%d/%d\n",
+                  phase?phase:"unknown",nss_level,reset_level,
+                  (int)nss_dir,(int)nss_high,(int)reset_dir,(int)reset_high,
+                  (int)nss_release,(int)reset_release);
+
+    return nss_dir==ESP_OK&&nss_high==ESP_OK&&reset_dir==ESP_OK&&reset_high==ESP_OK&&
+           nss_release==ESP_OK&&reset_release==ESP_OK&&
+           nss_level==HIGH&&reset_level==HIGH;
+}
+
 static void t5_radio_shared_bus_idle(bool stop_spi){
     if(stop_spi)radio_spi.end();
     // LilyGO's H752-01 LoRa examples explicitly deselect both devices before
@@ -356,11 +386,10 @@ bool meshink_board_diag_radio_begin() {
     // Restore only the ESP-side transport after deep-sleep reset. The SX1262
     // itself was never reset or powered down, so its modem configuration stays
     // live across the BOOT-only sleep cycle.
-    gpio_deep_sleep_hold_dis();
-    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
-    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
-    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
-    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    if(!t5_release_held_radio_control_pins("diag-radio")){
+        Serial.println("[T5-DIAG-RADIO] control-pin hold release FAILED");
+        return false;
+    }
     pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(P_LORA_BUSY,INPUT);
@@ -1164,11 +1193,10 @@ static bool t5_probe_deep_sleep_radio(MeshInkDeepSleepRadioProbe& probe) {
     // Recreate only the ESP32-side SPI/GPIO transport. Do NOT call std_init(),
     // toggle RESET, change the shared rail, clear IRQs, read FIFO contents or
     // ask the radio for RNG entropy. This is deliberately non-destructive.
-    gpio_deep_sleep_hold_dis();
-    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
-    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
-    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
-    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    if(!t5_release_held_radio_control_pins("warm-probe")){
+        Serial.println("[T5-DEEPSLEEP] warm radio probe failed: control-pin hold release");
+        return false;
+    }
     pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(P_LORA_BUSY,INPUT);
@@ -1216,11 +1244,10 @@ static bool radio_apply_post_init_board_settings() {
 }
 
 static bool radio_resume_retained(bool packet_wake) {
-    gpio_deep_sleep_hold_dis();
-    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
-    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
-    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
-    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    if(!t5_release_held_radio_control_pins(packet_wake?"packet-wake":"button-wake")){
+        Serial.println("[T5-DEEPSLEEP] retained radio restore failed: control-pin hold release");
+        return false;
+    }
     pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
     pinMode(P_LORA_DIO_1,INPUT);
     pinMode(P_LORA_BUSY,INPUT);
