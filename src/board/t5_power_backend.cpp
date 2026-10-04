@@ -250,6 +250,34 @@ void meshink_power_prepare_board() {
     gauge_apply_factory_profile_if_needed();
 }
 
+bool meshink_power_begin_minimal_bus() {
+    i2c_config_t config{};
+    config.mode=I2C_MODE_MASTER;
+    config.sda_io_num=(gpio_num_t)T5_PIN_I2C_SDA;
+    config.scl_io_num=(gpio_num_t)T5_PIN_I2C_SCL;
+    config.sda_pullup_en=GPIO_PULLUP_ENABLE;
+    config.scl_pullup_en=GPIO_PULLUP_ENABLE;
+    config.master.clk_speed=400000;
+
+    const esp_err_t configured=i2c_param_config(I2C_NUM_0,&config);
+    if(configured!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] battery I2C config failed code=%d\n",(int)configured);
+        return false;
+    }
+    const esp_err_t installed=i2c_driver_install(I2C_NUM_0,I2C_MODE_MASTER,0,0,0);
+    if(installed!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] battery I2C install failed code=%d\n",(int)installed);
+        return false;
+    }
+    return true;
+}
+
+void meshink_power_end_minimal_bus() {
+    const esp_err_t stopped=i2c_driver_delete(I2C_NUM_0);
+    if(stopped!=ESP_OK)
+        Serial.printf("[T5-DEEPSLEEP] battery I2C stop code=%d\n",(int)stopped);
+}
+
 void meshink_power_frontlight_begin() {
     pinMode(T5_PIN_FRONTLIGHT,OUTPUT);
     digitalWrite(T5_PIN_FRONTLIGHT,LOW);
@@ -308,20 +336,33 @@ bool meshink_power_read_status(MeshInkPowerStatus& status) {
     return status.battery_voltage_valid||status.battery_percent_valid||charge_valid;
 }
 
-bool meshink_power_boot_critical(MeshInkPowerCriticalState& state) {
+MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState& state) {
     state=MeshInkPowerCriticalState{};
-    if(meshink_power_external_present())return false;
+    if(meshink_power_external_present())return MeshInkPowerSleepCheck::ExternalPower;
 
     uint16_t first=0,second=0;
-    if(!meshink_power_read_battery_mv(first)||first>=T5_CRITICAL_BATTERY_MV)return false;
-    delay(80);
-    if(meshink_power_external_present())return false;
-    if(!meshink_power_read_battery_mv(second)||second>=T5_CRITICAL_BATTERY_MV)return false;
-
+    if(!meshink_power_read_battery_mv(first))
+        return MeshInkPowerSleepCheck::Unavailable;
     state.battery_mv_valid=true;
+    state.battery_mv=first;
+    if(first>=T5_CRITICAL_BATTERY_MV)
+        return MeshInkPowerSleepCheck::Safe;
+
+    delay(80);
+    if(meshink_power_external_present())return MeshInkPowerSleepCheck::ExternalPower;
+    if(!meshink_power_read_battery_mv(second))
+        return MeshInkPowerSleepCheck::Unavailable;
+
     state.battery_mv=(uint16_t)(((uint32_t)first+second)/2U);
+    if(second>=T5_CRITICAL_BATTERY_MV)
+        return MeshInkPowerSleepCheck::Safe;
+
     state.critical=state.battery_mv<T5_CRITICAL_BATTERY_MV;
-    return state.critical;
+    return state.critical?MeshInkPowerSleepCheck::Critical:MeshInkPowerSleepCheck::Safe;
+}
+
+bool meshink_power_boot_critical(MeshInkPowerCriticalState& state) {
+    return meshink_power_deep_sleep_check(state)==MeshInkPowerSleepCheck::Critical;
 }
 
 bool meshink_power_poll_critical(MeshInkPowerCriticalState& state) {
