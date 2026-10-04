@@ -2424,7 +2424,7 @@ static void draw_meshink_logo(int top,bool compact=false);
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);
-    draw_status_bar();
+    if(!deep_sleep_standby)draw_status_bar();
 
     const bool has_direct=status_unread>0;
     const bool has_channel=status_channel_unread>0;
@@ -2470,9 +2470,16 @@ static void draw_standby(){
         standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
     }
 
-    // STANDBY is part of the at-rest identity rather than small helper copy.
-    // Move it beneath unread cards when present; otherwise use the open centre.
-    ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);
+    // Deep-sleep standby has its own at-rest identity and deliberately omits
+    // the normal status bar. Keep the state label in the same movable region
+    // as ordinary STANDBY so future unread-card layout changes can shift the
+    // whole treatment rather than relying on fixed status-bar coordinates.
+    const int standby_state_y=any_unread?ui_y(775):ui_y(620);
+    if(deep_sleep_standby)
+        ui_centred_fit("DEEP SLEEP STANDBY",standby_state_y,
+                       portrait_layout().width-ui_w(32),4,0,true);
+    else
+        ui_centred("STANDBY",standby_state_y,5,0,true);
 
     // Keep the wake instruction low on the panel and make it readable at a
     // glance. Scale 3 uses the smooth Inter renderer; two lines avoid squeezing.
@@ -2865,6 +2872,57 @@ static void request_hardware_shutdown() {
     SPIFFS.end();
     T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
+}
+
+[[noreturn]] void ui_minimal_low_battery_shutdown(
+        const MeshInkPowerCriticalState& critical,const char* source) {
+    if(critical.battery_mv_valid)
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; minimal low-battery shutdown\n",
+                      (unsigned)critical.battery_mv,source?source:"unknown");
+    else
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\n",
+                      source?source:"unknown");
+
+    // No touch, storage, GPS or MeshCore startup here. Bring up only the
+    // frontlight pin (kept at zero) and EPD long enough to leave persistent
+    // user guidance before board-level ship mode removes battery power.
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(0);
+    meshink_display_init();
+    meshink_display_set_orientation(MeshInkOrientation::Portrait);
+    display=meshink_display_state_init();
+    fb=meshink_display_framebuffer(&display);
+
+    if(fb){
+        meshink_display_set_all_white(&display);
+        ui_centred("LOW BATTERY",ui_y(230),6,0,true);
+        ui_centred("POWERED DOWN",ui_y(340),5,0,true);
+        ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
+        if(critical.battery_mv_valid){
+            char voltage[20];
+            snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
+                     (unsigned)(critical.battery_mv/1000U),
+                     (unsigned)((critical.battery_mv%1000U)/10U));
+            ui_centred(voltage,ui_y(650),2,0,true);
+        }else{
+            ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
+        }
+        ui_centred(UI_VERSION,ui_y(900),2,0,true);
+        meshink_display_poweron();
+        const MeshInkDisplayResult result=meshink_display_update_screen(
+            &display,MeshInkRefreshMode::FastGray16,
+            (int)meshink_display_ambient_temperature());
+        meshink_display_poweroff();
+        Serial.printf("[T5-DEEPSLEEP] minimal low-battery EPD result=%d\n",(int)result);
+    }else{
+        meshink_display_poweroff();
+        Serial.println("[T5-DEEPSLEEP] minimal low-battery framebuffer unavailable");
+    }
+
+    meshink_display_release_state(&display);
+    fb=nullptr;
+    meshink_display_deinit();
+    meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
 
 static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
