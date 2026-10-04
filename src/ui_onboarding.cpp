@@ -3874,18 +3874,18 @@ static void ui_close_headless_display_session() {
     Serial.println("[T5-DEEPSLEEP] headless display session fully closed");
 }
 
-void ui_quiesce_headless_display_for_deep_sleep() {
-    if(!headless_display_session)return;
-    // Keep EPDiy, its framebuffer and shared GPIO ISR service alive until the
-    // ESP32 actually enters deep sleep. If a packet races the sleep handoff,
-    // the same display session is immediately reusable without another init.
+void ui_quiesce_display_for_deep_sleep() {
+    // Keep the high-level EPDiy session/framebuffer initialized through the
+    // final race window so an arriving message can still redraw immediately.
+    // The physical panel HV and frontlight are nevertheless forced off before
+    // ESP deep sleep. Deep sleep resets the ESP-side session state anyway.
     meshink_power_frontlight_set(0);
     frontlight_lit=false;
     frontlight_deadline=0;
-    meshink_display_poweroff();
+    if(display_session_active)meshink_display_poweroff();
     ui_boot_cpu_active=false;
-    set_cpu_target(UI_IDLE_CPU_MHZ,"headless-sleep-ready");
-    Serial.println("[T5-DEEPSLEEP] headless display quiesced for sleep; session retained until reset");
+    set_cpu_target(UI_IDLE_CPU_MHZ,"deep-sleep-ready");
+    Serial.println("[T5-DEEPSLEEP] display quiesced: panel HV/frontlight off; session retained until reset");
 }
 
 bool ui_headless_message_alert_pending() {
@@ -4184,18 +4184,6 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
 void ui_setup() {
     MeshInkUiStartupPlan plan{};
     ui_startup(plan);
-}
-
-void ui_show_split_sleep_diag(const char* title,const char* line1,
-                              const char* line2,const char* line3) {
-    set_ui_orientation(MeshInkOrientation::Portrait);
-    meshink_display_set_all_white(&display);
-    ui_centred(title?title:"DEEP SLEEP TEST",ui_y(180),4,0,true);
-    if(line1&&line1[0])ui_centred_fit(line1,ui_y(360),portrait_layout().width-ui_w(40),3,0,true);
-    if(line2&&line2[0])ui_centred_fit(line2,ui_y(470),portrait_layout().width-ui_w(40),3,0,false);
-    if(line3&&line3[0])ui_centred_fit(line3,ui_y(580),portrait_layout().width-ui_w(40),3,0,false);
-    ui_centred(UI_VERSION,ui_y(850),2,0,false);
-    refresh(MeshInkRefreshMode::FastGray16,false);
 }
 
 void ui_show_storage_initializing() {
