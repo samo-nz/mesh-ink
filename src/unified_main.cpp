@@ -39,12 +39,12 @@ static void split_diag_wait_boot_release() {
     meshink_board_diag_restore_button_wake();
     if(cause==ESP_SLEEP_WAKEUP_EXT0)++split_diag_boot_wakes;
 
-    Serial.printf("[T5-DIAG-ESP] WAKE #%lu cause=%d; release BOOT, then 30s USB+radio test window\n",
+    Serial.printf("[T5-DIAG-ESP] WAKE #%lu cause=%d; release BOOT, 15s USB reconnect, then 30s radio test\n",
                   (unsigned long)split_diag_boot_wakes,(int)cause);
     split_diag_wait_boot_release();
 
     // Give native USB time to enumerate before touching the retained SX1262.
-    for(int seconds=3;seconds>0;--seconds){
+    for(int seconds=15;seconds>0;--seconds){
         Serial.printf("[T5-DIAG-ESP] USB settle before radio test: %ds\n",seconds);
         Serial.flush();
         delay(1000);
