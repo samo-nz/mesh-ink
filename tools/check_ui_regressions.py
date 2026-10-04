@@ -286,6 +286,10 @@ assert "stageWakePacket" not in board_target_source and "wake_packet_" not in bo
 assert "MeshInkSX1262Wrapper::recvRaw" not in board_target_source, "retained wake uses upstream RadioLibWrapper recvRaw without a MeshInk replay override"
 retained_resume_body = board_target_source.split("static bool radio_resume_retained",1)[1].split("bool radio_resume_rx_wake",1)[0]
 assert "radio.std_init(&radio_spi)" in retained_resume_body, "retained wake performs the normal upstream RadioLib initialization"
+assert "radio.resetOnStartup=!packet_wake;" in retained_resume_body, "packet wakes use RadioLib's supported ESP32 deep-sleep restore mode without hardware reset"
+assert retained_resume_body.index("radio.resetOnStartup=!packet_wake;") < retained_resume_body.index("radio.std_init(&radio_spi)"), "reset suppression is active before retained std_init"
+assert retained_resume_body.index("radio.std_init(&radio_spi)") < retained_resume_body.index("radio.resetOnStartup=true;"), "normal reset-on-startup policy is restored only after retained initialization"
+assert "reset-skipped=%u" in retained_resume_body, "retained wake log exposes whether hardware reset was suppressed"
 for forbidden_pre_read in ("t5_probe_deep_sleep_radio(", "radio.getPacketLength(", "radio.getIrqFlags(", "radio.readBuffer(", "radio.getRSSI(", "radio.getSNR("):
     assert forbidden_pre_read not in retained_resume_body, f"upstream retained-RX handoff must not inspect FIFO before MeshCore: {forbidden_pre_read}"
 assert "radio.startReceive()" not in retained_resume_body, "packet-wake path must not start a fresh RX before upstream recvRaw consumes the retained packet"

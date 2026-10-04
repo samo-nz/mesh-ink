@@ -1007,7 +1007,17 @@ static bool radio_resume_retained(bool packet_wake) {
     pinMode(P_LORA_BUSY,INPUT);
 
     radio_hal.detachInterrupt(P_LORA_DIO_1);
+
+    // RadioLib's PhysicalLayer::resetOnStartup is specifically intended for
+    // restoring a radio across ESP32 deep sleep. On a DIO1 packet wake, keep
+    // the physical SX1262 untouched while std_init() rebuilds Module/SPI state.
+    // This prevents findChip() from toggling RESET and prevents config() from
+    // resetting the FIFO base before MeshCore's synthetic STATE_INT_READY
+    // consumes the already-received packet. Button wakes have no pending
+    // packet, so they keep the normal reset-on-startup behavior.
+    radio.resetOnStartup=!packet_wake;
     const bool ready=radio.std_init(&radio_spi);
+    radio.resetOnStartup=true;
     if(!ready){
         Serial.println("[T5-DEEPSLEEP] SX1262 retained-state reinit failed");
         return false;
@@ -1023,8 +1033,9 @@ static bool radio_resume_retained(bool packet_wake) {
         return false;
     }
 
-    Serial.printf("[T5-DEEPSLEEP] SX1262 upstream retained-RX handoff ready packet-wake=%u startup-reason=%u dio1=%u\n",
+    Serial.printf("[T5-DEEPSLEEP] SX1262 upstream retained-RX handoff ready packet-wake=%u startup-reason=%u reset-skipped=%u dio1=%u\n",
                   packet_wake?1U:0U,(unsigned)board.getStartupReason(),
+                  packet_wake?1U:0U,
                   digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
     return true;
 }
