@@ -609,10 +609,10 @@ bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry) {
     }
 
     const esp_err_t clear=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    const esp_err_t button=esp_sleep_enable_ext0_wakeup(
-        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    const esp_err_t button=esp_sleep_enable_ext1_wakeup(
+        1ULL<<T5_PIN_BOOT_BUTTON,ESP_EXT1_WAKEUP_ANY_LOW);
     if(clear!=ESP_OK||button!=ESP_OK){
-        Serial.printf("[T5-DIAG-ESP] BOOT-only wake setup failed clear=%d button=%d\n",
+        Serial.printf("[T5-DIAG-ESP] BOOT-only EXT1 wake setup failed clear=%d button=%d\n",
                       (int)clear,(int)button);
         return false;
     }
@@ -624,8 +624,9 @@ bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry) {
         return false;
     }
 
-    Serial.printf("[T5-DIAG-ESP] entering deep sleep: ONLY BOOT EXT0 LOW armed; first=%u\n",
+    Serial.printf("[T5-DIAG-ESP] entering deep sleep: ONLY BOOT EXT1 ANY_LOW armed; first=%u\n",
                   first_entry?1U:0U);
+    Serial.println("[T5-DIAG-ESP] while asleep: send one LoRa packet first, THEN press BOOT to wake");
     Serial.flush();
     delay(100);
     esp_deep_sleep_start();
