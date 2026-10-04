@@ -13,6 +13,10 @@ bool meshink_radio_resume_rx_wake() {
     return radio_resume_rx_wake();
 }
 
+bool meshink_radio_resume_retained_wake() {
+    return radio_resume_retained_wake();
+}
+
 uint32_t meshink_radio_rng_seed() {
     return radio_driver.getRngSeed();
 }
