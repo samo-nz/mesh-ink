@@ -313,6 +313,7 @@ public:
 static LocalSerial local_interface;
 static bool local_runtime_ready=false;
 static bool local_rx_wake_runtime=false;
+static bool local_rx_wake_promoted_to_ui=false;
 static uint32_t local_rx_wake_last_activity=0;
 static uint32_t local_rx_wake_last_report=0;
 static uint32_t local_rx_wake_sleep_retry=0;
@@ -541,21 +542,26 @@ void local_mesh_setup() {
     T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] ready name='%s' contacts=%d\n",the_mesh.getNodeName(),the_mesh.getNumContacts());
 }
 
-bool local_mesh_setup_rx_wake() {
+static bool local_mesh_setup_retained_wake(bool require_packet,const char* reason) {
     const uint32_t started=millis();
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::HeadlessStart);
     local_rx_wake_indicator(true);
     local_interface.resetMessageSync();
     companion_mode_active=false;
     local_rx_wake_runtime=false;
+    local_rx_wake_promoted_to_ui=false;
     local_runtime_ready=false;
-    Serial.println("[T5-DEEPSLEEP] headless RX boot: starting minimal MeshCore path");
+    Serial.printf("[T5-DEEPSLEEP] retained startup: reason=%s require-packet=%u\n",
+                  reason?reason:"unknown",require_packet?1U:0U);
 
     meshink_board_begin_local_rx_wake();
-    if(!meshink_radio_resume_rx_wake()){
+    const bool radio_ready=require_packet
+        ?meshink_radio_resume_rx_wake()
+        :meshink_radio_resume_retained_wake();
+    if(!radio_ready){
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RadioResumeFail,
                                      millis()-started);
-        Serial.println("[T5-DEEPSLEEP] headless RX boot failed before MeshCore: warm radio transport unavailable");
+        Serial.println("[T5-DEEPSLEEP] retained startup failed before MeshCore");
         local_rx_wake_indicator(false);
         return false;
     }
@@ -565,7 +571,7 @@ bool local_mesh_setup_rx_wake() {
     if(!SPIFFS.begin(false)){
         meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::SpiffsFail,
                                      millis()-started);
-        Serial.println("[T5-DEEPSLEEP] headless RX boot failed: SPIFFS mount unavailable (no format attempted)");
+        Serial.println("[T5-DEEPSLEEP] retained startup failed: SPIFFS mount unavailable");
         local_rx_wake_indicator(false);
         return false;
     }
@@ -575,8 +581,6 @@ bool local_mesh_setup_rx_wake() {
 
     ui_prepare_headless_rx_wake();
 
-    // Never seed the RNG from SX1262 noise here: the packet that woke us is
-    // still waiting in its FIFO. Use the ESP32 hardware RNG instead.
     fast_rng.begin(esp_random());
     store.begin();
     Serial.printf("[T5-DEEPSLEEP] datastore ready +%lums; entering MeshCore begin()\n",
@@ -603,14 +607,31 @@ bool local_mesh_setup_rx_wake() {
     meshink_deep_sleep_diag_mark(MeshInkDeepSleepDiagStage::RuntimeReady,
                                  local_rx_wake_stats.packets_received,
                                  (uint16_t)(local_rx_wake_stats.receive_errors>65535?65535:local_rx_wake_stats.receive_errors));
-    Serial.printf("[T5-DEEPSLEEP] MeshCore headless READY +%lums rx=%lu err=%lu tx=%lu rxmode=%u\n",
+    Serial.printf("[T5-DEEPSLEEP] MeshCore retained runtime READY +%lums rx=%lu err=%lu tx=%lu rxmode=%u\n",
                   (unsigned long)(millis()-started),
                   (unsigned long)local_rx_wake_stats.packets_received,
                   (unsigned long)local_rx_wake_stats.receive_errors,
                   (unsigned long)local_rx_wake_stats.packets_sent,
                   local_rx_wake_stats.continuous_rx?1U:0U);
-    Serial.println("[T5-DEEPSLEEP] waiting for MeshCore to consume the buffered RX packet");
     return true;
+}
+
+bool local_mesh_setup_rx_wake() {
+    return local_mesh_setup_retained_wake(true,"radio");
+}
+
+bool local_mesh_setup_button_wake() {
+    return local_mesh_setup_retained_wake(false,"button");
+}
+
+void local_mesh_service_startup() {
+    if(!local_runtime_ready)return;
+    the_mesh.loop();
+    local_mesh_flush_contacts_save_if_due();
+}
+
+bool local_mesh_rx_wake_promoted() {
+    return local_rx_wake_promoted_to_ui;
 }
 
 bool local_mesh_enter_deep_sleep_standby() {
@@ -729,9 +750,29 @@ void local_mesh_rx_wake_loop() {
     const bool pressed=meshink_primary_button_pressed();
     if(pressed&&!local_rx_wake_button_started)local_rx_wake_button_started=now_ms;
     if(pressed&&local_rx_wake_button_started&&now_ms-local_rx_wake_button_started>=2000UL){
-        Serial.println("[T5-DEEPSLEEP] BOOT held during headless RX runtime; restarting into full UI boot");
+        Serial.println("[T5-DEEPSLEEP] BOOT held during headless RX runtime; promoting running MeshCore into UI");
         local_rx_wake_indicator(false);
-        Serial.flush();delay(20);ESP.restart();
+        MeshInkPowerCriticalState wake_power{};
+        MeshInkPowerSleepCheck wake_result=MeshInkPowerSleepCheck::Unavailable;
+        if(meshink_power_begin_minimal_bus()){
+            wake_result=meshink_power_deep_sleep_check(wake_power);
+            meshink_power_end_minimal_bus();
+        }
+        if(wake_result==MeshInkPowerSleepCheck::Critical){
+            local_mesh_prepare_shutdown();
+            meshink_board_companion_release_resources();
+            SPIFFS.end();
+            ui_minimal_low_battery_shutdown(wake_power,"deep-button");
+        }
+
+        if(ui_promote_headless_to_interactive()){
+            local_rx_wake_runtime=false;
+            local_rx_wake_promoted_to_ui=true;
+            Serial.println("[T5-DEEPSLEEP] headless runtime promoted to interactive UI; radio/MeshCore retained");
+            return;
+        }
+        Serial.println("[T5-DEEPSLEEP] UI promotion failed; staying in headless RX runtime");
+        local_rx_wake_indicator(true);
     }
     if(!pressed)local_rx_wake_button_started=0;
 
