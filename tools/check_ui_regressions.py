@@ -293,16 +293,15 @@ assert "meshink_board_begin_local_rx_wake(require_packet);" in companion_source,
 board_rx_wake_body = board_target_source.split("void T5Board::beginLocalRxWake(bool packet_wake)",1)[1].split("static bool t5_probe_deep_sleep_radio",1)[0]
 assert "BD_STARTUP_RX_PACKET" in board_rx_wake_body and "BD_STARTUP_NORMAL" in board_rx_wake_body, "T5 retained startup mirrors upstream MeshCore board startup-reason handoff"
 assert "packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL" in board_rx_wake_body, "only radio wakes advertise an already-received packet"
-assert "stageWakePacket" not in board_target_source and "wake_packet_" not in board_target_header_source, "custom ESP-RAM wake packet staging is removed"
-assert "MeshInkSX1262Wrapper::recvRaw" not in board_target_source, "retained wake uses upstream RadioLibWrapper recvRaw without a MeshInk replay override"
+assert "stageWakePacket" in board_target_source and "wake_packet_" in board_target_header_source, "deepsleep26 stages the wake packet in ESP RAM before resetting the SX1262"
+assert "MeshInkSX1262Wrapper::recvRaw" in board_target_source, "deepsleep26 replays the staged wake packet through the MeshCore radio wrapper"
 retained_resume_body = board_target_source.split("static bool radio_resume_retained",1)[1].split("bool radio_resume_rx_wake",1)[0]
-assert "radio.std_init(&radio_spi)" in retained_resume_body, "retained wake performs the normal upstream RadioLib initialization"
-assert "radio.resetOnStartup=!packet_wake;" in retained_resume_body, "packet wakes use RadioLib's supported ESP32 deep-sleep restore mode without hardware reset"
-assert retained_resume_body.index("radio.resetOnStartup=!packet_wake;") < retained_resume_body.index("radio.std_init(&radio_spi)"), "reset suppression is active before retained std_init"
-for forbidden_pre_read in ("t5_probe_deep_sleep_radio(", "radio.getPacketLength(", "radio.getIrqFlags(", "radio.readBuffer(", "radio.getRSSI(", "radio.getSNR("):
-    assert forbidden_pre_read not in retained_resume_body, f"upstream retained-RX handoff must not inspect FIFO before MeshCore: {forbidden_pre_read}"
+assert "radio.resetOnStartup=false;" in retained_resume_body, "packet wake first reconstructs RadioLib without resetting retained FIFO"
+assert retained_resume_body.index("radio.resetOnStartup=false;") < retained_resume_body.index("captureRetainedWakePacket"), "retained FIFO is initialized before normal readData capture"
+assert retained_resume_body.index("captureRetainedWakePacket") < retained_resume_body.index("radio.resetOnStartup=true;") < retained_resume_body.rindex("radio.std_init(&radio_spi)"), "saved packet is secured before the clean hardware-resetting reinit"
+assert "radio.getIrqFlags()" in retained_resume_body and "radio.getRSSI()" in retained_resume_body and "radio.getSNR()" in retained_resume_body, "wake diagnostics/metrics are sampled only after retained RadioLib init"
+assert "radio.getPacketLength(" not in retained_resume_body and "radio.readBuffer(" not in retained_resume_body, "deepsleep26 avoids the old raw FIFO length/buffer probe"
 sleep_entry_body = board_target_source.split("bool meshink_board_enter_deep_sleep_standby()",1)[1].split("bool meshink_board_return_to_retained_deep_sleep()",1)[0]
-assert "preserving MeshCore continuous RX unchanged before sleep" in sleep_entry_body, "sleep entry documents the always-listening radio invariant"
 assert "digitalRead(P_LORA_BUSY)==HIGH" in sleep_entry_body, "sleep entry checks BUSY non-destructively instead of issuing a radio command"
 assert "digitalRead(P_LORA_DIO_1)==HIGH" in sleep_entry_body, "sleep entry rejects a pending RX IRQ rather than disturbing it"
 assert "radio.startReceive()" in sleep_entry_body, "deepsleep26 re-arms SX1262 RX/DIO1 mapping at every sleep boundary"
