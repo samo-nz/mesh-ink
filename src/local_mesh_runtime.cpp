@@ -380,6 +380,9 @@ public:
         const uint32_t sequence=store_.append(
             MessageKind::Direct,key,6,text,timestamp,UiMessageState::Received,0,
             MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
+        Serial.printf("[T5-STORE] RX direct journal seq=%lu count=%u ts=%lu result=%s\n",
+                      (unsigned long)sequence,(unsigned)store_.count(),
+                      (unsigned long)timestamp,sequence?"OK":"FAIL");
         if(sequence&&!active_channel_&&!memcmp(active_key_,key,6))rebuild_active();
         refresh(true);ui_notify_message_received(false);
     }
@@ -389,6 +392,9 @@ public:
         const uint32_t sequence=store_.append(
             MessageKind::Channel,&channel,1,text,timestamp,UiMessageState::Received,0,
             MeshInkMessageOrigin::LocalUi,has_rf,snr_q4,path_len);
+        Serial.printf("[T5-STORE] RX channel journal seq=%lu count=%u ts=%lu result=%s\n",
+                      (unsigned long)sequence,(unsigned)store_.count(),
+                      (unsigned long)timestamp,sequence?"OK":"FAIL");
         if(sequence&&active_channel_&&active_key_[0]==channel)rebuild_active();
         refresh(true);ui_notify_message_received(true);
     }
