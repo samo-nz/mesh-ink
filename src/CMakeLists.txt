@@ -7,7 +7,6 @@ idf_component_register(
         "board/t5_storage_backend.cpp"
         "companion_notice.cpp"
         "companion_runtime.cpp"
-        "deep_sleep_diag.cpp"
         "local_mesh_runtime.cpp"
         "message_store.cpp"
         "map_tiles.cpp"
