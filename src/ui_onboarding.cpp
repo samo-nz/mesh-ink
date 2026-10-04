@@ -3909,6 +3909,11 @@ bool ui_service_headless_message_alert() {
     if(!headless_display_session)return false;
     service_message_alert();
     if(!message_alert_active){
+        // The final GC16 refresh is synchronous. Give MeshCore one immediate
+        // service pass before tearing EPDiy/I2C back down so any packet held
+        // by the SX1262 during that refresh is handled without waiting for the
+        // next outer headless loop iteration.
+        local_mesh_service_startup();
         ui_close_headless_display_session();
         return false;
     }

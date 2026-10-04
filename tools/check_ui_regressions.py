@@ -223,6 +223,7 @@ assert "local_rx_wake_indicator" not in companion_source, "headless RX standby s
 retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
 assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"
+assert "local_mesh_service_startup();\n        ui_close_headless_display_session();" in source, "final standby redraw services MeshCore before display teardown"
 assert "meshink_epdiy_existing_gpio_isr_service" in board_target_source, "board runtime exposes retained-radio ISR ownership to EPDiy"
 assert "companion_radio_uses_arduino_irq&&radio_gpio_isr_service_active" in board_target_source, "EPDiy sharing is enabled only after the retained radio ISR service is known active"
 assert "MESHINK_SHARED_GPIO_ISR_PATCH_V1" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR patch"
