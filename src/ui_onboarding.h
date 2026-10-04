@@ -25,11 +25,9 @@ bool ui_service_headless_message_alert();
 bool ui_headless_display_busy();
 bool ui_headless_display_session_active();
 bool ui_display_session_active();
-void ui_quiesce_headless_display_for_deep_sleep();
+void ui_quiesce_display_for_deep_sleep();
 bool ui_promote_headless_to_interactive();
 void ui_show_storage_initializing(); // update boot splash before formatting
-void ui_show_split_sleep_diag(const char* title,const char* line1,
-                              const char* line2,const char* line3);
 [[noreturn]] void ui_minimal_low_battery_shutdown(
     const MeshInkPowerCriticalState& critical,const char* source);
 void ui_finish_startup(); // reveal interactive UI after storage/mesh initialization
