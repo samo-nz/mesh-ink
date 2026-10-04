@@ -223,7 +223,13 @@ assert "local_rx_wake_indicator" not in companion_source, "headless RX standby s
 retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
 assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"
-assert "local_mesh_service_startup();\n        ui_close_headless_display_session();" in source, "final standby redraw services MeshCore before display teardown"
+assert "local_mesh_service_startup();" in source, "final standby redraw services MeshCore before display teardown"
+headless_loop = companion_source.split("void local_mesh_rx_wake_loop()",1)[1].split("bool local_mesh_is_running",1)[0]
+assert "alert_was_busy" not in headless_loop and "alert_active" not in headless_loop, "display alert activity must not reset the genuine MeshCore quiet timer"
+notify_body = source.split("void ui_notify_message_received(bool channel)",1)[1].split("bool ui_restore_failed_compose",1)[0]
+assert "if(!headless_display_session&&!message_alert_active)" not in notify_body and "headless_alert_requested=true;" in notify_body, "messages received during a headless alert stay latched"
+assert "if(headless_ui_state)headless_alert_requested=false;" in source, "final GC16 redraw coalesces messages already represented on the standby screen"
+assert "message arrived during final standby redraw; restarting headless alert" in source, "messages processed after the final redraw trigger another notification cycle"
 assert "meshink_epdiy_existing_gpio_isr_service" in board_target_source, "board runtime exposes retained-radio ISR ownership to EPDiy"
 assert "companion_radio_uses_arduino_irq&&radio_gpio_isr_service_active" in board_target_source, "EPDiy sharing is enabled only after the retained radio ISR service is known active"
 assert "MESHINK_SHARED_GPIO_ISR_PATCH_V1" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR patch"

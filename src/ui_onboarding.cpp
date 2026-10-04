@@ -3811,6 +3811,11 @@ static void service_message_alert(){
         default:
             meshink_power_frontlight_set(0);frontlight_lit=false;frontlight_deadline=0;
             update_status_hardware();
+            // Every headless message processed before this point is represented
+            // by the standby redraw below. Clear the pending bit immediately
+            // before the synchronous GC16 update; a packet processed after the
+            // redraw will set it again and request another alert session.
+            if(headless_ui_state)headless_alert_requested=false;
             draw_screen();force_redraw(MeshInkRefreshMode::Gray16,"MESSAGE_ALERT_RESTORE",false);
             status_dirty=false;status_bar_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
             break;
@@ -3914,6 +3919,15 @@ bool ui_service_headless_message_alert() {
         // by the SX1262 during that refresh is handled without waiting for the
         // next outer headless loop iteration.
         local_mesh_service_startup();
+        if(headless_alert_requested){
+            // This message was processed after the persistent standby image was
+            // committed, so it must get its own notification cycle/redraw.
+            headless_alert_requested=false;
+            message_alert_cooldown_until=0;
+            start_message_alert();
+            Serial.println("[T5-DEEPSLEEP] message arrived during final standby redraw; restarting headless alert");
+            return true;
+        }
         ui_close_headless_display_session();
         return false;
     }
@@ -4542,8 +4556,10 @@ void ui_notify_message_received(bool channel){
     status_dirty=true;
     if(standby_active){
         if(headless_ui_state){
-            if(!headless_display_session&&!message_alert_active)
-                headless_alert_requested=true;
+            // Keep the request latched even while a display-only alert is in
+            // progress. The final redraw clears messages already represented;
+            // anything processed after that redraw starts a fresh alert.
+            headless_alert_requested=true;
         }else{
             start_message_alert();
         }

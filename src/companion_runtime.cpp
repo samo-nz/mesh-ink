@@ -718,7 +718,6 @@ void local_mesh_rx_wake_loop() {
     the_mesh.loop();
     local_mesh_flush_contacts_save_if_due();
 
-    const bool alert_was_busy=ui_headless_display_busy();
     if(ui_headless_message_alert_pending()){
         MeshInkPowerCriticalState alert_power{};
         MeshInkPowerSleepCheck alert_power_result=MeshInkPowerSleepCheck::Unavailable;
@@ -737,9 +736,7 @@ void local_mesh_rx_wake_loop() {
             ui_minimal_low_battery_shutdown(alert_power,"deep-message-alert");
         }
     }
-    const bool alert_active=ui_service_headless_message_alert();
-    if(alert_was_busy||alert_active)
-        local_rx_wake_last_activity=millis();
+    ui_service_headless_message_alert();
 
     const uint32_t now_ms=millis();
     const MeshInkRadioStats now=meshink_radio_stats();
