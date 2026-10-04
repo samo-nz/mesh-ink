@@ -185,6 +185,12 @@ void setup() {
     const bool button_wake=meshink_board_woke_from_primary_button();
     const bool timer_wake=meshink_board_woke_from_timer();
 
+    // EXT0/EXT1 leave their pads in RTC-IO mode after deep-sleep wake on the
+    // ESP32-S3. Capture the wake cause first, then restore both pads to digital
+    // GPIO before any RadioLib ISR setup or another deep-sleep cycle.
+    if(radio_wake||button_wake||timer_wake)
+        meshink_board_restore_deep_sleep_wake_pads();
+
     // A timer can win the ESP32 wake-cause race just as DIO1 asserts. Release
     // only the automatic pad hold, then let a pending radio packet take priority
     // over the periodic battery-only wake path.

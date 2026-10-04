@@ -278,6 +278,14 @@ assert "map_tiles_warm_storage();" in promotion_body and promotion_body.index("m
 assert "meshink_gps_prepare_runtime();" in companion_source and "retained UI promotion UART ready" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
 assert "restarting into full UI boot" not in companion_source, "headless BOOT promotion must not restart the ESP32"
 assert "meshink_radio_resume_retained_wake" in companion_source, "button wake uses retained-radio recovery before UI startup"
+assert "meshink_board_restore_deep_sleep_wake_pads();" in unified_source, "deep-sleep wake restores EXT0/EXT1 RTC pads to normal digital GPIO"
+wake_restore_body = board_target_source.split("void meshink_board_restore_deep_sleep_wake_pads()",1)[1].split("void meshink_board_prepare_retained_aux_wake()",1)[0]
+assert "rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1)" in wake_restore_body, "DIO1 is detached from RTC IO before RadioLib GPIO ISR reuse"
+assert "rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON)" in wake_restore_body, "BOOT is detached from RTC IO before digital button handling"
+assert wake_restore_body.index("rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1)") < wake_restore_body.index("pinMode(P_LORA_DIO_1,INPUT)"), "DIO1 RTC mux is released before digital pinMode"
+wake_source_body = board_target_source.split("static bool t5_enable_deep_sleep_wake_sources()",1)[1].split("bool meshink_board_enter_deep_sleep_standby()",1)[0]
+assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL)" in wake_source_body, "each repeated deep-sleep cycle rebuilds wake sources from a clean RTC configuration"
+assert wake_source_body.index("esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL)") < wake_source_body.index("esp_sleep_enable_ext1_wakeup"), "stale wake sources are cleared before DIO1 EXT1 is re-armed"
 assert "meshink_board_begin_local_rx_wake(require_packet);" in companion_source, "retained startup passes packet-wake state into the board startup reason"
 board_rx_wake_body = board_target_source.split("void T5Board::beginLocalRxWake(bool packet_wake)",1)[1].split("static bool t5_probe_deep_sleep_radio",1)[0]
 assert "BD_STARTUP_RX_PACKET" in board_rx_wake_body and "BD_STARTUP_NORMAL" in board_rx_wake_body, "T5 retained startup mirrors upstream MeshCore board startup-reason handoff"

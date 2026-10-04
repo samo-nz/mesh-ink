@@ -10,6 +10,7 @@
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
 #include <esp_sleep.h>
 #include <sys/time.h>
 #include <RTClib.h>
@@ -764,6 +765,21 @@ bool meshink_board_radio_irq_asserted() {
     return digitalRead(P_LORA_DIO_1)==HIGH;
 }
 
+void meshink_board_restore_deep_sleep_wake_pads() {
+    // ESP-IDF 4.4 leaves EXT0/EXT1 wake pads configured as RTC IO after wake.
+    // Return BOOT and DIO1 to the normal digital GPIO block before Arduino
+    // pinMode(), RadioLib GPIO interrupts, or a later EXT1 sleep cycle use them.
+    // This is especially important for the second deep-sleep cycle in one boot.
+    gpio_deep_sleep_hold_dis();
+    const esp_err_t radio_pad=rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_pad=rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    Serial.printf("[T5-DEEPSLEEP] wake pads restored to digital gpio dio1=%d boot=%d result=%d/%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
+                  (int)radio_pad,(int)button_pad);
+}
+
 void meshink_board_prepare_retained_aux_wake() {
     // Release only the automatic digital-pad hold so I2C/EPD pins can be used.
     // Keep the explicit SX1262 NSS/RESET holds intact while a timer wake merely
@@ -781,15 +797,19 @@ static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
     60ULL*60ULL*1000000ULL;
 
 static bool t5_enable_deep_sleep_wake_sources() {
+    // Rebuild the wake-source set from scratch on every sleep entry. A retained
+    // headless runtime can enter deep sleep repeatedly within one application
+    // boot, so do not depend on RTC wake configuration left from the prior cycle.
+    const esp_err_t clear_wake=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
         (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
     const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
         1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
     const esp_err_t timer_wake=esp_sleep_enable_timer_wakeup(
         T5_DEEP_SLEEP_BATTERY_CHECK_US);
-    if(button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
-        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed button=%d radio=%d timer=%d\n",
-                      (int)button_wake,(int)radio_wake,(int)timer_wake);
+    if(clear_wake!=ESP_OK||button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed clear=%d button=%d radio=%d timer=%d\n",
+                      (int)clear_wake,(int)button_wake,(int)radio_wake,(int)timer_wake);
         return false;
     }
     return true;
