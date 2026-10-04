@@ -39,47 +39,49 @@ static void split_diag_wait_boot_release() {
     meshink_board_diag_restore_button_wake();
     if(cause==ESP_SLEEP_WAKEUP_EXT0)++split_diag_boot_wakes;
 
-    Serial.printf("[T5-DIAG-ESP] WAKE #%lu cause=%d; release BOOT, then 30s monitor window\n",
+    Serial.printf("[T5-DIAG-ESP] WAKE #%lu cause=%d; release BOOT, then 30s USB+radio test window\n",
                   (unsigned long)split_diag_boot_wakes,(int)cause);
     split_diag_wait_boot_release();
 
-    // Give native USB time to enumerate before display initialization begins.
+    // Give native USB time to enumerate before touching the retained SX1262.
     for(int seconds=3;seconds>0;--seconds){
-        Serial.printf("[T5-DIAG-ESP] USB settle before display: %ds\n",seconds);
+        Serial.printf("[T5-DIAG-ESP] USB settle before radio test: %ds\n",seconds);
         Serial.flush();
         delay(1000);
     }
 
-    MeshInkUiStartupPlan plan{};
-    plan.touch=false;
-    plan.load_state=false;
-    plan.radio_settle=false;
-    plan.recover_power_path=false;
-    plan.splash=false;
-    plan.sample_status=false;
-    plan.battery_guard=false;
-    plan.service_mesh_between_steps=false;
-    ui_startup(plan);
+    const bool radio_ready=meshink_board_diag_radio_begin();
+    Serial.printf("[T5-DIAG-ESP] wake #%lu retained radio test ready=%u; send LoRa packets now\n",
+                  (unsigned long)split_diag_boot_wakes,radio_ready?1U:0U);
 
-    char wake_line[40]{};
-    snprintf(wake_line,sizeof(wake_line),"BOOT WAKE #%lu",
-             (unsigned long)split_diag_boot_wakes);
-    ui_show_split_sleep_diag("ESP DEEP SLEEP TEST",wake_line,
-                             "BOOT IS THE ONLY WAKE SOURCE",
-                             "30 SEC USB WINDOW");
+    uint32_t window_events=0;
+    const uint32_t window_started=millis();
+    int last_reported=-1;
+    while(millis()-window_started<30000UL){
+        if(meshink_board_diag_radio_poll(window_events+1))
+            ++window_events;
 
-    for(int remaining=30;remaining>0;--remaining){
-        if(remaining==30||remaining==20||remaining==10||remaining<=5){
-            Serial.printf("[T5-DIAG-ESP] wake #%lu sleeping again in %ds\n",
-                          (unsigned long)split_diag_boot_wakes,remaining);
+        const uint32_t elapsed=millis()-window_started;
+        const int remaining=30-(int)(elapsed/1000UL);
+        if(remaining!=last_reported&&
+           (remaining==30||remaining==20||remaining==10||remaining<=5)){
+            last_reported=remaining;
+            Serial.printf("[T5-DIAG-ESP] wake #%lu radio-events=%lu sleeping again in %ds\n",
+                          (unsigned long)split_diag_boot_wakes,
+                          (unsigned long)window_events,remaining);
             Serial.flush();
         }
-        delay(1000);
+        delay(5);
     }
 
+    // Put the live SX1262 back into a known continuous-RX/DIO1-low state
+    // immediately before the next CPU deep-sleep interval.
+    const bool radio_rearmed=meshink_board_diag_radio_begin();
+    Serial.printf("[T5-DIAG-ESP] wake #%lu radio window complete events=%lu final-rearm=%u; sleeping\n",
+                  (unsigned long)split_diag_boot_wakes,
+                  (unsigned long)window_events,radio_rearmed?1U:0U);
+
     split_diag_wait_boot_release();
-    Serial.printf("[T5-DIAG-ESP] wake #%lu re-arming BOOT EXT0 and sleeping again\n",
-                  (unsigned long)split_diag_boot_wakes);
     Serial.flush();
     while(!meshink_board_diag_enter_button_only_deep_sleep(false)){
         split_diag_wait_boot_release();
@@ -463,9 +465,6 @@ void loop() {
             split_diag_magic=SPLIT_DIAG_MAGIC;
             split_diag_phase=2;
             split_diag_boot_wakes=0;
-            ui_show_split_sleep_diag("ESP DEEP SLEEP TEST","ARMED",
-                                     "RELEASE BOOT",
-                                     "FIRST SLEEP IN 3 SEC");
             Serial.printf("[T5-DIAG] radio phase complete events=%lu; switching to BOOT-only wake test\n",
                           (unsigned long)split_diag_radio_events);
             split_diag_wait_boot_release();

@@ -353,9 +353,21 @@ bool meshink_board_service_asserted_radio_irq() {
 }
 
 bool meshink_board_diag_radio_begin() {
-    // MeshCore has already applied the real preset, frequency and modem
-    // parameters. Detach its GPIO ISR so this diagnostic can observe the raw
-    // DIO1 level without the normal runtime consuming/clearing the IRQ first.
+    // Restore only the ESP-side transport after deep-sleep reset. The SX1262
+    // itself was never reset or powered down, so its modem configuration stays
+    // live across the BOOT-only sleep cycle.
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
+    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+
+    // No MeshCore ISR exists on the post-deep-sleep diagnostic boot. Keep DIO1
+    // raw and explicitly re-arm continuous receive for the next packet.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     const int16_t armed=radio.startReceive();
     delayMicroseconds(250);
@@ -416,19 +428,16 @@ bool meshink_board_diag_enter_button_only_deep_sleep(bool first_entry) {
         return false;
     }
 
-    // On the first diagnostic sleep, freeze NSS/RESET HIGH so the already-live
-    // SX1262 remains powered/listening. On later cycles those individual holds
-    // deliberately remain in place; only the global deep-sleep hold is toggled.
-    if(first_entry){
-        pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
-        pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
-        const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
-        const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
-        if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
-            Serial.printf("[T5-DIAG-ESP] radio pin hold failed nss=%d reset=%d\n",
-                          (int)nss_hold,(int)reset_hold);
-            return false;
-        }
+    // Every post-wake radio test releases NSS/RESET so SPI can talk to the
+    // live SX1262. Re-apply those holds before every deep-sleep entry.
+    pinMode(P_LORA_NSS,OUTPUT);digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(P_LORA_RESET,OUTPUT);digitalWrite(P_LORA_RESET,HIGH);
+    const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+    if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+        Serial.printf("[T5-DIAG-ESP] radio pin hold failed nss=%d reset=%d\n",
+                      (int)nss_hold,(int)reset_hold);
+        return false;
     }
 
     const esp_err_t clear=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
