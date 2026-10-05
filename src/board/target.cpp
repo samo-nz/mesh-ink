@@ -817,6 +817,367 @@ MeshInkGpsStatus meshink_gps_read_status(){
     return status;
 }
 
+namespace {
+struct GpsPowerLoggedSample {
+    bool post = false;
+    uint16_t elapsed_s = 0;
+    MeshInkPowerMeasurement power{};
+};
+
+static constexpr uint32_t GPS_POWER_BASELINE_MS = 30000;
+static constexpr uint32_t GPS_POWER_POST_MS = 60000;
+static constexpr uint32_t GPS_POWER_SAMPLE_MS = 1000;
+static constexpr size_t GPS_POWER_LOG_CAPACITY = 96;
+static GpsPowerLoggedSample gps_power_log[GPS_POWER_LOG_CAPACITY]{};
+static size_t gps_power_log_count = 0;
+static bool gps_power_log_valid = false;
+static bool gps_power_post_phase = false;
+static uint32_t gps_power_phase_started = 0;
+static uint32_t gps_power_next_sample = 0;
+static MeshInkGpsPowerExperiment gps_power_experiment = MeshInkGpsPowerExperiment::GpsOnly;
+static MeshInkGpsConstellationMode gps_power_saved_constellation = MeshInkGpsConstellationMode::Unchanged;
+static bool gps_power_uart_suspended = false;
+
+static int32_t gps_discharge_ma(int16_t value) {
+    return value < 0 ? -(int32_t)value : 0;
+}
+static int32_t gps_discharge_mw(int16_t value) {
+    return value < 0 ? -(int32_t)value : 0;
+}
+
+static void gps_power_uart_resume() {
+    if(!gps_power_uart_suspended)return;
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    Serial1.begin(detected_gps_baud);
+    gps_power_uart_suspended=false;
+    gps_last_byte_at=millis();
+    Serial.printf("[T5-GPS-POWER] host UART resumed baud=%lu pins=%d/%d\n",
+                  (unsigned long)detected_gps_baud,(int)PIN_GPS_TX,(int)PIN_GPS_RX);
+}
+
+static void gps_power_uart_suspend() {
+    if(gps_power_uart_suspended)return;
+    Serial1.flush();
+    Serial1.end();
+    gpio_set_pull_mode((gpio_num_t)PIN_GPS_TX,GPIO_FLOATING);
+    gpio_set_pull_mode((gpio_num_t)PIN_GPS_RX,GPIO_FLOATING);
+    gpio_set_direction((gpio_num_t)PIN_GPS_TX,GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)PIN_GPS_RX,GPIO_MODE_INPUT);
+    gps_power_uart_suspended=true;
+    Serial.printf("[T5-GPS-POWER] host UART released: TX/RX are floating inputs; GNSS/shared LoRa rail remains ON\n");
+}
+
+static void gps_power_send(const char* payload,const char* reason) {
+    gps_power_uart_resume();
+    Serial.printf("[T5-GPS-POWER] receiver command reason='%s' payload='$%s*<xor>'\n",
+                  reason?reason:"experiment",payload?payload:"");
+    gps_send_pcas(payload);
+}
+
+static uint8_t gps_restore_constellation_value() {
+    return gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
+        ? 3U : (uint8_t)gps_power_saved_constellation;
+}
+
+static void gps_power_restore_receiver(bool cancelled) {
+    Serial.printf("[T5-GPS-POWER] restore begin cancelled=%u experiment='%s'\n",
+                  cancelled?1U:0U,meshink_gps_power_experiment_name(gps_power_experiment));
+    gps_power_uart_resume();
+    switch(gps_power_experiment) {
+        case MeshInkGpsPowerExperiment::RfOff:
+        case MeshInkGpsPowerExperiment::RfOffUartHighImpedance:
+        case MeshInkGpsPowerExperiment::CasicTimedStandby60s:
+            gps_power_send("PCAS10,9","restore RF/serial section after experimental low-power command");
+            delay(100);
+            break;
+        default:break;
+    }
+    gps_power_send("PCAS02,1000","restore documented 1 Hz fix interval");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","restore diagnostic NMEA output");
+#else
+    gps_power_send("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","restore compact GGA+RMC output");
+#endif
+    char constellation[16];
+    snprintf(constellation,sizeof(constellation),"PCAS04,%u",(unsigned)gps_restore_constellation_value());
+    gps_power_send(constellation,
+        gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
+            ?"restore known default GPS+BeiDou because preference was UNCHANGED"
+            :"restore saved constellation preference");
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    Serial.println("[T5-GPS-POWER] restore complete; receiver settings were not saved with PCAS00");
+}
+
+static void gps_power_apply_experiment() {
+    Serial.printf("[T5-GPS-POWER] ===== APPLY '%s' =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment));
+    switch(gps_power_experiment) {
+        case MeshInkGpsPowerExperiment::GpsOnly:
+            gps_power_send("PCAS04,1","documented single-system GPS-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::BeiDouOnly:
+            gps_power_send("PCAS04,2","documented single-system BeiDou-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::GlonassOnly:
+            gps_power_send("PCAS04,4","documented single-system GLONASS-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::NmeaEvery9:
+            gps_power_send("PCAS03,9,0,0,0,9,0,0,0,0,0,,,0,0",
+                           "GGA+RMC only once every nine fixes");
+            break;
+        case MeshInkGpsPowerExperiment::NmeaOff:
+            gps_power_send("PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0",
+                           "disable all L76K NMEA output");
+            break;
+        case MeshInkGpsPowerExperiment::GpsOnlyNmeaOff:
+            gps_power_send("PCAS04,1","combine GPS-only with no NMEA");
+            gps_power_send("PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0",
+                           "combine GPS-only with no NMEA");
+            break;
+        case MeshInkGpsPowerExperiment::UartHighImpedance:
+            Serial.println("[T5-GPS-POWER] no receiver command: measuring host UART electrical release only");
+            gps_power_uart_suspend();
+            break;
+        case MeshInkGpsPowerExperiment::RfOff:
+            gps_power_send("PCAS10,8",
+                           "CASIC chipset experiment: disable serial output and RF section");
+            break;
+        case MeshInkGpsPowerExperiment::RfOffUartHighImpedance:
+            gps_power_send("PCAS10,8",
+                           "CASIC chipset experiment: RF/serial off before host UART release");
+            delay(100);
+            gps_power_uart_suspend();
+            break;
+        case MeshInkGpsPowerExperiment::CasicTimedStandby60s:
+            gps_power_send("PCAS12,60",
+                           "unsupported-on-L76K CASIC timed standby probe for a recoverable 60 second window");
+            break;
+        case MeshInkGpsPowerExperiment::SlowFix5s:
+            gps_power_send("PCAS02,5000",
+                           "out-of-spec slow positioning interval probe: 5000 ms");
+            break;
+        case MeshInkGpsPowerExperiment::SlowFix10s:
+            gps_power_send("PCAS02,10000",
+                           "out-of-spec slow positioning interval probe: 10000 ms");
+            break;
+    }
+    Serial.println("[T5-GPS-POWER] post-change measurement window is 60 seconds; one gauge sample per second");
+}
+
+struct GpsPowerSummary {
+    int32_t current_sum=0,avg_current_sum=0,avg_power_sum=0;
+    uint16_t current_count=0,avg_current_count=0,avg_power_count=0;
+    bool external_seen=false;
+};
+static GpsPowerSummary gps_power_summary(bool post) {
+    GpsPowerSummary result{};
+    for(size_t i=0;i<gps_power_log_count;++i) {
+        const auto& sample=gps_power_log[i];
+        if(sample.post!=post)continue;
+        result.external_seen=result.external_seen||sample.power.external_power;
+        if(sample.power.current_valid){
+            result.current_sum+=gps_discharge_ma(sample.power.current_ma);
+            ++result.current_count;
+        }
+        if(sample.power.average_current_valid){
+            result.avg_current_sum+=gps_discharge_ma(sample.power.average_current_ma);
+            ++result.avg_current_count;
+        }
+        if(sample.power.average_power_valid){
+            result.avg_power_sum+=gps_discharge_mw(sample.power.average_power_mw);
+            ++result.avg_power_count;
+        }
+    }
+    return result;
+}
+static int32_t gps_power_mean(int32_t sum,uint16_t count){return count?sum/(int32_t)count:0;}
+
+static void gps_power_print_summary() {
+    const auto base=gps_power_summary(false);
+    const auto post=gps_power_summary(true);
+    const int32_t base_i=gps_power_mean(base.current_sum,base.current_count);
+    const int32_t post_i=gps_power_mean(post.current_sum,post.current_count);
+    const int32_t base_ai=gps_power_mean(base.avg_current_sum,base.avg_current_count);
+    const int32_t post_ai=gps_power_mean(post.avg_current_sum,post.avg_current_count);
+    const int32_t base_p=gps_power_mean(base.avg_power_sum,base.avg_power_count);
+    const int32_t post_p=gps_power_mean(post.avg_power_sum,post.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] ===== RESULT '%s' =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment));
+    Serial.printf("[T5-GPS-POWER] baseline mean load: Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                  (long)base_i,(long)base_ai,(long)base_p,
+                  (unsigned)base.current_count,(unsigned)base.avg_current_count,(unsigned)base.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] post mean load:     Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                  (long)post_i,(long)post_ai,(long)post_p,
+                  (unsigned)post.current_count,(unsigned)post.avg_current_count,(unsigned)post.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] apparent saving:    Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW (positive = less battery draw)\n",
+                  (long)(base_i-post_i),(long)(base_ai-post_ai),(long)(base_p-post_p));
+    if(base.external_seen||post.external_seen)
+        Serial.println("[T5-GPS-POWER] WARNING: external/USB power was detected during measurement; charger behaviour can invalidate the comparison");
+    else
+        Serial.println("[T5-GPS-POWER] measurement remained battery-only according to charger power-good");
+}
+
+static void gps_power_sample_now() {
+    MeshInkPowerMeasurement measurement{};
+    const uint32_t now=millis();
+    const uint16_t elapsed=(uint16_t)min((uint32_t)65535,(now-gps_power_phase_started)/1000UL);
+    const bool ok=meshink_power_read_measurement(measurement);
+    if(gps_power_log_count<GPS_POWER_LOG_CAPACITY)
+        gps_power_log[gps_power_log_count++]={gps_power_post_phase,elapsed,measurement};
+    const int32_t load_i=measurement.current_valid?gps_discharge_ma(measurement.current_ma):0;
+    const int32_t load_ai=measurement.average_current_valid?gps_discharge_ma(measurement.average_current_ma):0;
+    const int32_t load_p=measurement.average_power_valid?gps_discharge_mw(measurement.average_power_mw):0;
+    Serial.printf("[T5-GPS-POWER] sample phase=%s t=%us read=%u valid[V/I/AI/AP/SOC]=%u/%u/%u/%u/%u V=%umV I=%dmA load=%ldmA AI=%dmA avg-load=%ldmA AP=%dmW avg-load=%ldmW SOC=%u%% ext=%u\n",
+                  gps_power_post_phase?"POST":"BASE",(unsigned)elapsed,ok?1U:0U,
+                  measurement.voltage_valid?1U:0U,measurement.current_valid?1U:0U,
+                  measurement.average_current_valid?1U:0U,measurement.average_power_valid?1U:0U,
+                  measurement.battery_percent_valid?1U:0U,
+                  (unsigned)measurement.voltage_mv,(int)measurement.current_ma,(long)load_i,
+                  (int)measurement.average_current_ma,(long)load_ai,
+                  (int)measurement.average_power_mw,(long)load_p,
+                  (unsigned)measurement.battery_percent,measurement.external_power?1U:0U);
+}
+
+static void gps_power_finish(bool cancelled) {
+    if(!gps_power_test_running)return;
+    if(!cancelled)gps_power_print_summary();
+    else Serial.println("[T5-GPS-POWER] experiment cancelled by standby transition");
+    gps_power_restore_receiver(cancelled);
+    gps_power_test_running=false;
+    gps_power_log_valid=gps_power_log_count>0;
+    Serial.printf("[T5-GPS-POWER] test idle; retained %u samples for REPLAY LAST LOG\n",
+                  (unsigned)gps_power_log_count);
+}
+} // namespace
+
+bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running){
+        Serial.println("[T5-GPS-POWER] start rejected: another experiment is already running");
+        return false;
+    }
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] start rejected: requires checksum-locked L76K; locked=%u module=%s baud=%lu\n",
+                      gps_baud_locked?1U:0U,gps_module_name(),(unsigned long)detected_gps_baud);
+        return false;
+    }
+    gps_load_tuning();
+    gps_power_experiment=experiment;
+    gps_power_saved_constellation=gps_constellation_mode;
+    gps_power_log_count=0;
+    gps_power_log_valid=false;
+    gps_power_post_phase=false;
+    gps_power_test_running=true;
+    gps_power_phase_started=millis();
+    gps_power_next_sample=gps_power_phase_started+GPS_POWER_SAMPLE_MS;
+    const auto status=meshink_gps_read_status();
+    const bool external=meshink_power_external_present();
+    Serial.println("[T5-GPS-POWER] ============================================================");
+    Serial.printf("[T5-GPS-POWER] START experiment='%s' baseline=30s post=60s sample=1Hz\n",
+                  meshink_gps_power_experiment_name(experiment));
+    Serial.printf("[T5-GPS-POWER] receiver module=%s baud=%lu fix=%u sats=%ld constellation-pref=%u\n",
+                  gps_module_name(),(unsigned long)detected_gps_baud,status.valid?1U:0U,
+                  (long)status.satellites,(unsigned)gps_power_saved_constellation);
+    Serial.printf("[T5-GPS-POWER] external-power-at-start=%u; battery-only is strongly preferred\n",external?1U:0U);
+    if(external)Serial.println("[T5-GPS-POWER] WARNING: disconnect USB/charger and restart the test for trustworthy battery-current deltas");
+    Serial.println("[T5-GPS-POWER] BASELINE: receiver is unchanged for the next 30 seconds");
+    return true;
+#else
+    (void)experiment;
+    return false;
+#endif
+}
+
+void meshink_gps_power_test_tick() {
+#if ENV_INCLUDE_GPS == 1
+    if(!gps_power_test_running)return;
+    const uint32_t now=millis();
+    while((int32_t)(now-gps_power_next_sample)>=0) {
+        gps_power_sample_now();
+        gps_power_next_sample+=GPS_POWER_SAMPLE_MS;
+        if((uint32_t)(now-gps_power_phase_started) >=
+           (gps_power_post_phase?GPS_POWER_POST_MS:GPS_POWER_BASELINE_MS))break;
+    }
+    if(!gps_power_post_phase&&now-gps_power_phase_started>=GPS_POWER_BASELINE_MS) {
+        const auto base=gps_power_summary(false);
+        Serial.printf("[T5-GPS-POWER] BASELINE COMPLETE samples=%u mean-current-load=%ldmA mean-average-current-load=%ldmA mean-average-power-load=%ldmW\n",
+                      (unsigned)gps_power_log_count,
+                      (long)gps_power_mean(base.current_sum,base.current_count),
+                      (long)gps_power_mean(base.avg_current_sum,base.avg_current_count),
+                      (long)gps_power_mean(base.avg_power_sum,base.avg_power_count));
+        gps_power_apply_experiment();
+        gps_power_post_phase=true;
+        gps_power_phase_started=millis();
+        gps_power_next_sample=gps_power_phase_started+GPS_POWER_SAMPLE_MS;
+        return;
+    }
+    if(gps_power_post_phase&&now-gps_power_phase_started>=GPS_POWER_POST_MS)
+        gps_power_finish(false);
+#endif
+}
+
+bool meshink_gps_power_test_busy(){return gps_power_test_running;}
+
+bool meshink_gps_power_test_replay_last() {
+    if(!gps_power_log_valid||gps_power_log_count==0){
+        Serial.println("[T5-GPS-POWER] REPLAY requested but no completed/cancelled measurement log is retained");
+        return false;
+    }
+    Serial.printf("[T5-GPS-POWER] ===== REPLAY '%s' %u samples =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment),(unsigned)gps_power_log_count);
+    for(size_t i=0;i<gps_power_log_count;++i){
+        const auto& sample=gps_power_log[i];
+        const auto& m=sample.power;
+        Serial.printf("[T5-GPS-POWER] replay phase=%s t=%us valid[V/I/AI/AP/SOC]=%u/%u/%u/%u/%u V=%umV I=%dmA load=%ldmA AI=%dmA avg-load=%ldmA AP=%dmW avg-load=%ldmW SOC=%u%% ext=%u\n",
+                      sample.post?"POST":"BASE",(unsigned)sample.elapsed_s,
+                      m.voltage_valid?1U:0U,m.current_valid?1U:0U,m.average_current_valid?1U:0U,
+                      m.average_power_valid?1U:0U,m.battery_percent_valid?1U:0U,
+                      (unsigned)m.voltage_mv,(int)m.current_ma,(long)(m.current_valid?gps_discharge_ma(m.current_ma):0),
+                      (int)m.average_current_ma,(long)(m.average_current_valid?gps_discharge_ma(m.average_current_ma):0),
+                      (int)m.average_power_mw,(long)(m.average_power_valid?gps_discharge_mw(m.average_power_mw):0),
+                      (unsigned)m.battery_percent,m.external_power?1U:0U);
+    }
+    gps_power_print_summary();
+    return true;
+}
+
+void meshink_gps_enter_standby_power_mode() {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running)gps_power_finish(true);
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] standby single-system skipped locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return;
+    }
+    gps_power_send("PCAS04,1","standby policy: force single-system GPS to reduce GNSS load");
+    gps_standby_forced_single=true;
+    gps_standby_magic=GPS_STANDBY_MAGIC;
+    Serial.println("[T5-GPS-POWER] standby policy active: GPS-only; shared LoRa/GNSS rail remains ON");
+#endif
+}
+
+void meshink_gps_leave_standby_power_mode() {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_standby_magic!=GPS_STANDBY_MAGIC&&!gps_standby_forced_single)return;
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] standby restore deferred until L76K baud lock; locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return;
+    }
+    gps_load_tuning();
+    const uint8_t restore=gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+        ? 3U:(uint8_t)gps_constellation_mode;
+    char payload[16];snprintf(payload,sizeof(payload),"PCAS04,%u",(unsigned)restore);
+    gps_power_send(payload,gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+        ?"wake policy: restore GPS+BeiDou default"
+        :"wake policy: restore saved constellation preference");
+    gps_standby_forced_single=false;
+    gps_standby_magic=0;
+    Serial.println("[T5-GPS-POWER] standby single-system policy cleared on interactive wake");
+#endif
+}
+
 void meshink_gps_shutdown(){
 #if ENV_INCLUDE_GPS == 1
     if(auto* location=sensors.getLocationProvider())location->stop();
