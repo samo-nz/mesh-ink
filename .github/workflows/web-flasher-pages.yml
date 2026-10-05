@@ -3,7 +3,7 @@ name: Deploy MeshInk web flasher
 on:
   workflow_dispatch:
   push:
-    branches: [main, deepsleep_standby]
+    branches: [main]
     paths:
       - 'web/**'
       - 'tools/check_web_flasher.py'
@@ -65,7 +65,15 @@ jobs:
           curl --fail --location --show-error --silent \
             https://unpkg.com/esptool-js@0.6.0/bundle.js \
             --output dist/vendor/esptool-js.js
+          curl --fail --location --show-error --silent \
+            https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js \
+            --output dist/vendor/web-serial-polyfill.js
+          curl --fail --location --show-error --silent \
+            https://unpkg.com/web-serial-polyfill@1.0.15/LICENSE \
+            --output dist/vendor/web-serial-polyfill-LICENSE.txt
           test -s dist/vendor/esptool-js.js
+          test -s dist/vendor/web-serial-polyfill.js
+          test -s dist/vendor/web-serial-polyfill-LICENSE.txt
           python tools/check_web_flasher.py --build dist --version "$VERSION"
           echo "Published MeshInk $VERSION, app-only update and 16MB full-wipe images"
       - name: Configure GitHub Pages
