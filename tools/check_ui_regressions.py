@@ -442,6 +442,7 @@ contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node
 contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
 contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
 contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
+contains("Radio tower: tapered mast plus two signal arcs", "Contacts and Discovery repeater icon uses the radio-tower glyph")
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
 contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
