@@ -219,12 +219,13 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION promotes the deep-sleep, messaging, map and UI work
-          validated through the 2.0.0 release-candidate hardware test series.
+          MeshInk $VERSION's headline feature is reliable deep-sleep standby
+          designed to maximise battery life while keeping the mesh useful.
 
           Highlights:
-          - deep-sleep standby retains the MeshCore/SX1262 receive runtime and can
-            wake headlessly for radio traffic without starting the interactive UI
+          - reliable deep-sleep standby retains the MeshCore/SX1262 receive runtime
+            and can wake headlessly for radio traffic without starting the interactive UI,
+            dramatically reducing the time the display/UI and higher-power services need to run
           - long-BOOT promotion attaches the UI to the retained MeshCore runtime
             without restarting the radio, while restored tabs fully replace the
             persistent standby image on e-paper
