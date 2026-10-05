@@ -1572,6 +1572,7 @@ assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_
 assert "esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED" in power_backend_source, "retained tab is accepted only on a real deep-sleep wake"
 assert "retained_tab_for_screen" in source and "screen_for_retained_tab" in source, "UI maps nested screens to stable top-level tabs"
 assert "meshink_power_retain_ui_tab(retained_tab);" in source, "deep-sleep entry stores the current top-level tab"
-assert "meshink_power_take_retained_ui_tab(retained_tab);" in source, "wake consumes the retained top-level tab"
+assert "if(meshink_power_take_retained_ui_tab(retained_tab)){" in source, "wake consumes the retained top-level tab"
 assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promotion preserves a restored existing-user tab"
+assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "-DT5_FIRMWARE_VERSION='\"2.0.0-rc.2\"'" in platformio_source and "-DT5_UI_VERSION='\"2.0.0-rc.2\"'" in platformio_source, "RC2 firmware/UI identity stays aligned"
