@@ -297,35 +297,6 @@ enum class Screen : uint8_t {
     Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
-static const char* timing_screen_name(){
-    switch(screen){
-        case Screen::Welcome:return "Welcome";
-        case Screen::Presets:return "Presets";
-        case Screen::CompanionConfirm:return "Companion";
-        case Screen::ShutdownConfirm:return "Shutdown";
-        case Screen::Contacts:return "Contacts";
-        case Screen::ContactChat:return "ContactChat";
-        case Screen::ContactDetails:return "NodeInfo";
-        case Screen::Channels:return "Channels";
-        case Screen::ChannelChat:return "ChannelChat";
-        case Screen::Maps:return "Maps";
-        case Screen::Discovery:return "Discovery";
-        case Screen::More:return "More";
-        case Screen::AdvertMenu:return "Advert";
-        case Screen::Diagnostics:return "Diagnostics";
-        case Screen::Settings:return "Settings";
-        case Screen::RadioSettings:return "RadioSettings";
-        case Screen::GpsSettings:return "GpsSettings";
-        case Screen::GpsTuning:return "GpsTuning";
-        case Screen::Timezone:return "Timezone";
-        case Screen::PrivacySettings:return "Privacy";
-        case Screen::DisplaySettings:return "DisplaySettings";
-        case Screen::NightSchedule:return "NightSchedule";
-        case Screen::Help:return "Help";
-        case Screen::About:return "About";
-        default:return "?";
-    }
-}
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
@@ -371,7 +342,7 @@ static size_t map_base_bytes=0;
 static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
-static MapRenderResult map_base_result{false,0,0,0,0,0,0};
+static MapRenderResult map_base_result{};
 static uint32_t map_base_media_epoch=0;
 // The own-position bullseye is drawn over the map, never stored in the
 // raster base cache. The last drawn screen position supports low-rate GPS
@@ -658,7 +629,8 @@ static int ui_text_line_step(int scale) {
     return ui_smooth_font(scale).line_step;
 }
 static int ui_text_width_n(const char* s,size_t n,int scale) {
-    if(!s||!n)return 0;int width=0;
+    if(!s||!n)return 0;
+    int width=0;
     for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
     return width&&scale<3?width-scale:width;
 }
@@ -858,7 +830,8 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
         if(*cursor=='\n'){lines[line_count++]={cursor,0};++cursor;continue;}
         size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=1;
         lines[line_count++]={cursor,take};cursor+=take;
-        while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n')++cursor;
     }
     if(!line_count)return;
     const int glyph_height=ui_text_height(scale);
@@ -1252,7 +1225,11 @@ static void standby_centred(const char* value,const MeshInkUiRect& rect,int y,in
 
 static void draw_battery_icon(int x,int y,int level=-1) {
     meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);
-    if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;meshink_display_fill_rect({x+2,y+8,fill,14},0,fb);}
+    if(level<0)level=status_battery;
+    if(level>0){
+        const int fill=(level*27)/100;
+        meshink_display_fill_rect({x+2,y+8,fill,14},0,fb);
+    }
     if(meshink_power_is_charging(status_charge_state)){
         meshink_display_fill_rect({x+10,y+6,14,17},0xFF,fb);
         // Wide, bold lightning bolt for the low-resolution status bar.
@@ -1300,8 +1277,11 @@ static void draw_status_bar() {
         text(count,left,ui_y(13),3,0,true);
     }
     char clock_text[8];
-    if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
-    else snprintf(clock_text,sizeof(clock_text),"--:--");
+    if(status_hour>=0&&status_minute>=0){
+        const int safe_hour=max(0,min(23,status_hour));
+        const int safe_minute=max(0,min(59,status_minute));
+        snprintf(clock_text,sizeof(clock_text),"%02d:%02d",safe_hour,safe_minute);
+    }else snprintf(clock_text,sizeof(clock_text),"--:--");
     centred(clock_text,ui_y(13),3,0,true);
     char battery[8];
     if(status_battery>=0)snprintf(battery,sizeof(battery),"%d%%",status_battery);
@@ -1732,7 +1712,10 @@ static void draw_maps() {
         map_base_valid=false;
         map_base_media_epoch=media_epoch;
     }
-    MapRenderResult result{media_ready,0,0,0,0,map_zoom,map_zoom};
+    MapRenderResult result{};
+    result.sd_ready=media_ready;
+    result.min_source_zoom=map_zoom;
+    result.max_source_zoom=map_zoom;
     if(media_ready&&map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
@@ -1858,7 +1841,9 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
-    const MessageBubbleGeometry geometry={x,width,height,text_width};
+    const MessageBubbleGeometry geometry={
+        (int16_t)x,(int16_t)width,(int16_t)height,(int16_t)text_width
+    };
     return geometry;
 }
 
@@ -1883,10 +1868,6 @@ static MessageBubbleGeometry chat_message_geometry(size_t index){
         chat_geometry_cache.valid[index]=1;
     }
     return chat_geometry_cache.geometry[index];
-}
-
-static int message_bubble_height(const UiMessage& message){
-    return message_bubble_geometry(message).height;
 }
 
 static void draw_message_bubble(const UiMessage& message,int y,
@@ -2745,6 +2726,7 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     // for normal updates; the 1.3.24 device test confirmed it prevents the
     // terrain fading seen after GC16. BOOT on Maps uses DU as well.
     const MeshInkRefreshMode requested_mode=mode;
+    (void)requested_mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh");
@@ -2762,6 +2744,7 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     const uint32_t started=millis();
     if(wake_light&&!standby_active)frontlight_event();
     const MeshInkRefreshMode requested_mode=mode;
+    (void)requested_mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh");
@@ -2849,13 +2832,6 @@ static void load_map_with_feedback(bool already_on_map) {
     // This preserves the stable black->map DU transition that prevents
     // progressive darkening of unchanged terrain on repeated map updates.
     reveal_map_after_black_prep("MAP_BLACK_PREP_COMPLETE",false);
-}
-
-static void full_display_clean(const char* reason) {
-    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] full GC16 redraw requested by %s standby=%d\n",reason,standby_active);
-    draw_screen();
-    force_redraw(MeshInkRefreshMode::Gray16,reason,false);
-    T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
 
 static void set_touch_power(bool enabled);
@@ -3230,10 +3206,6 @@ static bool hit_header_action(int16_t x,int16_t y) {
 static bool hit_outer_row(int16_t x,int16_t y,int reference_top,int reference_height=112) {
     return hit(x,y,meshink_outer_row_rect(portrait_layout(),reference_top,reference_height));
 }
-static bool hit_section_row(int16_t x,int16_t y,int reference_top,int reference_height) {
-    return hit(x,y,meshink_section_row_rect(portrait_layout(),reference_top,reference_height));
-}
-
 static void open_screen(Screen next,bool preserve_map_centre=false) {
     // Opening Maps normally goes to our current or last known GPS location.
     // A node's explicit "OPEN POSITION ON MAP" uses preserve_map_centre=true
@@ -3458,7 +3430,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                               !keyboard_visible&&chat_page==0;
-    if((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat||chat_main_page)&&
+    if(((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
        y>=portrait_layout().bottom_nav_top){
         const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
@@ -3624,10 +3596,30 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,356)){open_screen(Screen::Timezone);return true;}break;
         case Screen::Timezone:
             if(hit_header_back(x,y)){open_screen(Screen::GpsTuning);return true;}
-            for(uint8_t i=0;i<TIMEZONE_COUNT;++i)if(hit_outer_row(x,y,118+i*102,92)){timezone_index=i;apply_timezone();prefs.begin("t5-ui",false);prefs.putUChar("timezone",timezone_index);prefs.end();show_toast("TIMEZONE SAVED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}break;
+            for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
+                if(!hit_outer_row(x,y,118+i*102,92))continue;
+                timezone_index=i;
+                apply_timezone();
+                prefs.begin("t5-ui",false);
+                prefs.putUChar("timezone",timezone_index);
+                prefs.end();
+                show_toast("TIMEZONE SAVED");
+                draw_screen();
+                refresh(MeshInkRefreshMode::FastGray16);
+                return true;
+            }
+            break;
         case Screen::PrivacySettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
-            for(uint8_t i=0;i<6;++i)if(hit_outer_row(x,y,130+i*118)){local_mesh_toggle_privacy(i);show_toast("SETTING SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}return true;
+            for(uint8_t i=0;i<6;++i){
+                if(!hit_outer_row(x,y,130+i*118))continue;
+                local_mesh_toggle_privacy(i);
+                show_toast("SETTING SAVED");
+                draw_screen();
+                refresh(MeshInkRefreshMode::Direct);
+                return true;
+            }
+            return true;
         case Screen::DisplaySettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&
@@ -3769,7 +3761,14 @@ static void enter_standby(const char* reason){
 }
 
 static void leave_standby(){
-    if(!standby_active)return;deep_sleep_pending=false;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;meshink_power_frontlight_set(0);frontlight_lit=false;
+    if(!standby_active)return;
+    deep_sleep_pending=false;
+    set_touch_power(true);
+    standby_active=false;
+    last_user_activity=millis();
+    message_alert_active=false;
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
     if(standby_restore_landscape){
         standby_restore_landscape=false;
         keyboard_landscape=true;
@@ -4364,7 +4363,8 @@ void ui_loop() {
             clamp_list_page(page,count);
             const size_t pages=list_page_count(count);
             int next=(int)page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=(int)pages)next=(int)pages-1;
+            if(next<0)next=0;
+            if(next>=(int)pages)next=(int)pages-1;
             if((size_t)next!=page){
                 page=(size_t)next;
                 const char* name=screen==Screen::Contacts?"contacts":
@@ -4394,7 +4394,8 @@ void ui_loop() {
         }else if(screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             UiNodeDetails node{};const uint8_t pages=(ui_data&&ui_data->active_node_details(node))?node_info_page_count(node.node_type):1;
             int next=(int)details_page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=pages)next=pages-1;
+            if(next<0)next=0;
+            if(next>=pages)next=pages-1;
             if((uint8_t)next!=details_page){
                 details_page=(uint8_t)next;
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] node-info page=%u/%u\n",details_page+1,pages);

@@ -1142,4 +1142,8 @@ static constexpr MeshInkFontData inter_20_regular = {
     0,
     nullptr,
     0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
 };

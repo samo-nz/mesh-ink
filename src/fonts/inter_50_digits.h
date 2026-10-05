@@ -377,4 +377,8 @@ static constexpr MeshInkFontData inter_50_digits = {
     0,
     nullptr,
     0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
 };
