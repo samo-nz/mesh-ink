@@ -1380,7 +1380,7 @@ assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in source, "GPS satellite 
 assert "ui_text_width(count,3)" in source and "ui_text_width(satellites,3)" in source, "primary status-number spacing follows proportional font metrics"
 assert "!(status_unread&&status_channel_unread)" in source, "GPS satellite number yields space when both enlarged unread counters are present"
 assert "ui_text_width(short_name,2),ui_text_width(age,2)" in source, "map label background accounts for both node name and age"
-assert "meshink_map_control_rect(portrait_layout(),(int)control)" in source, "map labels avoid the visible map controls"
+assert "meshink_map_control_rect(layout,(int)control)" in source, "map labels avoid the visible map controls through the cached layout reference"
 assert "const int label_bottom=ui_y(766);" in source, "map node labels stay clear of bottom map overlays"
 assert "const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);" in source, "map zoom background follows proportional text width"
 assert "const int scale_backing_width=max(pixels+ui_w(12),ui_text_width(scale,2)+ui_w(16));" in source, "map scale backing covers both the physical bar and proportional label"
