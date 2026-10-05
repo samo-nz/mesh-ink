@@ -2166,7 +2166,7 @@ static void draw_contact_details() {
                 ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2;
             ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),
                             layout.section_width,telemetry_scale,0,true,4);
-            ui_text("POSITION",layout.section_margin,ui_y(420),2,0,true);
+            ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);
             const int telemetry_position_y=ui_y(454);
             const int telemetry_position_lines=min(
                 2,ui_wrapped_line_count(node.position,layout.section_width,3));
