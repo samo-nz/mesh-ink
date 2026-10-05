@@ -496,6 +496,33 @@ static void gps_send_pcas(const char* payload) {
 }
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
+
+    // If deep sleep preserved the powered GNSS in our forced GPS-only standby
+    // state, restore the user's interactive constellation choice as soon as
+    // the receiver UART is identified again. A stale RTC marker on an ordinary
+    // reset is cleared without touching receiver configuration.
+    if(gps_standby_magic==GPS_STANDBY_MAGIC){
+        const bool legitimate_restore=gps_standby_forced_single||
+            esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED;
+        if(legitimate_restore){
+            const uint8_t restore=gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+                ? 3U:(uint8_t)gps_constellation_mode;
+            char payload[16];
+            snprintf(payload,sizeof(payload),"PCAS04,%u",(unsigned)restore);
+            gps_send_pcas(payload);
+            gps_constellation_dirty=false;
+            gps_standby_forced_single=false;
+            gps_standby_magic=0;
+            Serial.printf("[T5-GPS-POWER] deep/standby wake restored constellation mode=%u%s\n",
+                          (unsigned)restore,
+                          gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+                            ?" (GPS+BeiDou fallback for UNCHANGED preference)":"");
+        }else{
+            gps_standby_magic=0;
+            Serial.println("[T5-GPS-POWER] cleared stale standby constellation marker on ordinary boot");
+        }
+    }
+
     if(gps_constellation_dirty){
         gps_constellation_dirty=false;
         if(gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged){
