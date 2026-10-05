@@ -466,6 +466,7 @@ public:
             strncpy(item.name,positioned.name[0]?positioned.name:"UNNAMED",sizeof(item.name)-1);
             memcpy(item.key,positioned.id.pub_key,sizeof(item.key));
             item.latitude=positioned.gps_lat;item.longitude=positioned.gps_lon;
+            item.node_type=positioned.type;
             item.advertised_at=positioned.last_advert_timestamp;
         }
         // A node with no saved advert GPS may still have returned valid GPS
@@ -481,6 +482,7 @@ public:
                         recent_info_.key,PUB_KEY_SIZE)){
                     strncpy(item.name,contact->name[0]?contact->name:"UNNAMED",
                             sizeof(item.name)-1);
+                    item.node_type=contact->type;
                     item.advertised_at=contact->last_advert_timestamp;
                     memcpy(item.key,recent_info_.key,sizeof(item.key));
                     item.latitude=recent_info_.lat;
