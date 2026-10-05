@@ -452,6 +452,13 @@ static GpsModule detected_gps_module = GpsModule::Unknown;
 static bool gps_command_sleeping = false;
 static uint32_t gps_last_byte_at = 0;
 
+// gps-powersave branch: deliberately intrusive receiver experiments are kept
+// board-local. Stable application code never sees UARTs or receiver commands.
+static bool gps_power_test_running = false;
+static bool gps_standby_forced_single = false;
+static constexpr uint32_t GPS_STANDBY_MAGIC = 0x47505331; // "GPS1"
+RTC_DATA_ATTR uint32_t gps_standby_magic = 0;
+
 // LoRa and GPS share VCC3V3. Constellation selection remains user-controlled;
 // compact GGA+RMC NMEA output is always configured on the inferred L76K.
 // Neither setting shuts down receiver power or changes the 1 Hz fix rate.
@@ -710,28 +717,30 @@ public:
                 (unsigned long)(millis()-gps_wake_started_at),(long)satellitesCount());
         }
 #endif
-        if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
-            gps_baud_locked = true;
-            detected_gps_baud = Serial1.baudRate();
-            detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
-            T5_GPS_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
-            gps_apply_tuning();
-        } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
-            detected_gps_baud = Serial1.baudRate() == 9600 ? 38400 : 9600;
-            Serial1.updateBaudRate(detected_gps_baud);
-            gps_stream.clearValidation();
-            MicroNMEALocationProvider::syncTime();
-            next_baud_retry = millis() + 6000;
-            T5_GPS_TRACE("gps: background probe trying %u baud\n", detected_gps_baud);
-        }
-        if (active && gps_baud_locked && !gps_command_sleeping && gps_last_byte_at && millis() - gps_last_byte_at > 30000) {
-            T5_GPS_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
-            // Loss of NMEA is not proof of standby. Retry baud detection
-            // without sending any unverified GPS wake or sleep command.
-            gps_stream.clearValidation();
-            gps_baud_locked = false;
-            next_baud_retry = millis() + 6000;
-            gps_last_byte_at = millis();
+        if (!gps_power_test_running) {
+            if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
+                gps_baud_locked = true;
+                detected_gps_baud = Serial1.baudRate();
+                detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                T5_GPS_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
+                gps_apply_tuning();
+            } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
+                detected_gps_baud = Serial1.baudRate() == 9600 ? 38400 : 9600;
+                Serial1.updateBaudRate(detected_gps_baud);
+                gps_stream.clearValidation();
+                MicroNMEALocationProvider::syncTime();
+                next_baud_retry = millis() + 6000;
+                T5_GPS_TRACE("gps: background probe trying %u baud\n", detected_gps_baud);
+            }
+            if (active && gps_baud_locked && !gps_command_sleeping && gps_last_byte_at && millis() - gps_last_byte_at > 30000) {
+                T5_GPS_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
+                // Loss of NMEA is not proof of standby. Retry baud detection
+                // without sending any unverified GPS wake or sleep command.
+                gps_stream.clearValidation();
+                gps_baud_locked = false;
+                next_baud_retry = millis() + 6000;
+                gps_last_byte_at = millis();
+            }
         }
 #if T5_LOG_GPS
         static uint32_t last_report = 0;
