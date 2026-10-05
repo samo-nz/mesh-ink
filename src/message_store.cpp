@@ -348,6 +348,33 @@ bool MeshInkMessageStore::mark_read_through(
     return true;
 }
 
+bool MeshInkMessageStore::mark_matching_received_read(
+        MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+        uint32_t timestamp,const char* text){
+    if(!initialized_&&!begin())return false;
+    MeshInkStoredMessage item{};
+    if(!file_||!key||!key_len||key_len>sizeof(item.key)||!text)return false;
+
+    // The companion queue is FIFO, so clear the oldest unread journal record
+    // matching the frame actually handed to the app. Do not create a
+    // READ_THROUGH marker: a newer message may still be waiting in MeshCore.
+    for(size_t logical=0;logical<header_.count;++logical){
+        const uint16_t p=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))return false;
+        if(item.sequence==0||
+           item.kind!=(uint8_t)kind||
+           item.state!=(uint8_t)UiMessageState::Received||
+           !(item.flags&MESHINK_MESSAGE_UNREAD)||
+           item.timestamp!=timestamp||
+           memcmp(item.key,key,key_len)||
+           strncmp(item.text,text,sizeof(item.text)))continue;
+        item.flags&=(uint8_t)~MESHINK_MESSAGE_UNREAD;
+        return write_record(p,item);
+    }
+    return false;
+}
+
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
