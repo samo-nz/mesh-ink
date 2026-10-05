@@ -10,9 +10,4 @@ button[hidden]{display:none}
 .source-select-label{color:var(--muted);font-size:13px;font-weight:700;margin-left:2px}
 #firmware-source-select{appearance:auto;background:#0c171f;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font:650 13px/1.2 inherit;cursor:pointer}
 #firmware-source-select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
-.custom-file-box{margin:-2px 0 14px;padding:12px 15px;border:1px solid var(--line);border-radius:12px;background:#101d26}
-.custom-file-box[hidden]{display:none}
-.custom-file-box label{display:block;margin-bottom:8px;color:var(--accent)}
-.custom-file-box input[type=file]{display:block;width:100%;color:var(--muted)}
-.custom-file-box input[type=file]::file-selector-button{border:1px solid var(--line);border-radius:8px;background:#1b3536;color:var(--ink);padding:8px 12px;margin-right:10px;font:700 14px/1.2 inherit;cursor:pointer}
-.custom-file-box small{display:block;margin-top:8px;color:var(--muted)}
+.hidden-file-input{position:fixed;left:-10000px;top:auto;width:1px;height:1px;opacity:0;pointer-events:none}

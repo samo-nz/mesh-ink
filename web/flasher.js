@@ -14,9 +14,9 @@ const logArea = $("log");
 const siteStatus = $("site-status");
 const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
 const sourceSelect = $("firmware-source-select");
-const customFileBox = $("custom-file-box");
 const customFileInput = $("custom-file");
-const customFileStatus = $("custom-file-status");
+const customOption = sourceSelect.querySelector('option[value="custom"]');
+const CUSTOM_OPTION_LABEL = "Custom BIN file";
 let manifest = null;
 let busy = false;
 let flashingCompleted = false;
@@ -69,13 +69,6 @@ function updateControls() {
   for (const input of modeInputs) input.disabled = busy;
   sourceSelect.disabled = busy;
   customFileInput.disabled = busy;
-  customFileBox.hidden = !custom;
-  if (custom) {
-    customFileStatus.textContent = !file ?
-      (wipe ? "Choose an exact 16 MB full-wipe BIN." : "Choose an update BIN up to 6 MB.") :
-      fileOkay ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB · ready` :
-      (wipe ? "That file is not an exact 16 MB full-wipe image." : "That file is too small or exceeds the 6 MB update partition.");
-  }
   detail.textContent = !navigator.serial || !window.isSecureContext ?
     "Chrome or Edge with Web Serial over HTTPS is required." :
     connectionRetry ? "Hold BOOT, press RST, then release both buttons. Then click Retry connection." :
@@ -90,8 +83,36 @@ function resetFlashUi() {
   updateControls();
 }
 for (const input of modeInputs) input.addEventListener("change", resetFlashUi);
-sourceSelect.addEventListener("change", resetFlashUi);
-customFileInput.addEventListener("change", resetFlashUi);
+
+sourceSelect.addEventListener("change", () => {
+  resetFlashUi();
+  if (sourceSelect.value !== "custom" || busy) return;
+
+  // This click runs directly from the user's dropdown change gesture, so the
+  // browser is allowed to open the native file picker on Android and desktop.
+  customFileInput.value = "";
+  customOption.textContent = CUSTOM_OPTION_LABEL;
+  customFileInput.click();
+});
+
+customFileInput.addEventListener("change", () => {
+  const file = customFile();
+  if (!file) {
+    sourceSelect.value = "release";
+    customOption.textContent = CUSTOM_OPTION_LABEL;
+  } else {
+    sourceSelect.value = "custom";
+    customOption.textContent = file.name;
+  }
+  resetFlashUi();
+});
+
+customFileInput.addEventListener("cancel", () => {
+  sourceSelect.value = "release";
+  customOption.textContent = CUSTOM_OPTION_LABEL;
+  customFileInput.value = "";
+  resetFlashUi();
+});
 
 async function sha256(bytes) {
   const hash = await crypto.subtle.digest("SHA-256", bytes);
@@ -228,7 +249,7 @@ async function flash() {
       const digest = await sha256(bytes);
       firmwareLabel = localFile.name;
       log(`Custom firmware SHA-256: ${digest}`);
-      setActivity("Custom firmware validated. Choose the T5 USB serial port…");
+      setActivity("Custom firmware validated. Connecting to the T5…");
     } else {
       setActivity(`Preparing MeshInk v${activeManifest.version} ${wipe ? "install" : "update"}…`);
       const item = activeManifest.files[mode];
@@ -239,7 +260,7 @@ async function flash() {
       setActivity("Checking firmware checksum…");
       if (await sha256(bytes) !== item.sha256) throw new Error("Firmware checksum mismatch; nothing was flashed.");
       firmwareLabel = `MeshInk v${activeManifest.version}`;
-      setActivity("Firmware verified. Choose the T5 USB serial port…");
+      setActivity("Firmware verified. Connecting to the T5…");
     }
     transport = new Transport(port, false);
     const loader = new ESPLoader({

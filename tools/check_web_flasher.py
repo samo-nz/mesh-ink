@@ -23,9 +23,8 @@ require('value="update" checked' in html, "safe update must be selected by defau
 require('value="wipe"' in html and "Choose this to install MeshInk for the first time." in html, "first-time install option")
 require('id="firmware-source-select"' in html and '<option value="release" selected>Latest release</option>' in html,
         "published release remains the default firmware source")
-require('<option value="custom">Custom BIN file</option>' in html and
-        'id="custom-file-box"' in html and 'id="custom-file"' in html,
-        "custom local BIN source with visible file box")
+require('<option value="custom">Custom BIN file</option>' in html and 'id="custom-file"' in html,
+        "custom local BIN source")
 require('id="wipe-word"' not in html and "Type ERASE" not in html, "no unnecessary text-entry gate")
 require('id="flash-button"' in html and "disabled" in html, "initially disabled flash button")
 require('0x10000' in js and '0x0' in js, "update and full-wipe offsets")
@@ -33,9 +32,13 @@ require('const UPDATE_MAX_SIZE = 0x600000' in js, "update image is bounded by th
 require('file.size === FULL_WIPE_SIZE' in js, "custom full-wipe image must be exactly 16 MB")
 require('file.size >= 1024 && file.size <= UPDATE_MAX_SIZE' in js, "custom update image must fit the app partition")
 require('new Uint8Array(await localFile.arrayBuffer())' in js, "custom BIN is read locally without upload")
-require('customFileBox.hidden = !custom' in js and
-        'customFileInput.addEventListener("change", resetFlashUi)' in js,
-        "custom source reveals a persistent file chooser")
+require('sourceSelect.addEventListener("change"' in js and 'customFileInput.click()' in js,
+        "choosing Custom BIN immediately opens the native file picker")
+require('customOption.textContent = file.name' in js,
+        "selected custom filename replaces the dropdown label")
+require('customFileInput.addEventListener("cancel"' in js and
+        'sourceSelect.value = "release"' in js,
+        "cancelling file selection safely returns to Latest release")
 flash_body = js[js.index("async function flash()"):js.index('button.addEventListener("click", flash)')]
 require('const port = await navigator.serial.requestPort();' in flash_body,
         "Flash requests serial permission")
