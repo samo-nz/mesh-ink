@@ -127,6 +127,57 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
         return sequence;
     }
 
+    void mark_synced_message_read(const uint8_t* frame,size_t len){
+        if(!companion_mode_active||!frame||!len)return;
+
+        MeshInkMessageKind kind=MeshInkMessageKind::Direct;
+        uint8_t key[7]{};
+        size_t key_len=0;
+        uint32_t timestamp=0;
+        size_t text_start=0;
+        uint8_t txt_type=TXT_TYPE_PLAIN;
+
+        switch(frame[0]){
+            case RESP_CODE_CONTACT_MSG_RECV:
+                if(len<13)return;
+                kind=MeshInkMessageKind::Direct;key_len=6;
+                memcpy(key,frame+1,key_len);
+                txt_type=frame[8];memcpy(&timestamp,frame+9,4);
+                text_start=txt_type==TXT_TYPE_SIGNED_PLAIN?17:13;
+                break;
+            case RESP_CODE_CONTACT_MSG_RECV_V3:
+                if(len<16)return;
+                kind=MeshInkMessageKind::Direct;key_len=6;
+                memcpy(key,frame+4,key_len);
+                txt_type=frame[11];memcpy(&timestamp,frame+12,4);
+                text_start=txt_type==TXT_TYPE_SIGNED_PLAIN?20:16;
+                break;
+            case RESP_CODE_CHANNEL_MSG_RECV:
+                if(len<8)return;
+                kind=MeshInkMessageKind::Channel;key_len=1;key[0]=frame[1];
+                txt_type=frame[3];memcpy(&timestamp,frame+4,4);text_start=8;
+                break;
+            case RESP_CODE_CHANNEL_MSG_RECV_V3:
+                if(len<11)return;
+                kind=MeshInkMessageKind::Channel;key_len=1;key[0]=frame[4];
+                txt_type=frame[6];memcpy(&timestamp,frame+7,4);text_start=11;
+                break;
+            default:
+                return;
+        }
+        if((txt_type!=TXT_TYPE_PLAIN&&txt_type!=TXT_TYPE_SIGNED_PLAIN)||
+           text_start>len)return;
+
+        char text[MESHINK_MESSAGE_TEXT_BYTES]{};
+        const size_t text_len=min(sizeof(text)-1,len-text_start);
+        if(text_len)memcpy(text,frame+text_start,text_len);
+        const bool cleared=meshink_message_store().mark_matching_received_read(
+            kind,key,key_len,timestamp,text);
+        T5_DEBUGF(T5_LOG_MESH,
+                  "[T5-STORE] companion sync kind=%u ts=%lu unread-cleared=%u\n",
+                  (unsigned)kind,(unsigned long)timestamp,cleared?1U:0U);
+    }
+
     void observe_mesh_response(const uint8_t* frame,size_t len){
         if(!companion_mode_active||!frame||!len)return;
 
@@ -166,6 +217,10 @@ public:
         return len;
     }
     size_t writeFrame(const uint8_t* src,size_t len) override {
+        // A sync response means the phone has fetched this exact queued
+        // message. It is the strongest read signal the companion protocol
+        // provides; merely being connected is not treated as read.
+        mark_synced_message_read(src,len);
         observe_mesh_response(src,len);
         return SerialBLEInterface::writeFrame(src,len);
     }
@@ -183,7 +238,7 @@ protected:
                 MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
                 UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
                 pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
-                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);
         }
         MyMesh::onMessageRecv(from,pkt,sender_timestamp,text);
     }
@@ -196,7 +251,7 @@ protected:
                 MeshInkMessageKind::Direct,from.id.pub_key,6,text,sender_timestamp,
                 UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
                 pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
-                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+                (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);
         }
         MyMesh::onSignedMessageRecv(from,pkt,sender_timestamp,sender_prefix,text);
     }
@@ -211,7 +266,7 @@ protected:
                     MeshInkMessageKind::Channel,&key,1,text,timestamp,
                     UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
                     pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
-                    (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN);
+                    (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);
             }
             MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);
             return;
