@@ -33,6 +33,10 @@ jobs:
           key: meshink-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: meshink-pio-${{ runner.os }}-
       - run: python -m pip install platformio Pillow
+      - name: MeshCore submodule pin integrity
+        run: python tools/check_meshcore_pin.py
+      - name: Architecture boundary checks
+        run: python tools/check_architecture.py
       - name: Validate all radio presets
         run: python tools/check_radio_presets.py
       - name: Host map archive reader tests
@@ -78,6 +82,21 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_gps_contract.cpp -o /tmp/meshink-gps-contract-test
           /tmp/meshink-gps-contract-test
+      - name: Board-independent board lifecycle contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_board_contract.cpp -o /tmp/meshink-board-contract-test
+          /tmp/meshink-board-contract-test
+      - name: Board-independent RTC backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_rtc_contract.cpp -o /tmp/meshink-rtc-contract-test
+          /tmp/meshink-rtc-contract-test
+      - name: Board-independent CPU performance backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_performance_contract.cpp -o /tmp/meshink-performance-contract-test
+          /tmp/meshink-performance-contract-test
       - name: T5 GT911 backend state regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \
@@ -87,6 +106,8 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
+      - name: Warnings-visible cache64 firmware audit
+        run: python -m platformio run -e t5-unified-cache64-warnings
 
       - name: Verify cache64 release SDK config
         run: |

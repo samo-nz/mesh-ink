@@ -1,4 +1,5 @@
 #include "message_store.h"
+#include "hardware/performance.h"
 
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -24,12 +25,12 @@ struct StoreCpuBoostScope {
 
     explicit StoreCpuBoostScope(bool enabled=true){
         if(!enabled)return;
-        previous_mhz=getCpuFrequencyMhz();
+        previous_mhz=meshink_performance_cpu_mhz();
         if(previous_mhz<STORE_FLASH_CPU_MHZ)
-            restore=setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ);
+            restore=meshink_performance_set_cpu_mhz(STORE_FLASH_CPU_MHZ);
     }
     ~StoreCpuBoostScope(){
-        if(restore)setCpuFrequencyMhz(previous_mhz);
+        if(restore)meshink_performance_set_cpu_mhz(previous_mhz);
     }
 };
 

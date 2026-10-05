@@ -5,6 +5,7 @@
 #include "hardware/storage.h"
 #include "hardware/touch.h"
 #include "hardware/power.h"
+#include "hardware/performance.h"
 #include "hardware/buttons.h"
 #include "hardware/board.h"
 #include <esp_heap_caps.h>
@@ -12,7 +13,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
-#include <esp32-hal-cpu.h>
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
@@ -498,20 +498,20 @@ static uint32_t ui_post_render_cpu_target(){
 }
 
 static bool set_cpu_target(uint32_t mhz,const char* reason){
-    const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
+    const bool accepted=meshink_performance_set_cpu_mhz(mhz);const uint32_t actual=meshink_performance_cpu_mhz();
     if(!accepted||actual!=mhz)Serial.printf("[T5-ERROR] CPU target=%lu actual=%lu MHz reason=%s\n",(unsigned long)mhz,(unsigned long)actual,reason);
     return accepted&&actual==mhz;
 }
 
-struct T5CpuBoostScope {
+struct MeshInkCpuBoostScope {
     uint32_t previous_mhz;
     bool restore;
-    explicit T5CpuBoostScope(bool enabled,const char* reason):
-        previous_mhz(getCpuFrequencyMhz()),restore(false){
+    explicit MeshInkCpuBoostScope(bool enabled,const char* reason):
+        previous_mhz(meshink_performance_cpu_mhz()),restore(false){
         if(enabled&&previous_mhz<UI_RENDER_CPU_MHZ)
             restore=set_cpu_target(UI_RENDER_CPU_MHZ,reason);
     }
-    ~T5CpuBoostScope(){
+    ~MeshInkCpuBoostScope(){
         if(restore)set_cpu_target(previous_mhz,"ui-draw-complete");
     }
 };
@@ -1261,7 +1261,7 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
     const MeshInkUiLayout& layout=portrait_layout();
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
@@ -1327,7 +1327,7 @@ static MeshInkRect toast_message_rect(const char* message) {
     return {(portrait_layout().width-w)/2,ui_y(640),w,ui_h(72)};
 }
 static void draw_toast_message(const char* message) {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");
     const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
     rounded_fill(rect.x,rect.y,rect.width,rect.height,r,0);
@@ -2051,7 +2051,7 @@ static void draw_chat(bool channel) {
 }
 
 static void draw_message_entry_fast() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
     // Typing does not change the chat history. Avoid rebuilding the status
     // bar, message bubbles and bottom navigation for every character.
     const auto metrics=keyboard_metrics(false);
@@ -2302,7 +2302,7 @@ static void draw_radio_settings() {
 }
 
 static void draw_radio_name_fast() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
     settings_row("NODE NAME",node_name,120);
 }
 
@@ -2580,7 +2580,7 @@ static void draw_underlying_screen() {
 }
 
 static void draw_quick_panel() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");
     draw_underlying_screen();
 
     const MeshInkUiLayout& layout=portrait_layout();
@@ -2707,7 +2707,7 @@ static void draw_screen() {
     // 240 MHz only while drawing, then restores the previous clock before the
     // caller decides whether to refresh the panel. Small standalone draw paths
     // (keyboard/status/quick panel/toasts) use the same short boost.
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
     // Standby must take precedence over every transient/landscape UI layer.
     if(standby_active){
         draw_standby();
@@ -2755,7 +2755,7 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     meshink_display_poweroff();
     set_cpu_target(ui_post_render_cpu_target(),"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
-        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)meshink_performance_cpu_mhz());
 }
 
 static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_light=true) {

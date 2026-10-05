@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <esp32-hal-cpu.h>
 #include <Preferences.h>
 #include <string.h>
 #include "ui_onboarding.h"
@@ -9,6 +8,7 @@
 #include "hardware/buttons.h"
 #include "hardware/board.h"
 #include "hardware/power.h"
+#include "hardware/performance.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -178,7 +178,7 @@ void setup() {
     // Boot is a race-to-idle phase: run the ESP32-S3 at its maximum clock
     // until the local UI becomes interactive (or companion setup completes).
     // The steady-state policies then drop back to their validated 80 MHz cruise.
-    setCpuFrequencyMhz(240);
+    meshink_performance_set_cpu_mhz(240);
     Serial.begin(115200);
     meshink_buttons_begin();
 

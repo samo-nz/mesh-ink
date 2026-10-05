@@ -4,71 +4,9 @@ on:
   push:
     branches:
       - testing
-  pull_request:
-    paths:
-      - 'src/pmtiles_reader.*'
-      - 'src/map_tiles.cpp'
-      - 'src/ui_onboarding.cpp'
-      - 'src/ui_data.h'
-      - 'src/local_mesh_runtime.cpp'
-      - 'src/message_store.cpp'
-      - 'src/message_store.h'
-      - 'src/companion_notice.cpp'
-      - 'src/companion_notice.h'
-      - 'src/map_gestures.h'
-      - 'src/ui_layout.h'
-      - 'src/hardware/touch.h'
-      - 'src/hardware/rtc.h'
-      - 'src/board/t5_rtc_backend.h'
-      - 'tests/test_rtc_contract.cpp'
-      - 'tests/rtc_mock_backend.h'
-      - 'src/hardware/touch_types.h'
-      - 'src/hardware/orientation.h'
-      - 'src/hardware/wireless.h'
-      - 'src/hardware/wireless_types.h'
-      - 'src/board/t5_wireless_backend.h'
-      - 'src/hardware/power.h'
-      - 'src/hardware/power_types.h'
-      - 'src/board/t5_power_backend.h'
-      - 'src/board/t5_power_backend.cpp'
-      - 'src/hardware/buttons.h'
-      - 'src/board/t5_buttons_backend.h'
-      - 'src/board/t5_buttons_backend.cpp'
-      - 'src/hardware/radio.h'
-      - 'src/hardware/radio_types.h'
-      - 'src/board/t5_radio_backend.h'
-      - 'src/board/t5_radio_backend.cpp'
-      - 'src/hardware/storage.h'
-      - 'src/board/t5_storage_backend.h'
-      - 'src/board/t5_storage_backend.cpp'
-      - 'tests/pmtiles_stubs/storage_backend.h'
-      - 'src/hardware/board.h'
-      - 'tests/test_board_contract.cpp'
-      - 'tests/board_mock_backend.h'
-      - 'src/board/t5_board_backend.h'
-      - 'src/board/t5_touch_backend.h'
-      - 'src/board/t5_display_backend.h'
-      - 'src/board/t5_packed_framebuffer.h'
-      - 'tests/test_t5_packed_framebuffer.cpp'
-      - 'tests/test_map_gestures.cpp'
-      - 'tests/test_ui_layout.cpp'
-      - 'tests/test_touch_contract.cpp'
-      - 'tests/test_t5_touch_backend.cpp'
-      - 'tests/touch_mock_backend.h'
-      - 'tests/touch_backend_stubs/**'
-      - 'src/map_gray.h'
-      - 'tests/test_map_gray.cpp'
-      - 'platformio.ini'
-      - 'tools/check_ui_regressions.py'
-      - 'tools/test_keyboard_geometry.cpp'
-      - 'src/keyboard_geometry.h'
-      - 'src/unified_main.cpp'
-      - 'src/cache64_compat.cpp'
-      - 'src/CMakeLists.txt'
-      - 'CMakeLists.txt'
-      - 'sdkconfig.cache64'
-      - 'cache64_include/**'
-      - '.github/workflows/testing-firmware.yml'
+  # Always test pull requests. MeshCore submodule, build-system and integration
+  # changes are too important to depend on a hand-maintained path allow-list.
+  pull_request: {}
   workflow_dispatch:
 
 permissions:
@@ -89,6 +27,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install platformio Pillow
+      - name: MeshCore submodule pin integrity
+        run: python tools/check_meshcore_pin.py
+      - name: Architecture boundary checks
+        run: python tools/check_architecture.py
       - name: Host map archive reader tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
@@ -143,6 +85,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_rtc_contract.cpp -o /tmp/meshink-rtc-contract-test
           /tmp/meshink-rtc-contract-test
+      - name: Board-independent CPU performance backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_performance_contract.cpp -o /tmp/meshink-performance-contract-test
+          /tmp/meshink-performance-contract-test
       - name: T5 GT911 backend state regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \
@@ -152,6 +99,8 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
+      - name: Warnings-visible cache64 firmware audit
+        run: python -m platformio run -e t5-unified-cache64-warnings
       - name: Verify cache64 SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h

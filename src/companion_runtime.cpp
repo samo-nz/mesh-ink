@@ -2,7 +2,6 @@
 #include <Mesh.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
-#include <esp32-hal-cpu.h>
 #include <esp_random.h>
 #include <helpers/MultiSerialInterface.h>
 #include <helpers/esp32/SerialBLEInterface.h>
@@ -15,6 +14,7 @@
 #define the_mesh meshcore_upstream_example_the_mesh
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.cpp"
 #undef the_mesh
+#include "meshcore_adapter.h"
 #include "companion_runtime.h"
 #include "companion_notice.h"
 #include "local_mesh_runtime.h"
@@ -27,6 +27,7 @@
 #include "hardware/radio.h"
 #include "hardware/buttons.h"
 #include "hardware/power.h"
+#include "hardware/performance.h"
 
 // Device-owned composition root around the upstream MeshCore companion
 // classes. MeshInk adds persistence hooks without changing the phone protocol.
@@ -356,8 +357,8 @@ static MeshInkPowerSleepCheck local_mesh_headless_power_check(
 
 static void companion_set_low_power_cpu() {
     static constexpr uint32_t COMPANION_CPU_MHZ=80;
-    const bool accepted=setCpuFrequencyMhz(COMPANION_CPU_MHZ);
-    const uint32_t actual=getCpuFrequencyMhz();
+    const bool accepted=meshink_performance_set_cpu_mhz(COMPANION_CPU_MHZ);
+    const uint32_t actual=meshink_performance_cpu_mhz();
     if(!accepted||actual!=COMPANION_CPU_MHZ)
         Serial.printf("[T5-ERROR] companion CPU target=%lu actual=%luMHz\n",
                       (unsigned long)COMPANION_CPU_MHZ,(unsigned long)actual);
@@ -381,7 +382,7 @@ static void companion_configure_ble_scan_response(const char* prefix,const char*
 }
 
 MeshInkMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tables, store);
-MyMesh& t5_mesh() { return the_mesh; }
+MyMesh& meshink_meshcore() { return the_mesh; }
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
 static uint32_t local_contacts_save_due=0;
