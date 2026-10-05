@@ -894,6 +894,11 @@ assert "MeshInkGpsPowerExperiment::GpsOnly" in source and "MeshInkGpsPowerExperi
 assert '"REPLAY LAST LOG"' in source and "gps_power_page" in source, "GPS power experiments are paged explicit choices with retained-log replay"
 assert "local_mesh_gps_enter_standby_power_mode();" in source and "local_mesh_gps_leave_standby_power_mode();" in source, "both standby entry and normal wake route through GPS single-system power policy"
 assert "meshink_gps_power_test_start" in t5_gps_backend_source and "meshink_gps_enter_standby_power_mode" in t5_gps_backend_source, "T5 GPS backend exposes measured experiment and standby hooks"
+assert "gps_power_touch_suspended" in source and "set_touch_power(false);" in source, "GPS power test disables touch during its measured window"
+assert "gps_power_measurement_quiet" in source and "if(!gps_power_measurement_quiet)service_message_alert();" in source, "GPS power test suppresses display/message refresh activity while measuring"
+assert "UI quiet mode ended: touch restored after measurement" in source, "GPS power measurement automatically restores interactive UI"
+assert "GPS_POWER_BASELINE_MS = 30000" in board_target_source and "GPS_POWER_POST_MS = 60000" in board_target_source, "GPS experiments retain 30-second baseline and 60-second post windows"
+assert "gps_power_prepare_baseline();" in board_target_source and '"PCAS04,3"' in board_target_source, "GPS power experiments normalize to a common dual-system baseline"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
