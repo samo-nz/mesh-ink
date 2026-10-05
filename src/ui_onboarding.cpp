@@ -1511,7 +1511,14 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
         thick_line(x+6,y+4,x+1,y+8);thick_line(x+1,y+8,x+1,y+18);thick_line(x+1,y+18,x+6,y+22);
         thick_line(x+22,y+4,x+27,y+8);thick_line(x+27,y+8,x+27,y+18);thick_line(x+27,y+18,x+22,y+22);
     }
-    else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);meshink_display_fill_rect({x+8,y+8,5,5},0,fb);meshink_display_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
+    else if(type==(uint8_t)UiNodeRole::Room){
+        // Simple house silhouette: peaked roof, square body, one window and door.
+        thick_line(x+2,y+14,x+14,y+3);thick_line(x+14,y+3,x+26,y+14);
+        thick_line(x+5,y+12,x+5,y+31);thick_line(x+23,y+12,x+23,y+31);
+        thick_line(x+5,y+31,x+23,y+31);
+        meshink_display_fill_rect({x+9,y+16,5,5},0,fb);
+        thick_rect(x+15,y+21,6,10);
+    }
     else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
     else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
 }
