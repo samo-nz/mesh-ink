@@ -303,6 +303,7 @@ static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
+static uint8_t gps_power_page=0;
 
 // Deep-sleep wake restores only the four real bottom-navigation tabs. Nested
 // pages intentionally collapse to their parent tab so wake always returns to
@@ -2456,28 +2457,52 @@ static void draw_gps_settings() {
     settings_row("GPS POWER SAVING","CONSTELLATIONS, TIMEZONE",710);
 }
 
-static const char* gps_constellation_label(){
-    switch(local_mesh_gps_constellation_mode()){
-        case MeshInkGpsConstellationMode::GpsOnly:return "GPS ONLY (TEST LOWER POWER)";
-        case MeshInkGpsConstellationMode::GpsBeiDou:return "GPS + BEIDOU";
-        case MeshInkGpsConstellationMode::GpsGlonass:return "GPS + GLONASS";
-        case MeshInkGpsConstellationMode::GpsBeiDouGlonass:return "GPS + BEIDOU + GLONASS";
-        default:return "UNCHANGED (CURRENT MODE)";
-    }
+static MeshInkUiRect gps_power_prev_rect(){
+    return ui_rect(28,772,224,66);
+}
+static MeshInkUiRect gps_power_next_rect(){
+    return ui_rect(288,772,224,66);
+}
+static void gps_power_test_row(const char* title,const char* detail,int y){
+    settings_row(title,detail,y);
 }
 static void draw_gps_tuning(){
     draw_app_header("GPS POWER SAVING",true);
-    settings_row("CONSTELLATIONS",gps_constellation_label(),120);
     const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect nmea=meshink_outer_row_rect(layout,238,112);
-    ui_section_card(nmea);
-    ui_text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(13),3,0,true);
-    ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(292),3,0,false);
-    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
-    ui_draw_wrapped("GPS only may lower receiver load, but can take longer to fix. Choose more satellite systems if reception is poor.",
-                    layout.section_margin,ui_y(515),layout.section_width,2,0,false,5);
-    ui_draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),
-                    layout.section_width,2,0,false,4);
+    char page[48];
+    snprintf(page,sizeof(page),"MEASURED EXPERIMENTS  %u / 3",(unsigned)gps_power_page+1U);
+    ui_text(page,layout.content_text_x,ui_y(76),2,0,true);
+    ui_text(local_mesh_gps_power_test_busy()?"TEST RUNNING - SEE SERIAL":"30S BASELINE + 60S POST TEST",
+            layout.content_text_x,ui_y(99),2,0,false);
+
+    if(gps_power_page==0){
+        gps_power_test_row("GPS ONLY","PCAS04 SINGLE-SYSTEM TEST",128);
+        gps_power_test_row("BEIDOU ONLY","PCAS04 SINGLE-SYSTEM TEST",246);
+        gps_power_test_row("GLONASS ONLY","PCAS04 SINGLE-SYSTEM TEST",364);
+        gps_power_test_row("GPS ONLY + NMEA OFF","COMBINED DOCUMENTED TUNING",482);
+        settings_row("TIMEZONE",TIMEZONES[timezone_index].label,600);
+    }else if(gps_power_page==1){
+        gps_power_test_row("NMEA EVERY 9 FIXES","GGA + RMC OUTPUT REDUCED",128);
+        gps_power_test_row("NMEA OFF","ALL RECEIVER SENTENCES OFF",246);
+        gps_power_test_row("UART HIGH-Z","ESP32 UART RELEASE ONLY",364);
+        gps_power_test_row("5 SECOND FIX INTERVAL","OUT-OF-SPEC PCAS02 TEST",482);
+        gps_power_test_row("10 SECOND FIX INTERVAL","OUT-OF-SPEC PCAS02 TEST",600);
+    }else{
+        gps_power_test_row("CASIC RF OFF","PCAS10,8 CHIPSET EXPERIMENT",128);
+        gps_power_test_row("RF OFF + UART HIGH-Z","CHIPSET + HOST INTERFACE TEST",246);
+        gps_power_test_row("CASIC STANDBY 60S","PCAS12 TIMED SLEEP PROBE",364);
+        gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED SAMPLES TO SERIAL",482);
+        const MeshInkUiRect note=meshink_outer_row_rect(layout,600,112);
+        ui_section_card(note);
+        ui_text("IMPORTANT",layout.content_text_x,note.y+ui_h(13),3,0,true);
+        ui_draw_wrapped("Battery-only gives the cleanest result. USB power is detected and flagged in every test log.",
+                        layout.content_text_x,note.y+ui_h(48),note.width-ui_w(32),2,0,false,3);
+    }
+
+    ui_action_button("PREV",gps_power_prev_rect(),gps_power_page>0);
+    ui_action_button("NEXT",gps_power_next_rect(),gps_power_page<2);
+    ui_text_fit("Tests restore normal GNSS settings and never send PCAS00.",
+                layout.content_text_x,ui_y(852),layout.content_width,2,0,false);
 }
 
 static void draw_timezone(){
@@ -3750,17 +3775,49 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             if(hit_outer_row(x,y,474)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,710)){open_screen(Screen::GpsTuning);return true;}break;
-        case Screen::GpsTuning:
+            if(hit_outer_row(x,y,710)){gps_power_page=0;open_screen(Screen::GpsTuning);return true;}break;
+        case Screen::GpsTuning:{
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
-            if(hit_outer_row(x,y,120)){
-                const auto mode=local_mesh_gps_constellation_mode();
-                const auto next=meshink_gps_next_constellation_mode(mode);
-                show_toast(local_mesh_gps_set_constellation_mode(next)?"MODE SAVED":"SAVE FAILED");
+            if(hit(x,y,gps_power_prev_rect())&&gps_power_page>0){--gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,gps_power_next_rect())&&gps_power_page<2){++gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(local_mesh_gps_power_test_busy()){
+                if(gps_power_page==2&&hit_outer_row(x,y,482)){
+                    show_toast("TEST RUNNING");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(hit_outer_row(x,y,128)||hit_outer_row(x,y,246)||hit_outer_row(x,y,364)||
+                   hit_outer_row(x,y,482)||hit_outer_row(x,y,600)){
+                    show_toast("TEST ALREADY RUNNING");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+            }
+            MeshInkGpsPowerExperiment experiment=MeshInkGpsPowerExperiment::GpsOnly;
+            bool start=false;
+            if(gps_power_page==0){
+                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::GpsOnly;start=true;}
+                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::BeiDouOnly;start=true;}
+                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::GlonassOnly;start=true;}
+                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::GpsOnlyNmeaOff;start=true;}
+                else if(hit_outer_row(x,y,600)){open_screen(Screen::Timezone);return true;}
+            }else if(gps_power_page==1){
+                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::NmeaEvery9;start=true;}
+                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::NmeaOff;start=true;}
+                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::UartHighImpedance;start=true;}
+                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::SlowFix5s;start=true;}
+                else if(hit_outer_row(x,y,600)){experiment=MeshInkGpsPowerExperiment::SlowFix10s;start=true;}
+            }else{
+                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::RfOff;start=true;}
+                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::RfOffUartHighImpedance;start=true;}
+                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::CasicTimedStandby60s;start=true;}
+                else if(hit_outer_row(x,y,482)){
+                    show_toast(local_mesh_gps_power_test_replay_last()?"LOG REPLAYED":"NO SAVED LOG");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+            }
+            if(start){
+                show_toast(local_mesh_gps_power_test_start(experiment)?"30S BASELINE - SEE SERIAL":"TEST START FAILED");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }
-            // NMEA output is automatic; this informational row has no action.
-            if(hit_outer_row(x,y,356)){open_screen(Screen::Timezone);return true;}break;
+            return true;
+        }
         case Screen::Timezone:
             if(hit_header_back(x,y)){open_screen(Screen::GpsTuning);return true;}
             for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
@@ -3917,6 +3974,7 @@ static void enter_standby(const char* reason){
         keyboard_landscape=false;
         set_ui_orientation(MeshInkOrientation::Portrait);
     }
+    local_mesh_gps_enter_standby_power_mode();
     standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
     // Enter standby with an exact clock/battery sample. Periodic status updates
     // remain anchored to wall-clock :00/:05/:10... boundaries.
@@ -3937,6 +3995,7 @@ static void leave_standby(){
     deep_sleep_pending=false;
     set_touch_power(true);
     standby_active=false;
+    local_mesh_gps_leave_standby_power_mode();
     last_user_activity=millis();
     message_alert_active=false;
     meshink_power_frontlight_set(0);
