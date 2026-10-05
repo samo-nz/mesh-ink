@@ -82,8 +82,11 @@ for rel in (
         errors.append(f"{rel}: CPU policy must use generic hardware/performance.h")
 
 platformio=(ROOT/"platformio.ini").read_text(encoding="utf-8")
-if "[env:t5-unified-cache64-warnings]" not in platformio or "build_unflags =" not in platformio:
-    errors.append("platformio.ini: warnings-visible RC audit environment is missing")
+warning_env=platformio[platformio.index("[env:t5-unified-cache64-warnings]"):platformio.index("; Generic portability",platformio.index("[env:t5-unified-cache64-warnings]"))]
+if "build_src_flags =" not in warning_env or "-Wall" not in warning_env or "-Wextra" not in warning_env:
+    errors.append("platformio.ini: MeshInk-source warnings-visible RC audit environment is missing")
+if "build_unflags =" in warning_env:
+    errors.append("platformio.ini: warning audit must not alter dependency/framework production flags")
 
 if errors:
     raise AssertionError("\n".join(errors))
