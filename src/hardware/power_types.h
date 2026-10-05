@@ -13,6 +13,20 @@ enum class MeshInkChargeState : uint8_t {
     Full
 };
 
+struct MeshInkPowerMeasurement {
+    bool voltage_valid = false;
+    uint16_t voltage_mv = 0;
+    bool current_valid = false;
+    int16_t current_ma = 0;
+    bool average_current_valid = false;
+    int16_t average_current_ma = 0;
+    bool average_power_valid = false;
+    int16_t average_power_mw = 0;
+    bool battery_percent_valid = false;
+    uint8_t battery_percent = 0;
+    bool external_power = false;
+};
+
 struct MeshInkPowerStatus {
     bool battery_voltage_valid = false;
     uint16_t battery_mv = 0;
