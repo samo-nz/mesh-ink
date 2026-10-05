@@ -107,7 +107,10 @@ jobs:
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
       - name: Warnings-visible cache64 firmware audit
-        run: python -m platformio run -e t5-unified-cache64-warnings
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
 
       - name: Verify cache64 release SDK config
         run: |

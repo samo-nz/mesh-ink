@@ -732,7 +732,7 @@ assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fix
 assert "DISCOVERED_CONTACT_BASE_LEN" in runtime_source, "discovered advert parser must define a complete base frame length"
 assert 'len<DISCOVERED_CONTACT_BASE_LEN' in runtime_source, "truncated discovered adverts must be rejected"
 assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache must clear stale optional bytes"
-assert 'memset(&detail_contact_,0,sizeof(detail_contact_));' in runtime_source, "Node Info advert parse must start from zeroed contact state"
+assert 'detail_contact_=ContactInfo{};' in runtime_source, "Node Info advert parse must start from zeroed contact state"
 assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malformed advert rejection must remain observable"
 assert "audit_ui_geometry" not in source and "[T5-GEOM]" not in source, "temporary geometry self-audit is removed"
 assert "[T5-TOUCH] tap screen=" not in source, "temporary touch coordinate logging is removed"

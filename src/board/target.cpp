@@ -1327,7 +1327,8 @@ bool radio_init() {
                     if (gps_stream.hasValidSentence()) { found = true; break; }
                     delay(5);
                 }
-                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n", pass + 1, baud, found);
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
+                              (unsigned)(pass+1),(unsigned long)baud,found);
                 if (found) {
                     detected_gps_baud = baud;
                     gps_baud_locked = true;
