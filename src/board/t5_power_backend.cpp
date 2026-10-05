@@ -383,6 +383,35 @@ bool meshink_power_read_status(MeshInkPowerStatus& status) {
     return status.battery_voltage_valid||status.battery_percent_valid||charge_valid;
 }
 
+bool meshink_power_read_measurement(MeshInkPowerMeasurement& measurement) {
+    measurement=MeshInkPowerMeasurement{};
+    uint16_t raw=0;
+    if(gauge_word(0x08,raw)&&raw>=2500&&raw<=5000){
+        measurement.voltage_valid=true;
+        measurement.voltage_mv=raw;
+    }
+    if(gauge_word(0x0C,raw)){
+        measurement.current_valid=true;
+        measurement.current_ma=(int16_t)raw;
+    }
+    if(gauge_word(0x14,raw)){
+        measurement.average_current_valid=true;
+        measurement.average_current_ma=(int16_t)raw;
+    }
+    if(gauge_word(0x24,raw)){
+        measurement.average_power_valid=true;
+        measurement.average_power_mw=(int16_t)raw;
+    }
+    if(gauge_word(0x2C,raw)&&raw<=100){
+        measurement.battery_percent_valid=true;
+        measurement.battery_percent=(uint8_t)raw;
+    }
+    measurement.external_power=meshink_power_external_present();
+    return measurement.voltage_valid||measurement.current_valid||
+           measurement.average_current_valid||measurement.average_power_valid||
+           measurement.battery_percent_valid;
+}
+
 MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState& state) {
     state=MeshInkPowerCriticalState{};
 
