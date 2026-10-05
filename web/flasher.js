@@ -1,4 +1,5 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js.js";
+import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";
 
 const UPDATE_ADDRESS = 0x10000;
 const FULL_WIPE_ADDRESS = 0x0;
@@ -42,8 +43,20 @@ function customFileFitsMode(file, mode) {
     file.size === FULL_WIPE_SIZE :
     file.size >= 1024 && file.size <= UPDATE_MAX_SIZE;
 }
+function isAndroidPlatform() {
+  return navigator.userAgentData?.platform === "Android" || /Android/i.test(navigator.userAgent || "");
+}
+function usesWebUsbSerial() {
+  return isAndroidPlatform() && !!navigator.usb;
+}
+function serialApi() {
+  return usesWebUsbSerial() ? webUsbSerial : navigator.serial;
+}
+function serialAvailable() {
+  return window.isSecureContext && !!serialApi();
+}
 function ready() {
-  if (busy || !navigator.serial || !window.isSecureContext) return false;
+  if (busy || !serialAvailable()) return false;
   if (selectedSource() === "custom") return customFileFitsMode(customFile(), selectedMode());
   return !!manifest;
 }
@@ -65,12 +78,12 @@ function updateControls() {
     wipe ? "Install MeshInk" : "Update MeshInk";
   button.disabled = !ready();
   restartButton.hidden = !flashingCompleted;
-  restartButton.disabled = busy || !navigator.serial || !window.isSecureContext;
+  restartButton.disabled = busy || !serialAvailable();
   for (const input of modeInputs) input.disabled = busy;
   sourceSelect.disabled = busy;
   customFileInput.disabled = busy;
-  detail.textContent = !navigator.serial || !window.isSecureContext ?
-    "Chrome or Edge with Web Serial over HTTPS is required." :
+  detail.textContent = !serialAvailable() ?
+    "Use Chrome/Edge on desktop, or Chrome on Android with USB host support." :
     connectionRetry ? "Hold BOOT, press RST, then release both buttons. Then click Retry connection." :
     custom ? (fileOkay ? "Press Flash, then choose the T5 USB port." : "Choose a compatible BIN file above.") :
     wipe ? "For a new device or a fresh start." :
@@ -133,11 +146,14 @@ function checkManifest(data) {
   return data;
 }
 async function loadLatest() {
-  if (!navigator.serial || !window.isSecureContext) {
-    siteStatus.textContent = "Unsupported browser · use desktop Chrome/Edge over HTTPS";
+  if (!serialAvailable()) {
+    siteStatus.textContent = "Unsupported browser · serial access unavailable";
     updateControls();
-    log("Web Serial is not available. Try Chrome or Edge on a desktop computer.");
+    log("Serial access is unavailable. Use desktop Chrome/Edge or Chrome on Android with USB host support.");
     return;
+  }
+  if (usesWebUsbSerial()) {
+    log("Android detected · using WebUSB serial compatibility layer.");
   }
   try {
     const response = await fetch("./latest.json", { cache: "no-store" });
@@ -188,7 +204,7 @@ async function restartBoard() {
   let resetTransport = null;
   try {
     setActivity("Choose your T5 USB port to retry the restart…");
-    const port = await navigator.serial.requestPort();
+    const port = await serialApi().requestPort();
     resetTransport = new Transport(port, false);
     await resetTransport.connect(115200);
     const sent = await resetWithRetry(resetTransport);
@@ -237,7 +253,7 @@ async function flash() {
     // Web Serial permission must be requested directly from the Flash tap.
     // Android Chrome will reject requestPort() after an intervening file read,
     // download, checksum, or other awaited operation.
-    const port = await navigator.serial.requestPort();
+    const port = await serialApi().requestPort();
 
     let bytes;
     let firmwareLabel;

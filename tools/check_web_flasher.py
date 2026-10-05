@@ -28,6 +28,11 @@ require('<option value="custom">Custom BIN file</option>' in html and 'id="custo
 require('id="wipe-word"' not in html and "Type ERASE" not in html, "no unnecessary text-entry gate")
 require('id="flash-button"' in html and "disabled" in html, "initially disabled flash button")
 require('0x10000' in js and '0x0' in js, "update and full-wipe offsets")
+require('import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";' in js,
+        "Android WebUSB serial polyfill is imported locally")
+require('isAndroidPlatform()' in js and 'usesWebUsbSerial()' in js and
+        'return usesWebUsbSerial() ? webUsbSerial : navigator.serial;' in js,
+        "Android uses WebUSB serial while desktop keeps native Web Serial")
 require('const UPDATE_MAX_SIZE = 0x600000' in js, "update image is bounded by the app0 partition")
 require('file.size === FULL_WIPE_SIZE' in js, "custom full-wipe image must be exactly 16 MB")
 require('file.size >= 1024 && file.size <= UPDATE_MAX_SIZE' in js, "custom update image must fit the app partition")
@@ -40,12 +45,12 @@ require('customFileInput.addEventListener("cancel"' in js and
         'sourceSelect.value = "release"' in js,
         "cancelling file selection safely returns to Latest release")
 flash_body = js[js.index("async function flash()"):js.index('button.addEventListener("click", flash)')]
-require('const port = await navigator.serial.requestPort();' in flash_body,
+require('const port = await serialApi().requestPort();' in flash_body,
         "Flash requests serial permission")
-require(flash_body.index('const port = await navigator.serial.requestPort();') <
+require(flash_body.index('const port = await serialApi().requestPort();') <
         flash_body.index('await localFile.arrayBuffer()'),
         "serial permission is requested before custom file I/O so Android keeps the user gesture")
-require(flash_body.index('const port = await navigator.serial.requestPort();') <
+require(flash_body.index('const port = await serialApi().requestPort();') <
         flash_body.index('await fetch('),
         "serial permission is requested before release download so Android keeps the user gesture")
 require('Custom firmware SHA-256:' in js, "custom BIN digest is shown before flashing")
@@ -92,7 +97,8 @@ else:
     require(args.version is not None and re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.\d+)?", args.version),
             "invalid release version")
     build = args.build
-    for name in ("index.html", "style.css", "flasher.js", "vendor/esptool-js.js"):
+    for name in ("index.html", "style.css", "flasher.js", "vendor/esptool-js.js",
+                 "vendor/web-serial-polyfill.js", "vendor/web-serial-polyfill-LICENSE.txt"):
         require((build / name).is_file() and (build / name).stat().st_size > 0,
                 f"missing Pages file: {name}")
     checksums = {}
