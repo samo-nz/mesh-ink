@@ -2502,7 +2502,7 @@ static void draw_gps_tuning(){
     ui_action_button("PREV",gps_power_prev_rect(),gps_power_page>0);
     ui_action_button("NEXT",gps_power_next_rect(),gps_power_page<2);
     ui_text_fit("Tests restore normal GNSS settings and never send PCAS00.",
-                layout.content_text_x,ui_y(852),layout.content_width,2,0,false);
+                layout.content_text_x,ui_y(852),layout.content_right-layout.content_text_x,2,0,false);
 }
 
 static void draw_timezone(){
