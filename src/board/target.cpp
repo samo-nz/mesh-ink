@@ -1065,10 +1065,15 @@ static void gps_power_print_summary() {
 static void gps_power_sample_now() {
     MeshInkPowerMeasurement measurement{};
     const uint32_t now=millis();
-    const uint16_t elapsed=(uint16_t)min((uint32_t)65535,(now-gps_power_phase_started)/1000UL);
+    const uint32_t elapsed_seconds=(now-gps_power_phase_started)/1000U;
+    const uint16_t elapsed=(uint16_t)(elapsed_seconds>65535U?65535U:elapsed_seconds);
     const bool ok=meshink_power_read_measurement(measurement);
-    if(gps_power_log_count<GPS_POWER_LOG_CAPACITY)
-        gps_power_log[gps_power_log_count++]={gps_power_post_phase,elapsed,measurement};
+    if(gps_power_log_count<GPS_POWER_LOG_CAPACITY){
+        GpsPowerLoggedSample& entry=gps_power_log[gps_power_log_count++];
+        entry.post=gps_power_post_phase;
+        entry.elapsed_s=elapsed;
+        entry.power=measurement;
+    }
     const int32_t load_i=measurement.current_valid?gps_discharge_ma(measurement.current_ma):0;
     const int32_t load_ai=measurement.average_current_valid?gps_discharge_ma(measurement.average_current_ma):0;
     const int32_t load_p=measurement.average_power_valid?gps_discharge_mw(measurement.average_power_mw):0;
