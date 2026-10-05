@@ -77,6 +77,8 @@ public:
                     bool unread=false);
     bool update_state(uint32_t sequence,UiMessageState state);
     bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len);
+    bool mark_matching_received_read(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+                                     uint32_t timestamp,const char* text);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
     void update_route(uint32_t sequence,bool flood);
