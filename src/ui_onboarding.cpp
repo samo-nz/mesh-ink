@@ -297,6 +297,8 @@ enum class Screen : uint8_t {
     Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
+static uint8_t retained_wake_tab=0;
+static bool retained_wake_tab_valid=false;
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
@@ -4153,13 +4155,16 @@ static void ui_load_persistent_state() {
     }
 
     uint8_t retained_tab=0;
-    const bool retained_tab_valid=meshink_power_take_retained_ui_tab(retained_tab);
+    if(meshink_power_take_retained_ui_tab(retained_tab)){
+        retained_wake_tab=retained_tab;
+        retained_wake_tab_valid=true;
+    }
     screen=setup_complete
-        ?(retained_tab_valid?screen_for_retained_tab(retained_tab):Screen::Contacts)
+        ?(retained_wake_tab_valid?screen_for_retained_tab(retained_wake_tab):Screen::Contacts)
         :Screen::Welcome;
-    if(setup_complete&&retained_tab_valid)
+    if(setup_complete&&retained_wake_tab_valid)
         T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] restored top tab=%u screen=%u\n",
-                  (unsigned)retained_tab,(unsigned)screen);
+                  (unsigned)retained_wake_tab,(unsigned)screen);
     keyboard_visible=!setup_complete;
 }
 
@@ -4280,6 +4285,10 @@ void ui_finish_startup() {
                               &touch_task_handle,0)!=pdPASS)
         Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
+    // Once the interactive screen is visible, the RTC handoff has served its
+    // purpose. A later in-process UI reinitialization must not replay it.
+    retained_wake_tab=0;
+    retained_wake_tab_valid=false;
     ui_boot_cpu_active=false;
     set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
 }
