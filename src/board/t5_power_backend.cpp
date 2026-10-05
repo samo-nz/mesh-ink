@@ -10,6 +10,9 @@ static constexpr uint8_t BQ27220_ADDR = 0x55;
 static constexpr uint8_t BQ25896_PRIMARY_ADDR = 0x6B;
 static constexpr uint8_t BQ25896_ALT_ADDR = 0x6A;
 static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL = 6;
+static constexpr uint32_t RETAINED_UI_MAGIC = 0x3249554D; // "MUI2"
+RTC_DATA_ATTR uint32_t retained_ui_magic=0;
+RTC_DATA_ATTR uint8_t retained_ui_tab=0;
 
 // H752-01 uses a single-cell Li-ion pack and the field-tested protection
 // policy from pre-abstraction builds. These values are deliberately private
@@ -244,6 +247,27 @@ static const MeshInkPowerWakeInfo T5_WAKE_INFO=make_t5_wake_info();
 
 const MeshInkPowerWakeInfo& meshink_power_wake_info() {
     return T5_WAKE_INFO;
+}
+
+void meshink_power_retain_ui_tab(uint8_t tab) {
+    if(tab<1||tab>4){
+        retained_ui_magic=0;
+        retained_ui_tab=0;
+        return;
+    }
+    retained_ui_tab=tab;
+    retained_ui_magic=RETAINED_UI_MAGIC;
+}
+
+bool meshink_power_take_retained_ui_tab(uint8_t& tab) {
+    tab=0;
+    const bool deep_wake=esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED;
+    const bool valid=deep_wake&&retained_ui_magic==RETAINED_UI_MAGIC&&
+                     retained_ui_tab>=1&&retained_ui_tab<=4;
+    if(valid)tab=retained_ui_tab;
+    retained_ui_magic=0;
+    retained_ui_tab=0;
+    return valid;
 }
 
 void meshink_power_prepare_board() {
