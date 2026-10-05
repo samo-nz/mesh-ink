@@ -270,6 +270,7 @@ static bool text_refresh_pending=false;
 static uint32_t text_refresh_after=0;
 static uint32_t text_refresh_queued_at=0;
 static bool touch_enabled=true;
+static bool gps_power_touch_suspended=false;
 static bool standby_active=false;
 static bool hardware_failure=false;
 static uint8_t standby_timeout_index=1;
@@ -3813,6 +3814,10 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(started){
                     frontlight_deadline=0;
                     frontlight_drive(false);
+                    set_touch_power(false);
+                    if(touch_queue)xQueueReset(touch_queue);
+                    gps_power_touch_suspended=true;
+                    Serial.println("[T5-GPS-POWER] UI quiet mode: touch OFF, frontlight OFF, e-paper refreshes suppressed until test completes");
                 }
                 return true;
             }
@@ -4498,6 +4503,20 @@ void ui_loop() {
     }
     service_critical_battery();
     service_primary_button();
+
+    const bool gps_power_measurement_quiet=local_mesh_gps_power_test_busy();
+    if(gps_power_touch_suspended&&!gps_power_measurement_quiet){
+        set_touch_power(true);
+        gps_power_touch_suspended=false;
+        if(touch_queue)xQueueReset(touch_queue);
+        last_user_activity=millis();
+        update_status_hardware();
+        status_bar_dirty=false;status_wake_light=false;
+        draw_screen();
+        refresh(MeshInkRefreshMode::Direct,false);
+        Serial.println("[T5-GPS-POWER] UI quiet mode ended: touch restored after measurement");
+    }
+
     if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&!message_alert_active&&
        !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
         deep_sleep_retry_at=millis()+250;
@@ -4511,7 +4530,7 @@ void ui_loop() {
     // touching Maps. The generation changes on a failed read/remount, so
     // discard the old viewport and show the unavailable or new map promptly.
     static uint32_t last_map_media_poll=0;
-    if(screen==Screen::Maps&&!standby_active&&!message_alert_active&&
+    if(!gps_power_measurement_quiet&&screen==Screen::Maps&&!standby_active&&!message_alert_active&&
        millis()-last_map_media_poll>=3000) {
         last_map_media_poll=millis();
         const uint32_t previous_epoch=map_tiles_media_epoch();
@@ -4522,9 +4541,9 @@ void ui_loop() {
         }
     }
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
-    if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
+    if(!gps_power_measurement_quiet&&!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
-    while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
+    while(!gps_power_measurement_quiet&&!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         // Only ordinary portrait page navigation uses this stale-event fence.
         // Keyboard input, Quick Settings and Maps keep their existing queue /
         // gesture semantics and are never discarded by this rule.
@@ -4685,7 +4704,7 @@ void ui_loop() {
 
     static uint32_t last_status_poll=0;
     const uint32_t status_poll_interval=standby_active?60000:15000;
-    if(millis()-last_status_poll>=status_poll_interval){
+    if(!gps_power_measurement_quiet&&millis()-last_status_poll>=status_poll_interval){
         last_status_poll=millis();
         update_status_hardware();
         // Normal UI keeps the visible clock current minute-by-minute.
@@ -4701,7 +4720,7 @@ void ui_loop() {
         if(aligned_status_due)status_bar_dirty=true;
     }
     const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
-    if(status_dirty&&!message_alert_active){
+    if(!gps_power_measurement_quiet&&status_dirty&&!message_alert_active){
         // Content changes retain the ordinary screen redraw. Refresh the
         // hardware snapshot first so clock and battery come along for free.
         update_status_hardware();
@@ -4711,7 +4730,7 @@ void ui_loop() {
         const bool wake=status_wake_light&&!standby_active;
         status_dirty=false;status_bar_dirty=false;status_wake_light=false;
         draw_screen();refresh(MeshInkRefreshMode::Direct,wake);
-    }else if(text_refresh_due){
+    }else if(!gps_power_measurement_quiet&&text_refresh_due){
         text_refresh_pending=false;
         if(status_bar_dirty&&!quick_panel_active&&!keyboard_landscape){
             // Coalesce a pending bar change into an update that is already
@@ -4727,7 +4746,7 @@ void ui_loop() {
         else
             draw_screen();
         refresh(MeshInkRefreshMode::Direct);
-    }else if(status_bar_dirty&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
+    }else if(!gps_power_measurement_quiet&&status_bar_dirty&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
         // Event-driven updates still sample and display the exact clock and
         // battery, but they never move the next :00/:05/:10... periodic boundary.
         update_status_hardware();
@@ -4737,13 +4756,13 @@ void ui_loop() {
         refresh_area(MeshInkRefreshMode::Direct,
             {0,0,portrait_layout().width,portrait_layout().status_height},wake);
     }
-    if(toast_visible&&(int32_t)(millis()-toast_until)>=0){
+    if(!gps_power_measurement_quiet&&toast_visible&&(int32_t)(millis()-toast_until)>=0){
         toast_visible=false;
         if(toast_opens_main){toast_opens_main=false;screen=Screen::Contacts;keyboard_visible=false;keyboard_message_mode=false;status_unread=0;status_channel_unread=0;}
         draw_screen();refresh(MeshInkRefreshMode::Direct,true);
     }
     frontlight_service();
-    service_message_alert();
+    if(!gps_power_measurement_quiet)service_message_alert();
     delay(12);
 }
 
