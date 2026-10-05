@@ -1,4 +1,5 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js.js";
+import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";
 
 const UPDATE_ADDRESS = 0x10000;
 const FULL_WIPE_ADDRESS = 0x0;
@@ -13,10 +14,10 @@ const progressLabel = $("progress-label");
 const logArea = $("log");
 const siteStatus = $("site-status");
 const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
-const sourceInputs = [...document.querySelectorAll('input[name="source"]')];
-const customFileRow = $("custom-file-row");
+const sourceSelect = $("firmware-source-select");
 const customFileInput = $("custom-file");
-const customFileHelp = $("custom-file-help");
+const customOption = sourceSelect.querySelector('option[value="custom"]');
+const CUSTOM_OPTION_LABEL = "Custom BIN file";
 let manifest = null;
 let busy = false;
 let flashingCompleted = false;
@@ -31,7 +32,7 @@ function selectedMode() {
   return document.querySelector('input[name="mode"]:checked').value;
 }
 function selectedSource() {
-  return document.querySelector('input[name="source"]:checked').value;
+  return sourceSelect.value;
 }
 function customFile() {
   return customFileInput.files?.[0] || null;
@@ -42,8 +43,20 @@ function customFileFitsMode(file, mode) {
     file.size === FULL_WIPE_SIZE :
     file.size >= 1024 && file.size <= UPDATE_MAX_SIZE;
 }
+function isAndroidPlatform() {
+  return navigator.userAgentData?.platform === "Android" || /Android/i.test(navigator.userAgent || "");
+}
+function usesWebUsbSerial() {
+  return isAndroidPlatform() && !!navigator.usb;
+}
+function serialApi() {
+  return usesWebUsbSerial() ? webUsbSerial : navigator.serial;
+}
+function serialAvailable() {
+  return window.isSecureContext && !!serialApi();
+}
 function ready() {
-  if (busy || !navigator.serial || !window.isSecureContext) return false;
+  if (busy || !serialAvailable()) return false;
   if (selectedSource() === "custom") return customFileFitsMode(customFile(), selectedMode());
   return !!manifest;
 }
@@ -56,6 +69,7 @@ function updateControls() {
   const wipe = selectedMode() === "wipe";
   const custom = selectedSource() === "custom";
   const file = customFile();
+  const fileOkay = customFileFitsMode(file, selectedMode());
   button.classList.toggle("wipe", wipe);
   button.textContent = busy ? "Flashing — do not disconnect" :
     connectionRetry ? "Retry connection" :
@@ -64,37 +78,53 @@ function updateControls() {
     wipe ? "Install MeshInk" : "Update MeshInk";
   button.disabled = !ready();
   restartButton.hidden = !flashingCompleted;
-  restartButton.disabled = busy || !navigator.serial || !window.isSecureContext;
-  for (const input of [...modeInputs, ...sourceInputs]) input.disabled = busy;
+  restartButton.disabled = busy || !serialAvailable();
+  for (const input of modeInputs) input.disabled = busy;
+  sourceSelect.disabled = busy;
   customFileInput.disabled = busy;
-  customFileRow.hidden = !custom;
-  customFileHelp.textContent = wipe ?
-    "Full-wipe images must be exactly 16 MB and are written at 0x0 after erasing the whole flash." :
-    "Update images must fit the 6 MB app partition and are written at 0x10000 without erasing stored data.";
-  detail.textContent = !navigator.serial || !window.isSecureContext ?
-    "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
+  detail.textContent = !serialAvailable() ?
+    "Use Chrome/Edge on desktop, or Chrome on Android with USB host support." :
     connectionRetry ? "Hold BOOT, press RST, then release both buttons. Then click Retry connection." :
-    custom && file && !customFileFitsMode(file, selectedMode()) ?
-      (wipe ? "That file is not a 16 MB full-wipe image." : "That file is too large or too small for the 6 MB update partition.") :
-    custom && file ? `Selected: ${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB` :
-    custom ? "Choose a local .bin file for the selected flash mode." :
+    custom ? (fileOkay ? "Press Flash, then choose the T5 USB port." : "Choose a compatible BIN file above.") :
     wipe ? "For a new device or a fresh start." :
            "For a device that already has MeshInk installed.";
 }
-for (const input of modeInputs) input.addEventListener("change", () => {
+function resetFlashUi() {
   progress.hidden = true;
   progressLabel.textContent = "";
+  connectionRetry = false;
   updateControls();
+}
+for (const input of modeInputs) input.addEventListener("change", resetFlashUi);
+
+sourceSelect.addEventListener("change", () => {
+  resetFlashUi();
+  if (sourceSelect.value !== "custom" || busy) return;
+
+  // This click runs directly from the user's dropdown change gesture, so the
+  // browser is allowed to open the native file picker on Android and desktop.
+  customFileInput.value = "";
+  customOption.textContent = CUSTOM_OPTION_LABEL;
+  customFileInput.click();
 });
-for (const input of sourceInputs) input.addEventListener("change", () => {
-  progress.hidden = true;
-  progressLabel.textContent = "";
-  updateControls();
-});
+
 customFileInput.addEventListener("change", () => {
-  progress.hidden = true;
-  progressLabel.textContent = "";
-  updateControls();
+  const file = customFile();
+  if (!file) {
+    sourceSelect.value = "release";
+    customOption.textContent = CUSTOM_OPTION_LABEL;
+  } else {
+    sourceSelect.value = "custom";
+    customOption.textContent = file.name;
+  }
+  resetFlashUi();
+});
+
+customFileInput.addEventListener("cancel", () => {
+  sourceSelect.value = "release";
+  customOption.textContent = CUSTOM_OPTION_LABEL;
+  customFileInput.value = "";
+  resetFlashUi();
 });
 
 async function sha256(bytes) {
@@ -116,11 +146,14 @@ function checkManifest(data) {
   return data;
 }
 async function loadLatest() {
-  if (!navigator.serial || !window.isSecureContext) {
-    siteStatus.textContent = "Unsupported browser · use desktop Chrome/Edge over HTTPS";
+  if (!serialAvailable()) {
+    siteStatus.textContent = "Unsupported browser · serial access unavailable";
     updateControls();
-    log("Web Serial is not available. Try Chrome or Edge on a desktop computer.");
+    log("Serial access is unavailable. Use desktop Chrome/Edge or Chrome on Android with USB host support.");
     return;
+  }
+  if (usesWebUsbSerial()) {
+    log("Android detected · using WebUSB serial compatibility layer.");
   }
   try {
     const response = await fetch("./latest.json", { cache: "no-store" });
@@ -171,7 +204,7 @@ async function restartBoard() {
   let resetTransport = null;
   try {
     setActivity("Choose your T5 USB port to retry the restart…");
-    const port = await navigator.serial.requestPort();
+    const port = await serialApi().requestPort();
     resetTransport = new Transport(port, false);
     await resetTransport.connect(115200);
     const sent = await resetWithRetry(resetTransport);
@@ -194,10 +227,16 @@ async function flash() {
   const wipe = mode === "wipe";
   const source = selectedSource();
   const activeManifest = manifest;
-  const localFile = customFile();
+  const localFile = source === "custom" ? customFile() : null;
+
+  if (source === "custom" && !customFileFitsMode(localFile, mode)) {
+    siteStatus.textContent = "Choose a compatible custom BIN first";
+    updateControls();
+    return;
+  }
   if (wipe && !window.confirm(
     source === "custom" ?
-      "Flash this 16 MB full-wipe BIN? This erases the entire flash, including settings and stored data." :
+      `Flash ${localFile.name} as a 16 MB full wipe? This erases the entire flash, including settings and stored data.` :
       "Install MeshInk for the first time? This will reset any existing data on the device."
   )) return;
   busy = true;
@@ -205,12 +244,17 @@ async function flash() {
   connectionRetry = false;
   progress.hidden = false;
   progress.removeAttribute("value"); // show indeterminate activity while downloading/checking
-  setActivity("Downloading firmware…");
+  setActivity("Preparing firmware…");
   updateControls();
   let transport = null;
   let completed = false;
   let writeStarted = false;
   try {
+    // Web Serial permission must be requested directly from the Flash tap.
+    // Android Chrome will reject requestPort() after an intervening file read,
+    // download, checksum, or other awaited operation.
+    const port = await serialApi().requestPort();
+
     let bytes;
     let firmwareLabel;
     if (source === "custom") {
@@ -221,7 +265,7 @@ async function flash() {
       const digest = await sha256(bytes);
       firmwareLabel = localFile.name;
       log(`Custom firmware SHA-256: ${digest}`);
-      setActivity("Custom firmware validated. Choose the T5 USB serial port…");
+      setActivity("Custom firmware validated. Connecting to the T5…");
     } else {
       setActivity(`Preparing MeshInk v${activeManifest.version} ${wipe ? "install" : "update"}…`);
       const item = activeManifest.files[mode];
@@ -232,9 +276,8 @@ async function flash() {
       setActivity("Checking firmware checksum…");
       if (await sha256(bytes) !== item.sha256) throw new Error("Firmware checksum mismatch; nothing was flashed.");
       firmwareLabel = `MeshInk v${activeManifest.version}`;
-      setActivity("Firmware verified. Choose the T5 USB serial port…");
+      setActivity("Firmware verified. Connecting to the T5…");
     }
-    const port = await navigator.serial.requestPort();
     transport = new Transport(port, false);
     const loader = new ESPLoader({
       transport, baudrate: 115200, debugLogging: false,
