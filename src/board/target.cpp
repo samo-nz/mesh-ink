@@ -851,6 +851,7 @@ struct GpsPowerLoggedSample {
     MeshInkPowerMeasurement power{};
 };
 
+static constexpr uint32_t GPS_POWER_SETTLE_MS = 5000;
 static constexpr uint32_t GPS_POWER_BASELINE_MS = 30000;
 static constexpr uint32_t GPS_POWER_POST_MS = 60000;
 static constexpr uint32_t GPS_POWER_SAMPLE_MS = 1000;
@@ -859,6 +860,8 @@ static GpsPowerLoggedSample gps_power_log[GPS_POWER_LOG_CAPACITY]{};
 static size_t gps_power_log_count = 0;
 static bool gps_power_log_valid = false;
 static bool gps_power_post_phase = false;
+static bool gps_power_measurement_started = false;
+static uint32_t gps_power_settle_until = 0;
 static uint32_t gps_power_phase_started = 0;
 static uint32_t gps_power_next_sample = 0;
 static MeshInkGpsPowerExperiment gps_power_experiment = MeshInkGpsPowerExperiment::GpsOnly;
@@ -1095,20 +1098,24 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
     gps_power_log_count=0;
     gps_power_log_valid=false;
     gps_power_post_phase=false;
+    gps_power_measurement_started=false;
     gps_power_test_running=true;
-    gps_power_phase_started=millis();
-    gps_power_next_sample=gps_power_phase_started+GPS_POWER_SAMPLE_MS;
+    const uint32_t start_now=millis();
+    gps_power_settle_until=start_now+GPS_POWER_SETTLE_MS;
+    gps_power_phase_started=0;
+    gps_power_next_sample=0;
     const auto status=meshink_gps_read_status();
     const bool external=meshink_power_external_present();
     Serial.println("[T5-GPS-POWER] ============================================================");
-    Serial.printf("[T5-GPS-POWER] START experiment='%s' baseline=30s post=60s sample=1Hz\n",
+    Serial.printf("[T5-GPS-POWER] START experiment='%s' settle=5s baseline=30s post=60s sample=1Hz\n",
                   meshink_gps_power_experiment_name(experiment));
     Serial.printf("[T5-GPS-POWER] receiver module=%s baud=%lu fix=%u sats=%ld constellation-pref=%u\n",
                   gps_module_name(),(unsigned long)detected_gps_baud,status.valid?1U:0U,
                   (long)status.satellites,(unsigned)gps_power_saved_constellation);
     Serial.printf("[T5-GPS-POWER] external-power-at-start=%u; battery-only is strongly preferred\n",external?1U:0U);
     if(external)Serial.println("[T5-GPS-POWER] WARNING: disconnect USB/charger and restart the test for trustworthy battery-current deltas");
-    Serial.println("[T5-GPS-POWER] BASELINE: receiver is unchanged for the next 30 seconds");
+    Serial.println("[T5-GPS-POWER] SETTLE: 5 seconds for display/frontlight transients to finish; samples are not counted");
+    Serial.println("[T5-GPS-POWER] BASELINE then keeps the receiver unchanged for a full 30 seconds");
     return true;
 #else
     (void)experiment;
@@ -1120,6 +1127,14 @@ void meshink_gps_power_test_tick() {
 #if ENV_INCLUDE_GPS == 1
     if(!gps_power_test_running)return;
     const uint32_t now=millis();
+    if(!gps_power_measurement_started){
+        if((int32_t)(now-gps_power_settle_until)<0)return;
+        gps_power_measurement_started=true;
+        gps_power_phase_started=now;
+        gps_power_next_sample=now+GPS_POWER_SAMPLE_MS;
+        Serial.println("[T5-GPS-POWER] BASELINE MEASUREMENT START: 30 seconds, one BQ27220 sample per second");
+        return;
+    }
     while((int32_t)(now-gps_power_next_sample)>=0) {
         gps_power_sample_now();
         gps_power_next_sample+=GPS_POWER_SAMPLE_MS;
