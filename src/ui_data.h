@@ -50,6 +50,7 @@ struct UiMapNode {
     uint8_t key[7];
     int32_t latitude;
     int32_t longitude;
+    uint8_t node_type=0; // Raw MeshCore advert type; repeaters get a distinct map marker.
     uint32_t advertised_at; // MeshCore last advert, not a GPS fix timestamp.
     uint32_t gps_received_millis=0; // local reception of GPS telemetry
     bool gps_from_reply=false;
