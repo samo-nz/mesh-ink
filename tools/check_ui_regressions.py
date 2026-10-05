@@ -289,8 +289,10 @@ power_check_body = companion_source.split("static MeshInkPowerSleepCheck local_m
 assert power_check_body.index("ui_display_session_active()") < power_check_body.index("meshink_power_begin_minimal_bus()"), "normal or headless EPDiy I2C is reused before attempting another driver install"
 assert "local_mesh_setup_button_wake" in unified_source and "local_mesh_promote_to_ui" in unified_source, "BOOT wake restores retained MeshCore before attaching full UI"
 assert "bool i2c_ready_ = false;" in board_target_header_source, "RTC tracks whether its shared I2C lifecycle has actually started"
+assert "uint32_t deferred_hardware_time_ = 0;" in board_target_header_source, "RTC retains one deferred bootstrap timestamp until interactive I2C exists"
 assert "i2c_ready_=true;" in board_target_source, "RTC marks I2C ready only from interactive/cold RTC begin"
-assert "if(!i2c_ready_){" in board_target_source and "deferred hardware write" in board_target_source, "headless MeshCore time bootstrap updates system time without touching absent I2C"
+assert "deferred_hardware_time_=utc;" in board_target_source and "deferred hardware write" in board_target_source, "headless MeshCore time bootstrap records a deferred hardware update without touching absent I2C"
+assert "rtc=PCF8563 restored from deferred startup time" in board_target_source, "invalid RTC is repaired from deferred startup time only after I2C returns"
 assert board_target_source.index("settimeofday(&tv,nullptr);") < board_target_source.index("if(!i2c_ready_){"), "headless RTC fallback still keeps software time current"
 runtime_promotion_body = companion_source.split("bool local_mesh_promote_to_ui(const char* source)",1)[1].split("bool local_mesh_enter_deep_sleep_standby()",1)[0]
 assert "meshink_power_frontlight_begin();" in runtime_promotion_body and "meshink_power_frontlight_set(100);" in runtime_promotion_body, "awake/headless BOOT promotion immediately acknowledges with full frontlight"
@@ -1576,7 +1578,7 @@ assert "if(ch=='\\n'&&terminal_last_was_cr)" in unified_source, "CRLF terminals 
 assert "Disconnect serial to exit screenshot mode" in unified_source, "session lifetime is explained to the user"
 
 
-# RC2: companion unread/read handoff, server login convenience, telemetry
+# RC3: companion unread/read handoff, server login convenience, telemetry
 # provenance wording and deep-sleep top-tab restoration remain intentionally
 # narrow changes with no journal-layout or flash-partition migration.
 assert "mark_matching_received_read" in message_store_header and "MeshInkMessageStore::mark_matching_received_read" in message_store_source, "companion sync can clear one exact unread journal record"
@@ -1597,4 +1599,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.0.0-rc.2\"'" in platformio_source and "-DT5_UI_VERSION='\"2.0.0-rc.2\"'" in platformio_source, "RC2 firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.0.0-rc.3\"'" in platformio_source and "-DT5_UI_VERSION='\"2.0.0-rc.3\"'" in platformio_source, "RC3 firmware/UI identity stays aligned"
