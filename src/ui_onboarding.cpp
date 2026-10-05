@@ -1278,8 +1278,8 @@ static void draw_status_bar() {
     }
     char clock_text[8];
     if(status_hour>=0&&status_minute>=0){
-        const int safe_hour=max(0,min(23,status_hour));
-        const int safe_minute=max(0,min(59,status_minute));
+        const int safe_hour=max(0,min(23,(int)status_hour));
+        const int safe_minute=max(0,min(59,(int)status_minute));
         snprintf(clock_text,sizeof(clock_text),"%02d:%02d",safe_hour,safe_minute);
     }else snprintf(clock_text,sizeof(clock_text),"--:--");
     centred(clock_text,ui_y(13),3,0,true);
