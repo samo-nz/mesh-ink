@@ -880,18 +880,20 @@ gps_header_source = (root / "src" / "hardware" / "gps.h").read_text(encoding="ut
 gps_types_source = (root / "src" / "hardware" / "gps_types.h").read_text(encoding="utf-8")
 t5_gps_backend_source = (root / "src" / "board" / "t5_gps_backend.h").read_text(encoding="utf-8")
 assert "MESHINK_GPS_BACKEND_HEADER" in gps_header_source, "GPS backend is compile-time selectable"
-assert "MeshInkGpsConstellationMode" in gps_types_source, "GPS tuning vocabulary is board independent"
+assert "MeshInkGpsConstellationMode" in gps_types_source and "MeshInkGpsPowerExperiment" in gps_types_source, "GPS tuning and power-test vocabulary are board independent"
 assert '#include "hardware/gps.h"' in runtime_source, "local runtime must use generic GPS surface"
 assert '#include "hardware/gps.h"' in companion_source, "companion runtime must use generic GPS surface"
-assert "meshink_gps_background_tick();" in runtime_source, "GPS background servicing routes through generic backend"
+assert "meshink_gps_background_tick();" in runtime_source and "meshink_gps_power_test_tick();" in runtime_source, "GPS background and measured power-test servicing route through generic backend"
 assert "meshink_gps_shutdown();" in runtime_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through generic backend"
 assert "Serial1" not in runtime_source and "Serial1" not in companion_source and "Serial1" not in source, "application code must not own the GPS UART"
 assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
-assert "PCAS03" not in runtime_source and "PCAS04" not in runtime_source and "PCAS03" not in source and "PCAS04" not in source, "receiver command syntax must stay in the board GPS implementation"
-assert "meshink_gps_next_constellation_mode(mode)" in source, "UI uses board-independent GPS constellation cycle"
-assert "local_mesh_gps_tuning_note()" in source, "GPS board-specific explanatory text comes from backend"
-assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
+for receiver_command in ("PCAS02","PCAS03","PCAS04","PCAS10","PCAS12"):
+    assert receiver_command not in runtime_source and receiver_command not in source, "receiver command syntax must stay in the board GPS implementation"
+assert "MeshInkGpsPowerExperiment::GpsOnly" in source and "MeshInkGpsPowerExperiment::RfOffUartHighImpedance" in source, "GPS power page uses explicit board-independent experiment selections"
+assert '"REPLAY LAST LOG"' in source and "gps_power_page" in source, "GPS power experiments are paged explicit choices with retained-log replay"
+assert "local_mesh_gps_enter_standby_power_mode();" in source and "local_mesh_gps_leave_standby_power_mode();" in source, "both standby entry and normal wake route through GPS single-system power policy"
+assert "meshink_gps_power_test_start" in t5_gps_backend_source and "meshink_gps_enter_standby_power_mode" in t5_gps_backend_source, "T5 GPS backend exposes measured experiment and standby hooks"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
@@ -1602,4 +1604,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.1.0\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.0\"'" in platformio_source, "2.1.0 firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.0-gps-powersave.1\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.0-gps-powersave.1\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
