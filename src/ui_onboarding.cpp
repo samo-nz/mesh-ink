@@ -3777,18 +3777,12 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,710)){gps_power_page=0;open_screen(Screen::GpsTuning);return true;}break;
         case Screen::GpsTuning:{
+            // Do not let touches, frontlight changes or e-paper refreshes pollute
+            // an in-progress power measurement. The test finishes automatically.
+            if(local_mesh_gps_power_test_busy())return true;
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             if(hit(x,y,gps_power_prev_rect())&&gps_power_page>0){--gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit(x,y,gps_power_next_rect())&&gps_power_page<2){++gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(local_mesh_gps_power_test_busy()){
-                if(gps_power_page==2&&hit_outer_row(x,y,482)){
-                    show_toast("TEST RUNNING");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
-                }
-                if(hit_outer_row(x,y,128)||hit_outer_row(x,y,246)||hit_outer_row(x,y,364)||
-                   hit_outer_row(x,y,482)||hit_outer_row(x,y,600)){
-                    show_toast("TEST ALREADY RUNNING");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
-                }
-            }
             MeshInkGpsPowerExperiment experiment=MeshInkGpsPowerExperiment::GpsOnly;
             bool start=false;
             if(gps_power_page==0){
@@ -3813,8 +3807,14 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 }
             }
             if(start){
-                show_toast(local_mesh_gps_power_test_start(experiment)?"30S BASELINE - SEE SERIAL":"TEST START FAILED");
-                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                const bool started=local_mesh_gps_power_test_start(experiment);
+                show_toast(started?"POWER TEST RUNNING":"TEST START FAILED");
+                draw_screen();refresh(MeshInkRefreshMode::Direct,false);
+                if(started){
+                    frontlight_deadline=0;
+                    frontlight_drive(false);
+                }
+                return true;
             }
             return true;
         }
