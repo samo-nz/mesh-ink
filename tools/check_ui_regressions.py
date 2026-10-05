@@ -943,9 +943,18 @@ assert "[T5-STACK]" not in source, "temporary Maps stack diagnostic should be re
 
 # Maps marker rendering must keep complete UiMapNode records off loopTask stack.
 assert "Visible visible[50]" not in source, "Maps must not retain 50 complete node records on loopTask stack"
-assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};" in source, "Maps reuses compact projected marker storage"
+assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.node_type};" in source, "Maps reuses compact projected marker storage and carries node role"
 assert "struct Bounds {int16_t x,y,w,h;};" in source, "Maps collision bounds use compact 16-bit coordinates"
+assert "RankedLabel ranked[50]" in source, "Maps ranks labels without copying full node records"
+assert "for(uint8_t candidate=0;candidate<12;++candidate)" in source, "Maps tries the bounded twelve-position label solver"
+assert "Protect every true node position" in source, "Map labels protect all node markers from coverage"
+assert "const size_t label_budget=" in source and "compact_labels=map_zoom<=10" in source, "Maps deliberately thins labels at wide zooms"
+assert "draw_map_repeater_marker(n.x,n.y)" in source, "Repeater nodes use the dedicated tower marker"
+assert "A short leader keeps displaced labels" in source, "Displaced map labels keep a pointer to their node"
 assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
+assert "uint8_t node_type=0;" in data_source, "Map node data carries the MeshCore role"
+assert "item.node_type=positioned.type;" in runtime_source, "Saved map contacts expose their role"
+assert "item.node_type=contact->type;" in runtime_source, "Telemetry-only map contacts expose their role"
 
 # Shared X-axis interior geometry must derive from logical width.
 assert "form_width==480" in ui_layout_source, "T5 setup form width guard missing"
