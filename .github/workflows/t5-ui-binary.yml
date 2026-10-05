@@ -171,16 +171,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           BUILD=".pio/build/t5-unified-cache64"
-          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
           test -s "$BUILD/bootloader.bin"
           test -s "$BUILD/partitions.bin"
-          python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
-            --flash_mode keep --flash_freq keep --flash_size 16MB \
-            --fill-flash-size 16MB \
-            -o "meshink-$VERSION-full-wipe.bin" \
-            0x0 "$BUILD/bootloader.bin" \
-            0x8000 "$BUILD/partitions.bin" \
-            0x10000 "$BUILD/firmware.bin"
+          python tools/package_full_wipe.py \
+            --bootloader "$BUILD/bootloader.bin" \
+            --partitions "$BUILD/partitions.bin" \
+            --firmware "$BUILD/firmware.bin" \
+            --output "meshink-$VERSION-full-wipe.bin"
           test -s "meshink-$VERSION-full-wipe.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
           sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
