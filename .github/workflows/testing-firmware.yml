@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - testing
+      - gps-powersave
   # Always test pull requests. MeshCore submodule, build-system and integration
   # changes are too important to depend on a hand-maintained path allow-list.
   pull_request: {}
@@ -144,15 +145,19 @@ jobs:
           test -s "$BUILD/firmware.bin"
           cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
           sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt
-          test -s "$BUILD/bootloader.bin"
-          test -s "$BUILD/partitions.bin"
-          python tools/package_full_wipe.py \
-            --bootloader "$BUILD/bootloader.bin" \
-            --partitions "$BUILD/partitions.bin" \
-            --firmware "$BUILD/firmware.bin" \
-            --output "meshink-$VERSION-full-wipe.bin"
-          test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
-          sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
+          if [ "$GITHUB_REF_NAME" != "gps-powersave" ]; then
+            test -s "$BUILD/bootloader.bin"
+            test -s "$BUILD/partitions.bin"
+            python tools/package_full_wipe.py \
+              --bootloader "$BUILD/bootloader.bin" \
+              --partitions "$BUILD/partitions.bin" \
+              --firmware "$BUILD/firmware.bin" \
+              --output "meshink-$VERSION-full-wipe.bin"
+            test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
+            sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
+          else
+            echo "gps-powersave: update-only artifact requested; full-wipe image intentionally not built"
+          fi
 
       - name: Warnings-visible cache64 firmware audit
         run: |
@@ -165,8 +170,21 @@ jobs:
         run: |
           echo "Expected embedded firmware version: $VERSION"
           grep -aFq "$VERSION" "meshink-$VERSION-update.bin"
-          grep -aFq "$VERSION" "meshink-$VERSION-full-wipe.bin"
+          if [ "$GITHUB_REF_NAME" != "gps-powersave" ]; then
+            grep -aFq "$VERSION" "meshink-$VERSION-full-wipe.bin"
+          fi
+      - name: Downloadable gps-powersave update firmware
+        if: github.ref_name == 'gps-powersave'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshink-${{ steps.version.outputs.version }}
+          path: |
+            meshink-${{ steps.version.outputs.version }}-update.bin
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Downloadable testing firmware
+        if: github.ref_name != 'gps-powersave'
         uses: actions/upload-artifact@v4
         with:
           name: meshink-${{ steps.version.outputs.version }}
