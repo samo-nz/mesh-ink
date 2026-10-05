@@ -22,7 +22,11 @@
         <option value="release" selected>Latest release</option>
         <option value="custom">Custom BIN file</option>
       </select>
-      <input id="custom-file" class="visually-hidden-file" type="file" accept=".bin,application/octet-stream" tabindex="-1" aria-hidden="true">
+    </div>
+    <div id="custom-file-box" class="custom-file-box" hidden>
+      <label for="custom-file"><strong>Choose custom BIN file</strong></label>
+      <input id="custom-file" type="file" accept=".bin,application/octet-stream">
+      <small id="custom-file-status">Choose an update BIN for Update MeshInk, or a 16 MB full-wipe BIN for Install MeshInk.</small>
     </div>
     <section class="panel" aria-labelledby="flash-heading">
       <h2 id="flash-heading">What would you like to do?</h2>

@@ -14,7 +14,9 @@ const logArea = $("log");
 const siteStatus = $("site-status");
 const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
 const sourceSelect = $("firmware-source-select");
+const customFileBox = $("custom-file-box");
 const customFileInput = $("custom-file");
+const customFileStatus = $("custom-file-status");
 let manifest = null;
 let busy = false;
 let flashingCompleted = false;
@@ -31,6 +33,9 @@ function selectedMode() {
 function selectedSource() {
   return sourceSelect.value;
 }
+function customFile() {
+  return customFileInput.files?.[0] || null;
+}
 function customFileFitsMode(file, mode) {
   if (!file) return false;
   return mode === "wipe" ?
@@ -39,7 +44,7 @@ function customFileFitsMode(file, mode) {
 }
 function ready() {
   if (busy || !navigator.serial || !window.isSecureContext) return false;
-  if (selectedSource() === "custom") return true;
+  if (selectedSource() === "custom") return customFileFitsMode(customFile(), selectedMode());
   return !!manifest;
 }
 function setActivity(message) {
@@ -50,6 +55,8 @@ function setActivity(message) {
 function updateControls() {
   const wipe = selectedMode() === "wipe";
   const custom = selectedSource() === "custom";
+  const file = customFile();
+  const fileOkay = customFileFitsMode(file, selectedMode());
   button.classList.toggle("wipe", wipe);
   button.textContent = busy ? "Flashing — do not disconnect" :
     connectionRetry ? "Retry connection" :
@@ -62,10 +69,17 @@ function updateControls() {
   for (const input of modeInputs) input.disabled = busy;
   sourceSelect.disabled = busy;
   customFileInput.disabled = busy;
+  customFileBox.hidden = !custom;
+  if (custom) {
+    customFileStatus.textContent = !file ?
+      (wipe ? "Choose an exact 16 MB full-wipe BIN." : "Choose an update BIN up to 6 MB.") :
+      fileOkay ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB · ready` :
+      (wipe ? "That file is not an exact 16 MB full-wipe image." : "That file is too small or exceeds the 6 MB update partition.");
+  }
   detail.textContent = !navigator.serial || !window.isSecureContext ?
-    "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
+    "Chrome or Edge with Web Serial over HTTPS is required." :
     connectionRetry ? "Hold BOOT, press RST, then release both buttons. Then click Retry connection." :
-    custom ? "Press Flash; choose the BIN file, then choose the T5 USB port." :
+    custom ? (fileOkay ? "Press Flash, then choose the T5 USB port." : "Choose a compatible BIN file above.") :
     wipe ? "For a new device or a fresh start." :
            "For a device that already has MeshInk installed.";
 }
@@ -77,25 +91,7 @@ function resetFlashUi() {
 }
 for (const input of modeInputs) input.addEventListener("change", resetFlashUi);
 sourceSelect.addEventListener("change", resetFlashUi);
-
-function chooseCustomFile() {
-  return new Promise((resolve) => {
-    customFileInput.value = "";
-    let finished = false;
-    const finish = (file) => {
-      if (finished) return;
-      finished = true;
-      customFileInput.removeEventListener("change", onChange);
-      customFileInput.removeEventListener("cancel", onCancel);
-      resolve(file);
-    };
-    const onChange = () => finish(customFileInput.files?.[0] || null);
-    const onCancel = () => finish(null);
-    customFileInput.addEventListener("change", onChange, { once: true });
-    customFileInput.addEventListener("cancel", onCancel, { once: true });
-    customFileInput.click();
-  });
-}
+customFileInput.addEventListener("change", resetFlashUi);
 
 async function sha256(bytes) {
   const hash = await crypto.subtle.digest("SHA-256", bytes);
@@ -194,26 +190,13 @@ async function flash() {
   const wipe = mode === "wipe";
   const source = selectedSource();
   const activeManifest = manifest;
-  let localFile = null;
+  const localFile = source === "custom" ? customFile() : null;
 
-  // Keep file selection inside the user's Flash click. Once the local BIN is
-  // chosen, continue directly to serial-port selection and flashing.
-  if (source === "custom") {
-    localFile = await chooseCustomFile();
-    if (!localFile) {
-      siteStatus.textContent = manifest ? `Ready · MeshInk v${manifest.version}` : "Ready for custom BIN";
-      detail.textContent = "No BIN file selected.";
-      return;
-    }
-    if (!customFileFitsMode(localFile, mode)) {
-      siteStatus.textContent = "Custom BIN does not match the selected flash mode";
-      detail.textContent = wipe ?
-        "Full-wipe images must be exactly 16 MB." :
-        "Update images must be between 1 KB and 6 MB.";
-      return;
-    }
+  if (source === "custom" && !customFileFitsMode(localFile, mode)) {
+    siteStatus.textContent = "Choose a compatible custom BIN first";
+    updateControls();
+    return;
   }
-
   if (wipe && !window.confirm(
     source === "custom" ?
       `Flash ${localFile.name} as a 16 MB full wipe? This erases the entire flash, including settings and stored data.` :
@@ -230,6 +213,11 @@ async function flash() {
   let completed = false;
   let writeStarted = false;
   try {
+    // Web Serial permission must be requested directly from the Flash tap.
+    // Android Chrome will reject requestPort() after an intervening file read,
+    // download, checksum, or other awaited operation.
+    const port = await navigator.serial.requestPort();
+
     let bytes;
     let firmwareLabel;
     if (source === "custom") {
@@ -253,7 +241,6 @@ async function flash() {
       firmwareLabel = `MeshInk v${activeManifest.version}`;
       setActivity("Firmware verified. Choose the T5 USB serial port…");
     }
-    const port = await navigator.serial.requestPort();
     transport = new Transport(port, false);
     const loader = new ESPLoader({
       transport, baudrate: 115200, debugLogging: false,

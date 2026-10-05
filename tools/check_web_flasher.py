@@ -23,8 +23,9 @@ require('value="update" checked' in html, "safe update must be selected by defau
 require('value="wipe"' in html and "Choose this to install MeshInk for the first time." in html, "first-time install option")
 require('id="firmware-source-select"' in html and '<option value="release" selected>Latest release</option>' in html,
         "published release remains the default firmware source")
-require('<option value="custom">Custom BIN file</option>' in html and 'id="custom-file"' in html,
-        "custom local BIN source")
+require('<option value="custom">Custom BIN file</option>' in html and
+        'id="custom-file-box"' in html and 'id="custom-file"' in html,
+        "custom local BIN source with visible file box")
 require('id="wipe-word"' not in html and "Type ERASE" not in html, "no unnecessary text-entry gate")
 require('id="flash-button"' in html and "disabled" in html, "initially disabled flash button")
 require('0x10000' in js and '0x0' in js, "update and full-wipe offsets")
@@ -32,15 +33,18 @@ require('const UPDATE_MAX_SIZE = 0x600000' in js, "update image is bounded by th
 require('file.size === FULL_WIPE_SIZE' in js, "custom full-wipe image must be exactly 16 MB")
 require('file.size >= 1024 && file.size <= UPDATE_MAX_SIZE' in js, "custom update image must fit the app partition")
 require('new Uint8Array(await localFile.arrayBuffer())' in js, "custom BIN is read locally without upload")
-require('customFileInput.click()' in js and 'localFile = await chooseCustomFile()' in js,
-        "custom BIN picker opens from Flash and continues immediately")
+require('customFileBox.hidden = !custom' in js and
+        'customFileInput.addEventListener("change", resetFlashUi)' in js,
+        "custom source reveals a persistent file chooser")
 flash_body = js[js.index("async function flash()"):js.index('button.addEventListener("click", flash)')]
-require('const port = await navigator.serial.requestPort();' in flash_body and
-        flash_body.index('localFile = await chooseCustomFile()') <
-        flash_body.index('const port = await navigator.serial.requestPort();'),
-        "custom file selection precedes serial-port selection")
-require('customFileInput.addEventListener("cancel", onCancel' in js,
-        "cancelling the custom file picker returns cleanly")
+require('const port = await navigator.serial.requestPort();' in flash_body,
+        "Flash requests serial permission")
+require(flash_body.index('const port = await navigator.serial.requestPort();') <
+        flash_body.index('await localFile.arrayBuffer()'),
+        "serial permission is requested before custom file I/O so Android keeps the user gesture")
+require(flash_body.index('const port = await navigator.serial.requestPort();') <
+        flash_body.index('await fetch('),
+        "serial permission is requested before release download so Android keeps the user gesture")
 require('Custom firmware SHA-256:' in js, "custom BIN digest is shown before flashing")
 require('selectedSource() === "custom"' in js, "custom source can flash without a release manifest")
 require('eraseAll: wipe' in js, "no full-device erase in update mode")
