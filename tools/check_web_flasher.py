@@ -34,9 +34,13 @@ require('file.size >= 1024 && file.size <= UPDATE_MAX_SIZE' in js, "custom updat
 require('new Uint8Array(await localFile.arrayBuffer())' in js, "custom BIN is read locally without upload")
 require('customFileInput.click()' in js and 'localFile = await chooseCustomFile()' in js,
         "custom BIN picker opens from Flash and continues immediately")
-require('const port = await navigator.serial.requestPort();' in js and
-        js.index('localFile = await chooseCustomFile()') < js.index('const port = await navigator.serial.requestPort();'),
+flash_body = js[js.index("async function flash()"):js.index('button.addEventListener("click", flash)')]
+require('const port = await navigator.serial.requestPort();' in flash_body and
+        flash_body.index('localFile = await chooseCustomFile()') <
+        flash_body.index('const port = await navigator.serial.requestPort();'),
         "custom file selection precedes serial-port selection")
+require('customFileInput.addEventListener("cancel", onCancel' in js,
+        "cancelling the custom file picker returns cleanly")
 require('Custom firmware SHA-256:' in js, "custom BIN digest is shown before flashing")
 require('selectedSource() === "custom"' in js, "custom source can flash without a release manifest")
 require('eraseAll: wipe' in js, "no full-device erase in update mode")

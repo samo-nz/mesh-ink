@@ -81,11 +81,18 @@ sourceSelect.addEventListener("change", resetFlashUi);
 function chooseCustomFile() {
   return new Promise((resolve) => {
     customFileInput.value = "";
-    const onChange = () => {
+    let finished = false;
+    const finish = (file) => {
+      if (finished) return;
+      finished = true;
       customFileInput.removeEventListener("change", onChange);
-      resolve(customFileInput.files?.[0] || null);
+      customFileInput.removeEventListener("cancel", onCancel);
+      resolve(file);
     };
+    const onChange = () => finish(customFileInput.files?.[0] || null);
+    const onCancel = () => finish(null);
     customFileInput.addEventListener("change", onChange, { once: true });
+    customFileInput.addEventListener("cancel", onCancel, { once: true });
     customFileInput.click();
   });
 }
