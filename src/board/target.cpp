@@ -49,6 +49,9 @@ static uint8_t from_bcd(uint8_t v){return (uint8_t)((v>>4)*10+(v&0x0F));}
 static uint8_t to_bcd(uint8_t v){return (uint8_t)(((v/10)<<4)|(v%10));}
 
 void T5RTCClock::begin(){
+    // begin() is only reached once the shared I2C lifecycle is active.
+    // Retained headless wakes intentionally skip it.
+    i2c_ready_=true;
     uint8_t r[7]{};
     if(!idf_read(0x51,0x02,r,sizeof(r))){
         valid_=false;
@@ -90,10 +93,18 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
             (unsigned long)utc,(unsigned long)current);
         return;
     }
+    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+    if(!i2c_ready_){
+        // MeshCore bootstraps a plausible clock from contact timestamps during
+        // retained radio-first startup. Keep that as system time only: the
+        // headless path deliberately has no shared I2C driver yet.
+        T5_TRACE("rtc: deferred hardware write UTC=%lu; I2C lifecycle not initialized\n",
+            (unsigned long)utc);
+        return;
+    }
     const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
         to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
     valid_=idf_write(0x51,0x02,r,sizeof(r));
-    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
     if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
 }
 void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
