@@ -2476,21 +2476,21 @@ static void draw_gps_tuning(){
             layout.content_text_x,ui_y(99),2,0,false);
 
     if(gps_power_page==0){
-        gps_power_test_row("GPS ONLY","PCAS04 SINGLE-SYSTEM TEST",128);
-        gps_power_test_row("BEIDOU ONLY","PCAS04 SINGLE-SYSTEM TEST",246);
-        gps_power_test_row("GLONASS ONLY","PCAS04 SINGLE-SYSTEM TEST",364);
-        gps_power_test_row("GPS ONLY + NMEA OFF","COMBINED DOCUMENTED TUNING",482);
+        gps_power_test_row("GPS ONLY","SINGLE-SYSTEM RECEIVER TEST",128);
+        gps_power_test_row("BEIDOU ONLY","SINGLE-SYSTEM RECEIVER TEST",246);
+        gps_power_test_row("GLONASS ONLY","SINGLE-SYSTEM RECEIVER TEST",364);
+        gps_power_test_row("GPS ONLY + NMEA OFF","SINGLE SYSTEM + OUTPUT OFF",482);
         settings_row("TIMEZONE",TIMEZONES[timezone_index].label,600);
     }else if(gps_power_page==1){
         gps_power_test_row("NMEA EVERY 9 FIXES","GGA + RMC OUTPUT REDUCED",128);
         gps_power_test_row("NMEA OFF","ALL RECEIVER SENTENCES OFF",246);
         gps_power_test_row("UART HIGH-Z","ESP32 UART RELEASE ONLY",364);
-        gps_power_test_row("5 SECOND FIX INTERVAL","OUT-OF-SPEC PCAS02 TEST",482);
-        gps_power_test_row("10 SECOND FIX INTERVAL","OUT-OF-SPEC PCAS02 TEST",600);
+        gps_power_test_row("5 SECOND FIX INTERVAL","OUT-OF-SPEC FIX INTERVAL TEST",482);
+        gps_power_test_row("10 SECOND FIX INTERVAL","OUT-OF-SPEC FIX INTERVAL TEST",600);
     }else{
-        gps_power_test_row("CASIC RF OFF","PCAS10,8 CHIPSET EXPERIMENT",128);
+        gps_power_test_row("CASIC RF OFF","CASIC RF SECTION EXPERIMENT",128);
         gps_power_test_row("RF OFF + UART HIGH-Z","CHIPSET + HOST INTERFACE TEST",246);
-        gps_power_test_row("CASIC STANDBY 60S","PCAS12 TIMED SLEEP PROBE",364);
+        gps_power_test_row("CASIC STANDBY 60S","CASIC TIMED SLEEP PROBE",364);
         gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED SAMPLES TO SERIAL",482);
         const MeshInkUiRect note=meshink_outer_row_rect(layout,600,112);
         ui_section_card(note);
