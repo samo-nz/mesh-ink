@@ -2937,7 +2937,7 @@ static void reveal_map_after_black_prep(const char* reason,bool wake_light=false
 // Display the saved previous map underneath the same toast used for saved
 // settings. Never decode the requested tiles before the progress notification
 // has appeared on the physical e-paper screen.
-static void load_map_with_feedback(bool already_on_map) {
+static void load_map_with_feedback(bool already_on_map,bool force_complete_first_frame=false) {
     if(!already_on_map) {
         // Opening Maps from another tab: restore the previously rendered
         // terrain if available. On first-ever entry show the Maps shell
@@ -2956,6 +2956,11 @@ static void load_map_with_feedback(bool already_on_map) {
     draw_toast_message("Loading..");
     if(already_on_map)
         refresh_area(MeshInkRefreshMode::Direct,toast_message_rect("Loading.."));
+    else if(force_complete_first_frame)
+        // Deep-sleep wake may reuse a framebuffer whose EPDiy back-buffer does
+        // not describe the physically retained standby image. Prepare the full
+        // Loading frame first, then force that completed frame directly.
+        fast_full_redraw("MAP_LOADING_AFTER_DEEP_WAKE",false);
     else
         refresh(MeshInkRefreshMode::Direct);
 
@@ -4360,24 +4365,28 @@ void ui_finish_startup() {
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
+    const bool retained_deep_wake=setup_complete&&retained_wake_tab_valid;
     if(screen==Screen::Maps){
-        // A retained Maps tab has no live framebuffer after deep sleep. Rebuild
-        // the normal Maps view through its established loading/reveal path.
+        // On retained wake the physical panel still contains the standby image.
+        // Build the complete Loading frame in memory first, then force that
+        // frame directly so the user never sees an intermediate blank screen.
         centre_map_on_device();
-        load_map_with_feedback(false);
+        load_map_with_feedback(false,retained_deep_wake);
         frontlight_event();
     }else{
         draw_screen();
         if(screen==Screen::Welcome)
             fast_full_redraw("FIRST_SETUP_SCREEN",false);
-        else if(screen==Screen::Contacts) {
-            // Existing-user boot transitions directly from the dark startup logo
-            // to Contacts. Force the same complete refresh as a short BOOT press
-            // so the splash cannot remain faintly visible in the panel history.
-            fast_full_redraw("CONTACTS_AFTER_BOOT",false);
+        else if(screen==Screen::Contacts||retained_deep_wake) {
+            // Contacts already used the correct transition: prepare the entire
+            // destination screen, invalidate EPDiy's stale previous-frame view,
+            // then commit it as one complete update. Apply that same one-shot
+            // treatment to every retained top-level tab after deep sleep.
+            fast_full_redraw(retained_deep_wake
+                ?"RETAINED_TAB_AFTER_DEEP_WAKE":"CONTACTS_AFTER_BOOT",false);
             // Startup can take longer than the saved light timeout. Start a fresh
-            // timeout only after Contacts is actually visible.
-            frontlight_event();
+            // timeout only after the restored screen is actually visible.
+            if(setup_complete)frontlight_event();
         } else {
             refresh(MeshInkRefreshMode::FastGray16);
             if(setup_complete)frontlight_event();
