@@ -5,6 +5,11 @@ inline unsigned meshink_gps_mock_service_loops=0;
 inline bool meshink_gps_mock_started=false;
 inline bool meshink_gps_mock_provider_enabled=false;
 inline bool meshink_gps_mock_shutdown=false;
+inline bool meshink_gps_mock_power_test_busy=false;
+inline bool meshink_gps_mock_power_replayed=false;
+inline bool meshink_gps_mock_standby=false;
+inline MeshInkGpsPowerExperiment meshink_gps_mock_experiment=
+    MeshInkGpsPowerExperiment::GpsOnly;
 inline MeshInkGpsStatus meshink_gps_mock_status{};
 inline MeshInkGpsConstellationMode meshink_gps_mock_mode=
     MeshInkGpsConstellationMode::Unchanged;
@@ -16,6 +21,16 @@ inline void meshink_gps_service_loop(){++meshink_gps_mock_service_loops;}
 inline void meshink_gps_set_provider_enabled(bool enabled){meshink_gps_mock_provider_enabled=enabled;}
 inline MeshInkGpsStatus meshink_gps_read_status(){return meshink_gps_mock_status;}
 inline void meshink_gps_background_tick(){++meshink_gps_mock_ticks;}
+inline bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
+    meshink_gps_mock_experiment=experiment;
+    meshink_gps_mock_power_test_busy=true;
+    return true;
+}
+inline void meshink_gps_power_test_tick(){}
+inline bool meshink_gps_power_test_busy(){return meshink_gps_mock_power_test_busy;}
+inline bool meshink_gps_power_test_replay_last(){meshink_gps_mock_power_replayed=true;return true;}
+inline void meshink_gps_enter_standby_power_mode(){meshink_gps_mock_standby=true;}
+inline void meshink_gps_leave_standby_power_mode(){meshink_gps_mock_standby=false;}
 inline MeshInkGpsConstellationMode meshink_gps_constellation_mode(){
     return meshink_gps_mock_mode;
 }
