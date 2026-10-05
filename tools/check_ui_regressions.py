@@ -584,8 +584,8 @@ contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visibl
 
 contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
 contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
-contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
-contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
+contains("if(!gps_power_measurement_quiet&&status_dirty&&!message_alert_active)", "status redraw has priority for coalescing outside GPS power measurement")
+contains("else if(!gps_power_measurement_quiet&&text_refresh_due)", "text refresh runs only if status did not already redraw and GPS power measurement is idle")
 contains("draw_screen();refresh(MeshInkRefreshMode::Direct);return true;", "same-page keyboard transitions use DU")
 
 # Temporary performance/touch instrumentation is removed after field tuning.
