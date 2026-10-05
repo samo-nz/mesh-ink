@@ -10,6 +10,7 @@ bool meshink_power_read_battery_percent(uint8_t& percent);
 bool meshink_power_read_charge_state(MeshInkChargeState& state);
 bool meshink_power_external_present();
 bool meshink_power_read_status(MeshInkPowerStatus& status);
+bool meshink_power_read_measurement(MeshInkPowerMeasurement& measurement);
 
 // Battery topology, chemistry and cutoff/debounce policy belong to the board
 // backend. Application code receives only the resulting critical state.
