@@ -123,11 +123,6 @@ jobs:
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
 
-      - name: Warnings-visible cache64 firmware audit
-        run: |
-          set -o pipefail
-          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
-          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
 
 
       - name: Read firmware version
@@ -189,6 +184,12 @@ jobs:
           test -s "meshink-$VERSION-full-wipe.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
           sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
+
+      - name: Warnings-visible cache64 firmware audit
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
 
       - uses: actions/upload-artifact@v4
         with:
