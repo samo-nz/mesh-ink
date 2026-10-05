@@ -1626,18 +1626,22 @@ static void draw_channels() {
     draw_bottom_nav(1);
 }
 
-// Compact radio-tower marker for repeaters.  It stays distinct from an ordinary
-// node dot even at low zoom while fitting the existing marker touch target.
+// Bold radio-tower marker for repeaters. Keep it deliberately simple so the
+// symbol survives DU refresh and remains obvious when scanning coverage.
 static void draw_map_repeater_marker(int x,int y) {
-    meshink_display_fill_rect({x-10,y-11,21,23},0xFF,fb);
-    meshink_display_fill_rect({x-1,y-8,3,4},0,fb);
-    meshink_display_fill_rect({x-1,y-5,3,11},0,fb);
-    line(x,y-5,x-5,y+8);line(x,y-5,x+5,y+8);line(x-5,y+8,x+5,y+8);
-    line(x-3,y-5,x-6,y-2);line(x-6,y-2,x-6,y+1);line(x-6,y+1,x-3,y+4);
-    line(x+3,y-5,x+6,y-2);line(x+6,y-2,x+6,y+1);line(x+6,y+1,x+3,y+4);
-    line(x-6,y-7,x-9,y-4);line(x-9,y-4,x-9,y+3);line(x-9,y+3,x-6,y+6);
-    line(x+6,y-7,x+9,y-4);line(x+9,y-4,x+9,y+3);line(x+9,y+3,x+6,y+6);
+    meshink_display_fill_rect({x-13,y-14,27,29},0xFF,fb);
+    // Heavy mast / tripod.
+    meshink_display_fill_rect({x-2,y-8,5,15},0,fb);
+    thick_line(x,y-5,x-7,y+11);thick_line(x,y-5,x+7,y+11);
+    meshink_display_fill_rect({x-8,y+9,17,4},0,fb);
+    // One bold signal arc each side is clearer than multiple fine nested arcs.
+    thick_line(x-4,y-6,x-9,y-2);thick_line(x-9,y-2,x-9,y+4);thick_line(x-9,y+4,x-5,y+8);
+    thick_line(x+4,y-6,x+9,y-2);thick_line(x+9,y-2,x+9,y+4);thick_line(x+9,y+4,x+5,y+8);
+    thick_line(x-9,y-9,x-12,y-6);thick_line(x-12,y-6,x-12,y+6);thick_line(x-12,y+6,x-9,y+9);
+    thick_line(x+9,y-9,x+12,y-6);thick_line(x+12,y-6,x+12,y+6);thick_line(x+12,y+6,x+9,y+9);
 }
+
+static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy);
 
 // Node positions are stable; labels are ranked and moved around them.  Keep the
 // solver intentionally bounded: at most 50 markers and 12 candidates per label.
@@ -1698,6 +1702,17 @@ static void draw_map_nodes() {
     size_t labels_drawn=0;
     const int label_bottom=ui_y(766);
 
+    // Reserve the exact own-location bullseye before solving labels. The marker
+    // is drawn after labels, so without this reservation it can erase text.
+    int own_marker_x=0,own_marker_y=0;
+    bool own_marker_reserved=false;
+    long own_latitude=0,own_longitude=0;bool own_current_fix=false;
+    if(map_device_position(own_latitude,own_longitude,own_current_fix)&&
+       project_device_on_map(own_latitude,own_longitude,own_marker_x,own_marker_y)&&
+       own_marker_x>=20&&own_marker_x<=layout.width-20&&
+       own_marker_y>=map_top()+20&&own_marker_y<=map_bottom()-21)
+        own_marker_reserved=true;
+
     for(size_t order=0;order<count;++order) {
         const auto& n=map_marker_hits[ranked[order].marker];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
@@ -1750,10 +1765,16 @@ static void draw_map_nodes() {
             // Protect every true node position, not just labels already placed.
             for(size_t j=0;j<count&&!overlap;++j){
                 const auto& m=map_marker_hits[j];
-                const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?11:9;
+                const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?14:9;
                 if(x<m.x+radius+3&&x+w>m.x-radius-3&&
                    y<m.y+radius+3&&y+h>m.y-radius-3)overlap=true;
             }
+            // The own-location bullseye uses a 35x35 white backing. Give it a
+            // few extra pixels so text and leader lines stay visually separate.
+            if(!overlap&&own_marker_reserved&&
+               x<own_marker_x+22&&x+w>own_marker_x-22&&
+               y<own_marker_y+22&&y+h>own_marker_y-22)
+                overlap=true;
             for(size_t j=0;j<occupied_count&&!overlap;++j)
                 if(x<occupied[j].x+occupied[j].w+5&&x+w+5>occupied[j].x&&
                    y<occupied[j].y+occupied[j].h+4&&y+h+4>occupied[j].y)
@@ -3654,7 +3675,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
-                const int hit_radius=marker.node_type==(uint8_t)UiNodeRole::Repeater?12:10;
+                const int hit_radius=marker.node_type==(uint8_t)UiNodeRole::Repeater?14:10;
                 if(abs(x-marker.x)<=hit_radius&&abs(y-marker.y)<=hit_radius&&
                    ui_data&&ui_data->open_map_node(marker.index)) {
                     details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
