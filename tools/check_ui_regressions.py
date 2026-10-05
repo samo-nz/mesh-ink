@@ -1080,7 +1080,7 @@ assert "const bool visible=ui_chat_is_visible(channel);" in source, "message not
 # Test47: LAST HEARD uses MeshCore's per-contact lastmod (our T5 clock), while
 # LAST ADVERT remains the remote advertisement timestamp.
 assert "format_last_heard(contact.lastmod,heard)" in runtime_source, "contact list LAST HEARD must use MeshCore lastmod"
-assert 'snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard)' in runtime_source, "contact list labels lastmod as heard activity"
+assert 'snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %.43s",role,heard)' in runtime_source, "contact list labels lastmod as heard activity with bounded formatting"
 assert "if(contact.lastmod)format_time(contact.lastmod,item.time)" in runtime_source, "contact list time column follows lastmod"
 assert "format_last_heard(detail_contact_.lastmod,self->detail_seen_)" in runtime_source, "node Overview LAST HEARD must use lastmod"
 assert "now>=detail_contact_.last_advert_timestamp" in runtime_source and "detail_advert_age_" in runtime_source, "LAST ADVERT remains based on last_advert_timestamp"
