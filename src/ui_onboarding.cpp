@@ -301,6 +301,37 @@ static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
+
+// Deep-sleep wake restores only the four real bottom-navigation tabs. Nested
+// pages intentionally collapse to their parent tab so wake always returns to
+// a stable place rather than recreating transient editor/detail state.
+static uint8_t retained_tab_for_screen(Screen value){
+    switch(value){
+        case Screen::Contacts:
+        case Screen::ContactChat:
+            return 1;
+        case Screen::ContactDetails:
+            return details_from_discovery?4:1;
+        case Screen::Channels:
+        case Screen::ChannelChat:
+            return 2;
+        case Screen::Maps:
+            return 3;
+        case Screen::Welcome:
+        case Screen::Presets:
+            return 1;
+        default:
+            return 4;
+    }
+}
+static Screen screen_for_retained_tab(uint8_t tab){
+    switch(tab){
+        case 2:return Screen::Channels;
+        case 3:return Screen::Maps;
+        case 4:return Screen::More;
+        default:return Screen::Contacts;
+    }
+}
 enum class NodeInfoPage:uint8_t{Overview=0,Status,Telemetry,Path};
 static bool node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}
 static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}
@@ -3756,6 +3787,11 @@ static void enter_standby(const char* reason){
     update_status_hardware();
     draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
     deep_sleep_pending=deep_sleep_standby;
+    if(deep_sleep_pending&&setup_complete){
+        const uint8_t retained_tab=retained_tab_for_screen(screen);
+        meshink_power_retain_ui_tab(retained_tab);
+        T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] retained top tab=%u\n",(unsigned)retained_tab);
+    }
     deep_sleep_retry_at=millis();
     if(deep_sleep_pending)Serial.println("[T5-DEEPSLEEP] standby screen committed; deep-sleep handoff armed after BOOT release");
 }
@@ -4027,7 +4063,9 @@ bool ui_promote_headless_to_interactive() {
     deep_sleep_pending=false;
     headless_ui_state=false;
     message_alert_active=false;
-    screen=setup_complete?Screen::Contacts:Screen::Welcome;
+    // ui_startup() already restored the retained top-level tab. Do not
+    // overwrite it when promoting a deep-sleep/headless runtime to interactive.
+    if(!setup_complete)screen=Screen::Welcome;
     keyboard_visible=!setup_complete;
     ui_finish_startup();
     Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing MeshCore runtime");
@@ -4114,7 +4152,14 @@ static void ui_load_persistent_state() {
         T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] generated first-setup device name: %s\n",node_name);
     }
 
-    screen=setup_complete?Screen::Contacts:Screen::Welcome;
+    uint8_t retained_tab=0;
+    const bool retained_tab_valid=meshink_power_take_retained_ui_tab(retained_tab);
+    screen=setup_complete
+        ?(retained_tab_valid?screen_for_retained_tab(retained_tab):Screen::Contacts)
+        :Screen::Welcome;
+    if(setup_complete&&retained_tab_valid)
+        T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] restored top tab=%u screen=%u\n",
+                  (unsigned)retained_tab,(unsigned)screen);
     keyboard_visible=!setup_complete;
 }
 
@@ -4203,19 +4248,29 @@ void ui_finish_startup() {
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
-    draw_screen();
-    if(screen==Screen::Welcome)
-        fast_full_redraw("FIRST_SETUP_SCREEN",false);
-    else if(screen==Screen::Contacts) {
-        // Existing-user boot transitions directly from the dark startup logo
-        // to Contacts. Force the same complete refresh as a short BOOT press
-        // so the splash cannot remain faintly visible in the panel history.
-        fast_full_redraw("CONTACTS_AFTER_BOOT",false);
-        // Startup can take longer than the saved light timeout. Start a fresh
-        // timeout only after Contacts is actually visible.
+    if(screen==Screen::Maps){
+        // A retained Maps tab has no live framebuffer after deep sleep. Rebuild
+        // the normal Maps view through its established loading/reveal path.
+        centre_map_on_device();
+        load_map_with_feedback(false);
         frontlight_event();
-    } else
-        refresh(MeshInkRefreshMode::FastGray16);
+    }else{
+        draw_screen();
+        if(screen==Screen::Welcome)
+            fast_full_redraw("FIRST_SETUP_SCREEN",false);
+        else if(screen==Screen::Contacts) {
+            // Existing-user boot transitions directly from the dark startup logo
+            // to Contacts. Force the same complete refresh as a short BOOT press
+            // so the splash cannot remain faintly visible in the panel history.
+            fast_full_redraw("CONTACTS_AFTER_BOOT",false);
+            // Startup can take longer than the saved light timeout. Start a fresh
+            // timeout only after Contacts is actually visible.
+            frontlight_event();
+        } else {
+            refresh(MeshInkRefreshMode::FastGray16);
+            if(setup_complete)frontlight_event();
+        }
+    }
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;status_bar_dirty=false;
