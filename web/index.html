@@ -15,7 +15,15 @@
       <div><p class="eyebrow">LILYGO T5 E-PAPER S3 PRO · ESP32-S3</p><h1>MeshInk <span>Web Flasher</span></h1></div>
     </header>
     <p class="intro">Connect your T5 with a USB data cable, then choose whether you’re updating MeshInk or installing it for the first time.</p>
-    <div class="status-line" id="site-status" role="status">Checking the latest GitHub release…</div>
+    <div class="status-line firmware-status">
+      <span id="site-status" role="status">Checking the latest GitHub release…</span>
+      <label class="source-select-label" for="firmware-source-select">Firmware</label>
+      <select id="firmware-source-select" aria-label="Firmware source">
+        <option value="release" selected>Latest release</option>
+        <option value="custom">Custom BIN file</option>
+      </select>
+      <input id="custom-file" class="hidden-file-input" type="file" accept=".bin,application/octet-stream" tabindex="-1" aria-hidden="true">
+    </div>
     <section class="panel" aria-labelledby="flash-heading">
       <h2 id="flash-heading">What would you like to do?</h2>
       <div class="choices" role="radiogroup" aria-label="Flashing mode">
@@ -27,24 +35,6 @@
           <input type="radio" name="mode" value="wipe">
           <span><strong>Install MeshInk</strong><small>Choose this to install MeshInk for the first time.</small></span>
         </label>
-      </div>
-      <div class="firmware-source">
-        <h3>Firmware source</h3>
-        <div class="source-choices" role="radiogroup" aria-label="Firmware source">
-          <label class="source-option">
-            <input type="radio" name="source" value="release" checked>
-            <span><strong>Latest published release</strong><small>Download and verify the firmware published on GitHub.</small></span>
-          </label>
-          <label class="source-option">
-            <input type="radio" name="source" value="custom">
-            <span><strong>Custom BIN file</strong><small>Flash a local MeshInk update or full-wipe image from this computer.</small></span>
-          </label>
-        </div>
-        <div class="custom-file" id="custom-file-row" hidden>
-          <label for="custom-file"><strong>Choose firmware BIN</strong></label>
-          <input id="custom-file" type="file" accept=".bin,application/octet-stream">
-          <small id="custom-file-help">Update images are written at 0x10000 without erasing stored data.</small>
-        </div>
       </div>
       <div class="actions">
         <button id="flash-button" type="button" disabled>Loading firmware…</button>
@@ -61,7 +51,7 @@
     <section class="panel" aria-labelledby="prepare-heading">
       <h2 id="prepare-heading">Before connecting</h2>
       <ol>
-        <li>Use desktop <strong>Chrome or Edge</strong> on a computer with Web Serial support. Close PlatformIO Serial Monitor and any other app using the board's USB port.</li>
+        <li>Use <strong>Chrome or Edge on desktop</strong>, or <strong>Chrome on Android</strong>. On Android, use a USB-C data cable and allow the browser to access the USB device. Close any app that claims the T5 USB connection.</li>
         <li>Connect the T5 with a <strong>data-capable USB cable</strong>. Choose the T5 USB serial port when prompted.</li>
         <li>If the flasher cannot connect, hold <strong>BOOT</strong>, briefly press <strong>RESET</strong>, then release BOOT and try again.</li>
         <li>Keep USB connected until flashing completes. Press RESET if the board does not restart automatically.</li>
