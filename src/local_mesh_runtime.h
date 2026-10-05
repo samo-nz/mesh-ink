@@ -11,6 +11,7 @@ void local_mesh_runtime_begin();
 void local_mesh_loop();
 UiDataProvider* local_mesh_provider();
 void local_mesh_refresh_ui_data();
+void local_mesh_receive_channel_from_core(uint8_t channel, uint32_t timestamp, const char* text, bool has_rf, int8_t snr_q4, uint8_t path_len);
 bool local_mesh_send_direct(size_t contact_index, const char* text);
 bool local_mesh_send_channel(size_t channel_index, const char* text);
 bool local_mesh_send_active(const char* text);

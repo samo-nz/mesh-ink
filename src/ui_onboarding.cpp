@@ -5,6 +5,7 @@
 #include "hardware/storage.h"
 #include "hardware/touch.h"
 #include "hardware/power.h"
+#include "hardware/performance.h"
 #include "hardware/buttons.h"
 #include "hardware/board.h"
 #include <esp_heap_caps.h>
@@ -12,11 +13,11 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
-#include <esp32-hal-cpu.h>
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
 #include "local_mesh_runtime.h"
+#include "companion_runtime.h"
 #include "map_tiles.h"
 #include "map_gestures.h"
 #include "ui_layout.h"
@@ -272,9 +273,16 @@ static bool touch_enabled=true;
 static bool standby_active=false;
 static bool hardware_failure=false;
 static uint8_t standby_timeout_index=1;
+static bool deep_sleep_standby=false;
+static bool deep_sleep_pending=false;
+static uint32_t deep_sleep_retry_at=0;
 static uint32_t last_user_activity=0;
 static bool status_wake_light=false;
 static bool message_alert_active=false;
+static bool headless_ui_state=false;
+static bool headless_alert_requested=false;
+static bool headless_display_session=false;
+static bool display_session_active=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
 static volatile bool quick_slider_dragging=false;
@@ -289,39 +297,43 @@ enum class Screen : uint8_t {
     Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
-static const char* timing_screen_name(){
-    switch(screen){
-        case Screen::Welcome:return "Welcome";
-        case Screen::Presets:return "Presets";
-        case Screen::CompanionConfirm:return "Companion";
-        case Screen::ShutdownConfirm:return "Shutdown";
-        case Screen::Contacts:return "Contacts";
-        case Screen::ContactChat:return "ContactChat";
-        case Screen::ContactDetails:return "NodeInfo";
-        case Screen::Channels:return "Channels";
-        case Screen::ChannelChat:return "ChannelChat";
-        case Screen::Maps:return "Maps";
-        case Screen::Discovery:return "Discovery";
-        case Screen::More:return "More";
-        case Screen::AdvertMenu:return "Advert";
-        case Screen::Diagnostics:return "Diagnostics";
-        case Screen::Settings:return "Settings";
-        case Screen::RadioSettings:return "RadioSettings";
-        case Screen::GpsSettings:return "GpsSettings";
-        case Screen::GpsTuning:return "GpsTuning";
-        case Screen::Timezone:return "Timezone";
-        case Screen::PrivacySettings:return "Privacy";
-        case Screen::DisplaySettings:return "DisplaySettings";
-        case Screen::NightSchedule:return "NightSchedule";
-        case Screen::Help:return "Help";
-        case Screen::About:return "About";
-        default:return "?";
-    }
-}
+static uint8_t retained_wake_tab=0;
+static bool retained_wake_tab_valid=false;
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
 static bool details_from_discovery=false;
 static uint8_t details_page=0;
+
+// Deep-sleep wake restores only the four real bottom-navigation tabs. Nested
+// pages intentionally collapse to their parent tab so wake always returns to
+// a stable place rather than recreating transient editor/detail state.
+static uint8_t retained_tab_for_screen(Screen value){
+    switch(value){
+        case Screen::Contacts:
+        case Screen::ContactChat:
+            return 1;
+        case Screen::ContactDetails:
+            return details_from_discovery?4:1;
+        case Screen::Channels:
+        case Screen::ChannelChat:
+            return 2;
+        case Screen::Maps:
+            return 3;
+        case Screen::Welcome:
+        case Screen::Presets:
+            return 1;
+        default:
+            return 4;
+    }
+}
+static Screen screen_for_retained_tab(uint8_t tab){
+    switch(tab){
+        case 2:return Screen::Channels;
+        case 3:return Screen::Maps;
+        case 4:return Screen::More;
+        default:return Screen::Contacts;
+    }
+}
 enum class NodeInfoPage:uint8_t{Overview=0,Status,Telemetry,Path};
 static bool node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}
 static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}
@@ -363,14 +375,14 @@ static size_t map_base_bytes=0;
 static bool map_base_valid=false;
 static double map_base_lat=0,map_base_lon=0;
 static uint8_t map_base_zoom=0;
-static MapRenderResult map_base_result{false,0,0,0,0,0,0};
+static MapRenderResult map_base_result{};
 static uint32_t map_base_media_epoch=0;
 // The own-position bullseye is drawn over the map, never stored in the
 // raster base cache. The last drawn screen position supports low-rate GPS
 // marker updates without refreshing the e-paper for every GPS sample.
 static bool map_device_marker_visible=false;
 static int map_device_marker_x=0,map_device_marker_y=0;
-struct MapMarkerHit {int16_t x,y;size_t index;};
+struct MapMarkerHit {int16_t x,y;size_t index;uint8_t node_type;};
 static MapMarkerHit map_marker_hits[50]{};
 static size_t map_marker_hit_count=0;
 static bool map_cache_hit() {
@@ -452,7 +464,7 @@ static void frontlight_preview(uint8_t level){
 }
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
 static void frontlight_service(){if(message_alert_active||quick_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
-static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
+static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putBool("deep_standby",deep_sleep_standby);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 // Keep the original five-field single-touch event compatible with all UI
 // screens. Maps alone can add a completed two-finger gesture and tap timing.
@@ -490,20 +502,20 @@ static uint32_t ui_post_render_cpu_target(){
 }
 
 static bool set_cpu_target(uint32_t mhz,const char* reason){
-    const bool accepted=setCpuFrequencyMhz(mhz);const uint32_t actual=getCpuFrequencyMhz();
+    const bool accepted=meshink_performance_set_cpu_mhz(mhz);const uint32_t actual=meshink_performance_cpu_mhz();
     if(!accepted||actual!=mhz)Serial.printf("[T5-ERROR] CPU target=%lu actual=%lu MHz reason=%s\n",(unsigned long)mhz,(unsigned long)actual,reason);
     return accepted&&actual==mhz;
 }
 
-struct T5CpuBoostScope {
+struct MeshInkCpuBoostScope {
     uint32_t previous_mhz;
     bool restore;
-    explicit T5CpuBoostScope(bool enabled,const char* reason):
-        previous_mhz(getCpuFrequencyMhz()),restore(false){
+    explicit MeshInkCpuBoostScope(bool enabled,const char* reason):
+        previous_mhz(meshink_performance_cpu_mhz()),restore(false){
         if(enabled&&previous_mhz<UI_RENDER_CPU_MHZ)
             restore=set_cpu_target(UI_RENDER_CPU_MHZ,reason);
     }
-    ~T5CpuBoostScope(){
+    ~MeshInkCpuBoostScope(){
         if(restore)set_cpu_target(previous_mhz,"ui-draw-complete");
     }
 };
@@ -650,7 +662,8 @@ static int ui_text_line_step(int scale) {
     return ui_smooth_font(scale).line_step;
 }
 static int ui_text_width_n(const char* s,size_t n,int scale) {
-    if(!s||!n)return 0;int width=0;
+    if(!s||!n)return 0;
+    int width=0;
     for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
     return width&&scale<3?width-scale:width;
 }
@@ -850,7 +863,8 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
         if(*cursor=='\n'){lines[line_count++]={cursor,0};++cursor;continue;}
         size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=1;
         lines[line_count++]={cursor,take};cursor+=take;
-        while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
+        while(*cursor==' ')++cursor;
+        if(*cursor=='\n')++cursor;
     }
     if(!line_count)return;
     const int glyph_height=ui_text_height(scale);
@@ -1244,7 +1258,11 @@ static void standby_centred(const char* value,const MeshInkUiRect& rect,int y,in
 
 static void draw_battery_icon(int x,int y,int level=-1) {
     meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect({x+31,y+11,4,8},0,fb);
-    if(level<0)level=status_battery;if(level>0){const int fill=(level*27)/100;meshink_display_fill_rect({x+2,y+8,fill,14},0,fb);}
+    if(level<0)level=status_battery;
+    if(level>0){
+        const int fill=(level*27)/100;
+        meshink_display_fill_rect({x+2,y+8,fill,14},0,fb);
+    }
     if(meshink_power_is_charging(status_charge_state)){
         meshink_display_fill_rect({x+10,y+6,14,17},0xFF,fb);
         // Wide, bold lightning bolt for the low-resolution status bar.
@@ -1253,7 +1271,7 @@ static void draw_battery_icon(int x,int y,int level=-1) {
 }
 
 static void draw_status_bar() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");
     const MeshInkUiLayout& layout=portrait_layout();
     const int status_height=layout.status_height;
     meshink_display_fill_rect({0,0,layout.width,status_height},0xFF,fb);
@@ -1268,29 +1286,35 @@ static void draw_status_bar() {
         else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
         else draw_search_icon(ui_x(6),ui_y(9));
         left=ui_x(46);
-        if(!standby_active&&status_gps_enabled&&status_gps_fix) {
+        // All numeric status values use the same primary face/size as the
+        // clock and battery percentage. If both unread classes are present,
+        // reserve the left half for their two counters and keep only the GPS
+        // state icon so the enlarged numbers cannot collide with the clock.
+        if(!standby_active&&status_gps_enabled&&status_gps_fix&&
+           !(status_unread&&status_channel_unread)) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
-            // Match the clock and battery percentage: the satellite count
-            // is primary status information, not compact secondary metadata.
             text(satellites,ui_x(43),ui_y(13),3,0,true);
-            left=ui_x(43)+(int)strlen(satellites)*18+ui_w(8);
+            left=ui_x(43)+ui_text_width(satellites,3)+ui_w(8);
         }
     }
     if(status_unread){
         draw_envelope_icon(left,ui_y(9));left+=ui_w(36);
         char count[5];compact_count(status_unread,count);
-        text(count,left,ui_y(17),2,0,true);
-        left+=(int)strlen(count)*12+ui_w(8);
+        text(count,left,ui_y(13),3,0,true);
+        left+=ui_text_width(count,3)+ui_w(6);
     }
     if(status_channel_unread){
         draw_channel_status_icon(left,ui_y(9));left+=ui_w(34);
         char count[5];compact_count(status_channel_unread,count);
-        text(count,left,ui_y(17),2,0,true);
+        text(count,left,ui_y(13),3,0,true);
     }
     char clock_text[8];
-    if(status_hour>=0)snprintf(clock_text,sizeof(clock_text),"%02d:%02d",status_hour,status_minute);
-    else snprintf(clock_text,sizeof(clock_text),"--:--");
+    if(status_hour>=0&&status_minute>=0){
+        const int safe_hour=max(0,min(23,(int)status_hour));
+        const int safe_minute=max(0,min(59,(int)status_minute));
+        snprintf(clock_text,sizeof(clock_text),"%02d:%02d",safe_hour,safe_minute);
+    }else snprintf(clock_text,sizeof(clock_text),"--:--");
     centred(clock_text,ui_y(13),3,0,true);
     char battery[8];
     if(status_battery>=0)snprintf(battery,sizeof(battery),"%d%%",status_battery);
@@ -1316,7 +1340,7 @@ static MeshInkRect toast_message_rect(const char* message) {
     return {(portrait_layout().width-w)/2,ui_y(640),w,ui_h(72)};
 }
 static void draw_toast_message(const char* message) {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");
     const int scale=3,r=ui_w(12);
     const MeshInkRect rect=toast_message_rect(message);
     rounded_fill(rect.x,rect.y,rect.width,rect.height,r,0);
@@ -1477,8 +1501,24 @@ static void thick_rect(int x,int y,int w,int h){
 }
 static void draw_node_role_icon(uint8_t type,int x,int y){
     if(type==(uint8_t)UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
-    else if(type==(uint8_t)UiNodeRole::Repeater){meshink_display_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);meshink_display_fill_rect({x+7,y+28,15,5},0,fb);}
-    else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);meshink_display_fill_rect({x+8,y+8,5,5},0,fb);meshink_display_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
+    else if(type==(uint8_t)UiNodeRole::Repeater){
+        // Radio tower: tapered mast plus two signal arcs on each side.
+        meshink_display_fill_rect({x+12,y+5,5,6},0,fb);
+        thick_line(x+14,y+8,x+8,y+30);thick_line(x+14,y+8,x+20,y+30);
+        thick_line(x+8,y+30,x+20,y+30);line(x+10,y+22,x+18,y+22);line(x+11,y+17,x+17,y+17);
+        thick_line(x+10,y+7,x+6,y+10);thick_line(x+6,y+10,x+6,y+16);thick_line(x+6,y+16,x+10,y+19);
+        thick_line(x+18,y+7,x+22,y+10);thick_line(x+22,y+10,x+22,y+16);thick_line(x+22,y+16,x+18,y+19);
+        thick_line(x+6,y+4,x+1,y+8);thick_line(x+1,y+8,x+1,y+18);thick_line(x+1,y+18,x+6,y+22);
+        thick_line(x+22,y+4,x+27,y+8);thick_line(x+27,y+8,x+27,y+18);thick_line(x+27,y+18,x+22,y+22);
+    }
+    else if(type==(uint8_t)UiNodeRole::Room){
+        // Simple house silhouette: peaked roof, square body, one window and door.
+        thick_line(x+2,y+14,x+14,y+3);thick_line(x+14,y+3,x+26,y+14);
+        thick_line(x+5,y+12,x+5,y+31);thick_line(x+23,y+12,x+23,y+31);
+        thick_line(x+5,y+31,x+23,y+31);
+        meshink_display_fill_rect({x+9,y+16,5,5},0,fb);
+        thick_rect(x+15,y+21,6,10);
+    }
     else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
     else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
 }
@@ -1586,18 +1626,34 @@ static void draw_channels() {
     draw_bottom_nav(1);
 }
 
-// Node positions are stable; only the labels move to avoid collisions.
+// Bold radio-tower marker for repeaters. Keep it deliberately simple so the
+// symbol survives DU refresh and remains obvious when scanning coverage.
+static void draw_map_repeater_marker(int x,int y) {
+    meshink_display_fill_rect({x-13,y-14,27,29},0xFF,fb);
+    // Heavy mast / tripod.
+    meshink_display_fill_rect({x-2,y-8,5,15},0,fb);
+    thick_line(x,y-5,x-7,y+11);thick_line(x,y-5,x+7,y+11);
+    meshink_display_fill_rect({x-8,y+9,17,4},0,fb);
+    // Two bold broadcast arcs per side, with a deliberate white gap around
+    // the tower legs/base so the radio waves remain visually separate.
+    thick_line(x-5,y-7,x-9,y-4);thick_line(x-9,y-4,x-9,y+1);thick_line(x-9,y+1,x-8,y+3);
+    thick_line(x+5,y-7,x+9,y-4);thick_line(x+9,y-4,x+9,y+1);thick_line(x+9,y+1,x+8,y+3);
+    thick_line(x-9,y-10,x-12,y-7);thick_line(x-12,y-7,x-12,y+3);thick_line(x-12,y+3,x-10,y+6);
+    thick_line(x+9,y-10,x+12,y-7);thick_line(x+12,y-7,x+12,y+3);thick_line(x+12,y+3,x+10,y+6);
+}
+
+static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy);
+
+// Node positions are stable; labels are ranked and moved around them.  Keep the
+// solver intentionally bounded: at most 50 markers and 12 candidates per label.
 static void draw_map_nodes() {
     map_marker_hit_count=0;
     if(!ui_data)return;
+    const MeshInkUiLayout& layout=portrait_layout();
     const double world=256.0*(1U<<map_zoom);
     const double centre_x=(map_longitude+180.0)/360.0*world;
     const double rad=map_latitude*PI/180.0;
     const double centre_y=(1.0-log(tan(rad)+1.0/cos(rad))/PI)*world/2.0;
-    // Keep only projected marker coordinates in the existing global hit array.
-    // The previous implementation copied up to 50 complete UiMapNode records
-    // onto loopTask's stack (~several KB) while Maps was already the deepest
-    // UI rendering path. Fetch node details again only when drawing labels.
     size_t count=0;
     for(size_t i=0;i<ui_data->map_node_count()&&count<50;++i) {
         UiMapNode node{};if(!ui_data->map_node(i,node))continue;
@@ -1608,55 +1664,151 @@ static void draw_map_nodes() {
         const double lat=node.latitude/1000000.0,r=lat*PI/180.0;
         const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
         const int sx=(int)lround(map_centre_x()+delta_x),sy=(int)lround(map_centre_y()+y-centre_y);
-        if(sx<7||sx>portrait_layout().width-7||sy<map_top()+7||sy>map_bottom()-7)continue;
-        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};
+        if(sx<11||sx>layout.width-11||sy<map_top()+11||sy>map_bottom()-11)continue;
+        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.node_type};
     }
+
     struct Bounds {int16_t x,y,w,h;};
+    struct RankedLabel {uint8_t marker;int32_t score;};
     Bounds occupied[50]{};size_t occupied_count=0;
+    RankedLabel ranked[50]{};
     const uint32_t now=(uint32_t)time(nullptr);
+
+    // Requested GPS positions and repeaters matter most.  Recency and screen
+    // centre then make the remaining greedy choices deterministic and useful.
     for(size_t i=0;i<count;++i) {
-        const auto& n=map_marker_hits[i];
+        const auto& marker=map_marker_hits[i];
+        UiMapNode node{};if(!ui_data->map_node(marker.index,node))continue;
+        int32_t score=0;
+        if(node.gps_from_reply)score+=4000000;
+        if(node.node_type==(uint8_t)UiNodeRole::Repeater)score+=3000000;
+        if(node.advertised_at&&now>=node.advertised_at) {
+            const uint32_t age=min((uint32_t)1000000,now-node.advertised_at);
+            score+=(int32_t)(1000000-age);
+        }
+        const int centre_distance=abs(marker.x-map_centre_x())+abs(marker.y-map_centre_y());
+        score+=max(0,100000-centre_distance*100);
+        ranked[i]={(uint8_t)i,score};
+    }
+    for(size_t i=1;i<count;++i) {
+        const RankedLabel key=ranked[i];size_t j=i;
+        while(j&&ranked[j-1].score<key.score){ranked[j]=ranked[j-1];--j;}
+        ranked[j]=key;
+    }
+
+    // Deliberately thin labels as the viewport covers more territory. Important
+    // GPS/repeater labels may exceed the normal budget when collision-free.
+    const size_t label_budget=map_zoom<=7?6:map_zoom<=9?10:map_zoom<=11?16:map_zoom<=13?24:40;
+    const bool compact_labels=map_zoom<=10;
+    size_t labels_drawn=0;
+    const int label_bottom=ui_y(766);
+
+    // Reserve the exact own-location bullseye before solving labels. The marker
+    // is drawn after labels, so without this reservation it can erase text.
+    int own_marker_x=0,own_marker_y=0;
+    bool own_marker_reserved=false;
+    long own_latitude=0,own_longitude=0;bool own_current_fix=false;
+    if(map_device_position(own_latitude,own_longitude,own_current_fix)&&
+       project_device_on_map(own_latitude,own_longitude,own_marker_x,own_marker_y)&&
+       own_marker_x>=20&&own_marker_x<=layout.width-20&&
+       own_marker_y>=map_top()+20&&own_marker_y<=map_bottom()-21)
+        own_marker_reserved=true;
+
+    for(size_t order=0;order<count;++order) {
+        const auto& n=map_marker_hits[ranked[order].marker];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
+        const bool important=node.gps_from_reply||node.node_type==(uint8_t)UiNodeRole::Repeater;
+        if(labels_drawn>=label_budget&&!important)continue;
+
         char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
-        char age[16];
+        char age[16]{};
         if(node.gps_from_reply){
-            // This is when our T5 RECEIVED GPS telemetry, not the remote fix time.
             const uint32_t seconds=(uint32_t)(millis()-node.gps_received_millis)/1000U;
             if(seconds<3600)snprintf(age,sizeof(age),"GPS %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"GPS %luh",(unsigned long)(seconds/3600));
             else snprintf(age,sizeof(age),"GPS %lud",(unsigned long)(seconds/86400));
         }else if(!node.advertised_at||now<node.advertised_at)strcpy(age,"ADV ?");
-        else {const uint32_t seconds=now-node.advertised_at;
+        else {
+            const uint32_t seconds=now-node.advertised_at;
             if(seconds<3600)snprintf(age,sizeof(age),"ADV %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"ADV %luh",(unsigned long)(seconds/3600));
-            else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));}
-        const int w=min(230,max(48,max(ui_text_width(short_name,2),ui_text_width(age,2))+8));
-        const int offsets[4][2]={{12,-18},{-12-w,-18},{12,12},{-12-w,12}};
-        int lx=0,ly=0;bool placed=false;
-        const int label_bottom=ui_y(766);
-        for(const auto& offset:offsets) {
-            const int x=n.x+offset[0],y=n.y+offset[1];
-            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>label_bottom)continue;
+            else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));
+        }
+        const int h=compact_labels?18:34;
+        const int text_w=compact_labels?ui_text_width(short_name,2):
+            max(ui_text_width(short_name,2),ui_text_width(age,2));
+        const int w=min(230,max(48,text_w+8));
+
+        int best_x=0,best_y=0,best_cost=0x7fffffff;
+        for(uint8_t candidate=0;candidate<12;++candidate) {
+            int x=0,y=0;
+            switch(candidate){
+                case 0:x=n.x+14;y=n.y-h/2;break;
+                case 1:x=n.x-14-w;y=n.y-h/2;break;
+                case 2:x=n.x-w/2;y=n.y-14-h;break;
+                case 3:x=n.x-w/2;y=n.y+14;break;
+                case 4:x=n.x+12;y=n.y-12-h;break;
+                case 5:x=n.x-12-w;y=n.y-12-h;break;
+                case 6:x=n.x+12;y=n.y+12;break;
+                case 7:x=n.x-12-w;y=n.y+12;break;
+                case 8:x=n.x+28;y=n.y-h/2;break;
+                case 9:x=n.x-28-w;y=n.y-h/2;break;
+                case 10:x=n.x-w/2;y=n.y-28-h;break;
+                default:x=n.x-w/2;y=n.y+28;break;
+            }
+            if(x<3||x+w>layout.width-3||y<map_top()+3||y+h>label_bottom)continue;
+
             bool overlap=false;
             for(size_t control=0;control<3&&!overlap;++control){
-                const MeshInkUiRect r=meshink_map_control_rect(portrait_layout(),(int)control);
-                if(x<r.x+r.width+4&&x+w+4>r.x&&y<r.y+r.height+4&&y+38>r.y)overlap=true;
+                const MeshInkUiRect r=meshink_map_control_rect(layout,(int)control);
+                if(x<r.x+r.width+5&&x+w+5>r.x&&y<r.y+r.height+5&&y+h+5>r.y)overlap=true;
             }
-            for(size_t j=0;j<occupied_count&&!overlap;++j)if(x<occupied[j].x+occupied[j].w+4&&
-                x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
+            // Protect every true node position, not just labels already placed.
+            for(size_t j=0;j<count&&!overlap;++j){
+                const auto& m=map_marker_hits[j];
+                const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?14:9;
+                if(x<m.x+radius+3&&x+w>m.x-radius-3&&
+                   y<m.y+radius+3&&y+h>m.y-radius-3)overlap=true;
+            }
+            // The own-location bullseye uses a 35x35 white backing. Give it a
+            // few extra pixels so text and leader lines stay visually separate.
+            if(!overlap&&own_marker_reserved&&
+               x<own_marker_x+22&&x+w>own_marker_x-22&&
+               y<own_marker_y+22&&y+h>own_marker_y-22)
                 overlap=true;
-            if(!overlap){lx=x;ly=y;placed=true;break;}
+            for(size_t j=0;j<occupied_count&&!overlap;++j)
+                if(x<occupied[j].x+occupied[j].w+5&&x+w+5>occupied[j].x&&
+                   y<occupied[j].y+occupied[j].h+4&&y+h+4>occupied[j].y)
+                    overlap=true;
+            if(overlap)continue;
+
+            int cost=(candidate<8?candidate:20+candidate)*20;
+            const int edge=min(min(x,layout.width-(x+w)),
+                               min(y-map_top(),label_bottom-(y+h)));
+            if(edge<12)cost+=(12-edge)*8;
+            if(cost<best_cost){best_cost=cost;best_x=x;best_y=y;}
         }
-        if(!placed)continue; // Keep the true-position dot even if labels collide.
-        occupied[occupied_count++]={(int16_t)lx,(int16_t)ly,(int16_t)w,34};
-        meshink_display_fill_rect({lx,ly,w,34},0xFF,fb);
-        ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);
-        ui_text_fit(age,lx+4,ly+18,w-ui_w(8),2,0,true);
+        if(best_cost==0x7fffffff)continue;
+
+        // A short leader keeps displaced labels visually tied to their marker.
+        const int target_x=max(best_x,min((int)n.x,best_x+w-1));
+        const int target_y=max(best_y,min((int)n.y,best_y+h-1));
+        thick_line(n.x,n.y,target_x,target_y);
+        meshink_display_fill_rect({best_x,best_y,w,h},0xFF,fb);
+        ui_text_fit(short_name,best_x+4,best_y+2,w-ui_w(8),2,0,true);
+        if(!compact_labels)ui_text_fit(age,best_x+4,best_y+18,w-ui_w(8),2,0,true);
+        occupied[occupied_count++]={(int16_t)best_x,(int16_t)best_y,(int16_t)w,(int16_t)h};
+        ++labels_drawn;
     }
-    // Always draw position dots last so a neighbouring label cannot move or
-    // obscure a marker. Each circle has a white halo for contrast.
+
+    // Draw true positions last. Ordinary nodes remain dots; repeaters get the
+    // radio-tower glyph so they stand out immediately when assessing coverage.
     for(size_t i=0;i<count;++i) {
         const auto& n=map_marker_hits[i];
+        if(n.node_type==(uint8_t)UiNodeRole::Repeater){
+            draw_map_repeater_marker(n.x,n.y);
+            continue;
+        }
         meshink_display_fill_rect({n.x-6,n.y-6,13,13},0xFF,fb);
         for(int dy=-4;dy<=4;++dy) {
             const int half=abs(dy)==4?1:abs(dy)==3?3:4;
@@ -1665,7 +1817,6 @@ static void draw_map_nodes() {
     }
     map_marker_hit_count=count;
 }
-
 // Convert a GPS position to the same screen projection as map node markers.
 static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy) {
     if(latitude<-85051100L||latitude>85051100L||
@@ -1721,7 +1872,10 @@ static void draw_maps() {
         map_base_valid=false;
         map_base_media_epoch=media_epoch;
     }
-    MapRenderResult result{media_ready,0,0,0,0,map_zoom,map_zoom};
+    MapRenderResult result{};
+    result.sd_ready=media_ready;
+    result.min_source_zoom=map_zoom;
+    result.max_source_zoom=map_zoom;
     if(media_ready&&map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
@@ -1847,7 +2001,9 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
-    const MessageBubbleGeometry geometry={x,width,height,text_width};
+    const MessageBubbleGeometry geometry={
+        (int16_t)x,(int16_t)width,(int16_t)height,(int16_t)text_width
+    };
     return geometry;
 }
 
@@ -1872,10 +2028,6 @@ static MessageBubbleGeometry chat_message_geometry(size_t index){
         chat_geometry_cache.valid[index]=1;
     }
     return chat_geometry_cache.geometry[index];
-}
-
-static int message_bubble_height(const UiMessage& message){
-    return message_bubble_geometry(message).height;
 }
 
 static void draw_message_bubble(const UiMessage& message,int y,
@@ -2040,7 +2192,7 @@ static void draw_chat(bool channel) {
 }
 
 static void draw_message_entry_fast() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");
     // Typing does not change the chat history. Avoid rebuilding the status
     // bar, message bubbles and bottom navigation for every character.
     const auto metrics=keyboard_metrics(false);
@@ -2141,7 +2293,7 @@ static void draw_contact_details() {
                 ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2;
             ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),
                             layout.section_width,telemetry_scale,0,true,4);
-            ui_text("POSITION",layout.section_margin,ui_y(420),2,0,true);
+            ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);
             const int telemetry_position_y=ui_y(454);
             const int telemetry_position_lines=min(
                 2,ui_wrapped_line_count(node.position,layout.section_width,3));
@@ -2291,7 +2443,7 @@ static void draw_radio_settings() {
 }
 
 static void draw_radio_name_fast() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
     settings_row("NODE NAME",node_name,120);
 }
 
@@ -2370,7 +2522,9 @@ static void draw_display_settings() {
     meshink_display_fill_rect({knob-ui_w(12),slider.y-ui_h(15),ui_w(24),ui_h(35)},0,fb);
     ui_text("-",layout.content_text_x,ui_y(452),3,0,true);
     ui_text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
-    settings_row("STANDBY TIMEOUT",standby_timeout_name(),538);
+    settings_row("STANDBY",standby_timeout_name(),538);
+    ui_action_button(deep_sleep_standby?"DEEP SLEEP":"NORMAL",
+                     meshink_settings_inline_action_rect(layout,538),true);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
     ui_action_button("SHUT DOWN",shutdown,false);
@@ -2418,7 +2572,7 @@ static void draw_meshink_logo(int top,bool compact=false);
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);
-    draw_status_bar();
+    if(!deep_sleep_standby)draw_status_bar();
 
     const bool has_direct=status_unread>0;
     const bool has_channel=status_channel_unread>0;
@@ -2464,9 +2618,16 @@ static void draw_standby(){
         standby_centred("MESSAGES",channel_rect,channel_rect.y+ui_h(260),3);
     }
 
-    // STANDBY is part of the at-rest identity rather than small helper copy.
-    // Move it beneath unread cards when present; otherwise use the open centre.
-    ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);
+    // Deep-sleep standby has its own at-rest identity and deliberately omits
+    // the normal status bar. Keep the state label in the same movable region
+    // as ordinary STANDBY so future unread-card layout changes can shift the
+    // whole treatment rather than relying on fixed status-bar coordinates.
+    const int standby_state_y=any_unread?ui_y(775):ui_y(620);
+    if(deep_sleep_standby)
+        ui_centred_fit("DEEP SLEEP STANDBY",standby_state_y,
+                       portrait_layout().width-ui_w(32),4,0,true);
+    else
+        ui_centred("STANDBY",standby_state_y,5,0,true);
 
     // Keep the wake instruction low on the panel and make it readable at a
     // glance. Scale 3 uses the smooth Inter renderer; two lines avoid squeezing.
@@ -2560,7 +2721,7 @@ static void draw_underlying_screen() {
 }
 
 static void draw_quick_panel() {
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");
     draw_underlying_screen();
 
     const MeshInkUiLayout& layout=portrait_layout();
@@ -2687,7 +2848,7 @@ static void draw_screen() {
     // 240 MHz only while drawing, then restores the previous clock before the
     // caller decides whether to refresh the panel. Small standalone draw paths
     // (keyboard/status/quick panel/toasts) use the same short boost.
-    T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");
     // Standby must take precedence over every transient/landscape UI layer.
     if(standby_active){
         draw_standby();
@@ -2725,6 +2886,7 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     // for normal updates; the 1.3.24 device test confirmed it prevents the
     // terrain fading seen after GC16. BOOT on Maps uses DU as well.
     const MeshInkRefreshMode requested_mode=mode;
+    (void)requested_mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh");
@@ -2735,13 +2897,14 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     meshink_display_poweroff();
     set_cpu_target(ui_post_render_cpu_target(),"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
-        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)getCpuFrequencyMhz());
+        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)meshink_performance_cpu_mhz());
 }
 
 static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_light=true) {
     const uint32_t started=millis();
     if(wake_light&&!standby_active)frontlight_event();
     const MeshInkRefreshMode requested_mode=mode;
+    (void)requested_mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh");
@@ -2796,7 +2959,7 @@ static void reveal_map_after_black_prep(const char* reason,bool wake_light=false
 // Display the saved previous map underneath the same toast used for saved
 // settings. Never decode the requested tiles before the progress notification
 // has appeared on the physical e-paper screen.
-static void load_map_with_feedback(bool already_on_map) {
+static void load_map_with_feedback(bool already_on_map,bool force_complete_first_frame=false) {
     if(!already_on_map) {
         // Opening Maps from another tab: restore the previously rendered
         // terrain if available. On first-ever entry show the Maps shell
@@ -2815,6 +2978,11 @@ static void load_map_with_feedback(bool already_on_map) {
     draw_toast_message("Loading..");
     if(already_on_map)
         refresh_area(MeshInkRefreshMode::Direct,toast_message_rect("Loading.."));
+    else if(force_complete_first_frame)
+        // Deep-sleep wake may reuse a framebuffer whose EPDiy back-buffer does
+        // not describe the physically retained standby image. Prepare the full
+        // Loading frame first, then force that completed frame directly.
+        fast_full_redraw("MAP_LOADING_AFTER_DEEP_WAKE",false);
     else
         refresh(MeshInkRefreshMode::Direct);
 
@@ -2829,13 +2997,6 @@ static void load_map_with_feedback(bool already_on_map) {
     // This preserves the stable black->map DU transition that prevents
     // progressive darkening of unchanged terrain on repeated map updates.
     reveal_map_after_black_prep("MAP_BLACK_PREP_COMPLETE",false);
-}
-
-static void full_display_clean(const char* reason) {
-    T5_DEBUGF(T5_LOG_UI,"[T5-EPD] full GC16 redraw requested by %s standby=%d\n",reason,standby_active);
-    draw_screen();
-    force_redraw(MeshInkRefreshMode::Gray16,reason,false);
-    T5_DEBUGLN(T5_LOG_UI,"[T5-EPD] full GC16 UI redraw complete; buffers synchronized");
 }
 
 static void set_touch_power(bool enabled);
@@ -2859,6 +3020,64 @@ static void request_hardware_shutdown() {
     SPIFFS.end();
     T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
+}
+
+[[noreturn]] void ui_minimal_low_battery_shutdown(
+        const MeshInkPowerCriticalState& critical,const char* source) {
+    if(critical.battery_mv_valid)
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; minimal low-battery shutdown\n",
+                      (unsigned)critical.battery_mv,source?source:"unknown");
+    else
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\n",
+                      source?source:"unknown");
+
+    // No touch, storage, GPS or MeshCore startup here. Bring up only the
+    // frontlight pin (kept at zero) and EPD long enough to leave persistent
+    // user guidance before board-level ship mode removes battery power.
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(0);
+    meshink_display_init();
+    meshink_display_set_orientation(MeshInkOrientation::Portrait);
+    display=meshink_display_state_init();
+    fb=meshink_display_framebuffer(&display);
+
+    if(fb){
+        meshink_display_set_all_white(&display);
+        ui_centred("LOW BATTERY",ui_y(230),6,0,true);
+        ui_centred("POWERED DOWN",ui_y(340),5,0,true);
+        ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
+        if(critical.battery_mv_valid){
+            char voltage[20];
+            snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
+                     (unsigned)(critical.battery_mv/1000U),
+                     (unsigned)((critical.battery_mv%1000U)/10U));
+            ui_centred(voltage,ui_y(650),2,0,true);
+        }else{
+            ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
+        }
+        ui_centred(UI_VERSION,ui_y(900),2,0,true);
+        meshink_display_poweron();
+        const MeshInkDisplayResult result=meshink_display_update_screen(
+            &display,MeshInkRefreshMode::FastGray16,
+            (int)meshink_display_ambient_temperature());
+        meshink_display_poweroff();
+        Serial.printf("[T5-DEEPSLEEP] minimal low-battery EPD result=%d\n",(int)result);
+    }else{
+        meshink_display_poweroff();
+        Serial.println("[T5-DEEPSLEEP] minimal low-battery framebuffer unavailable");
+    }
+
+    meshink_display_release_state(&display);
+    fb=nullptr;
+    meshink_display_deinit();
+
+    // EPDiy v7 teardown deletes the shared I2C driver. Re-establish only the
+    // minimal bus before commanding board-level battery ship mode; otherwise the
+    // charger write would fail and low-battery shutdown would degrade to the
+    // ESP32-only deep-sleep fallback.
+    if(!meshink_power_begin_minimal_bus())
+        Serial.println("[T5-ERROR] low-battery ship-mode I2C restart failed");
+    meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
 
 static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
@@ -3152,10 +3371,6 @@ static bool hit_header_action(int16_t x,int16_t y) {
 static bool hit_outer_row(int16_t x,int16_t y,int reference_top,int reference_height=112) {
     return hit(x,y,meshink_outer_row_rect(portrait_layout(),reference_top,reference_height));
 }
-static bool hit_section_row(int16_t x,int16_t y,int reference_top,int reference_height) {
-    return hit(x,y,meshink_section_row_rect(portrait_layout(),reference_top,reference_height));
-}
-
 static void open_screen(Screen next,bool preserve_map_centre=false) {
     // Opening Maps normally goes to our current or last known GPS location.
     // A node's explicit "OPEN POSITION ON MAP" uses preserve_map_centre=true
@@ -3199,7 +3414,6 @@ static void zoom_map_around(int steps,int anchor_x,int anchor_y) {
     open_screen(Screen::Maps);
 }
 
-static void persist_unread(){Preferences state;if(state.begin("t5-ui",false)){state.putUShort("unread_dm",status_unread);state.putUShort("unread_ch",status_channel_unread);state.end();}}
 static void queue_text_refresh(){
     // Throttle/coalesce rather than debounce. The first character schedules
     // the next paint; later characters join it instead of pushing it farther
@@ -3381,7 +3595,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                               !keyboard_visible&&chat_page==0;
-    if((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat||chat_main_page)&&
+    if(((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
        y>=portrait_layout().bottom_nav_top){
         const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
@@ -3394,7 +3608,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){status_unread=local_mesh_direct_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
+                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
                 }
             }
             break;
@@ -3407,7 +3621,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){status_channel_unread=local_mesh_channel_unread_total();persist_unread();reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
+                        portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
                 }
             }
             break;
@@ -3462,7 +3676,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
-                if(abs(x-marker.x)<=10&&abs(y-marker.y)<=10&&ui_data&&ui_data->open_map_node(marker.index)) {
+                const int hit_radius=marker.node_type==(uint8_t)UiNodeRole::Repeater?14:10;
+                if(abs(x-marker.x)<=hit_radius&&abs(y-marker.y)<=hit_radius&&
+                   ui_data&&ui_data->open_map_node(marker.index)) {
                     details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
                 }
             }
@@ -3547,10 +3763,30 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,356)){open_screen(Screen::Timezone);return true;}break;
         case Screen::Timezone:
             if(hit_header_back(x,y)){open_screen(Screen::GpsTuning);return true;}
-            for(uint8_t i=0;i<TIMEZONE_COUNT;++i)if(hit_outer_row(x,y,118+i*102,92)){timezone_index=i;apply_timezone();prefs.begin("t5-ui",false);prefs.putUChar("timezone",timezone_index);prefs.end();show_toast("TIMEZONE SAVED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}break;
+            for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
+                if(!hit_outer_row(x,y,118+i*102,92))continue;
+                timezone_index=i;
+                apply_timezone();
+                prefs.begin("t5-ui",false);
+                prefs.putUChar("timezone",timezone_index);
+                prefs.end();
+                show_toast("TIMEZONE SAVED");
+                draw_screen();
+                refresh(MeshInkRefreshMode::FastGray16);
+                return true;
+            }
+            break;
         case Screen::PrivacySettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
-            for(uint8_t i=0;i<6;++i)if(hit_outer_row(x,y,130+i*118)){local_mesh_toggle_privacy(i);show_toast("SETTING SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}return true;
+            for(uint8_t i=0;i<6;++i){
+                if(!hit_outer_row(x,y,130+i*118))continue;
+                local_mesh_toggle_privacy(i);
+                show_toast("SETTING SAVED");
+                draw_screen();
+                refresh(MeshInkRefreshMode::Direct);
+                return true;
+            }
+            return true;
         case Screen::DisplaySettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&
@@ -3563,6 +3799,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 const MeshInkUiRect slider=meshink_display_slider_track_rect(portrait_layout());
                 int value=((int)x-slider.x)*100/slider.width;
                 frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),538))){deep_sleep_standby=!deep_sleep_standby;save_frontlight_settings();show_toast(deep_sleep_standby?"DEEP SLEEP ON":"NORMAL STANDBY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit(x,y,meshink_shutdown_rect(portrait_layout()))){
@@ -3685,10 +3922,25 @@ static void enter_standby(const char* reason){
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
     draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
+    deep_sleep_pending=deep_sleep_standby;
+    if(deep_sleep_pending&&setup_complete){
+        const uint8_t retained_tab=retained_tab_for_screen(screen);
+        meshink_power_retain_ui_tab(retained_tab);
+        T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] retained top tab=%u\n",(unsigned)retained_tab);
+    }
+    deep_sleep_retry_at=millis();
+    if(deep_sleep_pending)Serial.println("[T5-DEEPSLEEP] standby screen committed; deep-sleep handoff armed after BOOT release");
 }
 
 static void leave_standby(){
-    if(!standby_active)return;set_touch_power(true);standby_active=false;last_user_activity=millis();message_alert_active=false;meshink_power_frontlight_set(0);frontlight_lit=false;
+    if(!standby_active)return;
+    deep_sleep_pending=false;
+    set_touch_power(true);
+    standby_active=false;
+    last_user_activity=millis();
+    message_alert_active=false;
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
     if(standby_restore_landscape){
         standby_restore_landscape=false;
         keyboard_landscape=true;
@@ -3733,6 +3985,11 @@ static void service_message_alert(){
         default:
             meshink_power_frontlight_set(0);frontlight_lit=false;frontlight_deadline=0;
             update_status_hardware();
+            // Every headless message processed before this point is represented
+            // by the standby redraw below. Clear the pending bit immediately
+            // before the synchronous GC16 update; a packet processed after the
+            // redraw will set it again and request another alert session.
+            if(headless_ui_state)headless_alert_requested=false;
             draw_screen();force_redraw(MeshInkRefreshMode::Gray16,"MESSAGE_ALERT_RESTORE",false);
             status_dirty=false;status_bar_dirty=false;message_alert_active=false;message_alert_cooldown_until=millis()+3000;
             break;
@@ -3772,31 +4029,215 @@ static void service_primary_button(){
     }pressed_at=0;handled=false;}
 }
 
-void ui_setup() {
-    ui_boot_cpu_active=true;
-    set_cpu_target(UI_RENDER_CPU_MHZ,"boot-ui-start");
-    // unified_main has already started USB CDC before entering the local UI
-    // path. Keep begin() here for the standalone UI target, but do not burn a
-    // fixed 200 ms delay before useful boot work.
-    Serial.begin(115200);
-    T5_DEBUGF(T5_LOG_UI,"[T5-UI] onboarding %s boot heap=%u psram=%u; Bluetooth disabled\n",UI_VERSION,ESP.getFreeHeap(),ESP.getFreePsram());
-    meshink_buttons_begin();
-    // Stay off until preferences have been loaded. The splash refresh then
-    // uses the saved brightness or the new 30% first-install default.
-    meshink_power_frontlight_begin();
-    meshink_touch_prepare_boot();
-    meshink_display_init();
-    // EPDiy has now established the shared board/I2C environment. Start the
-    // LoRa/GPS rail before framebuffer, preferences and splash rendering so
-    // those operations overlap its required settling time.
-    meshink_board_start_local_radio_settle();
-    set_ui_orientation(MeshInkOrientation::Portrait);
-    Serial.println("[T5-INIT] display=initialized");
-    meshink_power_recover_boot_path();
-    meshink_touch_finish_boot();
-    Serial.println("[T5-INIT] touch=initialized");
-    display=meshink_display_state_init();fb=meshink_display_framebuffer(&display);
-    prefs.begin("t5-ui",true);String saved_name=prefs.getString("name","");selected_preset=prefs.getUChar("preset_v2",17);setup_complete=prefs.getBool("complete",false);timezone_index=prefs.getUChar("timezone",0);status_unread=prefs.getUShort("unread_dm",0);status_channel_unread=prefs.getUShort("unread_ch",0);
+static void ui_close_headless_display_session() {
+    if(!headless_display_session)return;
+    message_alert_active=false;
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
+    frontlight_deadline=0;
+    if(fb){
+        meshink_display_release_state(&display);
+        fb=nullptr;
+    }
+    meshink_display_deinit();
+    display_session_active=false;
+    headless_display_session=false;
+    ui_boot_cpu_active=false;
+    set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle");
+    Serial.println("[T5-DEEPSLEEP] headless display session fully closed");
+}
+
+void ui_quiesce_display_for_deep_sleep() {
+    // Keep the high-level EPDiy session/framebuffer initialized through the
+    // final race window so an arriving message can still redraw immediately.
+    // The physical panel HV and frontlight are nevertheless forced off before
+    // ESP deep sleep. Deep sleep resets the ESP-side session state anyway.
+    meshink_power_frontlight_set(0);
+    frontlight_lit=false;
+    frontlight_deadline=0;
+    if(display_session_active)meshink_display_poweroff();
+    ui_boot_cpu_active=false;
+    set_cpu_target(UI_IDLE_CPU_MHZ,"deep-sleep-ready");
+    Serial.println("[T5-DEEPSLEEP] display quiesced: panel HV/frontlight off; session retained until reset");
+}
+
+bool ui_headless_message_alert_pending() {
+    // A later message while EPDiy is already initialized still needs an
+    // alert/redraw. Only an alert already in progress coalesces the request.
+    return headless_ui_state&&headless_alert_requested&&!message_alert_active;
+}
+
+bool ui_headless_display_busy() {
+    // An initialized but idle display deliberately stays live during the
+    // 40-second radio cooldown and does not block the eventual sleep attempt.
+    return headless_alert_requested||message_alert_active;
+}
+
+bool ui_headless_display_session_active() {
+    return headless_display_session;
+}
+
+bool ui_display_session_active() {
+    return display_session_active;
+}
+
+bool ui_service_headless_message_alert() {
+    if(!headless_ui_state)return false;
+
+    bool started_session=false;
+    if(headless_alert_requested&&!headless_display_session){
+        Serial.println("[T5-DEEPSLEEP] headless display starting with retained radio GPIO ISR service");
+        MeshInkUiStartupPlan plan{};
+        plan.touch=false;
+        plan.radio_settle=false;
+        plan.recover_power_path=false;
+        plan.splash=false;
+        plan.sample_status=false;
+        plan.battery_guard=false;
+        plan.service_mesh_between_steps=true;
+        ui_startup(plan);
+        headless_display_session=true;
+        started_session=true;
+        if(!fb){
+            Serial.println("[T5-DEEPSLEEP] headless message display unavailable");
+            headless_alert_requested=false;
+            ui_close_headless_display_session();
+            return false;
+        }
+        standby_active=true;
+    }
+
+    if(headless_alert_requested&&headless_display_session&&!message_alert_active){
+        headless_alert_requested=false;
+        // Headless notifications are driven by actual message arrival rather
+        // than the interactive UI cooldown. Reuse the already-live EPDiy
+        // session for every subsequent DM/channel unread update.
+        message_alert_cooldown_until=0;
+        ui_boot_cpu_active=true;
+        set_cpu_target(UI_RENDER_CPU_MHZ,"headless-alert");
+        start_message_alert();
+        Serial.println(started_session
+            ?"[T5-DEEPSLEEP] headless message alert display session started"
+            :"[T5-DEEPSLEEP] reusing initialized headless display for unread update");
+    }
+
+    if(!headless_display_session)return false;
+
+    const bool was_active=message_alert_active;
+    service_message_alert();
+    if(was_active&&!message_alert_active){
+        // The final GC16 refresh is synchronous. Service MeshCore immediately
+        // while keeping EPDiy initialized. A packet landing during that redraw
+        // can therefore update unread counts and reuse the same session.
+        local_mesh_service_startup();
+        if(headless_alert_requested){
+            headless_alert_requested=false;
+            message_alert_cooldown_until=0;
+            ui_boot_cpu_active=true;
+            set_cpu_target(UI_RENDER_CPU_MHZ,"headless-alert");
+            start_message_alert();
+            Serial.println("[T5-DEEPSLEEP] message arrived during final standby redraw; restarting headless alert");
+            return true;
+        }
+
+        ui_boot_cpu_active=false;
+        set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle");
+        Serial.println("[T5-DEEPSLEEP] headless display session retained through 40s cooldown");
+    }
+    return message_alert_active;
+}
+
+bool ui_promote_headless_to_interactive() {
+    if(!headless_ui_state)return false;
+
+    const bool reuse_display=headless_display_session&&display_session_active&&fb;
+    headless_alert_requested=false;
+    message_alert_active=false;
+    // local_mesh_promote_to_ui() has already acknowledged the accepted BOOT
+    // request at full brightness. Keep that acknowledgement lit through the
+    // retained-to-interactive startup instead of extinguishing it here.
+    meshink_power_frontlight_set(100);
+    frontlight_lit=true;
+    frontlight_deadline=0;
+
+    MeshInkUiStartupPlan plan{};
+    // EPDiy high-level state is process-singleton state: epd_deinit() does not
+    // make epd_hl_init() legal a second time in the same boot. When a message
+    // alert already initialized EPDiy, transfer that exact framebuffer/session
+    // into interactive UI rather than tearing it down and reinitializing it.
+    plan.display=!reuse_display;
+    plan.radio_settle=false;
+    plan.splash=false;
+    plan.battery_guard=false;
+    // ui_mesh_ready() takes the first useful status sample after retained RTC
+    // startup; do not deliberately paint --:-- before MeshCore is attached.
+    plan.sample_status=false;
+    plan.service_mesh_between_steps=true;
+    ui_startup(plan);
+    if(reuse_display){
+        headless_display_session=false;
+        set_ui_orientation(MeshInkOrientation::Portrait);
+        Serial.println("[T5-DEEPSLEEP] interactive promotion reusing initialized EPDiy session");
+    }
+    if(!fb){
+        Serial.println("[T5-DEEPSLEEP] interactive promotion failed: display framebuffer unavailable");
+        return false;
+    }
+
+    local_mesh_prepare_interactive_services();
+    ui_use_data_provider(local_mesh_provider());
+    ui_mesh_ready();
+    local_mesh_refresh_ui_data();
+
+    // Cold boot hides this shallow SD/PMTiles inventory behind the splash.
+    // Do the same before revealing retained BOOT promotion so first Maps open
+    // does not pay the one-time mount/archive discovery cost.
+    map_tiles_warm_storage();
+    local_mesh_service_startup();
+
+    standby_active=false;
+    deep_sleep_pending=false;
+    headless_ui_state=false;
+    message_alert_active=false;
+    // ui_startup() already restored the retained top-level tab. Do not
+    // overwrite it when promoting a deep-sleep/headless runtime to interactive.
+    if(!setup_complete)screen=Screen::Welcome;
+    keyboard_visible=!setup_complete;
+    ui_finish_startup();
+    Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing MeshCore runtime");
+    return true;
+}
+
+void ui_prepare_headless_rx_wake() {
+    // Journal replay runs immediately after storage opens and replaces these
+    // zeroes before any message alert is rendered. NVS unread keys from older
+    // builds are intentionally ignored so they cannot disagree with per-node
+    // journal truth.
+    status_unread=0;
+    status_channel_unread=0;
+    // Existing receive hooks can now update journal-derived unread counts
+    // without starting framebuffer, display, touch or frontlight resources.
+    standby_active=true;
+    touch_enabled=false;
+    message_alert_active=false;
+    headless_ui_state=true;
+    headless_alert_requested=false;
+    headless_display_session=false;
+    deep_sleep_pending=false;
+    Serial.printf("[T5-DEEPSLEEP] headless UI state only: unread_dm=%u unread_ch=%u; display/touch not initialized\n",
+                  (unsigned)status_unread,(unsigned)status_channel_unread);
+}
+
+static void ui_load_persistent_state() {
+    prefs.begin("t5-ui",true);
+    String saved_name=prefs.getString("name","");
+    selected_preset=prefs.getUChar("preset_v2",17);
+    setup_complete=prefs.getBool("complete",false);
+    timezone_index=prefs.getUChar("timezone",0);
+    // Unread truth is reconstructed from the message journal. Do not touch
+    // it while loading ordinary UI preferences: on the first retained-RX
+    // alert this function runs after journal replay and must preserve the
+    // already-restored direct/channel totals for the standby redraw.
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
     map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
@@ -3806,20 +4247,35 @@ void ui_setup() {
     map_last_gps_saved=map_has_last_gps_position;
     map_saved_gps_latitude=map_last_gps_latitude;
     map_saved_gps_longitude=map_last_gps_longitude;
-    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);frontlight_timeout_index=prefs.getUChar("light_timeout",2);frontlight_brightness=prefs.getUChar("light_level",30);standby_timeout_index=prefs.getUChar("standby_timeout",1);night_start_minutes=prefs.getUShort("night_start",20*60);night_end_minutes=prefs.getUShort("night_end",7*60);map_imperial=prefs.getBool("map_imperial",false);prefs.end();
+    frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);
+    frontlight_timeout_index=prefs.getUChar("light_timeout",2);
+    frontlight_brightness=prefs.getUChar("light_level",30);
+    standby_timeout_index=prefs.getUChar("standby_timeout",1);
+    deep_sleep_standby=prefs.getBool("deep_standby",false);
+    night_start_minutes=prefs.getUShort("night_start",20*60);
+    night_end_minutes=prefs.getUShort("night_end",7*60);
+    map_imperial=prefs.getBool("map_imperial",false);
+    prefs.end();
+
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
-    if(frontlight_timeout_index>4)frontlight_timeout_index=2;if(frontlight_brightness>100)frontlight_brightness=30;
+    if(frontlight_timeout_index>4)frontlight_timeout_index=2;
+    if(frontlight_brightness>100)frontlight_brightness=30;
     if(standby_timeout_index>3)standby_timeout_index=1;
-    if(night_start_minutes>=1440)night_start_minutes=20*60;if(night_end_minutes>=1440)night_end_minutes=7*60;
+    if(night_start_minutes>=1440)night_start_minutes=20*60;
+    if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
-    if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;apply_timezone();
+    if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;
+    apply_timezone();
+
     if(saved_name.length()){
         size_t out=0;
-        for(size_t i=0;i<saved_name.length()&&out<20;++i){const char c=saved_name[i];if(legal_name_character(c))node_name[out++]=c;else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)c);}
+        for(size_t i=0;i<saved_name.length()&&out<20;++i){
+            const char ch=saved_name[i];
+            if(legal_name_character(ch))node_name[out++]=ch;
+            else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)ch);
+        }
         node_name[out]=0;
     }else if(!setup_complete){
-        // Generate once per new device and persist immediately: rebooting
-        // before pressing SAVE must not change the displayed MeshInk ID.
         static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         memcpy(node_name,"MeshInk-",8);
         for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];
@@ -3831,22 +4287,90 @@ void ui_setup() {
         }
         T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] generated first-setup device name: %s\n",node_name);
     }
-    if(setup_complete){screen=Screen::Contacts;keyboard_visible=false;}
-    update_status_hardware();
-    MeshInkPowerCriticalState boot_power{};
-    if(meshink_power_boot_critical(boot_power))
-        critical_battery_shutdown(boot_power,"boot");
-    meshink_display_set_all_white(&display);
-    draw_meshink_logo(ui_y(160),false);
-    // Keep the original logo visible throughout MeshCore startup. Storage
-    // is normally already mounted, so use the generic boot status by default.
-    // local_mesh_setup() changes it only if SPIFFS fails to mount and must
-    // attempt first-time initialization/recovery.
-    ui_centred("STARTING UP...",ui_y(716),3,0,true);
-    if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
-    ui_centred(UI_VERSION,ui_y(885),2,0,true);
-    meshink_display_poweron();meshink_display_clear();meshink_display_poweroff();refresh(MeshInkRefreshMode::FastGray16);
-    T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
+
+    uint8_t retained_tab=0;
+    if(meshink_power_get_retained_ui_tab(retained_tab)){
+        retained_wake_tab=retained_tab;
+        retained_wake_tab_valid=true;
+    }
+    screen=setup_complete
+        ?(retained_wake_tab_valid?screen_for_retained_tab(retained_wake_tab):Screen::Contacts)
+        :Screen::Welcome;
+    if(setup_complete&&retained_wake_tab_valid)
+        T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] restored top tab=%u screen=%u\n",
+                  (unsigned)retained_wake_tab,(unsigned)screen);
+    keyboard_visible=!setup_complete;
+}
+
+void ui_startup(const MeshInkUiStartupPlan& plan) {
+    ui_boot_cpu_active=true;
+    set_cpu_target(UI_RENDER_CPU_MHZ,"ui-startup");
+    Serial.begin(115200);
+    meshink_buttons_begin();
+
+    if(plan.display){
+        meshink_power_frontlight_begin();
+        meshink_power_frontlight_set(0);
+    }
+
+    if(plan.touch)meshink_touch_prepare_boot();
+
+    if(plan.display){
+        meshink_display_init();
+        display_session_active=true;
+        if(plan.radio_settle)meshink_board_start_local_radio_settle();
+        if(plan.touch)set_ui_orientation(MeshInkOrientation::Portrait);
+        else meshink_display_set_orientation(MeshInkOrientation::Portrait);
+        Serial.println("[T5-INIT] display=initialized");
+    }
+
+    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+
+    if(plan.recover_power_path)meshink_power_recover_boot_path();
+
+    if(plan.touch){
+        meshink_touch_finish_boot();
+        touch_enabled=true;
+        Serial.println("[T5-INIT] touch=initialized");
+    }else{
+        touch_enabled=false;
+    }
+
+    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+
+    if(plan.display){
+        display=meshink_display_state_init();
+        fb=meshink_display_framebuffer(&display);
+    }
+
+    if(plan.load_state)ui_load_persistent_state();
+    if(plan.sample_status)update_status_hardware();
+
+    if(plan.battery_guard){
+        MeshInkPowerCriticalState boot_power{};
+        if(meshink_power_boot_critical(boot_power))
+            critical_battery_shutdown(boot_power,"ui-startup");
+    }
+
+    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+
+    if(plan.splash&&plan.display){
+        meshink_display_set_all_white(&display);
+        draw_meshink_logo(ui_y(160),false);
+        ui_centred("STARTING UP...",ui_y(716),3,0,true);
+        if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
+        ui_centred(UI_VERSION,ui_y(885),2,0,true);
+        meshink_display_poweron();
+        meshink_display_clear();
+        meshink_display_poweroff();
+        refresh(MeshInkRefreshMode::FastGray16);
+        T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
+    }
+}
+
+void ui_setup() {
+    MeshInkUiStartupPlan plan{};
+    ui_startup(plan);
 }
 
 void ui_show_storage_initializing() {
@@ -3863,19 +4387,33 @@ void ui_finish_startup() {
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
-    draw_screen();
-    if(screen==Screen::Welcome)
-        fast_full_redraw("FIRST_SETUP_SCREEN",false);
-    else if(screen==Screen::Contacts) {
-        // Existing-user boot transitions directly from the dark startup logo
-        // to Contacts. Force the same complete refresh as a short BOOT press
-        // so the splash cannot remain faintly visible in the panel history.
-        fast_full_redraw("CONTACTS_AFTER_BOOT",false);
-        // Startup can take longer than the saved light timeout. Start a fresh
-        // timeout only after Contacts is actually visible.
+    const bool retained_deep_wake=setup_complete&&retained_wake_tab_valid;
+    if(screen==Screen::Maps){
+        // On retained wake the physical panel still contains the standby image.
+        // Build the complete Loading frame in memory first, then force that
+        // frame directly so the user never sees an intermediate blank screen.
+        centre_map_on_device();
+        load_map_with_feedback(false,retained_deep_wake);
         frontlight_event();
-    } else
-        refresh(MeshInkRefreshMode::FastGray16);
+    }else{
+        draw_screen();
+        if(screen==Screen::Welcome)
+            fast_full_redraw("FIRST_SETUP_SCREEN",false);
+        else if(screen==Screen::Contacts||retained_deep_wake) {
+            // Contacts already used the correct transition: prepare the entire
+            // destination screen, invalidate EPDiy's stale previous-frame view,
+            // then commit it as one complete update. Apply that same one-shot
+            // treatment to every retained top-level tab after deep sleep.
+            fast_full_redraw(retained_deep_wake
+                ?"RETAINED_TAB_AFTER_DEEP_WAKE":"CONTACTS_AFTER_BOOT",false);
+            // Startup can take longer than the saved light timeout. Start a fresh
+            // timeout only after the restored screen is actually visible.
+            if(setup_complete)frontlight_event();
+        } else {
+            refresh(MeshInkRefreshMode::FastGray16);
+            if(setup_complete)frontlight_event();
+        }
+    }
     // The first interactive frame already includes the MeshCore status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;status_bar_dirty=false;
@@ -3885,6 +4423,11 @@ void ui_finish_startup() {
                               &touch_task_handle,0)!=pdPASS)
         Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
+    // Once the interactive screen is visible, the RTC handoff has served its
+    // purpose. A later in-process UI reinitialization must not replay it.
+    meshink_power_clear_retained_ui_tab();
+    retained_wake_tab=0;
+    retained_wake_tab_valid=false;
     ui_boot_cpu_active=false;
     set_cpu_target(UI_IDLE_CPU_MHZ,"ui-ready");last_user_activity=millis();T5_DEBUGLN(T5_LOG_UI,"[T5-UI] touch ready; waiting for input");
 }
@@ -3896,6 +4439,11 @@ void ui_loop() {
     }
     service_critical_battery();
     service_primary_button();
+    if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&!message_alert_active&&
+       !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
+        deep_sleep_retry_at=millis()+250;
+        if(local_mesh_enter_deep_sleep_standby())return;
+    }
     if(map_taps.count&&
        (screen!=Screen::Maps||standby_active||
         millis()-map_taps.last_at>=meshink_map_gestures::TAP_WINDOW_MS))
@@ -4018,7 +4566,8 @@ void ui_loop() {
             clamp_list_page(page,count);
             const size_t pages=list_page_count(count);
             int next=(int)page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=(int)pages)next=(int)pages-1;
+            if(next<0)next=0;
+            if(next>=(int)pages)next=(int)pages-1;
             if((size_t)next!=page){
                 page=(size_t)next;
                 const char* name=screen==Screen::Contacts?"contacts":
@@ -4048,7 +4597,8 @@ void ui_loop() {
         }else if(screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             UiNodeDetails node{};const uint8_t pages=(ui_data&&ui_data->active_node_details(node))?node_info_page_count(node.node_type):1;
             int next=(int)details_page+(tap.dy<0?1:-1);
-            if(next<0)next=0;if(next>=pages)next=pages-1;
+            if(next<0)next=0;
+            if(next>=pages)next=pages-1;
             if((uint8_t)next!=details_page){
                 details_page=(uint8_t)next;
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] node-info page=%u/%u\n",details_page+1,pages);
@@ -4273,8 +4823,25 @@ bool ui_chat_is_visible(bool channel){
 
 void ui_notify_message_received(bool channel){
     const bool visible=ui_chat_is_visible(channel);
-    if(!visible){if(channel){if(status_channel_unread<65535)status_channel_unread++;}else if(status_unread<65535)status_unread++;persist_unread();}
-    status_dirty=true;if(standby_active)start_message_alert();else status_wake_light=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d visible=%d\n",channel?"channel":"direct",channel?status_channel_unread:status_unread,standby_active,visible);
+    // The provider has already committed the RX record and synchronized these
+    // totals from its journal-derived counters. Notification code must never
+    // maintain a second unread truth.
+    status_dirty=true;
+    if(standby_active){
+        if(headless_ui_state){
+            // Keep the request latched even while a display-only alert is in
+            // progress. The final redraw clears messages already represented;
+            // anything processed after that redraw starts a fresh alert.
+            headless_alert_requested=true;
+        }else{
+            start_message_alert();
+        }
+    }else{
+        status_wake_light=true;
+    }
+    T5_DEBUGF(T5_LOG_MESH,"[T5-UI] %s message event unread=%u refresh queued standby=%d headless=%d visible=%d\n",
+              channel?"channel":"direct",channel?status_channel_unread:status_unread,
+              standby_active,headless_ui_state,visible);
 }
 
 bool ui_restore_failed_compose(const char* text){

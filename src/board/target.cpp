@@ -10,9 +10,12 @@
 #include <esp_heap_caps.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
+#include <esp_sleep.h>
 #include <sys/time.h>
 #include <RTClib.h>
 #include "target.h"
+#include "t5_board_backend.h"
 #include "t5_logging.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
@@ -46,23 +49,44 @@ static uint8_t from_bcd(uint8_t v){return (uint8_t)((v>>4)*10+(v&0x0F));}
 static uint8_t to_bcd(uint8_t v){return (uint8_t)(((v/10)<<4)|(v%10));}
 
 void T5RTCClock::begin(){
+    // begin() is only reached once the shared I2C lifecycle is active.
+    // Retained headless wakes intentionally skip it.
+    i2c_ready_=true;
     uint8_t r[7]{};
-    if(!idf_read(0x51,0x02,r,sizeof(r))){
-        valid_=false;
-        Serial.println("[T5-WARN] rtc=PCF8563 unavailable; system/GPS fallback active");
-        return;
-    }
-    const bool voltage_low=(r[0]&0x80)!=0;
-    const uint8_t second=from_bcd(r[0]&0x7F),minute=from_bcd(r[1]&0x7F),hour=from_bcd(r[2]&0x3F);
-    const uint8_t day=from_bcd(r[3]&0x3F),month=from_bcd(r[5]&0x1F),year=from_bcd(r[6]);
-    valid_=!voltage_low&&second<60&&minute<60&&hour<24&&day>=1&&day<=31&&month>=1&&month<=12;
-    if(valid_){
-        const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
-        timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-        Serial.println("[T5-INIT] rtc=PCF8563 OK");
+    const bool read_ok=idf_read(0x51,0x02,r,sizeof(r));
+    if(read_ok){
+        const bool voltage_low=(r[0]&0x80)!=0;
+        const uint8_t second=from_bcd(r[0]&0x7F),minute=from_bcd(r[1]&0x7F),hour=from_bcd(r[2]&0x3F);
+        const uint8_t day=from_bcd(r[3]&0x3F),month=from_bcd(r[5]&0x1F),year=from_bcd(r[6]);
+        valid_=!voltage_low&&second<60&&minute<60&&hour<24&&day>=1&&day<=31&&month>=1&&month<=12;
+        if(valid_){
+            deferred_hardware_time_=0;
+            const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
+            timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+            Serial.println("[T5-INIT] rtc=PCF8563 OK");
+            return;
+        }
     }else{
-        Serial.println("[T5-WARN] rtc=PCF8563 invalid; system/GPS fallback active");
+        valid_=false;
     }
+
+    // MeshCore may already have bootstrapped software time from saved contact
+    // timestamps while this retained wake was headless. Only use that deferred
+    // value when the hardware RTC itself is unavailable/invalid; a valid RTC
+    // above always remains authoritative.
+    const uint32_t deferred=deferred_hardware_time_;
+    deferred_hardware_time_=0;
+    if(deferred){
+        setCurrentTime(deferred);
+        if(valid_){
+            Serial.println("[T5-INIT] rtc=PCF8563 restored from deferred startup time");
+            return;
+        }
+    }
+
+    Serial.println(read_ok
+        ?"[T5-WARN] rtc=PCF8563 invalid; system/GPS fallback active"
+        :"[T5-WARN] rtc=PCF8563 unavailable; system/GPS fallback active");
 }
 uint32_t T5RTCClock::getCurrentTime(){
     if(!valid_)return (uint32_t)time(nullptr);
@@ -87,10 +111,19 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
             (unsigned long)utc,(unsigned long)current);
         return;
     }
+    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+    if(!i2c_ready_){
+        // MeshCore bootstraps a plausible clock from contact timestamps during
+        // retained radio-first startup. Keep that as system time only: the
+        // headless path deliberately has no shared I2C driver yet.
+        deferred_hardware_time_=utc;
+        T5_TRACE("rtc: deferred hardware write UTC=%lu; I2C lifecycle not initialized\n",
+            (unsigned long)utc);
+        return;
+    }
     const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
         to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
     valid_=idf_write(0x51,0x02,r,sizeof(r));
-    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
     if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
 }
 void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
@@ -138,6 +171,42 @@ bool T5Board::enableRadioGpsRail(){
 static SPIClass radio_spi(FSPI);
 SPIClass& t5_shared_spi() { return radio_spi; }
 
+static bool t5_release_held_radio_control_pins(const char* phase) {
+    // gpio_get_level() returns 0 when the input path is disabled, even for a
+    // correctly driven output. Use INPUT_OUTPUT here so the diagnostic reads
+    // the actual pad level while still driving NSS/RESET HIGH.
+    //
+    // ESP-IDF requires the desired state to be configured before gpio_hold_dis()
+    // after deep sleep. Program both pads HIGH first, verify the held physical
+    // levels, then release the individual holds and verify them again.
+    gpio_deep_sleep_hold_dis();
+
+    const esp_err_t nss_dir=gpio_set_direction((gpio_num_t)P_LORA_NSS,GPIO_MODE_INPUT_OUTPUT);
+    const esp_err_t reset_dir=gpio_set_direction((gpio_num_t)P_LORA_RESET,GPIO_MODE_INPUT_OUTPUT);
+    const esp_err_t nss_high=gpio_set_level((gpio_num_t)P_LORA_NSS,1);
+    const esp_err_t reset_high=gpio_set_level((gpio_num_t)P_LORA_RESET,1);
+    delayMicroseconds(10);
+
+    const int nss_before=gpio_get_level((gpio_num_t)P_LORA_NSS);
+    const int reset_before=gpio_get_level((gpio_num_t)P_LORA_RESET);
+
+    const esp_err_t nss_release=gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_release=gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+    delayMicroseconds(20);
+
+    const int nss_after=gpio_get_level((gpio_num_t)P_LORA_NSS);
+    const int reset_after=gpio_get_level((gpio_num_t)P_LORA_RESET);
+    Serial.printf("[T5-DEEPSLEEP] radio control release phase=%s before=%d/%d after=%d/%d cfg=%d/%d/%d/%d release=%d/%d\n",
+                  phase?phase:"unknown",nss_before,reset_before,nss_after,reset_after,
+                  (int)nss_dir,(int)nss_high,(int)reset_dir,(int)reset_high,
+                  (int)nss_release,(int)reset_release);
+
+    return nss_dir==ESP_OK&&nss_high==ESP_OK&&reset_dir==ESP_OK&&reset_high==ESP_OK&&
+           nss_release==ESP_OK&&reset_release==ESP_OK&&
+           nss_before==HIGH&&reset_before==HIGH&&
+           nss_after==HIGH&&reset_after==HIGH;
+}
+
 static void t5_radio_shared_bus_idle(bool stop_spi){
     if(stop_spi)radio_spi.end();
     // LilyGO's H752-01 LoRa examples explicitly deselect both devices before
@@ -183,27 +252,54 @@ static bool t5_wait_local_radio_settle(){
 #endif
 }
 
-// Local UI keeps EPDiy's already-installed GPIO ISR service alive. Companion
-// mode tears EPDiy down before radio startup, so Arduino must install/own the
-// ISR service on its first radio attachInterrupt(). Select the path explicitly
-// to avoid probing the wrong state and emitting a false ESP-IDF error.
-static bool companion_radio_uses_arduino_irq=false;
+// The ESP-IDF GPIO ISR service is process-wide. MeshInk keeps the SX1262
+// DIO1 callback under one explicit IDF lifetime in every runtime mode instead
+// of relying on Arduino's hidden attachInterrupt bookkeeping.
+static bool radio_gpio_irq_handler_active=false;
+static bool gpio_isr_service_ready=false;
 
-// EPDiy's LilyGo-S3 board init installs the ESP-IDF GPIO ISR service for its
-// TPS65185 interrupt before MeshCore starts. Arduino's first attachInterrupt()
-// then tries to install the same global service again and ESP-IDF prints
-// "GPIO isr service already installed". Keep both handlers on the one service:
-// use it directly when already present, but fall back to ArduinoHal in
-// companion mode where EPDiy has been deinitialized and removed the service.
+// EPDiy asks this hook at init and teardown. A true value means the global ISR
+// service contains a live SX1262 handler and must be shared/preserved.
+extern "C" bool meshink_epdiy_existing_gpio_isr_service() {
+    return radio_gpio_irq_handler_active;
+}
+
+// EPDiy owns the service on cold UI startup, while the radio owns first creation
+// on retained headless wake. Keep that process-wide fact explicit so the second
+// subsystem never probes gpio_install_isr_service() just to discover it exists.
+extern "C" void meshink_epdiy_note_gpio_isr_service(bool installed) {
+    gpio_isr_service_ready=installed;
+}
+
 class T5RadioHal final : public ArduinoHal {
     static void (*callbacks_[GPIO_NUM_MAX])(void);
-    static bool arduino_owned_[GPIO_NUM_MAX];
+    static bool attached_[GPIO_NUM_MAX];
     static void irq_bridge(void* arg) {
         const uint32_t pin=(uint32_t)(uintptr_t)arg;
         if(pin<GPIO_NUM_MAX&&callbacks_[pin])callbacks_[pin]();
     }
 public:
     explicit T5RadioHal(SPIClass& spi):ArduinoHal(spi) {}
+
+    bool ensureIsrService(const char* phase=nullptr) {
+        if(gpio_isr_service_ready)return true;
+        const esp_err_t installed=gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
+        if(installed==ESP_OK){
+            gpio_isr_service_ready=true;
+            if(phase)
+                Serial.printf("[T5-DEEPSLEEP] GPIO ISR service created phase=%s\n",phase);
+            return true;
+        }
+        if(installed==ESP_ERR_INVALID_STATE){
+            // Compatibility fallback for an unexpected third-party owner. The
+            // EPDiy V3 handshake prevents this probe on normal MeshInk paths.
+            gpio_isr_service_ready=true;
+            return true;
+        }
+        Serial.printf("[T5-ERROR] GPIO ISR service unavailable phase=%s err=%d\n",
+                      phase?phase:"attach",(int)installed);
+        return false;
+    }
 
     void attachInterrupt(uint32_t interruptNum,void (*interruptCb)(void),
                          uint32_t mode) override {
@@ -213,31 +309,24 @@ public:
         if(mode==GpioInterruptRising)type=GPIO_INTR_POSEDGE;
         else if(mode==GpioInterruptFalling)type=GPIO_INTR_NEGEDGE;
 
-        if(callbacks_[interruptNum]||arduino_owned_[interruptNum])
-            detachInterrupt(interruptNum);
+        if(attached_[interruptNum])detachInterrupt(interruptNum);
+        callbacks_[interruptNum]=interruptCb;
+        attached_[interruptNum]=false;
 
-        if(companion_radio_uses_arduino_irq){
+        if(!ensureIsrService(nullptr)){
             callbacks_[interruptNum]=nullptr;
-            arduino_owned_[interruptNum]=true;
-            ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
             return;
         }
-
-        callbacks_[interruptNum]=interruptCb;
-        arduino_owned_[interruptNum]=false;
         gpio_set_intr_type(pin,type);
         const esp_err_t added=gpio_isr_handler_add(
             pin,irq_bridge,(void*)(uintptr_t)interruptNum);
-        if(added==ESP_OK)return;
 
-        // No global IDF service is active (normal in companion mode after
-        // meshink_display_deinit), so let Arduino install and own it in the usual way.
-        if(added==ESP_ERR_INVALID_STATE){
-            callbacks_[interruptNum]=nullptr;
-            arduino_owned_[interruptNum]=true;
-            ArduinoHal::attachInterrupt(interruptNum,interruptCb,mode);
+        if(added==ESP_OK){
+            attached_[interruptNum]=true;
+            if(interruptNum==P_LORA_DIO_1)radio_gpio_irq_handler_active=true;
             return;
         }
+
         callbacks_[interruptNum]=nullptr;
         Serial.printf("[T5-ERROR] radio DIO interrupt attach failed gpio=%lu err=%d\n",
                       (unsigned long)interruptNum,(int)added);
@@ -245,24 +334,104 @@ public:
 
     void detachInterrupt(uint32_t interruptNum) override {
         if(interruptNum==RADIOLIB_NC||interruptNum>=GPIO_NUM_MAX)return;
-        if(!callbacks_[interruptNum]&&!arduino_owned_[interruptNum])return;
-        if(arduino_owned_[interruptNum]){
-            ArduinoHal::detachInterrupt(interruptNum);
-            arduino_owned_[interruptNum]=false;
-        }else{
-            gpio_isr_handler_remove((gpio_num_t)interruptNum);
-            gpio_set_intr_type((gpio_num_t)interruptNum,GPIO_INTR_DISABLE);
-        }
+        if(!attached_[interruptNum])return;
+        gpio_isr_handler_remove((gpio_num_t)interruptNum);
+        gpio_set_intr_type((gpio_num_t)interruptNum,GPIO_INTR_DISABLE);
+        attached_[interruptNum]=false;
         callbacks_[interruptNum]=nullptr;
+        if(interruptNum==P_LORA_DIO_1)radio_gpio_irq_handler_active=false;
+    }
+
+    bool handlerActive(uint32_t interruptNum) const {
+        return interruptNum<GPIO_NUM_MAX&&attached_[interruptNum]&&callbacks_[interruptNum];
+    }
+
+    bool dispatchInterrupt(uint32_t interruptNum) {
+        if(!handlerActive(interruptNum))return false;
+        callbacks_[interruptNum]();
+        return true;
     }
 };
 void (*T5RadioHal::callbacks_[GPIO_NUM_MAX])(void)={};
-bool T5RadioHal::arduino_owned_[GPIO_NUM_MAX]={};
+bool T5RadioHal::attached_[GPIO_NUM_MAX]={};
 
 static T5RadioHal radio_hal(radio_spi);
 static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
-CustomSX1262Wrapper radio_driver(radio, board);
+MeshInkSX1262Wrapper radio_driver(radio, board);
+
+void MeshInkSX1262Wrapper::stageWakePacket(const uint8_t* data,uint16_t len,float rssi,float snr) {
+    if(!data||!len){
+        wake_packet_len_=0;
+        wake_metrics_active_=false;
+        return;
+    }
+    if(len>MAX_TRANS_UNIT)len=MAX_TRANS_UNIT;
+    memcpy(wake_packet_,data,len);
+    wake_packet_len_=len;
+    wake_rssi_=rssi;
+    wake_snr_=snr;
+    wake_metrics_active_=false;
+}
+
+bool MeshInkSX1262Wrapper::captureRetainedWakePacket(float rssi,float snr) {
+    uint8_t packet[MAX_TRANS_UNIT]{};
+    wake_packet_len_=0;
+    wake_metrics_active_=false;
+    const int len=CustomSX1262Wrapper::recvRaw(packet,sizeof(packet));
+    if(len<=0||len>(int)MAX_TRANS_UNIT)return false;
+    stageWakePacket(packet,(uint16_t)len,rssi,snr);
+    resetStats();
+    return true;
+}
+
+int MeshInkSX1262Wrapper::recvRaw(uint8_t* bytes,int sz) {
+    if(wake_packet_len_&&bytes&&sz>0){
+        const int len=(wake_packet_len_<(uint16_t)sz)?(int)wake_packet_len_:sz;
+        memcpy(bytes,wake_packet_,len);
+        wake_packet_len_=0;
+        wake_metrics_active_=true;
+        n_recv++;
+        uint8_t scratch=0;
+        (void)CustomSX1262Wrapper::recvRaw(&scratch,1);
+        Serial.printf("[T5-DEEPSLEEP] injected saved wake packet after clean radio reset len=%d rxmode=%u\n",
+                      len,isInRecvMode()?1U:0U);
+        return len;
+    }
+    wake_metrics_active_=false;
+    return CustomSX1262Wrapper::recvRaw(bytes,sz);
+}
+
+float MeshInkSX1262Wrapper::getLastRSSI() const {
+    return wake_metrics_active_?wake_rssi_:CustomSX1262Wrapper::getLastRSSI();
+}
+
+float MeshInkSX1262Wrapper::getLastSNR() const {
+    return wake_metrics_active_?wake_snr_:CustomSX1262Wrapper::getLastSNR();
+}
+
+
+bool meshink_board_service_asserted_radio_irq() {
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(P_LORA_DIO_1)!=HIGH)return false;
+
+    // These reads do not clear the IRQ. Invoke the exact callback that the
+    // missing GPIO edge would have invoked; MeshCore then performs its normal
+    // readData()/finishTransmit() path and clears the radio IRQ itself.
+    const uint16_t irq=(uint16_t)radio.getIrqFlags();
+    const uint16_t packet_len=(uint16_t)radio.getPacketLength();
+    const bool handler=radio_hal.handlerActive(P_LORA_DIO_1);
+    const bool dispatched=radio_hal.dispatchInterrupt(P_LORA_DIO_1);
+
+    static uint32_t last_report=0;
+    const uint32_t now=millis();
+    if(!last_report||now-last_report>=250UL){
+        last_report=now;
+        Serial.printf("[T5-DEEPSLEEP] DIO1 level recovery irq=0x%04x packet_len=%u handler=%u dispatched=%u\n",
+                      (unsigned)irq,(unsigned)packet_len,handler?1U:0U,dispatched?1U:0U);
+    }
+    return dispatched;
+}
 
 static T5RTCClock& t5_rtc_clock(){
     static T5RTCClock clock;
@@ -597,6 +766,19 @@ bool T5EnvironmentSensorManager::begin() {
 static T5GPS gps;
 T5EnvironmentSensorManager sensors(gps);
 
+void meshink_gps_prepare_runtime(){
+#if ENV_INCLUDE_GPS == 1
+    // Retained radio wake skips T5Board::beginLocal(), so restore the GNSS UART
+    // only. The running SX1262 and its shared rail remain untouched.
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    Serial1.begin(detected_gps_baud);
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    T5_GPS_TRACE("gps: retained UI promotion UART ready baud=%lu\n",
+                 (unsigned long)Serial1.baudRate());
+#endif
+}
+
 void meshink_gps_service_begin(){
     sensors.begin();
 }
@@ -695,19 +877,205 @@ void meshink_board_companion_release_resources() {
     // unlike test10, no same-boot EPDiy reinitialization needs that service.
     radio_hal.detachInterrupt(P_LORA_DIO_1);
     radio_spi.end();
-    companion_radio_uses_arduino_irq=false;
     T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
 }
 
 void meshink_board_begin_companion(){board.begin();}
 void meshink_board_begin_local(){board.beginLocal();}
+void meshink_board_begin_local_rx_wake(bool packet_wake){board.beginLocalRxWake(packet_wake);}
 void meshink_board_boot_complete(){board.onBootComplete();}
+
+bool meshink_board_woke_from_radio() {
+    if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT1)return false;
+    return (esp_sleep_get_ext1_wakeup_status()&(1ULL<<P_LORA_DIO_1))!=0;
+}
+
+bool meshink_board_woke_from_primary_button() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+}
+
+bool meshink_board_woke_from_timer() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_TIMER;
+}
+
+bool meshink_board_radio_irq_asserted() {
+    pinMode(P_LORA_DIO_1,INPUT);
+    return digitalRead(P_LORA_DIO_1)==HIGH;
+}
+
+void meshink_board_restore_deep_sleep_wake_pads() {
+    // EXT0/EXT1 route their wake pads through RTC IO. Explicitly release any
+    // per-pad RTC hold before returning DIO1/BOOT to normal digital GPIO.
+    gpio_deep_sleep_hold_dis();
+    const esp_err_t radio_hold=rtc_gpio_hold_dis((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_hold=rtc_gpio_hold_dis((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    const esp_err_t radio_pad=rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_pad=rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    Serial.printf("[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
+                  (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
+}
+
+void meshink_board_prepare_retained_aux_wake() {
+    // Release only the automatic digital-pad hold so I2C/EPD pins can be used.
+    // Keep the explicit SX1262 NSS/RESET holds intact while a timer wake merely
+    // checks battery state.
+    gpio_deep_sleep_hold_dis();
+}
+
+void meshink_board_release_retained_radio_holds() {
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+}
+
+static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
+    60ULL*60ULL*1000000ULL;
+
+static bool t5_enable_deep_sleep_wake_sources() {
+    // deepsleep26 returns to the original repeatedly-tested wake assignment:
+    // BOOT uses EXT0 LOW and SX1262 DIO1 uses EXT1 ANY_HIGH.
+    const esp_err_t clear_wake=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
+        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
+    const esp_err_t timer_wake=esp_sleep_enable_timer_wakeup(
+        T5_DEEP_SLEEP_BATTERY_CHECK_US);
+    if(clear_wake!=ESP_OK||button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed clear=%d button-ext0=%d radio-ext1=%d timer=%d\n",
+                      (int)clear_wake,(int)button_wake,(int)radio_wake,(int)timer_wake);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        return false;
+    }
+    Serial.printf("[T5-DEEPSLEEP] wake armed button=EXT0 GPIO%d LOW radio=EXT1 GPIO%d ANY_HIGH timer=1h dio1=%d boot=%d\n",
+                  T5_PIN_BOOT_BUTTON,P_LORA_DIO_1,
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON));
+    return true;
+}
+
+bool meshink_board_enter_deep_sleep_standby() {
+    // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
+    // sleeps; DIO1 wakes through EXT1 ANY_HIGH and BOOT through EXT0 LOW.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: BOOT is still held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 DIO1 already asserted");
+        return false;
+    }
+
+    // Re-arm the physical SX1262 at the last possible point. This is the
+    // pre-Heltec behavior that repeatedly woke correctly: it re-applies the
+    // RX_DONE -> DIO1 mapping on every sleep interval. The ESP32 resets on
+    // deep sleep anyway, so RadioLibWrapper bookkeeping after this point is
+    // irrelevant.
+    const int16_t rx_rearm=radio.startReceive();
+    if(rx_rearm!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 RX re-arm failed code=%d\n",(int)rx_rearm);
+        return false;
+    }
+    delayMicroseconds(200);
+    Serial.printf("[T5-DEEPSLEEP] SX1262 RX re-armed before sleep dio1=%d busy=%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY));
+    if(digitalRead(P_LORA_BUSY)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 BUSY asserted after RX re-arm");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: DIO1 asserted during RX re-arm");
+        return false;
+    }
+
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // Keep the radio out of hardware reset while the ESP32 GPIO domain sleeps.
+    // The H752-01's external PCA9535 keeps the shared LoRa/GPS 3V3 rail on.
+    pinMode(P_LORA_NSS,OUTPUT);
+    digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(P_LORA_RESET,OUTPUT);
+    digitalWrite(P_LORA_RESET,HIGH);
+    const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+    if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] SX1262 pin hold failed nss=%d reset=%d\n",
+                      (int)nss_hold,(int)reset_hold);
+        return false;
+    }
+    gpio_deep_sleep_hold_en();
+
+    // Close the race immediately before sleep. DIO1 must remain LOW for
+    // EXT1-ANY_HIGH and BOOT must remain HIGH for EXT0-LOW.
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
+        gpio_deep_sleep_hold_dis();
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
+        return false;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] entering: DIO1 EXT1 GPIO%d=LOW BOOT EXT0 GPIO%d=HIGH NSS/RESET=held-high\n",
+                  P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
+
+bool meshink_board_return_to_retained_deep_sleep() {
+    // Timer and accidental short-BOOT wakes reset the ESP32 but leave the
+    // retained SX1262 hardware listening. Do not issue RadioLib commands here:
+    // its C++ object state was reset and no packet needs to be consumed.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: BOOT is held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: DIO1 is asserted");
+        return false;
+    }
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // NSS and RESET were individually held when the original deep sleep began.
+    // Keep the global automatic deep-sleep hold policy enabled for this next
+    // interval without unholding or reconfiguring the retained radio.
+    gpio_deep_sleep_hold_en();
+
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
+        gpio_deep_sleep_hold_dis();
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] retained re-sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
+        return false;
+    }
+
+    Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 1h)");
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
 
 void T5Board::begin() {
     // The application renders and tears down the companion splash before this
     // board lifecycle entry. EPDiy has released I2C/GPIO resources, so the
     // upstream ESP32 board setup can safely take ownership here.
-    companion_radio_uses_arduino_irq=true;
     T5_TRACE("board: companion display released; MeshCore board/I2C begin\n");
     ESP32Board::begin();
     T5_TRACE("board: MeshCore I2C ready\n");
@@ -730,7 +1098,6 @@ void T5Board::begin() {
 }
 
 void T5Board::beginLocal() {
-    companion_radio_uses_arduino_irq=false;
     // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
     // I2C driver here would abort; only perform MeshCore's remaining board work.
     startup_reason = BD_STARTUP_NORMAL;
@@ -748,6 +1115,157 @@ void T5Board::beginLocal() {
     Serial1.begin(9600);
 #endif
     T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
+}
+
+void T5Board::beginLocalRxWake(bool packet_wake) {
+    startup_reason=packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL;
+    Serial.printf("[T5-DEEPSLEEP] board wake capture mode=%s\n",
+                  packet_wake?"RX_PACKET":"NORMAL");
+}
+
+void T5Board::finishLocalRxWakeCapture() {
+    startup_reason=BD_STARTUP_NORMAL;
+    Serial.println("[T5-DEEPSLEEP] retained wake packet secured; startup reason returned to NORMAL");
+}
+
+static bool t5_sx1262_raw_wait_busy(uint32_t timeout_ms=50) {
+    const uint32_t started=millis();
+    while(digitalRead(P_LORA_BUSY)==HIGH){
+        if(millis()-started>=timeout_ms)return false;
+        delayMicroseconds(100);
+    }
+    return true;
+}
+
+static bool t5_sx1262_raw_read(const uint8_t* command,size_t command_len,
+                               uint8_t* data,size_t data_len,uint8_t* status_out=nullptr) {
+    if(!command||!command_len)return false;
+    if(!t5_sx1262_raw_wait_busy())return false;
+
+    radio_spi.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));
+    digitalWrite(P_LORA_NSS,LOW);
+    delayMicroseconds(2);
+    for(size_t i=0;i<command_len;++i)(void)radio_spi.transfer(command[i]);
+
+    // SX126x read commands return one status byte between the command bytes
+    // and the requested data. Use this raw framing only before RadioLib has
+    // rebuilt its process-local SX126x transport state after deep sleep.
+    const uint8_t status=radio_spi.transfer(0x00);
+    for(size_t i=0;i<data_len;++i)data[i]=radio_spi.transfer(0x00);
+
+    delayMicroseconds(2);
+    digitalWrite(P_LORA_NSS,HIGH);
+    radio_spi.endTransaction();
+    if(status_out)*status_out=status;
+    return t5_sx1262_raw_wait_busy();
+}
+
+static bool t5_sx1262_raw_capture_wake_packet(bool require_packet,uint16_t& captured_len) {
+    captured_len=0;
+
+    uint8_t irq_data[2]{};
+    uint8_t rx_status[2]{};
+    uint8_t packet_status[3]{};
+    uint8_t command_status=0;
+    const uint8_t get_irq[]={0x12};             // GetIrqStatus
+    const uint8_t get_rx_buffer[]={0x13};       // GetRxBufferStatus
+    const uint8_t get_packet_status[]={0x14};   // GetPacketStatus
+
+    if(!t5_sx1262_raw_read(get_irq,sizeof(get_irq),irq_data,sizeof(irq_data),&command_status)||
+       !t5_sx1262_raw_read(get_rx_buffer,sizeof(get_rx_buffer),rx_status,sizeof(rx_status))||
+       !t5_sx1262_raw_read(get_packet_status,sizeof(get_packet_status),
+                           packet_status,sizeof(packet_status))){
+        Serial.println("[T5-DEEPSLEEP] raw wake capture failed: SX1262 status/FIFO metadata unavailable");
+        return false;
+    }
+
+    const uint16_t irq=(uint16_t)(((uint16_t)irq_data[0]<<8)|irq_data[1]);
+    const uint16_t packet_len=rx_status[0];
+    const uint8_t offset=rx_status[1];
+    constexpr uint16_t IRQ_RX_DONE=0x0002U;
+
+    if(!(irq&IRQ_RX_DONE)||packet_len==0||packet_len>MAX_TRANS_UNIT){
+        Serial.printf("[T5-DEEPSLEEP] raw wake capture has no valid RX packet status=0x%02x irq=0x%04x len=%u offset=%u dio1=%u\n",
+                      (unsigned)command_status,(unsigned)irq,(unsigned)packet_len,
+                      (unsigned)offset,digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
+        return !require_packet;
+    }
+
+    uint8_t packet[MAX_TRANS_UNIT]{};
+    const uint8_t read_buffer[]={0x1E,offset};   // ReadBuffer(offset)
+    if(!t5_sx1262_raw_read(read_buffer,sizeof(read_buffer),packet,packet_len)){
+        Serial.printf("[T5-DEEPSLEEP] raw wake FIFO read failed irq=0x%04x len=%u offset=%u\n",
+                      (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
+        return false;
+    }
+
+    // RadioLib uses packet-status byte 2 for packet RSSI and byte 1 for SNR.
+    const float wake_rssi=-((float)packet_status[2])/2.0f;
+    const float wake_snr=((float)(int8_t)packet_status[1])/4.0f;
+    radio_driver.stageWakePacket(packet,packet_len,wake_rssi,wake_snr);
+    captured_len=packet_len;
+    Serial.printf("[T5-DEEPSLEEP] raw wake packet captured BEFORE RadioLib init len=%u offset=%u irq=0x%04x status=0x%02x rssi=%d snr_x4=%d\n",
+                  (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
+                  (unsigned)command_status,(int)wake_rssi,(int)(wake_snr*4.0f));
+    return true;
+}
+
+static bool radio_apply_post_init_board_settings() {
+    constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
+    const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
+    const int16_t rf_switch_state=tcxo_state==RADIOLIB_ERR_NONE
+        ?radio.setDio2AsRfSwitch(true):tcxo_state;
+    if(tcxo_state!=RADIOLIB_ERR_NONE||rf_switch_state!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] SX1262 post-init board setup failed tcxo=%d rf-switch=%d\n",
+                      (int)tcxo_state,(int)rf_switch_state);
+        return false;
+    }
+    return true;
+}
+
+static bool radio_resume_retained(bool packet_wake) {
+    if(!t5_release_held_radio_control_pins(packet_wake?"packet-wake":"button-wake")){
+        Serial.println("[T5-DEEPSLEEP] retained radio restore failed: control-pin hold release");
+        return false;
+    }
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+
+    uint16_t captured_len=0;
+    if(packet_wake){
+        // Critical ordering: copy the retained FIFO using raw SX1262 commands
+        // before RadioLib touches the chip. The ESP reset loses RadioLib's
+        // process-local Module/SX126x framing state while the radio hardware
+        // and FIFO remain powered and intact.
+        if(!t5_sx1262_raw_capture_wake_packet(true,captured_len)){
+            Serial.println("[T5-DEEPSLEEP] raw retained wake packet capture failed");
+            return false;
+        }
+    }
+
+    // The packet is now safe in ESP RAM. Rebuild the radio from a completely
+    // normal baseline, including RadioLib's SX126x-specific SPI framing.
+    radio.resetOnStartup=true;
+    if(!radio.std_init(&radio_spi)){
+        Serial.println("[T5-DEEPSLEEP] clean SX1262 reset/reinit failed after raw wake capture");
+        return false;
+    }
+    if(!radio_apply_post_init_board_settings())return false;
+
+    Serial.printf("[T5-DEEPSLEEP] clean SX1262/RadioLib init complete saved-packet=%u len=%u\n",
+                  radio_driver.hasWakePacket()?1U:0U,(unsigned)captured_len);
+    return true;
+}
+
+bool radio_resume_rx_wake() {
+    return radio_resume_retained(true);
+}
+
+bool radio_resume_retained_wake() {
+    return radio_resume_retained(false);
 }
 
 bool radio_init() {
@@ -839,7 +1357,8 @@ bool radio_init() {
                     if (gps_stream.hasValidSentence()) { found = true; break; }
                     delay(5);
                 }
-                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n", pass + 1, baud, found);
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
+                              (unsigned)(pass+1),(unsigned long)baud,found);
                 if (found) {
                     detected_gps_baud = baud;
                     gps_baud_locked = true;

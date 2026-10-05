@@ -10,6 +10,9 @@ static constexpr uint8_t BQ27220_ADDR = 0x55;
 static constexpr uint8_t BQ25896_PRIMARY_ADDR = 0x6B;
 static constexpr uint8_t BQ25896_ALT_ADDR = 0x6A;
 static constexpr uint8_t FRONTLIGHT_PWM_CHANNEL = 6;
+static constexpr uint32_t RETAINED_UI_MAGIC = 0x3249554D; // "MUI2"
+RTC_DATA_ATTR uint32_t retained_ui_magic=0;
+RTC_DATA_ATTR uint8_t retained_ui_tab=0;
 
 // H752-01 uses a single-cell Li-ion pack and the field-tested protection
 // policy from pre-abstraction builds. These values are deliberately private
@@ -246,8 +249,80 @@ const MeshInkPowerWakeInfo& meshink_power_wake_info() {
     return T5_WAKE_INFO;
 }
 
+void meshink_power_retain_ui_tab(uint8_t tab) {
+    if(tab<1||tab>4){
+        retained_ui_magic=0;
+        retained_ui_tab=0;
+        return;
+    }
+    retained_ui_tab=tab;
+    retained_ui_magic=RETAINED_UI_MAGIC;
+}
+
+void meshink_power_clear_retained_ui_tab() {
+    retained_ui_magic=0;
+    retained_ui_tab=0;
+}
+
+bool meshink_power_get_retained_ui_tab(uint8_t& tab) {
+    tab=0;
+    const bool deep_wake=esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED;
+    const bool valid=deep_wake&&retained_ui_magic==RETAINED_UI_MAGIC&&
+                     retained_ui_tab>=1&&retained_ui_tab<=4;
+    if(!valid){
+        // A normal reset/cold boot must never replay stale RTC UI state.
+        meshink_power_clear_retained_ui_tab();
+        return false;
+    }
+    tab=retained_ui_tab;
+    return true;
+}
+
 void meshink_power_prepare_board() {
     gauge_apply_factory_profile_if_needed();
+}
+
+static bool minimal_bus_owned=false;
+
+bool meshink_power_begin_minimal_bus() {
+    minimal_bus_owned=false;
+    i2c_config_t config{};
+    config.mode=I2C_MODE_MASTER;
+    config.sda_io_num=(gpio_num_t)T5_PIN_I2C_SDA;
+    config.scl_io_num=(gpio_num_t)T5_PIN_I2C_SCL;
+    config.sda_pullup_en=GPIO_PULLUP_ENABLE;
+    config.scl_pullup_en=GPIO_PULLUP_ENABLE;
+    config.master.clk_speed=400000;
+
+    const esp_err_t configured=i2c_param_config(I2C_NUM_0,&config);
+    if(configured!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] battery I2C config failed code=%d\n",(int)configured);
+        return false;
+    }
+    const esp_err_t installed=i2c_driver_install(I2C_NUM_0,I2C_MODE_MASTER,0,0,0);
+    if(installed==ESP_OK){
+        minimal_bus_owned=true;
+        return true;
+    }
+
+    // ESP-IDF 4.4.x returns ESP_FAIL and logs "i2c driver install error"
+    // when this port already has a driver. That is the normal full-UI case:
+    // reuse the existing shared bus and never delete it from the minimal probe.
+    if(installed==ESP_FAIL){
+        Serial.println("[T5-DEEPSLEEP] battery I2C already active; reusing shared bus");
+        return true;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] battery I2C install failed code=%d\n",(int)installed);
+    return false;
+}
+
+void meshink_power_end_minimal_bus() {
+    if(!minimal_bus_owned)return;
+    minimal_bus_owned=false;
+    const esp_err_t stopped=i2c_driver_delete(I2C_NUM_0);
+    if(stopped!=ESP_OK)
+        Serial.printf("[T5-DEEPSLEEP] battery I2C stop code=%d\n",(int)stopped);
 }
 
 void meshink_power_frontlight_begin() {
@@ -308,20 +383,58 @@ bool meshink_power_read_status(MeshInkPowerStatus& status) {
     return status.battery_voltage_valid||status.battery_percent_valid||charge_valid;
 }
 
-bool meshink_power_boot_critical(MeshInkPowerCriticalState& state) {
+MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState& state) {
     state=MeshInkPowerCriticalState{};
-    if(meshink_power_external_present())return false;
 
+    const bool external_first=meshink_power_external_present();
     uint16_t first=0,second=0;
-    if(!meshink_power_read_battery_mv(first)||first>=T5_CRITICAL_BATTERY_MV)return false;
+    bool first_ok=false;
+    for(uint8_t attempt=0;attempt<3&&!first_ok;++attempt){
+        first_ok=meshink_power_read_battery_mv(first);
+        if(!first_ok)delay(25);
+    }
+    if(!first_ok){
+        Serial.printf("[T5-POWER] critical check unavailable ext1=%u\n",
+                      external_first?1U:0U);
+        return MeshInkPowerSleepCheck::Unavailable;
+    }
+
+    // Always take a second sample. Apart from rejecting a transient low value,
+    // this makes external-power suppression require a stable charger reading
+    // instead of one potentially stale/early power-good bit.
     delay(80);
-    if(meshink_power_external_present())return false;
-    if(!meshink_power_read_battery_mv(second)||second>=T5_CRITICAL_BATTERY_MV)return false;
+    const bool external_second=meshink_power_external_present();
+    bool second_ok=false;
+    for(uint8_t attempt=0;attempt<3&&!second_ok;++attempt){
+        second_ok=meshink_power_read_battery_mv(second);
+        if(!second_ok)delay(25);
+    }
+    if(!second_ok){
+        state.battery_mv_valid=true;
+        state.battery_mv=first;
+        Serial.printf("[T5-POWER] critical check partial first=%umV ext=%u/%u\n",
+                      (unsigned)first,external_first?1U:0U,external_second?1U:0U);
+        return MeshInkPowerSleepCheck::Unavailable;
+    }
 
     state.battery_mv_valid=true;
     state.battery_mv=(uint16_t)(((uint32_t)first+second)/2U);
-    state.critical=state.battery_mv<T5_CRITICAL_BATTERY_MV;
-    return state.critical;
+    const bool external_stable=external_first&&external_second;
+    const bool low=first<T5_CRITICAL_BATTERY_MV&&second<T5_CRITICAL_BATTERY_MV;
+
+    Serial.printf("[T5-POWER] critical check first=%umV second=%umV avg=%umV ext=%u/%u threshold=%umV result=%s\n",
+                  (unsigned)first,(unsigned)second,(unsigned)state.battery_mv,
+                  external_first?1U:0U,external_second?1U:0U,
+                  (unsigned)T5_CRITICAL_BATTERY_MV,
+                  external_stable?"EXTERNAL":(low?"CRITICAL":"SAFE"));
+
+    if(external_stable)return MeshInkPowerSleepCheck::ExternalPower;
+    state.critical=low;
+    return low?MeshInkPowerSleepCheck::Critical:MeshInkPowerSleepCheck::Safe;
+}
+
+bool meshink_power_boot_critical(MeshInkPowerCriticalState& state) {
+    return meshink_power_deep_sleep_check(state)==MeshInkPowerSleepCheck::Critical;
 }
 
 bool meshink_power_poll_critical(MeshInkPowerCriticalState& state) {
@@ -389,8 +502,6 @@ void meshink_power_recover_boot_path() {
     }
 
     const uint8_t requested=(uint8_t)((reg09|BATFET_DIS|BATFET_RST_EN)&~BATFET_DLY);
-    if(low_battery) {
-    }
 
     Serial.flush();
     if(!write_byte(address,0x09,requested)) {

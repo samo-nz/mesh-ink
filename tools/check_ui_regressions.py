@@ -9,6 +9,7 @@ import re
 
 root = Path(__file__).resolve().parents[1]
 source = (root / "src" / "ui_onboarding.cpp").read_text(encoding="utf-8")
+ui_header_source = (root / "src" / "ui_onboarding.h").read_text(encoding="utf-8")
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
 message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
@@ -50,6 +51,7 @@ touch_selector_source = (root / "src" / "hardware" / "touch.h").read_text(encodi
 touch_types_source = (root / "src" / "hardware" / "touch_types.h").read_text(encoding="utf-8")
 touch_backend_source = (root / "src" / "board" / "t5_touch_backend.h").read_text(encoding="utf-8")
 platformio_source = (root / "platformio.ini").read_text(encoding="utf-8")
+epdiy_patch_source = (root / "tools" / "patch_epdiy_shared_gpio_isr.py").read_text(encoding="utf-8")
 testing_workflow_source = (root / ".github" / "workflows" / "testing-firmware.yml").read_text(encoding="utf-8")
 cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].split("; Generic portability", 1)[0]
 
@@ -83,8 +85,11 @@ contains('standby_restore_landscape=restore_landscape;', "standby stores resolve
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button refresh also wakes frontlight")
 contains('last_user_activity=millis();\n            if(screen==Screen::Maps){', "primary-button short press counts as user activity")
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "non-map primary-button refresh keeps the established fast redraw path")
-contains('fast_full_redraw("CONTACTS_AFTER_BOOT",false);\n        // Startup can take longer than the saved light timeout.', "Contacts boot refresh completes before frontlight timer reset")
-contains('timeout only after Contacts is actually visible.\n        frontlight_event();', "Contacts starts a fresh frontlight timeout after splash")
+finish_startup_source=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()",source.index("void ui_finish_startup()"))]
+assert "const bool retained_deep_wake=setup_complete&&retained_wake_tab_valid;" in finish_startup_source, "deep-sleep startup identifies retained first-frame ownership"
+assert '?"RETAINED_TAB_AFTER_DEEP_WAKE":"CONTACTS_AFTER_BOOT"' in finish_startup_source, "retained Channels/More use the same forced complete-frame reveal as Contacts"
+assert "load_map_with_feedback(false,retained_deep_wake);" in finish_startup_source, "retained Maps passes full first-frame treatment into its Loading screen"
+assert "if(setup_complete)frontlight_event();" in finish_startup_source, "restored screens start a fresh frontlight timeout only after becoming visible"
 assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
 # Keep the application gesture/event layer independent from the physical touch
 # controller. Maps consumes multi-contact frames; other screens consume the
@@ -144,10 +149,9 @@ assert "GT911" not in board_target_source, "board runtime must not name the touc
 
 # Test10 companion-mode power/logging policy: both steady-state runtimes use
 # an 80 MHz cruise clock after initialization. Local UI separately bursts to
-# 240 MHz for rendering/display work. The companion ISR path must choose
-# Arduino ownership before
-# probing the deinitialized EPDiy ISR service, and BLE scan response data must
-# stay within the legacy 31-byte budget without duplicating the UART UUID.
+# 240 MHz for rendering/display work. SX1262 DIO1 uses one explicit IDF handler
+# lifetime in every mode so EPDiy cannot invalidate Arduino IRQ bookkeeping.
+# BLE scan response data stays within the legacy 31-byte budget.
 assert "COMPANION_CPU_MHZ=80" in companion_source, "BT companion steady-state CPU target is 80 MHz"
 assert 'companion_set_low_power_cpu();' in companion_source, "BT companion applies low-power CPU policy"
 assert "UI_IDLE_CPU_MHZ=80" in source and "UI_RENDER_CPU_MHZ=240" in source, "local UI uses 80 MHz cruise and 240 MHz render clocks"
@@ -161,10 +165,10 @@ assert "board.begin();" not in companion_source and "board.beginLocal();" not in
 assert "t5_companion_" not in companion_source, "generic runtime must not call T5-specific companion lifecycle hooks"
 local_setup_body = companion_source.split("void local_mesh_setup() {",1)[1]
 assert "companion_set_low_power_cpu();" not in local_setup_body, "local UI must not inherit companion CPU policy"
-assert "companion_radio_uses_arduino_irq=true;" in board_target_source, "companion selects Arduino-owned radio IRQ service"
-assert "companion_radio_uses_arduino_irq=false;" in board_target_source, "local UI selects EPDiy-owned radio IRQ service"
 attach_body = board_target_source.split("void attachInterrupt(uint32_t interruptNum",1)[1].split("void detachInterrupt",1)[0]
-assert attach_body.index("if(companion_radio_uses_arduino_irq)") < attach_body.index("gpio_isr_handler_add"), "companion must bypass missing-service probe before gpio_isr_handler_add"
+assert "gpio_isr_handler_add(" in attach_body, "all modes attach SX1262 DIO1 directly to the IDF ISR service"
+assert "if(!ensureIsrService(nullptr))" in attach_body, "radio ensures the process-wide ISR service exists before adding its handler"
+assert "ArduinoHal::attachInterrupt" not in attach_body, "radio IRQ lifetime must not depend on Arduino hidden bookkeeping"
 assert "BLEAdvertisementData scan_response;" in companion_source, "companion supplies bounded custom BLE scan response"
 assert "setScanResponseData(scan_response)" in companion_source, "companion overrides overflowing default BLE scan response"
 assert "char scan_name[30]" in companion_source, "BLE advertised name is capped to the 29-byte legacy payload name budget"
@@ -173,7 +177,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+)?", firmware_version.group(1)), "firmware version must be a stable semantic version or numbered test build"
+assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+|-rc\.\d+|deepsleep\d+)?", firmware_version.group(1)), "firmware version must be stable, a numbered test/RC build, or a numbered deepsleep experiment"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
 # standby retains the lower-power five-minute cadence. Event-driven redraws may
@@ -210,7 +214,144 @@ for backend_detail in (
 ):
     assert backend_detail in wireless_backend_source, f"T5 wireless backend missing {backend_detail}"
 assert 'meshink_wireless_force_local_radios_off()' in unified_source, "local boot forces Wi-Fi and Bluetooth off"
-assert unified_source.count('meshink_wireless_force_local_radios_off()') == 2, "local wireless policy is enforced before and after MeshCore startup"
+assert "message_sync_required" in companion_source and "message_sync_inflight" in companion_source, "local receive queue has explicit drain state"
+assert "frame[0]=10; // CMD_SYNC_NEXT_MESSAGE" in companion_source, "local receive queue polls CMD_SYNC_NEXT_MESSAGE"
+assert "sync-empty: MeshCore receive queue fully drained" in companion_source, "local receive queue drains until explicit empty response"
+assert "sleep deferred: received-message queue drain is still pending" in companion_source, "deep sleep waits for message persistence drain"
+assert "sync_and_verify_for_deep_sleep" in companion_source, "headless deep sleep verifies message journal durability"
+assert "RX direct journal seq=" in runtime_source, "received direct messages log real journal append result"
+assert "local_mesh_receive_channel_from_core" in companion_source and "local_mesh_receive_channel_from_core" in runtime_source, "standalone channel messages persist directly from MeshCore's decrypted callback"
+channel_callback = companion_source.split("void onChannelMessageRecv(const mesh::GroupChannel& channel",1)[1].split("};",1)[0]
+assert "if(companion_mode_active)" in channel_callback and "MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);" in channel_callback, "BLE companion channel protocol remains upstream-compatible"
+assert "local_mesh_receive_channel_from_core" in channel_callback and "return;" in channel_callback, "local channel receive bypasses the companion offline queue"
+assert "deep-sleep verify expected seq=" in message_store_source, "journal verification logs expected and reopened durable state"
+assert "local_rx_wake_indicator" not in companion_source, "headless RX standby stays dark outside the notification alert"
+assert "deep_sleep_diag" not in companion_source and "deep_sleep_diag" not in unified_source and "deep_sleep_diag" not in board_target_source, "retired deep-sleep flash journal has no runtime hooks"
+assert "+<deep_sleep_diag.cpp>" not in platformio_source, "retired deep-sleep flash journal is not built"
+assert "retained diagnostics will replay" not in unified_source and "service_deep_sleep_probe_replay" not in unified_source, "next boot no longer repeats retained diagnostics"
+retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
+assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
+assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"
+assert "local_mesh_service_startup();" in source, "final standby redraw services MeshCore while retaining the display session"
+assert "headless display session retained through 40s cooldown" in source, "headless display remains initialized for later unread/channel redraws"
+assert "return headless_alert_requested||message_alert_active;" in source, "idle initialized headless display does not block deep sleep"
+assert "ui_quiesce_display_for_deep_sleep" in source and "panel HV/frontlight off" in source, "deep-sleep cleanup explicitly powers down the physical display while retaining reusable EPDiy state until reset"
+sleep_entry = companion_source.split("bool local_mesh_enter_deep_sleep_standby()",1)[1].split("void local_mesh_rx_wake_loop()",1)[0]
+assert "ui_quiesce_display_for_deep_sleep();" in sleep_entry, "deepsleep39 powers the display down at the final sleep handoff"
+assert sleep_entry.index("ui_quiesce_display_for_deep_sleep();") < sleep_entry.index("meshink_board_enter_deep_sleep_standby()"), "display power-off precedes ESP deep sleep entry"
+assert "display untouched" not in sleep_entry, "temporary display-isolation diagnostic is removed"
+quiesce_body = source.split("void ui_quiesce_display_for_deep_sleep()",1)[1].split("bool ui_headless_message_alert_pending()",1)[0]
+assert "meshink_display_poweroff();" in quiesce_body and "meshink_power_frontlight_set(0);" in quiesce_body, "deep-sleep quiesce turns off panel HV and frontlight"
+assert "meshink_display_deinit();" not in quiesce_body, "display session remains initialized through the final race window instead of being torn down"
+headless_loop = companion_source.split("void local_mesh_rx_wake_loop()",1)[1].split("bool local_mesh_is_running",1)[0]
+assert "alert_was_busy" not in headless_loop and "alert_active" not in headless_loop, "display alert activity must not reset the genuine MeshCore quiet timer"
+notify_body = source.split("void ui_notify_message_received(bool channel)",1)[1].split("bool ui_restore_failed_compose",1)[0]
+assert "if(!headless_display_session&&!message_alert_active)" not in notify_body and "headless_alert_requested=true;" in notify_body, "messages received during a headless alert stay latched"
+assert "if(headless_ui_state)headless_alert_requested=false;" in source, "final GC16 redraw coalesces messages already represented on the standby screen"
+assert "message arrived during final standby redraw; restarting headless alert" in source, "messages processed after the final redraw trigger another notification cycle"
+assert "meshink_epdiy_existing_gpio_isr_service" in board_target_source, "board runtime exposes live radio ISR ownership to EPDiy"
+assert "ensureIsrService" in board_target_source and "gpio_install_isr_service(ESP_INTR_FLAG_EDGE)" in board_target_source, "headless radio path can explicitly create the shared GPIO ISR service"
+assert board_target_source.index("if(!ensureIsrService(nullptr))") < board_target_source.index("gpio_isr_handler_add("), "radio HAL installs the global ISR service before adding DIO1 handler"
+assert "T5_SPLIT_SLEEP_DIAG" not in platformio_source and "T5_SPLIT_SLEEP_DIAG" not in unified_source, "split deep-sleep diagnostic harness is removed from the cleanup build"
+assert "meshink_board_diag_" not in board_target_source and "meshink_board_diag_" not in board_backend_source, "temporary board diagnostic probes are removed"
+assert "ui_show_split_sleep_diag" not in source and "ui_show_split_sleep_diag" not in ui_header_source, "temporary diagnostic display screen is removed"
+assert "t5_sx1262_raw_capture_wake_packet" in board_target_source, "radio wake copies the retained SX1262 FIFO before RadioLib initialization"
+assert "raw wake packet captured BEFORE RadioLib init" in board_target_source, "raw wake capture ordering is explicit in the runtime log"
+assert "t5_sx1262_raw_probe" not in board_target_source and "meshink_board_probe_deep_sleep_radio" not in board_target_source, "unused retained-radio probe scaffolding is removed while raw wake capture remains"
+resume_body=board_target_source.split("static bool radio_resume_retained(bool packet_wake)",1)[1].split("bool radio_resume_rx_wake()",1)[0]
+assert resume_body.index("t5_sx1262_raw_capture_wake_packet") < resume_body.index("radio.std_init(&radio_spi)"), "retained FIFO is copied before normal RadioLib/SX1262 initialization"
+assert "resetOnStartup=false" not in resume_body and "radio_driver.begin()" not in resume_body, "wake capture no longer relies on Heltec-style retained RadioLib state"
+assert "radio.resetOnStartup=true;" in resume_body and "radio.std_init(&radio_spi)" in resume_body, "each wake rebuilds SX1262 and RadioLib from the normal reset path"
+assert "0x12" in board_target_source and "0x13" in board_target_source and "0x14" in board_target_source and "0x1E" in board_target_source, "raw wake capture reads IRQ, RX buffer metadata, packet status and FIFO directly"
+retained_setup=companion_source.split("static bool local_mesh_setup_retained_wake(bool require_packet,const char* reason)",1)[1].split("bool local_mesh_setup_rx_wake()",1)[0]
+assert 'if(require_packet)board.finishLocalRxWakeCapture();' in retained_setup, "RX_PACKET startup reason remains set until Dispatcher has called the radio wrapper begin"
+assert retained_setup.index("the_mesh.begin(true);") < retained_setup.index("if(require_packet)board.finishLocalRxWakeCapture();"), "saved-packet ready flag is latched before startup reason is cleared"
+assert "esp_sleep_enable_ext1_wakeup" in board_target_source and "ESP_EXT1_WAKEUP_ANY_HIGH" in board_target_source, "production SX1262 DIO1 wake remains EXT1 ANY_HIGH"
+assert "return radio_gpio_irq_handler_active;" in board_target_source, "EPDiy sharing follows the actual SX1262 DIO1 handler lifetime"
+assert "MESHINK_SHARED_GPIO_ISR_PATCH_V3" in epdiy_patch_source, "build carries deterministic EPDiy shared-ISR V2 patch"
+assert "meshink_radio_gpio_isr" in epdiy_patch_source and "&& !meshink_radio_gpio_isr" in epdiy_patch_source, "EPDiy teardown preserves a live radio handler even when EPDiy created the service first"
+assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
+assert "meshink_epdiy_note_gpio_isr_service" in epdiy_patch_source and "gpio_isr_service_ready" in board_target_source, "EPDiy and radio share explicit global ISR-service installed state"
+assert "if(gpio_isr_service_ready)return true;" in board_target_source, "radio skips duplicate gpio_install_isr_service calls when EPDiy already owns the service"
+assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
+assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
+assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
+assert "if(!deep_sleep_standby)draw_status_bar();" in source, "deep-sleep standby omits the normal status bar"
+assert '"DEEP SLEEP STANDBY"' in source, "deep-sleep standby visibly identifies its power state"
+assert "esp_sleep_enable_timer_wakeup" in board_target_source and "60ULL*60ULL*1000000ULL" in board_target_source, "deep-sleep standby has an hourly battery timer wake"
+assert "meshink_board_return_to_retained_deep_sleep" in unified_source, "timer and short-button wakes preserve retained SX1262 state when re-sleeping"
+assert "struct MeshInkUiStartupPlan" in ui_header_source, "UI startup exposes configurable modular steps"
+assert "plan.radio_settle" in source and "plan.splash" in source and "plan.touch" in source, "UI startup plan independently gates radio settle, splash and touch"
+assert "ui_service_headless_message_alert" in companion_source and "headless message alert display session started" in source, "headless messages can temporarily initialize only the display alert path"
+assert 'pre-alert battery check' in companion_source and 'pre-UI battery check' in companion_source, "deep-sleep display promotion paths perform an extra voltage guard"
+assert "ui_display_session_active()" in companion_source, "battery guard detects any already-owned EPDiy I2C bus"
+power_check_body = companion_source.split("static MeshInkPowerSleepCheck local_mesh_headless_power_check",1)[1].split("static void companion_set_low_power_cpu",1)[0]
+assert power_check_body.index("ui_display_session_active()") < power_check_body.index("meshink_power_begin_minimal_bus()"), "normal or headless EPDiy I2C is reused before attempting another driver install"
+assert "local_mesh_setup_button_wake" in unified_source and "local_mesh_promote_to_ui" in unified_source, "BOOT wake restores retained MeshCore before attaching full UI"
+assert "bool i2c_ready_ = false;" in board_target_header_source, "RTC tracks whether its shared I2C lifecycle has actually started"
+assert "uint32_t deferred_hardware_time_ = 0;" in board_target_header_source, "RTC retains one deferred bootstrap timestamp until interactive I2C exists"
+assert "i2c_ready_=true;" in board_target_source, "RTC marks I2C ready only from interactive/cold RTC begin"
+assert "deferred_hardware_time_=utc;" in board_target_source and "deferred hardware write" in board_target_source, "headless MeshCore time bootstrap records a deferred hardware update without touching absent I2C"
+assert "rtc=PCF8563 restored from deferred startup time" in board_target_source, "invalid RTC is repaired from deferred startup time only after I2C returns"
+assert board_target_source.index("settimeofday(&tv,nullptr);") < board_target_source.index("if(!i2c_ready_){"), "headless RTC fallback still keeps software time current"
+runtime_promotion_body = companion_source.split("bool local_mesh_promote_to_ui(const char* source)",1)[1].split("bool local_mesh_enter_deep_sleep_standby()",1)[0]
+assert "meshink_power_frontlight_begin();" in runtime_promotion_body and "meshink_power_frontlight_set(100);" in runtime_promotion_body, "awake/headless BOOT promotion immediately acknowledges with full frontlight"
+assert runtime_promotion_body.index("meshink_power_frontlight_set(100);") < runtime_promotion_body.index("local_mesh_headless_power_check"), "awake BOOT acknowledgement precedes promotion battery/startup work"
+deep_button_body = unified_source.split("if(button_wake){",1)[1].split("if(radio_wake){",1)[0]
+assert "meshink_power_frontlight_begin();" in deep_button_body and "meshink_power_frontlight_set(100);" in deep_button_body, "deep-sleep BOOT hold immediately acknowledges with full frontlight"
+assert deep_button_body.index("meshink_power_frontlight_set(100);") < deep_button_body.index("local_mesh_setup_button_wake()"), "deep-sleep BOOT acknowledgement precedes retained MeshCore restoration"
+promotion_body = source.split("bool ui_promote_headless_to_interactive()",1)[1].split("void ui_prepare_headless_rx_wake()",1)[0]
+assert "meshink_power_frontlight_set(100);" in promotion_body and "frontlight_lit=true;" in promotion_body, "interactive promotion keeps the BOOT acknowledgement lit through startup"
+assert "meshink_power_frontlight_set(0);" not in promotion_body, "interactive promotion must not extinguish accepted BOOT feedback"
+assert "plan.sample_status=false;" in promotion_body, "retained promotion avoids a premature --:-- status sample"
+assert "plan.display=!reuse_display;" in promotion_body, "retained promotion reuses an existing EPDiy session instead of initializing it twice"
+assert "ui_close_headless_display_session();" not in promotion_body, "BOOT promotion must not deinit/reinit EPDiy high-level singleton state"
+assert "interactive promotion reusing initialized EPDiy session" in promotion_body, "display-session transfer is observable in retained BOOT logs"
+assert "local_mesh_prepare_interactive_services();" in promotion_body, "retained promotion starts skipped RTC/GPS services without restarting radio"
+assert promotion_body.index("local_mesh_prepare_interactive_services();") < promotion_body.index("ui_mesh_ready();"), "RTC/GPS are ready before first interactive status sample"
+assert "map_tiles_warm_storage();" in promotion_body and promotion_body.index("map_tiles_warm_storage();") < promotion_body.index("ui_finish_startup();"), "retained promotion warms map storage before revealing UI"
+assert "meshink_gps_prepare_runtime();" in companion_source and "retained UI promotion UART ready" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
+assert "restarting into full UI boot" not in companion_source, "headless BOOT promotion must not restart the ESP32"
+assert "meshink_radio_resume_retained_wake" in companion_source, "button wake uses retained-radio recovery before UI startup"
+assert "meshink_board_restore_deep_sleep_wake_pads();" in unified_source, "deep-sleep wake restores EXT0/EXT1 RTC pads to normal digital GPIO"
+wake_restore_body = board_target_source.split("void meshink_board_restore_deep_sleep_wake_pads()",1)[1].split("void meshink_board_prepare_retained_aux_wake()",1)[0]
+assert "rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1)" in wake_restore_body, "DIO1 is detached from RTC IO before RadioLib GPIO ISR reuse"
+assert "rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON)" in wake_restore_body, "BOOT is detached from RTC IO before digital button handling"
+assert wake_restore_body.index("rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1)") < wake_restore_body.index("pinMode(P_LORA_DIO_1,INPUT)"), "DIO1 RTC mux is released before digital pinMode"
+wake_source_body = board_target_source.split("static bool t5_enable_deep_sleep_wake_sources()",1)[1].split("bool meshink_board_enter_deep_sleep_standby()",1)[0]
+assert "esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL)" in wake_source_body, "each repeated deep-sleep cycle rebuilds wake sources from a clean RTC configuration"
+assert wake_source_body.index("esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL)") < wake_source_body.index("esp_sleep_enable_ext1_wakeup"), "stale wake sources are cleared before DIO1 EXT1 is re-armed"
+assert "meshink_board_begin_local_rx_wake(require_packet);" in companion_source, "retained startup passes packet-wake state into the board startup reason"
+board_rx_wake_body = board_target_source.split("void T5Board::beginLocalRxWake(bool packet_wake)",1)[1].split("static bool t5_probe_deep_sleep_radio",1)[0]
+assert "BD_STARTUP_RX_PACKET" in board_rx_wake_body and "BD_STARTUP_NORMAL" in board_rx_wake_body, "T5 retained startup mirrors upstream MeshCore board startup-reason handoff"
+assert "packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL" in board_rx_wake_body, "only radio wakes advertise an already-received packet"
+assert "stageWakePacket" in board_target_source and "wake_packet_" in board_target_header_source, "deepsleep39 stages the wake packet in ESP RAM before resetting the SX1262"
+assert "MeshInkSX1262Wrapper::recvRaw" in board_target_source, "deepsleep39 replays the staged wake packet through the MeshCore radio wrapper"
+retained_resume_body = board_target_source.split("static bool radio_resume_retained",1)[1].split("bool radio_resume_rx_wake",1)[0]
+assert "t5_sx1262_raw_capture_wake_packet" in retained_resume_body, "packet wake captures the retained FIFO without invoking fresh RadioLib state"
+assert retained_resume_body.index("t5_sx1262_raw_capture_wake_packet") < retained_resume_body.index("radio.std_init(&radio_spi)"), "saved packet is secured before the clean hardware-resetting reinit"
+assert "radio.resetOnStartup=false;" not in retained_resume_body and "captureRetainedWakePacket" not in retained_resume_body, "Heltec-style retained RadioLib reconstruction is removed from production wake"
+assert "radio.getIrqFlags()" not in retained_resume_body and "radio.getRSSI()" not in retained_resume_body and "radio.getSNR()" not in retained_resume_body, "no RadioLib read is attempted before normal std_init on deep-sleep wake"
+assert "radio.resetOnStartup=true;" in retained_resume_body and "radio.std_init(&radio_spi)" in retained_resume_body, "wake returns SX1262 and RadioLib to a clean initialized baseline after raw capture"
+sleep_entry_body = board_target_source.split("bool meshink_board_enter_deep_sleep_standby()",1)[1].split("bool meshink_board_return_to_retained_deep_sleep()",1)[0]
+assert "digitalRead(P_LORA_BUSY)==HIGH" in sleep_entry_body, "sleep entry checks BUSY non-destructively instead of issuing a radio command"
+assert "digitalRead(P_LORA_DIO_1)==HIGH" in sleep_entry_body, "sleep entry rejects a pending RX IRQ rather than disturbing it"
+assert "radio.startReceive()" in sleep_entry_body, "deepsleep39 re-arms SX1262 RX/DIO1 mapping at every sleep boundary"
+assert "1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH" in board_target_source, "deepsleep39 keeps the known-good DIO1 EXT1 wake assignment"
+assert "(gpio_num_t)T5_PIN_BOOT_BUTTON,0" in board_target_source, "deepsleep39 keeps BOOT EXT0 LOW"
+assert "raw wake packet captured BEFORE RadioLib init" in board_target_source, "wake packet is copied from retained SX1262 FIFO before any RadioLib initialization"
+assert "clean SX1262/RadioLib init complete saved-packet=" in board_target_source, "wake path deliberately returns radio hardware and RadioLib to a clean baseline after capture"
+assert "injected saved wake packet after clean radio reset" in board_target_source, "captured wake packet is replayed into MeshCore after clean reinit"
+assert "rtc_gpio_hold_dis((gpio_num_t)P_LORA_DIO_1)" in board_target_source, "wake restoration explicitly releases any RTC DIO1 hold"
+assert "t5_prepare_retained_sx1262_transport" not in board_target_source, "unsafe partial RadioLib transport reconstruction stays removed"
+assert 'minimal_battery_check("cold-boot"' in unified_source, "cold boot performs battery guard before full UI/MeshCore startup"
+assert 'minimal_battery_check("deep-timer"' in unified_source, "timer wake performs minimal battery-only guard"
+assert "critical check first=" in power_backend_source and "threshold=%umV" in power_backend_source, "battery guard logs both voltage samples and threshold"
+assert "meshink_power_low_battery_latched" not in power_backend_source and "low_latch" not in power_backend_source, "low-battery policy must not persist a latch across recovery"
+assert "ui_minimal_low_battery_shutdown" in source and "minimal low-battery shutdown" in source, "critical deep-sleep battery path uses minimal persistent EPD notice"
+minimal_low_battery_body=source[source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"):source.index("static void critical_battery_shutdown",source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"))]
+assert minimal_low_battery_body.index("meshink_display_deinit();") < minimal_low_battery_body.index("meshink_power_begin_minimal_bus()") < minimal_low_battery_body.index("meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery)"), "minimal low-battery path restores shared I2C after EPDiy teardown before BATFET ship command"
+assert unified_source.count('meshink_wireless_force_local_radios_off()') == 4, "local wireless policy is enforced for normal pre/post MeshCore startup plus retained radio/button wake paths"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
 assert 'meshink_wireless_force_wifi_off()' in unified_source, "companion boot explicitly keeps unused Wi-Fi off"
@@ -308,7 +449,9 @@ contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node
 contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
 contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
 contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
+contains("Radio tower: tapered mast plus two signal arcs", "Contacts and Discovery repeater icon uses the radio-tower glyph")
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
+contains("Simple house silhouette: peaked roof", "Contacts and Discovery room-server icon uses the house glyph")
 contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
 assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
@@ -381,7 +524,8 @@ assert "bottom_nav_top==900" in ui_layout_source, "T5 bottom navigation remains 
 assert "map_centre_y==474" in ui_layout_source, "T5 map centre remains y=474"
 contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
 contains('refresh_area(MeshInkRefreshMode::Direct,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
-contains('else\n        refresh(MeshInkRefreshMode::Direct);', "first Maps entry retains full Loading refresh")
+contains('fast_full_redraw("MAP_LOADING_AFTER_DEEP_WAKE",false);', "retained Maps forces the completed Loading frame over the physical standby image")
+contains('else\n        refresh(MeshInkRefreshMode::Direct);', "ordinary first Maps entry retains the existing full Loading refresh")
 contains('meshink_display_update_area(', "partial Loading path uses display backend area update API")
 contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
 contains('refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
@@ -452,12 +596,12 @@ assert "T5_LOG_TOUCH" not in source and "T5_LOG_TOUCH" not in platformio_source,
 
 # Local UI framebuffer composition uses short 240 MHz bursts from the 80 MHz
 # cruise clock, restoring the previous clock immediately afterwards.
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
 contains('set_cpu_target(previous_mhz,"ui-draw-complete");', "UI draw boost restores previous CPU clock")
 assert 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh")' in source and 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh")' in source, "e-paper updates still run at 240 MHz"
 contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
@@ -507,8 +651,10 @@ assert 'archive-scan file=%s suffix=%u header=%u' in map_source, "archive scan r
 board_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 assert "class T5RadioHal final : public ArduinoHal" in board_source, "radio uses custom HAL to share EPDiy GPIO ISR service"
 assert "delay(1);" in companion, "Bluetooth companion loop must yield so cache64 watchdog does not starve IDLE1"
-assert "gpio_isr_handler_add(" in board_source, "radio attaches DIO handler to existing IDF ISR service"
-assert "ArduinoHal::attachInterrupt" in board_source, "radio HAL retains companion-mode Arduino interrupt fallback"
+assert "gpio_isr_handler_add(" in board_source and "gpio_install_isr_service(ESP_INTR_FLAG_EDGE)" in board_source, "radio directly owns an IDF DIO1 handler and creates the global service when needed"
+assert "ArduinoHal::attachInterrupt" not in board_source, "retained radio IRQ lifetime must not depend on Arduino hidden interrupt bookkeeping"
+assert "meshink_board_service_asserted_radio_irq" in board_source and "DIO1 level recovery" in board_source, "asserted DIO1 has a polling recovery path when an edge is missed"
+assert "meshink_board_service_asserted_radio_irq();" in headless_loop, "headless runtime polls asserted DIO1 before every MeshCore pass"
 
 print("PASS: UI behaviour, full-height map, monochrome controls and first-setup continuous GPS defaults")
 print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, last GPS, brightness)")
@@ -598,7 +744,7 @@ assert "meshink_display_fill_rect({18,812,260,30},0xFF,fb);" not in source, "fix
 assert "DISCOVERED_CONTACT_BASE_LEN" in runtime_source, "discovered advert parser must define a complete base frame length"
 assert 'len<DISCOVERED_CONTACT_BASE_LEN' in runtime_source, "truncated discovered adverts must be rejected"
 assert '*slot=DiscoveredContact{};' in runtime_source, "discovered advert cache must clear stale optional bytes"
-assert 'memset(&detail_contact_,0,sizeof(detail_contact_));' in runtime_source, "Node Info advert parse must start from zeroed contact state"
+assert 'detail_contact_=ContactInfo{};' in runtime_source, "Node Info advert parse must start from zeroed contact state"
 assert "[T5-MESH] rejected malformed new-advert frame" in runtime_source, "malformed advert rejection must remain observable"
 assert "audit_ui_geometry" not in source and "[T5-GEOM]" not in source, "temporary geometry self-audit is removed"
 assert "[T5-TOUCH] tap screen=" not in source, "temporary touch coordinate logging is removed"
@@ -664,9 +810,9 @@ assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "test31 must not 
 # Test32 overlaps H752-01 rail settling with splash preparation instead of
 # paying a fresh 1500 ms delay after the splash is already visible.
 assert "meshink_board_start_local_radio_settle" in board_backend_source, "board backend exposes generic early-settle hook"
-ui_setup_overlap=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
-assert ui_setup_overlap.index("meshink_display_init();") < ui_setup_overlap.index("meshink_board_start_local_radio_settle();"), "early radio power begins immediately after display board init"
-assert ui_setup_overlap.index("meshink_board_start_local_radio_settle();") < ui_setup_overlap.index("set_ui_orientation"), "UI starts rail before framebuffer/preferences/splash work"
+ui_startup_overlap=source[source.index("void ui_startup(const MeshInkUiStartupPlan& plan)"):source.index("void ui_setup()")]
+assert ui_startup_overlap.index("meshink_display_init();") < ui_startup_overlap.index("meshink_board_start_local_radio_settle();"), "early radio power begins immediately after display board init when that startup step is enabled"
+assert ui_startup_overlap.index("meshink_board_start_local_radio_settle();") < ui_startup_overlap.index("set_ui_orientation"), "UI startup plan starts rail before framebuffer/preferences/splash work"
 assert "radio_gps_rail_started_at" in board_target_source, "T5 backend timestamps early rail assertion"
 assert "REQUIRED_SETTLE_MS=1500" in board_target_source, "manufacturer-style total settle remains 1500 ms"
 assert "remaining=elapsed<REQUIRED_SETTLE_MS?REQUIRED_SETTLE_MS-elapsed:0" in board_target_source, "local handoff waits only the unconsumed settle remainder"
@@ -680,9 +826,10 @@ assert "void meshink_board_start_local_radio_settle() {}" in standalone_source, 
 assert "constexpr float LILYGO_TCXO_VOLTAGE=2.4f;" in board_target_source, "T5 backend uses LilyGO's 2.4 V post-init TCXO setting"
 assert "radio.setTCXO(LILYGO_TCXO_VOLTAGE)" in board_target_source, "T5 backend explicitly applies LilyGO TCXO voltage"
 assert "radio.setDio2AsRfSwitch(true)" in board_target_source, "T5 backend explicitly enables LilyGO DIO2 RF switch"
-tcxo_at=board_target_source.index("radio.setTCXO(LILYGO_TCXO_VOLTAGE)")
-rf_switch_at=board_target_source.index("radio.setDio2AsRfSwitch(true)")
-std_init_at=board_target_source.index("ready=radio.std_init(&radio_spi)")
+radio_init_body=board_target_source.split("bool radio_init()",1)[1]
+tcxo_at=radio_init_body.index("radio.setTCXO(LILYGO_TCXO_VOLTAGE)")
+rf_switch_at=radio_init_body.index("radio.setDio2AsRfSwitch(true)")
+std_init_at=radio_init_body.index("ready=radio.std_init(&radio_spi)")
 assert std_init_at < tcxo_at < rf_switch_at, "radio hardware order must be begin -> TCXO 2.4 V -> DIO2 RF switch"
 assert "post-init TCXO=%.1fV result=%d" in board_target_source, "TCXO post-init result remains available to targeted diagnostics"
 assert "post-init DIO2 RF-switch result=%d" in board_target_source, "RF-switch post-init result remains available to targeted diagnostics"
@@ -806,9 +953,21 @@ assert "[T5-STACK]" not in source, "temporary Maps stack diagnostic should be re
 
 # Maps marker rendering must keep complete UiMapNode records off loopTask stack.
 assert "Visible visible[50]" not in source, "Maps must not retain 50 complete node records on loopTask stack"
-assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};" in source, "Maps reuses compact projected marker storage"
+assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.node_type};" in source, "Maps reuses compact projected marker storage and carries node role"
 assert "struct Bounds {int16_t x,y,w,h;};" in source, "Maps collision bounds use compact 16-bit coordinates"
+assert "RankedLabel ranked[50]" in source, "Maps ranks labels without copying full node records"
+assert "for(uint8_t candidate=0;candidate<12;++candidate)" in source, "Maps tries the bounded twelve-position label solver"
+assert "Protect every true node position" in source, "Map labels protect all node markers from coverage"
+assert "const size_t label_budget=" in source and "compact_labels=map_zoom<=10" in source, "Maps deliberately thins labels at wide zooms"
+assert "draw_map_repeater_marker(n.x,n.y)" in source, "Repeater nodes use the dedicated tower marker"
+assert "Two bold broadcast arcs per side" in source and "meshink_display_fill_rect({x-13,y-14,27,29}" in source, "Map repeater marker uses the larger bold separated-wave tower glyph"
+assert "own_marker_reserved" in source and "own_marker_x+22" in source and "own_marker_y+22" in source, "Map labels reserve the own-location bullseye footprint"
+assert "const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?14:9;" in source, "Label solver protects the enlarged repeater marker"
+assert "thick_line(n.x,n.y,target_x,target_y);" in source, "Displaced map labels keep a three-pixel leader to their node"
 assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
+assert "uint8_t node_type=0;" in data_source, "Map node data carries the MeshCore role"
+assert "item.node_type=positioned.type;" in runtime_source, "Saved map contacts expose their role"
+assert "item.node_type=contact->type;" in runtime_source, "Telemetry-only map contacts expose their role"
 
 # Shared X-axis interior geometry must derive from logical width.
 assert "form_width==480" in ui_layout_source, "T5 setup form width guard missing"
@@ -873,7 +1032,7 @@ assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startu
 # Test44: field standby redesign uses the full-size MeshInk bitmap and only
 # shows unread summary cards that contain unread messages.
 assert "const int logo_top=any_unread?ui_y(70):ui_y(165);" in source and "draw_meshink_logo(logo_top,false);" in source, "standby lowers the full-size MeshInk logo only when there are no unread cards"
-assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in source, "standby combines the logo with a large smooth STANDBY heading"
+assert 'ui_centred("STANDBY",standby_state_y,5,0,true);' in source and '"DEEP SLEEP STANDBY"' in source, "standby keeps the large STANDBY identity and adds dedicated deep-sleep identity"
 assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
 assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
 assert "ui_rect(20,445,244,310)" in source and "ui_rect(276,445,244,310)" in source, "dual unread cards retain their side-by-side geometry"
@@ -884,6 +1043,29 @@ assert "standby_centred(channel,channel_rect,channel_rect.y+ui_h(125),11)" in so
 assert "rounded_box(rect,max(ui_w(22),ui_h(22)),false);" in source, "standby summary cards use the shared rounded visual language"
 assert 'standby_centred("PRIVATE"' in source and 'standby_centred("CHANNEL"' in source, "standby cards retain clear private/channel labels"
 assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_centred("TO WAKE",ui_y(892),3,0,true);' in source, "standby uses a lower divider and larger two-line smooth wake instruction"
+
+# Test44b: unread state is journal authority without growing the v3 record.
+assert "MESHINK_MESSAGE_UNREAD" in message_store_header and "MESHINK_MESSAGE_READ_THROUGH" in message_store_header, "v3 record flags persist unread arrival and read-through boundary"
+assert "static_assert(sizeof(MeshInkStoredMessage)==188" in message_store_source, "persistent unread reuses existing flags without growing the record cache"
+assert "if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;" in message_store_source, "incoming unread state is committed in the same append transaction"
+assert "MeshInkMessageStore::mark_read_through" in message_store_source and "MESHINK_MESSAGE_READ_THROUGH" in message_store_source, "opening a conversation persists a single read-through marker"
+assert "rebuild_unread_from_journal()" in runtime_source and "unread restored direct=" in runtime_source, "RAM unread counters are derived from journal state at startup"
+assert "MAX_UNREAD_PEERS=MAX_CONTACTS" in runtime_source and "direct_unread_[MAX_UNREAD_PEERS]" in runtime_source, "small unread cache covers configured contacts rather than only the 16 visible rows"
+assert "direct_unread_count" in runtime_source and "direct_unread_peer(item.key,false)" in runtime_source and "direct_unread_peer(item.key,true)" in runtime_source, "journal replay uses read-only lookup and allocates peers only when unread state needs storage"
+assert "if(auto* peer=direct_unread_peer(item.key,false))*peer=UnreadPeer{};" in runtime_source, "read-through markers release zero-count peer slots"
+assert "ui_status_set_unread(direct_total);" in runtime_source and "ui_status_set_channel_unread(channel_total);" in runtime_source, "journal-derived peer/channel counters drive global status totals"
+assert 'getUShort("unread_dm"' not in source and 'getUShort("unread_ch"' not in source, "legacy NVS aggregate unread values are no longer an authority"
+unread_load_body=source[source.index("static void ui_load_persistent_state()"):source.index("void ui_startup(const MeshInkUiStartupPlan& plan)")]
+assert "status_unread=0;" not in unread_load_body and "status_channel_unread=0;" not in unread_load_body, "ordinary UI preference loading must preserve journal-restored unread totals during the first headless alert"
+headless_prepare_body=source[source.index("void ui_prepare_headless_rx_wake()"):source.index("static void ui_load_persistent_state()")]
+assert "status_unread=0;" in headless_prepare_body and "status_channel_unread=0;" in headless_prepare_body, "retained RX wake still starts unread totals clean before journal replay"
+headless_alert_body=source[source.index("bool ui_service_headless_message_alert()"):source.index("bool ui_promote_headless_to_interactive()")]
+assert "MeshInkUiStartupPlan plan{};" in headless_alert_body and "ui_startup(plan);" in headless_alert_body, "first headless alert still initializes the display through normal UI startup"
+assert "plan.load_state=false;" not in headless_alert_body, "first headless alert may load ordinary UI preferences without erasing journal unread totals"
+assert "status_unread++" not in source and "status_channel_unread++" not in source, "UI notification code cannot maintain a second unread counter"
+assert "mark_read(MessageKind::Direct" in runtime_source and "mark_read(MessageKind::Channel" in runtime_source, "opening direct/channel conversations persists read state instead of only zeroing RAM"
+assert "path_len,unread)" in runtime_source, "RX append carries unread state directly into the durable record"
+assert "if(sequence&&journal_full)rebuild_unread_from_journal();" in runtime_source, "ring overwrite reconciles derived unread counters with the 250-record journal"
 
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
@@ -913,15 +1095,16 @@ assert "bool ui_chat_is_visible(bool channel)" in source, "UI exposes a single v
 assert "return !standby_active&&(channel?screen==Screen::ChannelChat:screen==Screen::ContactChat);" in source, "visible chat excludes standby and distinguishes private/channel chats"
 assert "ui_chat_is_visible(false)&&!active_channel_&&!memcmp(active_key_,key,6)" in runtime_source, "matching visible private chat suppresses provider unread increment"
 assert "ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel" in runtime_source, "matching visible channel chat suppresses provider unread increment"
-assert "if(!already_seen){auto& unread=direct_unread(key);if(unread<255)unread++;}" in runtime_source, "private unread increments only when unseen"
-assert "if(!already_seen&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)channel_unread_[channel]++;" in runtime_source, "channel unread increments only when unseen"
-assert "const bool visible=ui_chat_is_visible(channel);" in source, "bottom-tab unread uses the same visible-chat predicate"
+assert runtime_source.count("const bool unread=!already_seen;")>=2, "private/channel unread state is derived from the visible-chat predicate"
+assert "if(auto* peer=direct_unread_peer(key,true))" in runtime_source and "if(peer->count<255)++peer->count;" in runtime_source, "private RAM unread cache increments only after a durable unseen RX append"
+assert "if(unread&&channel<MAX_UI_CHANNELS&&channel_unread_[channel]<255)" in runtime_source and "++channel_unread_[channel];" in runtime_source, "channel RAM unread cache increments only after a durable unseen RX append"
+assert "const bool visible=ui_chat_is_visible(channel);" in source, "message notification retains the visible-chat predicate without owning unread counts"
 
 
 # Test47: LAST HEARD uses MeshCore's per-contact lastmod (our T5 clock), while
 # LAST ADVERT remains the remote advertisement timestamp.
 assert "format_last_heard(contact.lastmod,heard)" in runtime_source, "contact list LAST HEARD must use MeshCore lastmod"
-assert 'snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %s",role,heard)' in runtime_source, "contact list labels lastmod as heard activity"
+assert 'snprintf(item.subtitle,sizeof(item.subtitle),"%s  HEARD %.43s",role,heard)' in runtime_source, "contact list labels lastmod as heard activity with bounded formatting"
 assert "if(contact.lastmod)format_time(contact.lastmod,item.time)" in runtime_source, "contact list time column follows lastmod"
 assert "format_last_heard(detail_contact_.lastmod,self->detail_seen_)" in runtime_source, "node Overview LAST HEARD must use lastmod"
 assert "now>=detail_contact_.last_advert_timestamp" in runtime_source and "detail_advert_age_" in runtime_source, "LAST ADVERT remains based on last_advert_timestamp"
@@ -1049,8 +1232,8 @@ assert "provider.note_direct_ack(" not in runtime_source and "provider.note_dire
 # Test64: test.8 keeps the 80 MHz steady state but races actual message-store
 # flash I/O at 240 MHz. Cached PSRAM/RAM reads must never pay a clock switch.
 assert "STORE_FLASH_CPU_MHZ=240" in message_store_source, "message-store flash work has an explicit 240 MHz race-to-idle target"
-assert "struct StoreCpuBoostScope" in message_store_source and "setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ)" in message_store_source, "message-store owns a scoped flash CPU boost"
-assert "if(restore)setCpuFrequencyMhz(previous_mhz);" in message_store_source, "message-store flash boost restores the previous CPU clock"
+assert "struct StoreCpuBoostScope" in message_store_source and "meshink_performance_set_cpu_mhz(STORE_FLASH_CPU_MHZ)" in message_store_source, "message-store owns a scoped flash CPU boost"
+assert "if(restore)meshink_performance_set_cpu_mhz(previous_mhz);" in message_store_source, "message-store flash boost restores the previous CPU clock"
 for method in (
     "bool MeshInkMessageStore::load_cache(File& source)",
     "bool MeshInkMessageStore::create_empty()",
@@ -1075,7 +1258,7 @@ assert "new StoreCpuBoostScope" not in message_store_source and "delete flash_bo
 assert "[T5-STOREPERF]" not in message_store_source and "meshink_message_store_perf_snapshot" not in message_store_source, "message-store profiling instrumentation is removed"
 
 # Test65 cleanup: temporary boot-stage timing probes are removed after tuning.
-ui_setup_boot=source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")]
+ui_setup_boot=source[source.index("void ui_startup(const MeshInkUiStartupPlan& plan)"):source.index("void ui_setup()")]
 for tuned_source in (unified_source, companion_source, board_target_source, source):
     assert "[T5-BOOTPERF]" not in tuned_source, "boot performance probes are removed from the field build"
 assert "bootperf_" not in unified_source and "bootperf_" not in companion_source and "bootperf_" not in board_target_source and "bootperf_" not in source, "boot timer scaffolding is removed"
@@ -1085,9 +1268,9 @@ assert "bootperf_" not in unified_source and "bootperf_" not in companion_source
 # interactive cruise. The T5 GPS manager reuses the board-level NMEA probe
 # instead of paying upstream EnvironmentSensorManager's fixed 1000 ms detect.
 setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
-assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
-assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
-assert "ui_boot_cpu_active=true;" in source[source.index("void ui_setup()"):source.index("void ui_show_storage_initializing()")], "UI boot phase explicitly stays at render clock"
+assert "meshink_performance_set_cpu_mhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
+assert setup_body.index("meshink_performance_set_cpu_mhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
+assert "ui_boot_cpu_active=true;" in source[source.index("void ui_startup(const MeshInkUiStartupPlan& plan)"):source.index("void ui_setup()")], "UI startup phase explicitly stays at render clock"
 assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");' in source, "area refresh cannot drop boot to 80 MHz"
@@ -1112,7 +1295,7 @@ assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS up
 # Test69: test.11 keeps only low-risk boot scheduling wins. Internal SPIFFS
 # mounting is independent of the LoRa/GPS rail, so do it while the rail is
 # still settling; MeshCore datastore/core lifecycle remains behind radio init.
-local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("bool local_mesh_is_running()")]
+local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("static bool local_mesh_setup_retained_wake(")]
 assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
@@ -1124,7 +1307,7 @@ assert "Serial.begin(115200);" in ui_setup_boot, "standalone UI target still ini
 # Satellite count is primary status information and matches clock/battery size.
 status_bar_body=source[source.index("static void draw_status_bar()"):source.index("static MeshInkRect toast_message_rect")]
 assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in status_bar_body, "satellite count uses the same scale and baseline as clock/battery status text"
-assert "strlen(satellites)*18" in status_bar_body, "satellite status spacing matches scale-three character width"
+assert "ui_text_width(satellites,3)" in status_bar_body, "satellite status spacing follows the primary proportional font metrics"
 
 
 # Testing and release artifacts use the same versioned naming convention.
@@ -1204,9 +1387,12 @@ assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;"
 assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
 assert "if(!keyboard_visible)settings_row(\"PATH HASH MODE\",path_hash_label(),510);" in source, "Radio Settings does not draw a row beneath the portrait keyboard"
 assert 'if(value>99)strcpy(out,"99+");' in source, "status unread counters are visually bounded"
-assert "text(count,left,ui_y(17),2,0,true);" in source, "status secondary counters use compact scale-two text"
+assert source.count("text(count,left,ui_y(13),3,0,true);")>=2, "direct and channel status counters use the same primary numeric face/size as clock and battery"
+assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in source, "GPS satellite count uses the same primary numeric face/size"
+assert "ui_text_width(count,3)" in source and "ui_text_width(satellites,3)" in source, "primary status-number spacing follows proportional font metrics"
+assert "!(status_unread&&status_channel_unread)" in source, "GPS satellite number yields space when both enlarged unread counters are present"
 assert "ui_text_width(short_name,2),ui_text_width(age,2)" in source, "map label background accounts for both node name and age"
-assert "meshink_map_control_rect(portrait_layout(),(int)control)" in source, "map labels avoid the visible map controls"
+assert "meshink_map_control_rect(layout,(int)control)" in source, "map labels avoid the visible map controls through the cached layout reference"
 assert "const int label_bottom=ui_y(766);" in source, "map node labels stay clear of bottom map overlays"
 assert "const int zoom_label_width=ui_text_width(zoom,2)+ui_w(8);" in source, "map zoom background follows proportional text width"
 assert "const int scale_backing_width=max(pixels+ui_w(12),ui_text_width(scale,2)+ui_w(16));" in source, "map scale backing covers both the physical bar and proportional label"
@@ -1225,7 +1411,7 @@ assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Disc
 assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
 assert "ui_data->open_advert(index)" in source, "Discovery touch indexing follows the visible page"
 
-assert "ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);" in source, "capped map label backings also clip long node names"
+assert "ui_text_fit(short_name,best_x+4,best_y+2,w-ui_w(8),2,0,true);" in source, "capped map label backings also clip long node names"
 assert 'if(status_unread>99)strcpy(direct,"99+");' in source and 'if(status_channel_unread>99)strcpy(channel,"99+");' in source, "large standby unread counts stay inside their 244px cards"
 assert "ui_centred_fit(wake.confirm_battery" in source and "ui_centred_fit(wake.confirm_external" in source, "board-specific shutdown guidance is screen-bounded"
 assert "ui_centred_fit(wake.off_battery_line1" in source and "ui_centred_fit(wake.off_external_line2" in source, "powered-off guidance remains bounded for future board ports"
@@ -1333,7 +1519,7 @@ assert 'meshink_display_draw_rect({x,y+6,31,18},0,fb);meshink_display_fill_rect(
 # the empty and unread-card layouts without colliding with the wake footer.
 standby_body=source[source.index("static void draw_standby(){"):source.index("static void format_minutes",source.index("static void draw_standby(){"))]
 assert "const bool any_unread=has_direct||has_channel;" in standby_body, "standby layout branches only on whether any unread cards are present"
-assert 'ui_centred("STANDBY",any_unread?ui_y(775):ui_y(620),5,0,true);' in standby_body, "large smooth STANDBY heading moves below unread cards when needed"
+assert "const int standby_state_y=any_unread?ui_y(775):ui_y(620);" in standby_body and 'ui_centred("STANDBY",standby_state_y,5,0,true);' in standby_body, "standby state label moves below unread cards when needed"
 assert 'ui_centred_fit(wake_line,ui_y(852),portrait_layout().width-ui_w(32),3,0,true);' in standby_body, "wake instruction uses readable smooth scale-three text"
 assert "ui_y(830)" in standby_body and "ui_y(892)" in standby_body, "standby footer stays below the unread-card region"
 
@@ -1393,3 +1579,27 @@ assert 'Serial.printf("[T5-CMD] Saved %s\\n",path);' in unified_source, "each su
 assert "if(!terminal_length)" in unified_source and "if(screenshot_capture_mode)terminal_save_screenshot();" in unified_source, "blank Enter captures while armed"
 assert "if(ch=='\\n'&&terminal_last_was_cr)" in unified_source, "CRLF terminals cannot double-capture one Enter"
 assert "Disconnect serial to exit screenshot mode" in unified_source, "session lifetime is explained to the user"
+
+
+# 2.1.0: companion unread/read handoff, server login convenience, telemetry
+# provenance wording and deep-sleep top-tab restoration remain intentionally
+# narrow changes with no journal-layout or flash-partition migration.
+assert "mark_matching_received_read" in message_store_header and "MeshInkMessageStore::mark_matching_received_read" in message_store_source, "companion sync can clear one exact unread journal record"
+assert "item.flags&=(uint8_t)~MESHINK_MESSAGE_UNREAD;" in message_store_source, "companion sync clears only the unread bit"
+assert "MESHINK_MESSAGE_READ_THROUGH" not in message_store_source[message_store_source.index("MeshInkMessageStore::mark_matching_received_read"):message_store_source.index("void MeshInkMessageStore::update_ack")], "companion sync never marks newer conversation messages read"
+assert "if(queued==len)mark_synced_message_read(src,len);" in companion_source, "BLE sync responses clear unread only after the frame is accepted for transmit"
+assert companion_source.count("MESHINK_MESSAGE_PATH_UNKNOWN,true);")>=2 and "pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);" in companion_source, "companion receives start unread"
+assert '"TELEMETRY POSITION %s"' in runtime_source, "requested location is labelled as telemetry position rather than a verified live fix"
+assert 'ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);' in source, "telemetry page names the coordinate source explicitly"
+assert "const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);" in runtime_source, "successful repeater/room login immediately requests status"
+assert "auto-status=%u" in runtime_source, "automatic post-login status request is diagnosable"
+assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_get_retained_ui_tab" in power_backend_header and "meshink_power_clear_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
+assert "esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED" in power_backend_source, "retained tab is accepted only on a real deep-sleep wake"
+assert "retained_tab_for_screen" in source and "screen_for_retained_tab" in source, "UI maps nested screens to stable top-level tabs"
+assert "meshink_power_retain_ui_tab(retained_tab);" in source, "deep-sleep entry stores the current top-level tab"
+assert "if(meshink_power_get_retained_ui_tab(retained_tab)){" in source, "wake reads the retained top-level tab"
+assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promotion preserves a restored existing-user tab"
+assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
+assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
+assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.0\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.0\"'" in platformio_source, "2.1.0 firmware/UI identity stays aligned"

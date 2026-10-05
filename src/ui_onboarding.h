@@ -2,10 +2,34 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "hardware/radio_types.h"
+#include "hardware/power_types.h"
 class UiDataProvider;
 
+struct MeshInkUiStartupPlan {
+    bool display=true;
+    bool touch=true;
+    bool load_state=true;
+    bool radio_settle=true;
+    bool recover_power_path=true;
+    bool splash=true;
+    bool sample_status=true;
+    bool battery_guard=true;
+    bool service_mesh_between_steps=false;
+};
+
+void ui_startup(const MeshInkUiStartupPlan& plan);
 void ui_setup();
+void ui_prepare_headless_rx_wake();
+bool ui_headless_message_alert_pending();
+bool ui_service_headless_message_alert();
+bool ui_headless_display_busy();
+bool ui_headless_display_session_active();
+bool ui_display_session_active();
+void ui_quiesce_display_for_deep_sleep();
+bool ui_promote_headless_to_interactive();
 void ui_show_storage_initializing(); // update boot splash before formatting
+[[noreturn]] void ui_minimal_low_battery_shutdown(
+    const MeshInkPowerCriticalState& critical,const char* source);
 void ui_finish_startup(); // reveal interactive UI after storage/mesh initialization
 void ui_loop();
 void ui_status_set_unread(uint16_t count);

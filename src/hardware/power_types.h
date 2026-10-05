@@ -28,6 +28,13 @@ struct MeshInkPowerCriticalState {
     uint16_t battery_mv = 0;
 };
 
+enum class MeshInkPowerSleepCheck : uint8_t {
+    Safe = 0,
+    Critical,
+    ExternalPower,
+    Unavailable
+};
+
 // User-facing wake guidance is board-owned because the physical control that
 // restores power may not be readable or controllable by the running firmware.
 struct MeshInkPowerWakeInfo {

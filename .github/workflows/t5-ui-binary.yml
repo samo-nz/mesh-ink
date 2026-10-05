@@ -33,6 +33,12 @@ jobs:
           key: meshink-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: meshink-pio-${{ runner.os }}-
       - run: python -m pip install platformio Pillow
+      - name: MeshCore submodule pin integrity
+        run: python tools/check_meshcore_pin.py
+      - name: Architecture boundary checks
+        run: python tools/check_architecture.py
+      - name: Web flasher safety regression
+        run: python tools/check_web_flasher.py
       - name: Validate all radio presets
         run: python tools/check_radio_presets.py
       - name: Host map archive reader tests
@@ -78,6 +84,21 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
             tests/test_gps_contract.cpp -o /tmp/meshink-gps-contract-test
           /tmp/meshink-gps-contract-test
+      - name: Board-independent board lifecycle contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_board_contract.cpp -o /tmp/meshink-board-contract-test
+          /tmp/meshink-board-contract-test
+      - name: Board-independent RTC backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_rtc_contract.cpp -o /tmp/meshink-rtc-contract-test
+          /tmp/meshink-rtc-contract-test
+      - name: Board-independent CPU performance backend contract
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests -Isrc \
+            tests/test_performance_contract.cpp -o /tmp/meshink-performance-contract-test
+          /tmp/meshink-performance-contract-test
       - name: T5 GT911 backend state regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \
@@ -87,7 +108,6 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
-
       - name: Verify cache64 release SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -102,6 +122,8 @@ jobs:
           grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+
+
 
       - name: Read firmware version
         id: version
@@ -149,21 +171,22 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           BUILD=".pio/build/t5-unified-cache64"
-          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
           test -s "$BUILD/bootloader.bin"
           test -s "$BUILD/partitions.bin"
-          test -s "$FRAMEWORK/tools/partitions/boot_app0.bin"
-          python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
-            --flash_mode keep --flash_freq keep --flash_size 16MB \
-            --fill-flash-size 16MB \
-            -o "meshink-$VERSION-full-wipe.bin" \
-            0x0 "$BUILD/bootloader.bin" \
-            0x8000 "$BUILD/partitions.bin" \
-            0xe000 "$FRAMEWORK/tools/partitions/boot_app0.bin" \
-            0x10000 "$BUILD/firmware.bin"
+          python tools/package_full_wipe.py \
+            --bootloader "$BUILD/bootloader.bin" \
+            --partitions "$BUILD/partitions.bin" \
+            --firmware "$BUILD/firmware.bin" \
+            --output "meshink-$VERSION-full-wipe.bin"
           test -s "meshink-$VERSION-full-wipe.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
           sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
+
+      - name: Warnings-visible cache64 firmware audit
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
 
       - uses: actions/upload-artifact@v4
         with:
@@ -196,29 +219,31 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION is a major interaction and messaging upgrade,
-          promoted after the 1.9.4-test series passed hardware testing and CI.
+          MeshInk $VERSION's headline feature is reliable deep-sleep standby
+          designed to maximise battery life while keeping the mesh useful.
 
           Highlights:
-          - much larger, edge-to-edge portrait and landscape keyboard targets with
-            improved rapid-tap handling and cached touch recovery
-          - polished message composition with bottom-anchored multiline text,
-            a clear insertion cursor, visible trailing spaces and hold-to-repeat DEL
-          - capacitive HOME is suppressed while either keyboard is active so typing
-            cannot accidentally collapse the composer
-          - direct-message delivery status follows the actual MeshCore path through
-            direct/flood sends, retries, FINAL FLOOD and the terminal result
-          - retry progress remains RAM-only; the journal records only the initial
-            SENDING state and the durable final delivered/failed outcome
-          - failed final-state writes are retried, and stale in-flight direct sends
-            found after reboot are recovered as FAILED before history is displayed
-          - message-history paging now follows the visual conversation stack:
-            swipe down for older history and up to return toward newer messages
-          - 80 MHz interactive cruise, targeted 240 MHz work bursts and the faster
-            startup/render/storage path are retained without the temporary tuning
-            and keyboard diagnostic instrumentation
-          - existing message history is migrated and preserved across the updated
-            message format and persistence behavior
+          - reliable deep-sleep standby retains the MeshCore/SX1262 receive runtime
+            and can wake headlessly for radio traffic without starting the interactive UI,
+            dramatically reducing the time the display/UI and higher-power services need to run
+          - long-BOOT promotion attaches the UI to the retained MeshCore runtime
+            without restarting the radio, while restored tabs fully replace the
+            persistent standby image on e-paper
+          - PCF8563 RTC handling now respects the shared I2C lifecycle: headless
+            contact-time bootstrap is deferred until I2C is available, avoiding
+            invalid early hardware transactions
+          - message persistence, unread/read handoff, retry state, delivery-path
+            reporting and history paging are hardened across local and companion use
+          - Maps has improved node-label placement with bounded collision avoidance,
+            priority ordering, leader lines, zoom-dependent density reduction, and
+            protection for node markers, map controls and the own-location bullseye
+          - repeaters are visually distinct with a bold radio-tower marker on Maps
+            and role icon in Contacts/Discovery; room servers use a house role icon
+          - map label leader lines are heavier for better e-paper legibility
+          - larger primary UI text uses bundled smooth Inter raster fonts while
+            compact/status text keeps the established small-font treatment
+          - status, standby, keyboard, touch, power, GPS and map rendering refinements
+            from the hardware-tested release-candidate series are included
 
           The update image does not intentionally erase existing MeshCore
           settings, contacts, current-format message history, saved Maps data,

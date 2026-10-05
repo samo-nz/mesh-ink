@@ -1,4 +1,5 @@
 #include "message_store.h"
+#include "hardware/performance.h"
 
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -24,12 +25,12 @@ struct StoreCpuBoostScope {
 
     explicit StoreCpuBoostScope(bool enabled=true){
         if(!enabled)return;
-        previous_mhz=getCpuFrequencyMhz();
+        previous_mhz=meshink_performance_cpu_mhz();
         if(previous_mhz<STORE_FLASH_CPU_MHZ)
-            restore=setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ);
+            restore=meshink_performance_set_cpu_mhz(STORE_FLASH_CPU_MHZ);
     }
     ~StoreCpuBoostScope(){
-        if(restore)setCpuFrequencyMhz(previous_mhz);
+        if(restore)meshink_performance_set_cpu_mhz(previous_mhz);
     }
 };
 
@@ -80,7 +81,8 @@ bool MeshInkMessageStore::ensure_cache(){
         Serial.printf("[T5-STORE] WARN message cache allocation failed bytes=%u\n",(unsigned)bytes);
         return false;
     }
-    memset(records_,0,bytes);
+    for(size_t i=0;i<MESHINK_MESSAGE_CAPACITY;++i)
+        records_[i]=MeshInkStoredMessage{};
     return true;
 }
 
@@ -89,9 +91,7 @@ bool MeshInkMessageStore::load_cache(File& source){
     StoreCpuBoostScope cpu_boost;
     const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
     if(!source.seek(sizeof(MeshInkMessageStoreHeader)))return false;
-    const uint32_t started=micros();
     const size_t got=source.read((uint8_t*)records_,bytes);
-    const uint32_t elapsed=(uint32_t)(micros()-started);
     if(got!=bytes){
         heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;
         return false;
@@ -120,7 +120,8 @@ bool MeshInkMessageStore::create_empty(){
         return false;
     }
     if(ensure_cache())
-        memset(records_,0,MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage));
+        for(size_t i=0;i<MESHINK_MESSAGE_CAPACITY;++i)
+            records_[i]=MeshInkStoredMessage{};
     Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes cache=%s\n",
                   (unsigned)MESHINK_MESSAGE_CAPACITY,
                   (unsigned)(sizeof(header_)+
@@ -256,7 +257,7 @@ uint32_t MeshInkMessageStore::append(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
         const char* text,uint32_t timestamp,UiMessageState state,
         uint32_t ack,MeshInkMessageOrigin origin,
-        bool has_rx,int8_t snr_q4,uint8_t path_len){
+        bool has_rx,int8_t snr_q4,uint8_t path_len,bool unread){
     if(!initialized_&&!begin())return 0;
 
     uint16_t physical;
@@ -283,6 +284,7 @@ uint32_t MeshInkMessageStore::append(
         item.snr_q4=snr_q4;
         item.flags|=MESHINK_MESSAGE_HAS_RX;
     }
+    if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;
 
     if(!file_)return 0;
     StoreCpuBoostScope cpu_boost;
@@ -319,6 +321,58 @@ bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     if(item.state==(uint8_t)state)return true;
     item.state=(uint8_t)state;
     return write_record(p,item);
+}
+
+bool MeshInkMessageStore::mark_read_through(
+        MeshInkMessageKind kind,const uint8_t* key,size_t key_len){
+    if(!initialized_&&!begin())return false;
+    MeshInkStoredMessage item{};
+    if(!file_||!key||!key_len||key_len>sizeof(item.key))return false;
+
+    // A single marker on the newest record for this conversation means every
+    // older record for the same peer/channel is read. This keeps "mark read"
+    // to one record write regardless of how many unread messages accumulated.
+    for(size_t n=header_.count;n>0;--n){
+        const uint16_t p=(header_.head+(uint16_t)n-1)%MESHINK_MESSAGE_CAPACITY;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))return false;
+        if(item.kind!=(uint8_t)kind||memcmp(item.key,key,key_len))continue;
+
+        const uint8_t next_flags=(uint8_t)(
+            (item.flags|MESHINK_MESSAGE_READ_THROUGH)&
+            (uint8_t)~MESHINK_MESSAGE_UNREAD);
+        if(next_flags==item.flags)return true;
+        item.flags=next_flags;
+        return write_record(p,item);
+    }
+    return true;
+}
+
+bool MeshInkMessageStore::mark_matching_received_read(
+        MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+        uint32_t timestamp,const char* text){
+    if(!initialized_&&!begin())return false;
+    MeshInkStoredMessage item{};
+    if(!file_||!key||!key_len||key_len>sizeof(item.key)||!text)return false;
+
+    // The companion queue is FIFO, so clear the oldest unread journal record
+    // matching the frame actually handed to the app. Do not create a
+    // READ_THROUGH marker: a newer message may still be waiting in MeshCore.
+    for(size_t logical=0;logical<header_.count;++logical){
+        const uint16_t p=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))return false;
+        if(item.sequence==0||
+           item.kind!=(uint8_t)kind||
+           item.state!=(uint8_t)UiMessageState::Received||
+           !(item.flags&MESHINK_MESSAGE_UNREAD)||
+           item.timestamp!=timestamp||
+           memcmp(item.key,key,key_len)||
+           strncmp(item.text,text,sizeof(item.text)))continue;
+        item.flags&=(uint8_t)~MESHINK_MESSAGE_UNREAD;
+        return write_record(p,item);
+    }
+    return false;
 }
 
 void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
@@ -376,6 +430,76 @@ void MeshInkMessageStore::update_outgoing(
     else item.flags&=(uint8_t)~MESHINK_MESSAGE_ROUTE_FLOOD;
     if(!memcmp(&before,&item,sizeof(item)))return;
     write_record(p,item);
+}
+
+bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
+        uint32_t& disk_sequence,size_t& disk_count){
+    disk_sequence=0;
+    disk_count=0;
+    if(!initialized_||!file_){
+        Serial.println("[T5-STORE] deep-sleep verify failed: journal not open");
+        return false;
+    }
+
+    StoreCpuBoostScope cpu_boost;
+    const MeshInkMessageStoreHeader expected=header_;
+
+    // Force all stdio/VFS buffers out, then close the writer handle. Reopening
+    // from SPIFFS makes this a session-boundary durability check rather than
+    // trusting the still-live File object's in-memory state.
+    file_.flush();
+    file_.close();
+
+    File verify=SPIFFS.open(STORE_PATH,"r");
+    MeshInkMessageStoreHeader disk{};
+    bool header_ok=false;
+    bool tail_ok=true;
+    uint32_t tail_sequence=0;
+
+    if(verify){
+        header_ok=verify.read((uint8_t*)&disk,sizeof(disk))==sizeof(disk) &&
+                  disk.magic==STORE_MAGIC &&
+                  disk.version==STORE_VERSION &&
+                  disk.capacity==MESHINK_MESSAGE_CAPACITY &&
+                  disk.head<MESHINK_MESSAGE_CAPACITY &&
+                  disk.count<=MESHINK_MESSAGE_CAPACITY;
+        if(header_ok&&disk.count){
+            const uint16_t physical=
+                (uint16_t)((disk.head+disk.count-1)%MESHINK_MESSAGE_CAPACITY);
+            MeshInkStoredMessage tail{};
+            tail_ok=read_record(verify,physical,tail);
+            if(tail_ok)tail_sequence=tail.sequence;
+        }
+        verify.close();
+    }
+
+    disk_sequence=header_ok?disk.sequence:0;
+    disk_count=header_ok?disk.count:0;
+
+    // Keep the journal usable if board-level sleep is refused after this check.
+    file_=SPIFFS.open(STORE_PATH,"r+");
+    const bool reopen_ok=(bool)file_;
+
+    const bool header_matches=
+        header_ok &&
+        disk.magic==expected.magic &&
+        disk.version==expected.version &&
+        disk.capacity==expected.capacity &&
+        disk.head==expected.head &&
+        disk.count==expected.count &&
+        disk.sequence==expected.sequence;
+    const bool tail_matches=
+        !expected.count || (tail_ok&&tail_sequence==expected.sequence);
+    const bool ok=header_matches&&tail_matches&&reopen_ok;
+
+    Serial.printf(
+        "[T5-STORE] deep-sleep verify expected seq=%lu count=%u; disk seq=%lu count=%u tail=%lu header=%u tailok=%u reopen=%u result=%s\n",
+        (unsigned long)expected.sequence,(unsigned)expected.count,
+        (unsigned long)disk_sequence,(unsigned)disk_count,
+        (unsigned long)tail_sequence,header_ok?1U:0U,tail_ok?1U:0U,
+        reopen_ok?1U:0U,ok?"OK":"FAIL");
+
+    return ok;
 }
 
 bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){

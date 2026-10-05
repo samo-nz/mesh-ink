@@ -438,19 +438,6 @@ bool map_black(uint8_t level,int world_x,int world_y) {
                           ((unsigned)world_x&3U);
     return (map_black_masks()[level]&(1U<<phase))!=0;
 }
-uint8_t tile_level(const Tile& tile,int sx,int sy) {
-    const size_t offset=(size_t)sy*TILE_SIZE+(size_t)sx;
-    const uint8_t packed=tile.bits[offset>>1];
-    return (offset&1U)?(uint8_t)(packed&0x0FU):(uint8_t)(packed>>4);
-}
-void fill_clipped(int x0,int y0,int x1,int y1,uint8_t colour) {
-    const int left=max(render_clip.x,x0),top=max(render_clip.y,y0);
-    const int clip_right=render_clip.x+render_clip.width;
-    const int clip_bottom=render_clip.y+render_clip.height;
-    const int right=min(clip_right,x1),bottom=min(clip_bottom,y1);
-    if(left<right&&top<bottom)
-        meshink_display_fill_rect({left,top,right-left,bottom-top},colour,target);
-}
 // PNG callbacks keep source luminance in PSRAM. If allocation fails,
 // decode directly to the framebuffer with the SAME monochrome map palette.
 int png_draw(PNGDRAW* row) {
@@ -807,7 +794,10 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     const uint32_t started=millis(); // per-render performance instrumentation
     reset_map_perf();
     const bool ready=media_ready(false);
-    MapRenderResult result{ready,0,0,0,0,zoom,zoom,0,0,0};
+    MapRenderResult result{};
+    result.sd_ready=ready;
+    result.min_source_zoom=zoom;
+    result.max_source_zoom=zoom;
     if(!ready)return result;
     map_io_failed=false;
     pmtiles_begin_frame();

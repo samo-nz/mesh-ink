@@ -13,9 +13,11 @@ enum class MeshInkMessageKind:uint8_t { Direct=0, Channel=1 };
 enum class MeshInkMessageOrigin:uint8_t { LocalUi=0, CompanionApp=1 };
 
 enum MeshInkMessageFlags:uint8_t {
-    MESHINK_MESSAGE_HAS_RX      = 1U<<0,
-    MESHINK_MESSAGE_ROUTE_KNOWN = 1U<<1,
-    MESHINK_MESSAGE_ROUTE_FLOOD = 1U<<2
+    MESHINK_MESSAGE_HAS_RX       = 1U<<0,
+    MESHINK_MESSAGE_ROUTE_KNOWN  = 1U<<1,
+    MESHINK_MESSAGE_ROUTE_FLOOD  = 1U<<2,
+    MESHINK_MESSAGE_UNREAD       = 1U<<3,
+    MESHINK_MESSAGE_READ_THROUGH = 1U<<4
 };
 
 struct MeshInkStoredMessage {
@@ -71,14 +73,19 @@ public:
                     uint32_t ack=0,
                     MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi,
                     bool has_rx=false,int8_t snr_q4=0,
-                    uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN);
+                    uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN,
+                    bool unread=false);
     bool update_state(uint32_t sequence,UiMessageState state);
+    bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len);
+    bool mark_matching_received_read(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+                                     uint32_t timestamp,const char* text);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
     void update_route(uint32_t sequence,bool flood);
     void update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4);
     void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);
     bool mark_delivered_by_ack(uint32_t ack);
+    bool sync_and_verify_for_deep_sleep(uint32_t& disk_sequence,size_t& disk_count);
     uint32_t find_matching_outgoing(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                                     uint32_t timestamp,const char* text) const;
 };
