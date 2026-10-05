@@ -81,7 +81,8 @@ bool MeshInkMessageStore::ensure_cache(){
         Serial.printf("[T5-STORE] WARN message cache allocation failed bytes=%u\n",(unsigned)bytes);
         return false;
     }
-    memset(records_,0,bytes);
+    for(size_t i=0;i<MESHINK_MESSAGE_CAPACITY;++i)
+        records_[i]=MeshInkStoredMessage{};
     return true;
 }
 
@@ -90,9 +91,7 @@ bool MeshInkMessageStore::load_cache(File& source){
     StoreCpuBoostScope cpu_boost;
     const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
     if(!source.seek(sizeof(MeshInkMessageStoreHeader)))return false;
-    const uint32_t started=micros();
     const size_t got=source.read((uint8_t*)records_,bytes);
-    const uint32_t elapsed=(uint32_t)(micros()-started);
     if(got!=bytes){
         heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;
         return false;
@@ -121,7 +120,8 @@ bool MeshInkMessageStore::create_empty(){
         return false;
     }
     if(ensure_cache())
-        memset(records_,0,MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage));
+        for(size_t i=0;i<MESHINK_MESSAGE_CAPACITY;++i)
+            records_[i]=MeshInkStoredMessage{};
     Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes cache=%s\n",
                   (unsigned)MESHINK_MESSAGE_CAPACITY,
                   (unsigned)(sizeof(header_)+

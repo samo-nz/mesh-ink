@@ -987,7 +987,8 @@ static void handle_raw_repeat(const uint8_t* frame,size_t len){
     mesh::Packet packet;
     const size_t raw_len=len-3;if(raw_len>255||!packet.readFrom(frame+3,(uint8_t)raw_len)||packet.getPayloadType()!=PAYLOAD_TYPE_GRP_TXT||packet.payload_len<4)return;
     for(auto& item:recent_channel_sends){
-        if(!item.active)continue;ChannelDetails channel{};
+        if(!item.active)continue;
+        ChannelDetails channel{};
         if(!meshink_meshcore().getChannel(item.channel,channel)||channel.channel.hash[0]!=packet.payload[0])continue;
         uint8_t data[MAX_PACKET_PAYLOAD+1]{};
         const int plain=mesh::Utils::MACThenDecrypt(channel.channel.secret,data,&packet.payload[1],packet.payload_len-1);
@@ -1147,7 +1148,9 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if((frame[0]==0||frame[0]==1)&&pending_advert>=0){const bool flood=pending_advert==1;ui_notify_advert_result(flood,frame[0]==0);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] %s advert action result=%s\n",flood?"flood":"zero-hop",frame[0]==0?"OK":"FAILED");pending_advert=-1;}
     else if(frame[0]==7&&len>=13){
         const uint8_t* key=frame+1;const uint8_t path_len=frame[7],txt_type=frame[8];uint32_t timestamp=0;memcpy(&timestamp,frame+9,4);
-        const size_t start=txt_type==2?17:13;if(len<=start)return;memcpy(message,frame+start,min(sizeof(message)-1,len-start));
+        const size_t start=txt_type==2?17:13;
+        if(len<=start)return;
+        memcpy(message,frame+start,min(sizeof(message)-1,len-start));
         provider.received_direct(key,timestamp,message,false,0,path_len);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct legacy message received bytes=%u\n",(unsigned)(len-start));
     }
     else if(frame[0]==16&&len>=16){
@@ -1158,7 +1161,9 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     }
     else if(frame[0]==8&&len>=8){
         const uint8_t channel=frame[1],path_len=frame[2];uint32_t timestamp=0;memcpy(&timestamp,frame+4,4);
-        if(len<=8)return;memcpy(message,frame+8,min(sizeof(message)-1,len-8));provider.received_channel(channel,timestamp,message,false,0,path_len);
+        if(len<=8)return;
+        memcpy(message,frame+8,min(sizeof(message)-1,len-8));
+        provider.received_channel(channel,timestamp,message,false,0,path_len);
     }
     else if(frame[0]==17&&len>=11){
         const int8_t snr_q4=(int8_t)frame[1];const uint8_t channel=frame[4],path_len=frame[5];uint32_t timestamp=0;memcpy(&timestamp,frame+7,4);

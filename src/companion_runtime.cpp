@@ -11,9 +11,12 @@
 // companion example, but MyMesh.cpp itself never references that global.
 // Rename only that imported declaration so MeshInk can define a derived
 // MeshInkMesh instance with receive-persistence hooks below.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
 #define the_mesh meshcore_upstream_example_the_mesh
 #include "../lib/MeshCore/examples/companion_radio/MyMesh.cpp"
 #undef the_mesh
+#pragma GCC diagnostic pop
 #include "meshcore_adapter.h"
 #include "companion_runtime.h"
 #include "companion_notice.h"
