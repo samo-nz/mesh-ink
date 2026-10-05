@@ -3,7 +3,7 @@ name: Deploy MeshInk web flasher
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, deepsleep_standby]
     paths:
       - 'web/**'
       - 'tools/check_web_flasher.py'
