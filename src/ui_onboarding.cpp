@@ -382,7 +382,7 @@ static uint32_t map_base_media_epoch=0;
 // marker updates without refreshing the e-paper for every GPS sample.
 static bool map_device_marker_visible=false;
 static int map_device_marker_x=0,map_device_marker_y=0;
-struct MapMarkerHit {int16_t x,y;size_t index;};
+struct MapMarkerHit {int16_t x,y;size_t index;uint8_t node_type;};
 static MapMarkerHit map_marker_hits[50]{};
 static size_t map_marker_hit_count=0;
 static bool map_cache_hit() {
@@ -1501,7 +1501,16 @@ static void thick_rect(int x,int y,int w,int h){
 }
 static void draw_node_role_icon(uint8_t type,int x,int y){
     if(type==(uint8_t)UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
-    else if(type==(uint8_t)UiNodeRole::Repeater){meshink_display_fill_rect({x+12,y+4,5,27},0,fb);thick_line(x+14,y+4,x+7,y+14);thick_line(x+14,y+4,x+21,y+14);thick_line(x+5,y+7,x,y+14);thick_line(x+23,y+7,x+28,y+14);meshink_display_fill_rect({x+7,y+28,15,5},0,fb);}
+    else if(type==(uint8_t)UiNodeRole::Repeater){
+        // Radio tower: tapered mast plus two signal arcs on each side.
+        meshink_display_fill_rect({x+12,y+5,5,6},0,fb);
+        thick_line(x+14,y+8,x+8,y+30);thick_line(x+14,y+8,x+20,y+30);
+        thick_line(x+8,y+30,x+20,y+30);line(x+10,y+22,x+18,y+22);line(x+11,y+17,x+17,y+17);
+        thick_line(x+10,y+7,x+6,y+10);thick_line(x+6,y+10,x+6,y+16);thick_line(x+6,y+16,x+10,y+19);
+        thick_line(x+18,y+7,x+22,y+10);thick_line(x+22,y+10,x+22,y+16);thick_line(x+22,y+16,x+18,y+19);
+        thick_line(x+6,y+4,x+1,y+8);thick_line(x+1,y+8,x+1,y+18);thick_line(x+1,y+18,x+6,y+22);
+        thick_line(x+22,y+4,x+27,y+8);thick_line(x+27,y+8,x+27,y+18);thick_line(x+27,y+18,x+22,y+22);
+    }
     else if(type==(uint8_t)UiNodeRole::Room){thick_rect(x+2,y+2,25,29);meshink_display_fill_rect({x+8,y+8,5,5},0,fb);meshink_display_fill_rect({x+17,y+8,5,5},0,fb);thick_rect(x+9,y+18,11,13);}
     else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
     else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
@@ -1610,18 +1619,29 @@ static void draw_channels() {
     draw_bottom_nav(1);
 }
 
-// Node positions are stable; only the labels move to avoid collisions.
+// Compact radio-tower marker for repeaters.  It stays distinct from an ordinary
+// node dot even at low zoom while fitting the existing marker touch target.
+static void draw_map_repeater_marker(int x,int y) {
+    meshink_display_fill_rect({x-10,y-11,21,23},0xFF,fb);
+    meshink_display_fill_rect({x-1,y-8,3,4},0,fb);
+    meshink_display_fill_rect({x-1,y-5,3,11},0,fb);
+    line(x,y-5,x-5,y+8);line(x,y-5,x+5,y+8);line(x-5,y+8,x+5,y+8);
+    line(x-3,y-5,x-6,y-2);line(x-6,y-2,x-6,y+1);line(x-6,y+1,x-3,y+4);
+    line(x+3,y-5,x+6,y-2);line(x+6,y-2,x+6,y+1);line(x+6,y+1,x+3,y+4);
+    line(x-6,y-7,x-9,y-4);line(x-9,y-4,x-9,y+3);line(x-9,y+3,x-6,y+6);
+    line(x+6,y-7,x+9,y-4);line(x+9,y-4,x+9,y+3);line(x+9,y+3,x+6,y+6);
+}
+
+// Node positions are stable; labels are ranked and moved around them.  Keep the
+// solver intentionally bounded: at most 50 markers and 12 candidates per label.
 static void draw_map_nodes() {
     map_marker_hit_count=0;
     if(!ui_data)return;
+    const MeshInkUiLayout& layout=portrait_layout();
     const double world=256.0*(1U<<map_zoom);
     const double centre_x=(map_longitude+180.0)/360.0*world;
     const double rad=map_latitude*PI/180.0;
     const double centre_y=(1.0-log(tan(rad)+1.0/cos(rad))/PI)*world/2.0;
-    // Keep only projected marker coordinates in the existing global hit array.
-    // The previous implementation copied up to 50 complete UiMapNode records
-    // onto loopTask's stack (~several KB) while Maps was already the deepest
-    // UI rendering path. Fetch node details again only when drawing labels.
     size_t count=0;
     for(size_t i=0;i<ui_data->map_node_count()&&count<50;++i) {
         UiMapNode node{};if(!ui_data->map_node(i,node))continue;
@@ -1632,55 +1652,134 @@ static void draw_map_nodes() {
         const double lat=node.latitude/1000000.0,r=lat*PI/180.0;
         const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
         const int sx=(int)lround(map_centre_x()+delta_x),sy=(int)lround(map_centre_y()+y-centre_y);
-        if(sx<7||sx>portrait_layout().width-7||sy<map_top()+7||sy>map_bottom()-7)continue;
-        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i};
+        if(sx<11||sx>layout.width-11||sy<map_top()+11||sy>map_bottom()-11)continue;
+        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.node_type};
     }
+
     struct Bounds {int16_t x,y,w,h;};
+    struct RankedLabel {uint8_t marker;int32_t score;};
     Bounds occupied[50]{};size_t occupied_count=0;
+    RankedLabel ranked[50]{};
     const uint32_t now=(uint32_t)time(nullptr);
+
+    // Requested GPS positions and repeaters matter most.  Recency and screen
+    // centre then make the remaining greedy choices deterministic and useful.
     for(size_t i=0;i<count;++i) {
-        const auto& n=map_marker_hits[i];
+        const auto& marker=map_marker_hits[i];
+        UiMapNode node{};if(!ui_data->map_node(marker.index,node))continue;
+        int32_t score=0;
+        if(node.gps_from_reply)score+=4000000;
+        if(node.node_type==(uint8_t)UiNodeRole::Repeater)score+=3000000;
+        if(node.advertised_at&&now>=node.advertised_at) {
+            const uint32_t age=min((uint32_t)1000000,now-node.advertised_at);
+            score+=(int32_t)(1000000-age);
+        }
+        const int centre_distance=abs(marker.x-map_centre_x())+abs(marker.y-map_centre_y());
+        score+=max(0,100000-centre_distance*100);
+        ranked[i]={(uint8_t)i,score};
+    }
+    for(size_t i=1;i<count;++i) {
+        const RankedLabel key=ranked[i];size_t j=i;
+        while(j&&ranked[j-1].score<key.score){ranked[j]=ranked[j-1];--j;}
+        ranked[j]=key;
+    }
+
+    // Deliberately thin labels as the viewport covers more territory. Important
+    // GPS/repeater labels may exceed the normal budget when collision-free.
+    const size_t label_budget=map_zoom<=7?6:map_zoom<=9?10:map_zoom<=11?16:map_zoom<=13?24:40;
+    const bool compact_labels=map_zoom<=10;
+    size_t labels_drawn=0;
+    const int label_bottom=ui_y(766);
+
+    for(size_t order=0;order<count;++order) {
+        const auto& n=map_marker_hits[ranked[order].marker];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
+        const bool important=node.gps_from_reply||node.node_type==(uint8_t)UiNodeRole::Repeater;
+        if(labels_drawn>=label_budget&&!important)continue;
+
         char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
-        char age[16];
+        char age[16]{};
         if(node.gps_from_reply){
-            // This is when our T5 RECEIVED GPS telemetry, not the remote fix time.
             const uint32_t seconds=(uint32_t)(millis()-node.gps_received_millis)/1000U;
             if(seconds<3600)snprintf(age,sizeof(age),"GPS %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"GPS %luh",(unsigned long)(seconds/3600));
             else snprintf(age,sizeof(age),"GPS %lud",(unsigned long)(seconds/86400));
         }else if(!node.advertised_at||now<node.advertised_at)strcpy(age,"ADV ?");
-        else {const uint32_t seconds=now-node.advertised_at;
+        else {
+            const uint32_t seconds=now-node.advertised_at;
             if(seconds<3600)snprintf(age,sizeof(age),"ADV %lum",(unsigned long)(seconds/60));
             else if(seconds<86400)snprintf(age,sizeof(age),"ADV %luh",(unsigned long)(seconds/3600));
-            else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));}
-        const int w=min(230,max(48,max(ui_text_width(short_name,2),ui_text_width(age,2))+8));
-        const int offsets[4][2]={{12,-18},{-12-w,-18},{12,12},{-12-w,12}};
-        int lx=0,ly=0;bool placed=false;
-        const int label_bottom=ui_y(766);
-        for(const auto& offset:offsets) {
-            const int x=n.x+offset[0],y=n.y+offset[1];
-            if(x<3||x+w>portrait_layout().width-3||y<map_top()+3||y+34>label_bottom)continue;
+            else snprintf(age,sizeof(age),"ADV %lud",(unsigned long)(seconds/86400));
+        }
+        const int h=compact_labels?18:34;
+        const int text_w=compact_labels?ui_text_width(short_name,2):
+            max(ui_text_width(short_name,2),ui_text_width(age,2));
+        const int w=min(230,max(48,text_w+8));
+
+        int best_x=0,best_y=0,best_cost=0x7fffffff;
+        for(uint8_t candidate=0;candidate<12;++candidate) {
+            int x=0,y=0;
+            switch(candidate){
+                case 0:x=n.x+14;y=n.y-h/2;break;
+                case 1:x=n.x-14-w;y=n.y-h/2;break;
+                case 2:x=n.x-w/2;y=n.y-14-h;break;
+                case 3:x=n.x-w/2;y=n.y+14;break;
+                case 4:x=n.x+12;y=n.y-12-h;break;
+                case 5:x=n.x-12-w;y=n.y-12-h;break;
+                case 6:x=n.x+12;y=n.y+12;break;
+                case 7:x=n.x-12-w;y=n.y+12;break;
+                case 8:x=n.x+28;y=n.y-h/2;break;
+                case 9:x=n.x-28-w;y=n.y-h/2;break;
+                case 10:x=n.x-w/2;y=n.y-28-h;break;
+                default:x=n.x-w/2;y=n.y+28;break;
+            }
+            if(x<3||x+w>layout.width-3||y<map_top()+3||y+h>label_bottom)continue;
+
             bool overlap=false;
             for(size_t control=0;control<3&&!overlap;++control){
-                const MeshInkUiRect r=meshink_map_control_rect(portrait_layout(),(int)control);
-                if(x<r.x+r.width+4&&x+w+4>r.x&&y<r.y+r.height+4&&y+38>r.y)overlap=true;
+                const MeshInkUiRect r=meshink_map_control_rect(layout,(int)control);
+                if(x<r.x+r.width+5&&x+w+5>r.x&&y<r.y+r.height+5&&y+h+5>r.y)overlap=true;
             }
-            for(size_t j=0;j<occupied_count&&!overlap;++j)if(x<occupied[j].x+occupied[j].w+4&&
-                x+w+4>occupied[j].x&&y<occupied[j].y+occupied[j].h+3&&y+37>occupied[j].y)
-                overlap=true;
-            if(!overlap){lx=x;ly=y;placed=true;break;}
+            // Protect every true node position, not just labels already placed.
+            for(size_t j=0;j<count&&!overlap;++j){
+                const auto& m=map_marker_hits[j];
+                const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?11:9;
+                if(x<m.x+radius+3&&x+w>m.x-radius-3&&
+                   y<m.y+radius+3&&y+h>m.y-radius-3)overlap=true;
+            }
+            for(size_t j=0;j<occupied_count&&!overlap;++j)
+                if(x<occupied[j].x+occupied[j].w+5&&x+w+5>occupied[j].x&&
+                   y<occupied[j].y+occupied[j].h+4&&y+h+4>occupied[j].y)
+                    overlap=true;
+            if(overlap)continue;
+
+            int cost=(candidate<8?candidate:20+candidate)*20;
+            const int edge=min(min(x,layout.width-(x+w)),
+                               min(y-map_top(),label_bottom-(y+h)));
+            if(edge<12)cost+=(12-edge)*8;
+            if(cost<best_cost){best_cost=cost;best_x=x;best_y=y;}
         }
-        if(!placed)continue; // Keep the true-position dot even if labels collide.
-        occupied[occupied_count++]={(int16_t)lx,(int16_t)ly,(int16_t)w,34};
-        meshink_display_fill_rect({lx,ly,w,34},0xFF,fb);
-        ui_text_fit(short_name,lx+4,ly+2,w-ui_w(8),2,0,true);
-        ui_text_fit(age,lx+4,ly+18,w-ui_w(8),2,0,true);
+        if(best_cost==0x7fffffff)continue;
+
+        // A short leader keeps displaced labels visually tied to their marker.
+        const int target_x=max(best_x,min((int)n.x,best_x+w-1));
+        const int target_y=max(best_y,min((int)n.y,best_y+h-1));
+        line(n.x,n.y,target_x,target_y);
+        meshink_display_fill_rect({best_x,best_y,w,h},0xFF,fb);
+        ui_text_fit(short_name,best_x+4,best_y+2,w-ui_w(8),2,0,true);
+        if(!compact_labels)ui_text_fit(age,best_x+4,best_y+18,w-ui_w(8),2,0,true);
+        occupied[occupied_count++]={(int16_t)best_x,(int16_t)best_y,(int16_t)w,(int16_t)h};
+        ++labels_drawn;
     }
-    // Always draw position dots last so a neighbouring label cannot move or
-    // obscure a marker. Each circle has a white halo for contrast.
+
+    // Draw true positions last. Ordinary nodes remain dots; repeaters get the
+    // radio-tower glyph so they stand out immediately when assessing coverage.
     for(size_t i=0;i<count;++i) {
         const auto& n=map_marker_hits[i];
+        if(n.node_type==(uint8_t)UiNodeRole::Repeater){
+            draw_map_repeater_marker(n.x,n.y);
+            continue;
+        }
         meshink_display_fill_rect({n.x-6,n.y-6,13,13},0xFF,fb);
         for(int dy=-4;dy<=4;++dy) {
             const int half=abs(dy)==4?1:abs(dy)==3?3:4;
@@ -1689,7 +1788,6 @@ static void draw_map_nodes() {
     }
     map_marker_hit_count=count;
 }
-
 // Convert a GPS position to the same screen projection as map node markers.
 static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy) {
     if(latitude<-85051100L||latitude>85051100L||
