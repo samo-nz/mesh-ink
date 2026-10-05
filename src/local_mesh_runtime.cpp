@@ -695,7 +695,7 @@ public:
                 format_short_age((uint32_t)(millis()-recent_info_.gps_reply_millis)/1000U,
                                  age,sizeof(age));
                 snprintf(self->detail_position_source_,
-                         sizeof(self->detail_position_source_),"GPS REPLY %s",age);
+                         sizeof(self->detail_position_source_),"TELEMETRY POSITION %s",age);
             }else strcpy(self->detail_position_source_,"SAVED POSITION");
         }else{
             strcpy(self->detail_position_,"NO SAVED POSITION");
@@ -1092,7 +1092,10 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         const bool role_known=len>=13;const uint8_t permissions=role_known?frame[12]:(frame[1]?3:0);
         if(completed.save_password)save_password_for(completed.key,completed.password);else clear_saved_password(completed.key);
         memset(completed.password,0,sizeof(completed.password));provider.login_result(true,permissions,role_known);
-        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] server login succeeded role=%u known=%d\n",(unsigned)(permissions&3),role_known);
+        const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);
+        T5_DEBUGF(T5_LOG_MESH,
+                  "[T5-MESH] server login succeeded role=%u known=%d auto-status=%u\n",
+                  (unsigned)(permissions&3),role_known,status_requested?1U:0U);
     }
     else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x86){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] server login failed");}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){provider.status_response(frame+8,len-8);finish_info();}
