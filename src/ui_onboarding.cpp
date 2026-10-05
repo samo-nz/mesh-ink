@@ -3642,7 +3642,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
-                if(abs(x-marker.x)<=10&&abs(y-marker.y)<=10&&ui_data&&ui_data->open_map_node(marker.index)) {
+                const int hit_radius=marker.node_type==(uint8_t)UiNodeRole::Repeater?12:10;
+                if(abs(x-marker.x)<=hit_radius&&abs(y-marker.y)<=hit_radius&&
+                   ui_data&&ui_data->open_map_node(marker.index)) {
                     details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
                 }
             }
