@@ -1199,26 +1199,28 @@ void local_mesh_loop(){
             meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;
         }
     }
-    if(!gps_enabled){
-        if(!gps_duty_sleeping){meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;}
-    }else if(gps_interval==0){
-        if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
-    }else if(gps_duty_sleeping){
-        if((int32_t)(gps_now-gps_duty_next_wake)>=0){
-            gps_duty_wake_stamp=gps_location.available?gps_location.timestamp:0;
-            meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
-            T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty wake interval=%lus previous_stamp=%lu\n",(unsigned long)gps_interval,(unsigned long)gps_duty_wake_stamp);
+    if(!gps_power_test){
+        if(!gps_enabled){
+            if(!gps_duty_sleeping){meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;}
+        }else if(gps_interval==0){
+            if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
+        }else if(gps_duty_sleeping){
+            if((int32_t)(gps_now-gps_duty_next_wake)>=0){
+                gps_duty_wake_stamp=gps_location.available?gps_location.timestamp:0;
+                meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;gps_duty_awake_since=gps_now;
+                T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty wake interval=%lus previous_stamp=%lu\n",(unsigned long)gps_interval,(unsigned long)gps_duty_wake_stamp);
+            }
+        }else if(gps_location.valid&&
+                 (!gps_duty_awake_since||
+                  (gps_now-gps_duty_awake_since>=1000&&
+                   gps_location.timestamp!=gps_duty_wake_stamp))){
+            // Require a newly observed GPS timestamp after a scheduled wake so a
+            // cached fix cannot immediately put the receiver back to sleep.
+            gps_duty_next_wake=gps_now+gps_interval*1000UL;
+            gps_duty_awake_since=0;gps_duty_wake_stamp=0;
+            meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;
+            T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
         }
-    }else if(gps_location.valid&&
-             (!gps_duty_awake_since||
-              (gps_now-gps_duty_awake_since>=1000&&
-               gps_location.timestamp!=gps_duty_wake_stamp))){
-        // Require a newly observed GPS timestamp after a scheduled wake so a
-        // cached fix cannot immediately put the receiver back to sleep.
-        gps_duty_next_wake=gps_now+gps_interval*1000UL;
-        gps_duty_awake_since=0;gps_duty_wake_stamp=0;
-        meshink_gps_set_provider_enabled(false);gps_duty_sleeping=true;
-        T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] duty sleep after fresh fix; next wake in %lus\n",(unsigned long)gps_interval);
     }
 #endif
     meshink_gps_service_loop();
