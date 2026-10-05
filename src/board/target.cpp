@@ -909,6 +909,20 @@ static uint8_t gps_restore_constellation_value() {
         ? 3U : (uint8_t)gps_power_saved_constellation;
 }
 
+static void gps_power_prepare_baseline() {
+    gps_power_uart_resume();
+    gps_power_send("PCAS02,1000","normalize power-test baseline to documented 1 Hz");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","normalize baseline NMEA output");
+#else
+    gps_power_send("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","normalize baseline to compact GGA+RMC");
+#endif
+    gps_power_send("PCAS04,3","normalize baseline to GPS+BeiDou dual-system mode");
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    Serial.println("[T5-GPS-POWER] baseline normalized: GPS+BeiDou, 1 Hz, compact NMEA; no settings saved to receiver flash");
+}
+
 static void gps_power_restore_receiver(bool cancelled) {
     Serial.printf("[T5-GPS-POWER] restore begin cancelled=%u experiment='%s'\n",
                   cancelled?1U:0U,meshink_gps_power_experiment_name(gps_power_experiment));
@@ -1095,6 +1109,7 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
     gps_load_tuning();
     gps_power_experiment=experiment;
     gps_power_saved_constellation=gps_constellation_mode;
+    gps_power_prepare_baseline();
     gps_power_log_count=0;
     gps_power_log_valid=false;
     gps_power_post_phase=false;
@@ -1115,7 +1130,7 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
     Serial.printf("[T5-GPS-POWER] external-power-at-start=%u; battery-only is strongly preferred\n",external?1U:0U);
     if(external)Serial.println("[T5-GPS-POWER] WARNING: disconnect USB/charger and restart the test for trustworthy battery-current deltas");
     Serial.println("[T5-GPS-POWER] SETTLE: 5 seconds for display/frontlight transients to finish; samples are not counted");
-    Serial.println("[T5-GPS-POWER] BASELINE then keeps the receiver unchanged for a full 30 seconds");
+    Serial.println("[T5-GPS-POWER] BASELINE then measures the normalized receiver state for a full 30 seconds");
     return true;
 #else
     (void)experiment;
