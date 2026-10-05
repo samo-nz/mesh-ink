@@ -1555,3 +1555,23 @@ assert 'Serial.printf("[T5-CMD] Saved %s\\n",path);' in unified_source, "each su
 assert "if(!terminal_length)" in unified_source and "if(screenshot_capture_mode)terminal_save_screenshot();" in unified_source, "blank Enter captures while armed"
 assert "if(ch=='\\n'&&terminal_last_was_cr)" in unified_source, "CRLF terminals cannot double-capture one Enter"
 assert "Disconnect serial to exit screenshot mode" in unified_source, "session lifetime is explained to the user"
+
+
+# RC2: companion unread/read handoff, server login convenience, telemetry
+# provenance wording and deep-sleep top-tab restoration remain intentionally
+# narrow changes with no journal-layout or flash-partition migration.
+assert "mark_matching_received_read" in message_store_header and "MeshInkMessageStore::mark_matching_received_read" in message_store_source, "companion sync can clear one exact unread journal record"
+assert "item.flags&=(uint8_t)~MESHINK_MESSAGE_UNREAD;" in message_store_source, "companion sync clears only the unread bit"
+assert "MESHINK_MESSAGE_READ_THROUGH" not in message_store_source[message_store_source.index("MeshInkMessageStore::mark_matching_received_read"):message_store_source.index("void MeshInkMessageStore::update_ack")], "companion sync never marks newer conversation messages read"
+assert "mark_synced_message_read(src,len);" in companion_source, "BLE sync responses are matched back to the journal"
+assert companion_source.count("MESHINK_MESSAGE_PATH_UNKNOWN,true);")>=2 and "pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);" in companion_source, "companion receives start unread"
+assert '"TELEMETRY POSITION %s"' in runtime_source, "requested location is labelled as telemetry position rather than a verified live fix"
+assert "const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);" in runtime_source, "successful repeater/room login immediately requests status"
+assert "auto-status=%u" in runtime_source, "automatic post-login status request is diagnosable"
+assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_take_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
+assert "esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED" in power_backend_source, "retained tab is accepted only on a real deep-sleep wake"
+assert "retained_tab_for_screen" in source and "screen_for_retained_tab" in source, "UI maps nested screens to stable top-level tabs"
+assert "meshink_power_retain_ui_tab(retained_tab);" in source, "deep-sleep entry stores the current top-level tab"
+assert "meshink_power_take_retained_ui_tab(retained_tab);" in source, "wake consumes the retained top-level tab"
+assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promotion preserves a restored existing-user tab"
+assert "-DT5_FIRMWARE_VERSION='\"2.0.0-rc.2\"'" in platformio_source and "-DT5_UI_VERSION='\"2.0.0-rc.2\"'" in platformio_source, "RC2 firmware/UI identity stays aligned"
