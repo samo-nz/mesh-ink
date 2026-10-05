@@ -26,7 +26,8 @@ const MeshInkPowerWakeInfo& meshink_power_wake_info();
 // backend validates that the current boot really came from deep sleep and
 // consumes the value once, so ordinary resets/cold boots still start normally.
 void meshink_power_retain_ui_tab(uint8_t tab);
-bool meshink_power_take_retained_ui_tab(uint8_t& tab);
+bool meshink_power_get_retained_ui_tab(uint8_t& tab);
+void meshink_power_clear_retained_ui_tab();
 
 // Board-specific battery-gauge profile startup.
 void meshink_power_prepare_board();
