@@ -963,7 +963,7 @@ assert "draw_map_repeater_marker(n.x,n.y)" in source, "Repeater nodes use the de
 assert "Two bold broadcast arcs per side" in source and "meshink_display_fill_rect({x-13,y-14,27,29}" in source, "Map repeater marker uses the larger bold separated-wave tower glyph"
 assert "own_marker_reserved" in source and "own_marker_x+22" in source and "own_marker_y+22" in source, "Map labels reserve the own-location bullseye footprint"
 assert "const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?14:9;" in source, "Label solver protects the enlarged repeater marker"
-assert "A short leader keeps displaced labels" in source, "Displaced map labels keep a pointer to their node"
+assert "thick_line(n.x,n.y,target_x,target_y);" in source, "Displaced map labels keep a three-pixel leader to their node"
 assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
 assert "uint8_t node_type=0;" in data_source, "Map node data carries the MeshCore role"
 assert "item.node_type=positioned.type;" in runtime_source, "Saved map contacts expose their role"
@@ -1581,7 +1581,7 @@ assert "if(ch=='\\n'&&terminal_last_was_cr)" in unified_source, "CRLF terminals 
 assert "Disconnect serial to exit screenshot mode" in unified_source, "session lifetime is explained to the user"
 
 
-# RC4: companion unread/read handoff, server login convenience, telemetry
+# 2.1.0: companion unread/read handoff, server login convenience, telemetry
 # provenance wording and deep-sleep top-tab restoration remain intentionally
 # narrow changes with no journal-layout or flash-partition migration.
 assert "mark_matching_received_read" in message_store_header and "MeshInkMessageStore::mark_matching_received_read" in message_store_source, "companion sync can clear one exact unread journal record"
@@ -1602,4 +1602,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.0.0-rc.4\"'" in platformio_source and "-DT5_UI_VERSION='\"2.0.0-rc.4\"'" in platformio_source, "RC4 firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.0\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.0\"'" in platformio_source, "2.1.0 firmware/UI identity stays aligned"
