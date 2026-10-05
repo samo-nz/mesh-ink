@@ -22,6 +22,12 @@ MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState&
 // Board-owned user guidance for restoring power after shutdown/deep sleep.
 const MeshInkPowerWakeInfo& meshink_power_wake_info();
 
+// Tiny RTC-retained UI handoff used only across deep-sleep standby. The
+// backend validates that the current boot really came from deep sleep and
+// consumes the value once, so ordinary resets/cold boots still start normally.
+void meshink_power_retain_ui_tab(uint8_t tab);
+bool meshink_power_take_retained_ui_tab(uint8_t& tab);
+
 // Board-specific battery-gauge profile startup.
 void meshink_power_prepare_board();
 
