@@ -152,14 +152,12 @@ jobs:
           sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt
           test -s "$BUILD/bootloader.bin"
           test -s "$BUILD/partitions.bin"
-          test -s "$BUILD/ota_data_initial.bin"
           python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
             --flash_mode keep --flash_freq keep --flash_size 16MB \
             --fill-flash-size 16MB \
             -o "meshink-$VERSION-full-wipe.bin" \
             0x0 "$BUILD/bootloader.bin" \
             0x8000 "$BUILD/partitions.bin" \
-            0xe000 "$BUILD/ota_data_initial.bin" \
             0x10000 "$BUILD/firmware.bin"
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
           sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
