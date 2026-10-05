@@ -4155,7 +4155,7 @@ static void ui_load_persistent_state() {
     }
 
     uint8_t retained_tab=0;
-    if(meshink_power_take_retained_ui_tab(retained_tab)){
+    if(meshink_power_get_retained_ui_tab(retained_tab)){
         retained_wake_tab=retained_tab;
         retained_wake_tab_valid=true;
     }
@@ -4287,6 +4287,7 @@ void ui_finish_startup() {
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);
     // Once the interactive screen is visible, the RTC handoff has served its
     // purpose. A later in-process UI reinitialization must not replay it.
+    meshink_power_clear_retained_ui_tab();
     retained_wake_tab=0;
     retained_wake_tab_valid=false;
     ui_boot_cpu_active=false;
