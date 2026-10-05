@@ -12,6 +12,7 @@ class T5RTCClock : public mesh::RTCClock {
     // begin() is called only after the shared display/I2C lifecycle is active.
     // Headless deep-sleep MeshCore startup intentionally skips that lifecycle.
     bool i2c_ready_ = false;
+    uint32_t deferred_hardware_time_ = 0;
     uint32_t trusted_gps_time_ = 0;
     uint32_t trusted_gps_until_ = 0;
 public:
