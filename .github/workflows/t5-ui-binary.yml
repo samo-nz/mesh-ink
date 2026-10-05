@@ -37,6 +37,8 @@ jobs:
         run: python tools/check_meshcore_pin.py
       - name: Architecture boundary checks
         run: python tools/check_architecture.py
+      - name: Web flasher safety regression
+        run: python tools/check_web_flasher.py
       - name: Validate all radio presets
         run: python tools/check_radio_presets.py
       - name: Host map archive reader tests
@@ -106,12 +108,6 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build field-tested cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
-      - name: Warnings-visible cache64 firmware audit
-        run: |
-          set -o pipefail
-          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
-          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
-
       - name: Verify cache64 release SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -126,6 +122,13 @@ jobs:
           grep -q '#define CONFIG_LOG_DEFAULT_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+
+      - name: Warnings-visible cache64 firmware audit
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
+
 
       - name: Read firmware version
         id: version

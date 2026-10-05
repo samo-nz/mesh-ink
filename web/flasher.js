@@ -3,6 +3,7 @@ import { ESPLoader, Transport } from "./vendor/esptool-js.js";
 const UPDATE_ADDRESS = 0x10000;
 const FULL_WIPE_ADDRESS = 0x0;
 const FULL_WIPE_SIZE = 16 * 1024 * 1024;
+const UPDATE_MAX_SIZE = 0x600000; // app0 partition size from partitions.csv
 const $ = (id) => document.getElementById(id);
 const button = $("flash-button");
 const restartButton = $("restart-button");
@@ -12,6 +13,10 @@ const progressLabel = $("progress-label");
 const logArea = $("log");
 const siteStatus = $("site-status");
 const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
+const sourceInputs = [...document.querySelectorAll('input[name="source"]')];
+const customFileRow = $("custom-file-row");
+const customFileInput = $("custom-file");
+const customFileHelp = $("custom-file-help");
 let manifest = null;
 let busy = false;
 let flashingCompleted = false;
@@ -25,9 +30,22 @@ function log(message) {
 function selectedMode() {
   return document.querySelector('input[name="mode"]:checked').value;
 }
+function selectedSource() {
+  return document.querySelector('input[name="source"]:checked').value;
+}
+function customFile() {
+  return customFileInput.files?.[0] || null;
+}
+function customFileFitsMode(file, mode) {
+  if (!file) return false;
+  return mode === "wipe" ?
+    file.size === FULL_WIPE_SIZE :
+    file.size >= 1024 && file.size <= UPDATE_MAX_SIZE;
+}
 function ready() {
-  if (!manifest || busy || !navigator.serial || !window.isSecureContext) return false;
-  return true;
+  if (busy || !navigator.serial || !window.isSecureContext) return false;
+  if (selectedSource() === "custom") return customFileFitsMode(customFile(), selectedMode());
+  return !!manifest;
 }
 function setActivity(message) {
   siteStatus.textContent = message;
@@ -36,22 +54,44 @@ function setActivity(message) {
 }
 function updateControls() {
   const wipe = selectedMode() === "wipe";
+  const custom = selectedSource() === "custom";
+  const file = customFile();
   button.classList.toggle("wipe", wipe);
   button.textContent = busy ? "Flashing — do not disconnect" :
-    !manifest ? "Loading firmware…" :
     connectionRetry ? "Retry connection" :
+    custom ? (wipe ? "Flash custom full wipe" : "Flash custom update") :
+    !manifest ? "Loading firmware…" :
     wipe ? "Install MeshInk" : "Update MeshInk";
   button.disabled = !ready();
   restartButton.hidden = !flashingCompleted;
   restartButton.disabled = busy || !navigator.serial || !window.isSecureContext;
-  for (const input of modeInputs) input.disabled = busy;
+  for (const input of [...modeInputs, ...sourceInputs]) input.disabled = busy;
+  customFileInput.disabled = busy;
+  customFileRow.hidden = !custom;
+  customFileHelp.textContent = wipe ?
+    "Full-wipe images must be exactly 16 MB and are written at 0x0 after erasing the whole flash." :
+    "Update images must fit the 6 MB app partition and are written at 0x10000 without erasing stored data.";
   detail.textContent = !navigator.serial || !window.isSecureContext ?
     "Desktop Chrome or Edge with Web Serial over HTTPS is required." :
     connectionRetry ? "Hold BOOT, press RST, then release both buttons. Then click Retry connection." :
+    custom && file && !customFileFitsMode(file, selectedMode()) ?
+      (wipe ? "That file is not a 16 MB full-wipe image." : "That file is too large or too small for the 6 MB update partition.") :
+    custom && file ? `Selected: ${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB` :
+    custom ? "Choose a local .bin file for the selected flash mode." :
     wipe ? "For a new device or a fresh start." :
            "For a device that already has MeshInk installed.";
 }
 for (const input of modeInputs) input.addEventListener("change", () => {
+  progress.hidden = true;
+  progressLabel.textContent = "";
+  updateControls();
+});
+for (const input of sourceInputs) input.addEventListener("change", () => {
+  progress.hidden = true;
+  progressLabel.textContent = "";
+  updateControls();
+});
+customFileInput.addEventListener("change", () => {
   progress.hidden = true;
   progressLabel.textContent = "";
   updateControls();
@@ -62,14 +102,14 @@ async function sha256(bytes) {
   return [...new Uint8Array(hash)].map((x) => x.toString(16).padStart(2,"0")).join("");
 }
 function checkManifest(data) {
-  if (!data || !/^\d+\.\d+\.\d+$/.test(data.version || "")) throw new Error("Invalid release version.");
+  if (!data || !/^\d+\.\d+\.\d+(?:-rc\.\d+)?$/.test(data.version || "")) throw new Error("Invalid release version.");
   for (const mode of ["update","wipe"]) {
     const entry = data.files?.[mode];
     const expectedName = `meshink-${data.version}-${mode === "wipe" ? "full-wipe" : "update"}.bin`;
     if (!entry || entry.name !== expectedName || !/^[a-f0-9]{64}$/.test(entry.sha256) ||
         !Number.isSafeInteger(entry.size) || entry.size < 1024 ||
         (mode === "wipe" && entry.size !== FULL_WIPE_SIZE) ||
-        (mode === "update" && entry.size > FULL_WIPE_SIZE - UPDATE_ADDRESS)) {
+        (mode === "update" && entry.size > UPDATE_MAX_SIZE)) {
       throw new Error(`Invalid ${mode} firmware metadata.`);
     }
   }
@@ -89,8 +129,9 @@ async function loadLatest() {
     siteStatus.textContent = `Ready · MeshInk v${manifest.version}`;
     logArea.textContent = `Ready to flash MeshInk v${manifest.version}.\nChoose Update for a newer version, or Install for the first time.`;
   } catch (error) {
-    siteStatus.textContent = "Firmware not available";
+    siteStatus.textContent = "Latest release unavailable · custom BIN flashing is still available";
     log(`ERROR: ${error.message}`);
+    log("You can still choose Custom BIN file and flash a local image.");
   }
   updateControls();
 }
@@ -151,9 +192,13 @@ async function flash() {
   if (!ready()) return;
   const mode = selectedMode();
   const wipe = mode === "wipe";
+  const source = selectedSource();
   const activeManifest = manifest;
+  const localFile = customFile();
   if (wipe && !window.confirm(
-    "Install MeshInk for the first time? This will reset any existing data on the device."
+    source === "custom" ?
+      "Flash this 16 MB full-wipe BIN? This erases the entire flash, including settings and stored data." :
+      "Install MeshInk for the first time? This will reset any existing data on the device."
   )) return;
   busy = true;
   flashingCompleted = false;
@@ -166,15 +211,29 @@ async function flash() {
   let completed = false;
   let writeStarted = false;
   try {
-    setActivity(`Preparing MeshInk v${activeManifest.version} ${wipe ? "install" : "update"}…`);
-    const item = activeManifest.files[mode];
-    const response = await fetch(`./assets/${item.name}`, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Firmware download failed (HTTP ${response.status}).`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length !== item.size) throw new Error("Firmware size mismatch; nothing was flashed.");
-    setActivity("Checking firmware checksum…");
-    if (await sha256(bytes) !== item.sha256) throw new Error("Firmware checksum mismatch; nothing was flashed.");
-    setActivity("Firmware verified. Choose the T5 USB serial port…");
+    let bytes;
+    let firmwareLabel;
+    if (source === "custom") {
+      if (!localFile || !customFileFitsMode(localFile, mode))
+        throw new Error(wipe ? "Choose an exact 16 MB full-wipe BIN." : "Choose an update BIN that fits the 6 MB app partition.");
+      setActivity(`Reading custom firmware ${localFile.name}…`);
+      bytes = new Uint8Array(await localFile.arrayBuffer());
+      const digest = await sha256(bytes);
+      firmwareLabel = localFile.name;
+      log(`Custom firmware SHA-256: ${digest}`);
+      setActivity("Custom firmware validated. Choose the T5 USB serial port…");
+    } else {
+      setActivity(`Preparing MeshInk v${activeManifest.version} ${wipe ? "install" : "update"}…`);
+      const item = activeManifest.files[mode];
+      const response = await fetch(`./assets/${item.name}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`Firmware download failed (HTTP ${response.status}).`);
+      bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.length !== item.size) throw new Error("Firmware size mismatch; nothing was flashed.");
+      setActivity("Checking firmware checksum…");
+      if (await sha256(bytes) !== item.sha256) throw new Error("Firmware checksum mismatch; nothing was flashed.");
+      firmwareLabel = `MeshInk v${activeManifest.version}`;
+      setActivity("Firmware verified. Choose the T5 USB serial port…");
+    }
     const port = await navigator.serial.requestPort();
     transport = new Transport(port, false);
     const loader = new ESPLoader({
@@ -209,8 +268,8 @@ async function flash() {
     setActivity("Firmware written successfully. Restarting the T5…");
     const sent = await resetWithRetry(transport);
     siteStatus.textContent = sent ?
-      `MeshInk v${activeManifest.version} flashed · reset pulse sent` :
-      `MeshInk v${activeManifest.version} flashed · press RESET to restart`;
+      `${firmwareLabel} flashed · reset pulse sent` :
+      `${firmwareLabel} flashed · press RESET to restart`;
     progressLabel.textContent = "100% · firmware flashed";
     log(sent ?
       "If the T5 does not restart, click Restart device above or press RESET on the T5." :

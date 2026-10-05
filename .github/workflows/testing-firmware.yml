@@ -31,6 +31,8 @@ jobs:
         run: python tools/check_meshcore_pin.py
       - name: Architecture boundary checks
         run: python tools/check_architecture.py
+      - name: Web flasher safety regression
+        run: python tools/check_web_flasher.py
       - name: Host map archive reader tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
@@ -99,11 +101,6 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
-      - name: Warnings-visible cache64 firmware audit
-        run: |
-          set -o pipefail
-          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
-          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
       - name: Verify cache64 SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -126,6 +123,12 @@ jobs:
           grep -q '#define CONFIG_LOG_MAXIMUM_LEVEL 2' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_DEFAULT_LEVEL_INFO 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           ! grep -q '#define CONFIG_LOG_COLORS 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+      - name: Warnings-visible cache64 firmware audit
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
+
       - name: Read testing firmware version
         id: version
         run: |
@@ -142,21 +145,38 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          test -s .pio/build/t5-unified-cache64/firmware.bin
-          cp .pio/build/t5-unified-cache64/firmware.bin "meshink-$VERSION-update.bin"
+          BUILD=".pio/build/t5-unified-cache64"
+          FRAMEWORK="$HOME/.platformio/packages/framework-arduinoespressif32"
+          test -s "$BUILD/firmware.bin"
+          cp "$BUILD/firmware.bin" "meshink-$VERSION-update.bin"
           sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt
+          test -s "$BUILD/bootloader.bin"
+          test -s "$BUILD/partitions.bin"
+          test -s "$FRAMEWORK/tools/partitions/boot_app0.bin"
+          python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32s3 merge_bin \
+            --flash_mode keep --flash_freq keep --flash_size 16MB \
+            --fill-flash-size 16MB \
+            -o "meshink-$VERSION-full-wipe.bin" \
+            0x0 "$BUILD/bootloader.bin" \
+            0x8000 "$BUILD/partitions.bin" \
+            0xe000 "$FRAMEWORK/tools/partitions/boot_app0.bin" \
+            0x10000 "$BUILD/firmware.bin"
+          test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
+          sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
       - name: Verify testing version is embedded
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           echo "Expected embedded firmware version: $VERSION"
           grep -aFq "$VERSION" "meshink-$VERSION-update.bin"
+          grep -aFq "$VERSION" "meshink-$VERSION-full-wipe.bin"
       - name: Downloadable testing firmware
         uses: actions/upload-artifact@v4
         with:
           name: meshink-${{ steps.version.outputs.version }}
           path: |
             meshink-${{ steps.version.outputs.version }}-update.bin
+            meshink-${{ steps.version.outputs.version }}-full-wipe.bin
             SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
