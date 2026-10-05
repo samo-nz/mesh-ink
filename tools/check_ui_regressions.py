@@ -1568,6 +1568,7 @@ assert "MESHINK_MESSAGE_READ_THROUGH" not in message_store_source[message_store_
 assert "if(queued==len)mark_synced_message_read(src,len);" in companion_source, "BLE sync responses clear unread only after the frame is accepted for transmit"
 assert companion_source.count("MESHINK_MESSAGE_PATH_UNKNOWN,true);")>=2 and "pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);" in companion_source, "companion receives start unread"
 assert '"TELEMETRY POSITION %s"' in runtime_source, "requested location is labelled as telemetry position rather than a verified live fix"
+assert 'ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);' in source, "telemetry page names the coordinate source explicitly"
 assert "const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);" in runtime_source, "successful repeater/room login immediately requests status"
 assert "auto-status=%u" in runtime_source, "automatic post-login status request is diagnosable"
 assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_get_retained_ui_tab" in power_backend_header and "meshink_power_clear_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
