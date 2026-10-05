@@ -244,7 +244,7 @@ async function flash() {
   connectionRetry = false;
   progress.hidden = false;
   progress.removeAttribute("value"); // show indeterminate activity while downloading/checking
-  setActivity("Downloading firmware…");
+  setActivity("Preparing firmware…");
   updateControls();
   let transport = null;
   let completed = false;
