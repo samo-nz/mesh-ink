@@ -51,6 +51,17 @@ int main(){
     meshink_gps_background_tick();
     assert(meshink_gps_mock_ticks==1);
 
+    assert(meshink_gps_power_test_start(MeshInkGpsPowerExperiment::RfOff));
+    assert(meshink_gps_power_test_busy());
+    assert(meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::RfOff);
+    meshink_gps_mock_power_test_busy=false;
+    assert(meshink_gps_power_test_replay_last());
+    assert(meshink_gps_mock_power_replayed);
+    meshink_gps_enter_standby_power_mode();
+    assert(meshink_gps_mock_standby);
+    meshink_gps_leave_standby_power_mode();
+    assert(!meshink_gps_mock_standby);
+
     meshink_gps_shutdown();
     assert(meshink_gps_mock_shutdown);
 
