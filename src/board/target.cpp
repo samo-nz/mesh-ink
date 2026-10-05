@@ -53,22 +53,40 @@ void T5RTCClock::begin(){
     // Retained headless wakes intentionally skip it.
     i2c_ready_=true;
     uint8_t r[7]{};
-    if(!idf_read(0x51,0x02,r,sizeof(r))){
-        valid_=false;
-        Serial.println("[T5-WARN] rtc=PCF8563 unavailable; system/GPS fallback active");
-        return;
-    }
-    const bool voltage_low=(r[0]&0x80)!=0;
-    const uint8_t second=from_bcd(r[0]&0x7F),minute=from_bcd(r[1]&0x7F),hour=from_bcd(r[2]&0x3F);
-    const uint8_t day=from_bcd(r[3]&0x3F),month=from_bcd(r[5]&0x1F),year=from_bcd(r[6]);
-    valid_=!voltage_low&&second<60&&minute<60&&hour<24&&day>=1&&day<=31&&month>=1&&month<=12;
-    if(valid_){
-        const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
-        timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-        Serial.println("[T5-INIT] rtc=PCF8563 OK");
+    const bool read_ok=idf_read(0x51,0x02,r,sizeof(r));
+    if(read_ok){
+        const bool voltage_low=(r[0]&0x80)!=0;
+        const uint8_t second=from_bcd(r[0]&0x7F),minute=from_bcd(r[1]&0x7F),hour=from_bcd(r[2]&0x3F);
+        const uint8_t day=from_bcd(r[3]&0x3F),month=from_bcd(r[5]&0x1F),year=from_bcd(r[6]);
+        valid_=!voltage_low&&second<60&&minute<60&&hour<24&&day>=1&&day<=31&&month>=1&&month<=12;
+        if(valid_){
+            deferred_hardware_time_=0;
+            const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
+            timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+            Serial.println("[T5-INIT] rtc=PCF8563 OK");
+            return;
+        }
     }else{
-        Serial.println("[T5-WARN] rtc=PCF8563 invalid; system/GPS fallback active");
+        valid_=false;
     }
+
+    // MeshCore may already have bootstrapped software time from saved contact
+    // timestamps while this retained wake was headless. Only use that deferred
+    // value when the hardware RTC itself is unavailable/invalid; a valid RTC
+    // above always remains authoritative.
+    const uint32_t deferred=deferred_hardware_time_;
+    deferred_hardware_time_=0;
+    if(deferred){
+        setCurrentTime(deferred);
+        if(valid_){
+            Serial.println("[T5-INIT] rtc=PCF8563 restored from deferred startup time");
+            return;
+        }
+    }
+
+    Serial.println(read_ok
+        ?"[T5-WARN] rtc=PCF8563 invalid; system/GPS fallback active"
+        :"[T5-WARN] rtc=PCF8563 unavailable; system/GPS fallback active");
 }
 uint32_t T5RTCClock::getCurrentTime(){
     if(!valid_)return (uint32_t)time(nullptr);
@@ -98,6 +116,7 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
         // MeshCore bootstraps a plausible clock from contact timestamps during
         // retained radio-first startup. Keep that as system time only: the
         // headless path deliberately has no shared I2C driver yet.
+        deferred_hardware_time_=utc;
         T5_TRACE("rtc: deferred hardware write UTC=%lu; I2C lifecycle not initialized\n",
             (unsigned long)utc);
         return;
