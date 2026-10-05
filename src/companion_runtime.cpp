@@ -217,12 +217,13 @@ public:
         return len;
     }
     size_t writeFrame(const uint8_t* src,size_t len) override {
-        // A sync response means the phone has fetched this exact queued
-        // message. It is the strongest read signal the companion protocol
-        // provides; merely being connected is not treated as read.
-        mark_synced_message_read(src,len);
         observe_mesh_response(src,len);
-        return SerialBLEInterface::writeFrame(src,len);
+        const size_t queued=SerialBLEInterface::writeFrame(src,len);
+        // A sync response means the phone requested this exact queued message.
+        // Clear unread only after ESP32 BLE accepted the frame into its TX
+        // queue; a disconnect/full queue must not manufacture a read state.
+        if(queued==len)mark_synced_message_read(src,len);
+        return queued;
     }
 };
 
