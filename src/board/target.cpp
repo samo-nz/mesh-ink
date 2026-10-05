@@ -867,6 +867,7 @@ static uint32_t gps_power_next_sample = 0;
 static MeshInkGpsPowerExperiment gps_power_experiment = MeshInkGpsPowerExperiment::GpsOnly;
 static MeshInkGpsConstellationMode gps_power_saved_constellation = MeshInkGpsConstellationMode::Unchanged;
 static bool gps_power_uart_suspended = false;
+static constexpr uint32_t GPS_POWER_LOG_MAGIC = 0x47504C31; // "GPL1"
 
 static int32_t gps_discharge_ma(int16_t value) {
     return value < 0 ? -(int32_t)value : 0;
@@ -1037,6 +1038,51 @@ static GpsPowerSummary gps_power_summary(bool post) {
 }
 static int32_t gps_power_mean(int32_t sum,uint16_t count){return count?sum/(int32_t)count:0;}
 
+
+static bool gps_power_persist_log() {
+    if(!gps_power_log_count)return false;
+    Preferences pref;
+    if(!pref.begin("gps-pwrlog",false)){
+        Serial.println("[T5-GPS-POWER] WARNING: could not open NVS namespace for completed test log");
+        return false;
+    }
+    const size_t bytes=gps_power_log_count*sizeof(GpsPowerLoggedSample);
+    const bool ok=
+        pref.putUInt("magic",GPS_POWER_LOG_MAGIC)==sizeof(uint32_t)&&
+        pref.putUChar("experiment",(uint8_t)gps_power_experiment)==sizeof(uint8_t)&&
+        pref.putUInt("count",(uint32_t)gps_power_log_count)==sizeof(uint32_t)&&
+        pref.putBytes("samples",gps_power_log,bytes)==bytes;
+    pref.end();
+    Serial.printf("[T5-GPS-POWER] completed log NVS save=%s samples=%u bytes=%u; write occurs AFTER measurement window\n",
+                  ok?"OK":"FAILED",(unsigned)gps_power_log_count,(unsigned)bytes);
+    return ok;
+}
+
+static bool gps_power_load_persisted_log() {
+    Preferences pref;
+    if(!pref.begin("gps-pwrlog",true))return false;
+    const uint32_t magic=pref.getUInt("magic",0);
+    const uint32_t count=pref.getUInt("count",0);
+    const uint8_t experiment=pref.getUChar("experiment",0xFF);
+    const size_t bytes=pref.getBytesLength("samples");
+    bool ok=magic==GPS_POWER_LOG_MAGIC&&count>0&&count<=GPS_POWER_LOG_CAPACITY&&
+            experiment<=(uint8_t)MeshInkGpsPowerExperiment::SlowFix10s&&
+            bytes==count*sizeof(GpsPowerLoggedSample);
+    if(ok){
+        ok=pref.getBytes("samples",gps_power_log,bytes)==bytes;
+        if(ok){
+            gps_power_log_count=(size_t)count;
+            gps_power_experiment=(MeshInkGpsPowerExperiment)experiment;
+            gps_power_log_valid=true;
+        }
+    }
+    pref.end();
+    if(ok)Serial.printf("[T5-GPS-POWER] loaded persisted test log experiment='%s' samples=%u\n",
+                        meshink_gps_power_experiment_name(gps_power_experiment),
+                        (unsigned)gps_power_log_count);
+    return ok;
+}
+
 static void gps_power_print_summary() {
     const auto base=gps_power_summary(false);
     const auto post=gps_power_summary(true);
@@ -1095,7 +1141,8 @@ static void gps_power_finish(bool cancelled) {
     gps_power_restore_receiver(cancelled);
     gps_power_test_running=false;
     gps_power_log_valid=gps_power_log_count>0;
-    Serial.printf("[T5-GPS-POWER] test idle; retained %u samples for REPLAY LAST LOG\n",
+    if(gps_power_log_valid)gps_power_persist_log();
+    Serial.printf("[T5-GPS-POWER] test idle; retained %u samples for REPLAY LAST LOG (RAM + NVS when save succeeded)\n",
                   (unsigned)gps_power_log_count);
 }
 } // namespace
@@ -1182,7 +1229,7 @@ void meshink_gps_power_test_tick() {
 bool meshink_gps_power_test_busy(){return gps_power_test_running;}
 
 bool meshink_gps_power_test_replay_last() {
-    if(!gps_power_log_valid||gps_power_log_count==0){
+    if((!gps_power_log_valid||gps_power_log_count==0)&&!gps_power_load_persisted_log()){
         Serial.println("[T5-GPS-POWER] REPLAY requested but no completed/cancelled measurement log is retained");
         return false;
     }
