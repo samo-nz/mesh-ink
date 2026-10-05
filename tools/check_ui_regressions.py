@@ -584,12 +584,12 @@ assert "T5_LOG_TOUCH" not in source and "T5_LOG_TOUCH" not in platformio_source,
 
 # Local UI framebuffer composition uses short 240 MHz bursts from the 80 MHz
 # cruise clock, restoring the previous clock immediately afterwards.
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
-contains('T5CpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
 contains('set_cpu_target(previous_mhz,"ui-draw-complete");', "UI draw boost restores previous CPU clock")
 assert 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh")' in source and 'set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh")' in source, "e-paper updates still run at 240 MHz"
 contains("navigation_touch_cutoff_ms=millis();", "full-screen page navigation records a stale-touch cutoff")
@@ -1208,8 +1208,8 @@ assert "provider.note_direct_ack(" not in runtime_source and "provider.note_dire
 # Test64: test.8 keeps the 80 MHz steady state but races actual message-store
 # flash I/O at 240 MHz. Cached PSRAM/RAM reads must never pay a clock switch.
 assert "STORE_FLASH_CPU_MHZ=240" in message_store_source, "message-store flash work has an explicit 240 MHz race-to-idle target"
-assert "struct StoreCpuBoostScope" in message_store_source and "setCpuFrequencyMhz(STORE_FLASH_CPU_MHZ)" in message_store_source, "message-store owns a scoped flash CPU boost"
-assert "if(restore)setCpuFrequencyMhz(previous_mhz);" in message_store_source, "message-store flash boost restores the previous CPU clock"
+assert "struct StoreCpuBoostScope" in message_store_source and "meshink_performance_set_cpu_mhz(STORE_FLASH_CPU_MHZ)" in message_store_source, "message-store owns a scoped flash CPU boost"
+assert "if(restore)meshink_performance_set_cpu_mhz(previous_mhz);" in message_store_source, "message-store flash boost restores the previous CPU clock"
 for method in (
     "bool MeshInkMessageStore::load_cache(File& source)",
     "bool MeshInkMessageStore::create_empty()",
@@ -1244,8 +1244,8 @@ assert "bootperf_" not in unified_source and "bootperf_" not in companion_source
 # interactive cruise. The T5 GPS manager reuses the board-level NMEA probe
 # instead of paying upstream EnvironmentSensorManager's fixed 1000 ms detect.
 setup_body=unified_source[unified_source.index("void setup()"):unified_source.index("void loop()")]
-assert "setCpuFrequencyMhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
-assert setup_body.index("setCpuFrequencyMhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
+assert "meshink_performance_set_cpu_mhz(240)" in setup_body, "boot explicitly requests the ESP32-S3 maximum CPU clock"
+assert setup_body.index("meshink_performance_set_cpu_mhz(240)") < setup_body.index("meshink_buttons_begin()"), "240 MHz is selected before startup work begins"
 assert "ui_boot_cpu_active=true;" in source[source.index("void ui_startup(const MeshInkUiStartupPlan& plan)"):source.index("void ui_setup()")], "UI startup phase explicitly stays at render clock"
 assert "return ui_boot_cpu_active?UI_RENDER_CPU_MHZ:UI_IDLE_CPU_MHZ;" in source, "post-refresh clock target is boot-aware"
 assert 'set_cpu_target(ui_post_render_cpu_target(),"display-complete");' in source, "full panel refresh cannot drop boot to 80 MHz"
