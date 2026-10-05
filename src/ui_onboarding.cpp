@@ -1634,11 +1634,12 @@ static void draw_map_repeater_marker(int x,int y) {
     meshink_display_fill_rect({x-2,y-8,5,15},0,fb);
     thick_line(x,y-5,x-7,y+11);thick_line(x,y-5,x+7,y+11);
     meshink_display_fill_rect({x-8,y+9,17,4},0,fb);
-    // One bold signal arc each side is clearer than multiple fine nested arcs.
-    thick_line(x-4,y-6,x-9,y-2);thick_line(x-9,y-2,x-9,y+4);thick_line(x-9,y+4,x-5,y+8);
-    thick_line(x+4,y-6,x+9,y-2);thick_line(x+9,y-2,x+9,y+4);thick_line(x+9,y+4,x+5,y+8);
-    thick_line(x-9,y-9,x-12,y-6);thick_line(x-12,y-6,x-12,y+6);thick_line(x-12,y+6,x-9,y+9);
-    thick_line(x+9,y-9,x+12,y-6);thick_line(x+12,y-6,x+12,y+6);thick_line(x+12,y+6,x+9,y+9);
+    // Two bold broadcast arcs per side, with a deliberate white gap around
+    // the tower legs/base so the radio waves remain visually separate.
+    thick_line(x-5,y-7,x-9,y-4);thick_line(x-9,y-4,x-9,y+1);thick_line(x-9,y+1,x-8,y+3);
+    thick_line(x+5,y-7,x+9,y-4);thick_line(x+9,y-4,x+9,y+1);thick_line(x+9,y+1,x+8,y+3);
+    thick_line(x-9,y-10,x-12,y-7);thick_line(x-12,y-7,x-12,y+3);thick_line(x-12,y+3,x-10,y+6);
+    thick_line(x+9,y-10,x+12,y-7);thick_line(x+12,y-7,x+12,y+3);thick_line(x+12,y+3,x+10,y+6);
 }
 
 static bool project_device_on_map(long latitude,long longitude,int& sx,int& sy);
