@@ -1793,7 +1793,7 @@ static void draw_map_nodes() {
         // A short leader keeps displaced labels visually tied to their marker.
         const int target_x=max(best_x,min((int)n.x,best_x+w-1));
         const int target_y=max(best_y,min((int)n.y,best_y+h-1));
-        line(n.x,n.y,target_x,target_y);
+        thick_line(n.x,n.y,target_x,target_y);
         meshink_display_fill_rect({best_x,best_y,w,h},0xFF,fb);
         ui_text_fit(short_name,best_x+4,best_y+2,w-ui_w(8),2,0,true);
         if(!compact_labels)ui_text_fit(age,best_x+4,best_y+18,w-ui_w(8),2,0,true);
