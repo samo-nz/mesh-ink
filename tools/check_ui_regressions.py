@@ -86,9 +86,10 @@ contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primar
 contains('last_user_activity=millis();\n            if(screen==Screen::Maps){', "primary-button short press counts as user activity")
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "non-map primary-button refresh keeps the established fast redraw path")
 finish_startup_source=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()",source.index("void ui_finish_startup()"))]
-assert 'fast_full_redraw("CONTACTS_AFTER_BOOT",false);' in finish_startup_source, "Contacts boot refresh completes before frontlight timer reset"
-contacts_refresh=finish_startup_source.index('fast_full_redraw("CONTACTS_AFTER_BOOT",false);')
-assert finish_startup_source.index("frontlight_event();",contacts_refresh)>contacts_refresh, "Contacts starts a fresh frontlight timeout after splash"
+assert "const bool retained_deep_wake=setup_complete&&retained_wake_tab_valid;" in finish_startup_source, "deep-sleep startup identifies retained first-frame ownership"
+assert '?"RETAINED_TAB_AFTER_DEEP_WAKE":"CONTACTS_AFTER_BOOT"' in finish_startup_source, "retained Channels/More use the same forced complete-frame reveal as Contacts"
+assert "load_map_with_feedback(false,retained_deep_wake);" in finish_startup_source, "retained Maps passes full first-frame treatment into its Loading screen"
+assert "if(setup_complete)frontlight_event();" in finish_startup_source, "restored screens start a fresh frontlight timeout only after becoming visible"
 assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
 # Keep the application gesture/event layer independent from the physical touch
 # controller. Maps consumes multi-contact frames; other screens consume the
@@ -287,6 +288,10 @@ assert "ui_display_session_active()" in companion_source, "battery guard detects
 power_check_body = companion_source.split("static MeshInkPowerSleepCheck local_mesh_headless_power_check",1)[1].split("static void companion_set_low_power_cpu",1)[0]
 assert power_check_body.index("ui_display_session_active()") < power_check_body.index("meshink_power_begin_minimal_bus()"), "normal or headless EPDiy I2C is reused before attempting another driver install"
 assert "local_mesh_setup_button_wake" in unified_source and "local_mesh_promote_to_ui" in unified_source, "BOOT wake restores retained MeshCore before attaching full UI"
+assert "bool i2c_ready_ = false;" in board_target_header_source, "RTC tracks whether its shared I2C lifecycle has actually started"
+assert "i2c_ready_=true;" in board_target_source, "RTC marks I2C ready only from interactive/cold RTC begin"
+assert "if(!i2c_ready_){" in board_target_source and "deferred hardware write" in board_target_source, "headless MeshCore time bootstrap updates system time without touching absent I2C"
+assert board_target_source.index("settimeofday(&tv,nullptr);") < board_target_source.index("if(!i2c_ready_){"), "headless RTC fallback still keeps software time current"
 runtime_promotion_body = companion_source.split("bool local_mesh_promote_to_ui(const char* source)",1)[1].split("bool local_mesh_enter_deep_sleep_standby()",1)[0]
 assert "meshink_power_frontlight_begin();" in runtime_promotion_body and "meshink_power_frontlight_set(100);" in runtime_promotion_body, "awake/headless BOOT promotion immediately acknowledges with full frontlight"
 assert runtime_promotion_body.index("meshink_power_frontlight_set(100);") < runtime_promotion_body.index("local_mesh_headless_power_check"), "awake BOOT acknowledgement precedes promotion battery/startup work"
@@ -517,7 +522,8 @@ assert "bottom_nav_top==900" in ui_layout_source, "T5 bottom navigation remains 
 assert "map_centre_y==474" in ui_layout_source, "T5 map centre remains y=474"
 contains('draw_toast_message("Loading..");', "Maps keep the previous map visible beneath Loading")
 contains('refresh_area(MeshInkRefreshMode::Direct,toast_message_rect("Loading.."));', "Maps pan/zoom Loading toast uses partial-area refresh")
-contains('else\n        refresh(MeshInkRefreshMode::Direct);', "first Maps entry retains full Loading refresh")
+contains('fast_full_redraw("MAP_LOADING_AFTER_DEEP_WAKE",false);', "retained Maps forces the completed Loading frame over the physical standby image")
+contains('else\n        refresh(MeshInkRefreshMode::Direct);', "ordinary first Maps entry retains the existing full Loading refresh")
 contains('meshink_display_update_area(', "partial Loading path uses display backend area update API")
 contains('[T5-MAP-LOAD] area-refresh=', "partial Loading refresh logs independent timing")
 contains('refresh(MeshInkRefreshMode::Direct,false); // intentional transient black prep', "Maps retain dedicated contrast-preserving black-prep refresh")
