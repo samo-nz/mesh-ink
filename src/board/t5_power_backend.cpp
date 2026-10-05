@@ -259,15 +259,23 @@ void meshink_power_retain_ui_tab(uint8_t tab) {
     retained_ui_magic=RETAINED_UI_MAGIC;
 }
 
-bool meshink_power_take_retained_ui_tab(uint8_t& tab) {
+void meshink_power_clear_retained_ui_tab() {
+    retained_ui_magic=0;
+    retained_ui_tab=0;
+}
+
+bool meshink_power_get_retained_ui_tab(uint8_t& tab) {
     tab=0;
     const bool deep_wake=esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED;
     const bool valid=deep_wake&&retained_ui_magic==RETAINED_UI_MAGIC&&
                      retained_ui_tab>=1&&retained_ui_tab<=4;
-    if(valid)tab=retained_ui_tab;
-    retained_ui_magic=0;
-    retained_ui_tab=0;
-    return valid;
+    if(!valid){
+        // A normal reset/cold boot must never replay stale RTC UI state.
+        meshink_power_clear_retained_ui_tab();
+        return false;
+    }
+    tab=retained_ui_tab;
+    return true;
 }
 
 void meshink_power_prepare_board() {
