@@ -85,8 +85,10 @@ contains('standby_restore_landscape=restore_landscape;', "standby stores resolve
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button refresh also wakes frontlight")
 contains('last_user_activity=millis();\n            if(screen==Screen::Maps){', "primary-button short press counts as user activity")
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "non-map primary-button refresh keeps the established fast redraw path")
-contains('fast_full_redraw("CONTACTS_AFTER_BOOT",false);\n        // Startup can take longer than the saved light timeout.', "Contacts boot refresh completes before frontlight timer reset")
-contains('timeout only after Contacts is actually visible.\n        frontlight_event();', "Contacts starts a fresh frontlight timeout after splash")
+finish_startup_source=source[source.index("void ui_finish_startup()"):source.index("void ui_loop()",source.index("void ui_finish_startup()"))]
+assert 'fast_full_redraw("CONTACTS_AFTER_BOOT",false);' in finish_startup_source, "Contacts boot refresh completes before frontlight timer reset"
+contacts_refresh=finish_startup_source.index('fast_full_redraw("CONTACTS_AFTER_BOOT",false);')
+assert finish_startup_source.index("frontlight_event();",contacts_refresh)>contacts_refresh, "Contacts starts a fresh frontlight timeout after splash"
 assert "SHORT_BOOT_HOME" not in source, "obsolete BOOT-specific home navigation remains absent"
 # Keep the application gesture/event layer independent from the physical touch
 # controller. Maps consumes multi-contact frames; other screens consume the
@@ -1563,16 +1565,18 @@ assert "Disconnect serial to exit screenshot mode" in unified_source, "session l
 assert "mark_matching_received_read" in message_store_header and "MeshInkMessageStore::mark_matching_received_read" in message_store_source, "companion sync can clear one exact unread journal record"
 assert "item.flags&=(uint8_t)~MESHINK_MESSAGE_UNREAD;" in message_store_source, "companion sync clears only the unread bit"
 assert "MESHINK_MESSAGE_READ_THROUGH" not in message_store_source[message_store_source.index("MeshInkMessageStore::mark_matching_received_read"):message_store_source.index("void MeshInkMessageStore::update_ack")], "companion sync never marks newer conversation messages read"
-assert "mark_synced_message_read(src,len);" in companion_source, "BLE sync responses are matched back to the journal"
+assert "if(queued==len)mark_synced_message_read(src,len);" in companion_source, "BLE sync responses clear unread only after the frame is accepted for transmit"
 assert companion_source.count("MESHINK_MESSAGE_PATH_UNKNOWN,true);")>=2 and "pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);" in companion_source, "companion receives start unread"
 assert '"TELEMETRY POSITION %s"' in runtime_source, "requested location is labelled as telemetry position rather than a verified live fix"
 assert "const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);" in runtime_source, "successful repeater/room login immediately requests status"
 assert "auto-status=%u" in runtime_source, "automatic post-login status request is diagnosable"
-assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_take_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
+assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_get_retained_ui_tab" in power_backend_header and "meshink_power_clear_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
 assert "esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED" in power_backend_source, "retained tab is accepted only on a real deep-sleep wake"
 assert "retained_tab_for_screen" in source and "screen_for_retained_tab" in source, "UI maps nested screens to stable top-level tabs"
 assert "meshink_power_retain_ui_tab(retained_tab);" in source, "deep-sleep entry stores the current top-level tab"
-assert "if(meshink_power_take_retained_ui_tab(retained_tab)){" in source, "wake consumes the retained top-level tab"
+assert "if(meshink_power_get_retained_ui_tab(retained_tab)){" in source, "wake reads the retained top-level tab"
 assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promotion preserves a restored existing-user tab"
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
+assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
+assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
 assert "-DT5_FIRMWARE_VERSION='\"2.0.0-rc.2\"'" in platformio_source and "-DT5_UI_VERSION='\"2.0.0-rc.2\"'" in platformio_source, "RC2 firmware/UI identity stays aligned"
