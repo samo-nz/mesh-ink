@@ -444,6 +444,7 @@ contains("hit_outer_row(", "settings/list touch targets use shared interior geom
 contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
 contains("Radio tower: tapered mast plus two signal arcs", "Contacts and Discovery repeater icon uses the radio-tower glyph")
 contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
+contains("Simple house silhouette: peaked roof", "Contacts and Discovery room-server icon uses the house glyph")
 contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
 assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
