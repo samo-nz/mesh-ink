@@ -21,9 +21,17 @@ js = (WEB / "flasher.js").read_text(encoding="utf-8")
 css = (WEB / "style.css").read_text(encoding="utf-8")
 require('value="update" checked' in html, "safe update must be selected by default")
 require('value="wipe"' in html and "Choose this to install MeshInk for the first time." in html, "first-time install option")
+require('name="source" value="release" checked' in html, "published release remains the default firmware source")
+require('name="source" value="custom"' in html and 'id="custom-file"' in html, "custom local BIN source")
 require('id="wipe-word"' not in html and "Type ERASE" not in html, "no unnecessary text-entry gate")
 require('id="flash-button"' in html and "disabled" in html, "initially disabled flash button")
 require('0x10000' in js and '0x0' in js, "update and full-wipe offsets")
+require('const UPDATE_MAX_SIZE = 0x600000' in js, "update image is bounded by the app0 partition")
+require('file.size === FULL_WIPE_SIZE' in js, "custom full-wipe image must be exactly 16 MB")
+require('file.size >= 1024 && file.size <= UPDATE_MAX_SIZE' in js, "custom update image must fit the app partition")
+require('new Uint8Array(await localFile.arrayBuffer())' in js, "custom BIN is read locally without upload")
+require('Custom firmware SHA-256:' in js, "custom BIN digest is shown before flashing")
+require('selectedSource() === "custom"' in js, "custom source can flash without a release manifest")
 require('eraseAll: wipe' in js, "no full-device erase in update mode")
 require('address: wipe ? FULL_WIPE_ADDRESS : UPDATE_ADDRESS' in js, "mode-specific offset")
 require('wipeWord' not in js, "no typed confirmation logic")
@@ -63,7 +71,7 @@ if args.build is None:
     require(args.version is None, "version only applies to --build")
     print("PASS: simple update/install choices, safe update default, chip and SHA-256 gates")
 else:
-    require(args.version is not None and re.fullmatch(r"\d+\.\d+\.\d+", args.version),
+    require(args.version is not None and re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.\d+)?", args.version),
             "invalid release version")
     build = args.build
     for name in ("index.html", "style.css", "flasher.js", "vendor/esptool-js.js"):
@@ -80,7 +88,7 @@ else:
         path = build / "assets" / name
         require(name in checksums and path.is_file(), f"missing {mode} release firmware")
         length = path.stat().st_size
-        require(length == 16777216 if mode == "wipe" else 1024 < length < (16777216 - 65536),
+        require(length == 16777216 if mode == "wipe" else 1024 < length <= 0x600000,
                 f"unexpected {mode} binary size")
         digest = hashlib.file_digest(path.open("rb"), "sha256").hexdigest()
         require(digest == checksums[name], f"{mode} release checksum mismatch")
