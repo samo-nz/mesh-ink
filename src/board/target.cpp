@@ -1235,6 +1235,15 @@ bool meshink_gps_power_test_replay_last() {
     }
     Serial.printf("[T5-GPS-POWER] ===== REPLAY '%s' %u samples =====\n",
                   meshink_gps_power_experiment_name(gps_power_experiment),(unsigned)gps_power_log_count);
+
+    // Put the useful answer first. Android WebUSB can be fragile during large
+    // CDC bursts, so the baseline/post means and saving must arrive before the
+    // verbose 90-line sample replay.
+    gps_power_print_summary();
+    Serial.println("[T5-GPS-POWER] detailed samples follow at throttled USB-safe rate");
+    Serial.flush();
+    delay(150);
+
     for(size_t i=0;i<gps_power_log_count;++i){
         const auto& sample=gps_power_log[i];
         const auto& m=sample.power;
@@ -1246,8 +1255,15 @@ bool meshink_gps_power_test_replay_last() {
                       (int)m.average_current_ma,(long)(m.average_current_valid?gps_discharge_ma(m.average_current_ma):0),
                       (int)m.average_power_mw,(long)(m.average_power_valid?gps_discharge_mw(m.average_power_mw):0),
                       (unsigned)m.battery_percent,m.external_power?1U:0U);
+        // Avoid overrunning Android Chrome/WebUSB and give the USB task time
+        // to drain CDC packets. This occurs after measurement, so it cannot
+        // influence the captured power result.
+        delay(25);
+        yield();
+        if(((i+1U)%5U)==0U)Serial.flush();
     }
-    gps_power_print_summary();
+    Serial.println("[T5-GPS-POWER] ===== REPLAY COMPLETE =====");
+    Serial.flush();
     return true;
 }
 
