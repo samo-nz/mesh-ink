@@ -2472,38 +2472,28 @@ static void draw_gps_tuning(){
     const MeshInkUiLayout& layout=portrait_layout();
     char page[48];
     if(local_mesh_gps_power_test_busy())
-        snprintf(page,sizeof(page),"PAGE %u / 3   TEST RUNNING - SEE SERIAL",(unsigned)gps_power_page+1U);
+        snprintf(page,sizeof(page),"PAGE %u / 2   TEST RUNNING - SEE SERIAL",(unsigned)gps_power_page+1U);
     else
-        snprintf(page,sizeof(page),"PAGE %u / 3   30S BASE + 60S POST",(unsigned)gps_power_page+1U);
+        snprintf(page,sizeof(page),"PAGE %u / 2   30S BASE + 60S POST",(unsigned)gps_power_page+1U);
     ui_centred_fit(page,ui_y(101),layout.width-ui_w(36),2,0,false);
 
     if(gps_power_page==0){
-        gps_power_test_row("GPS ONLY","SINGLE-SYSTEM RECEIVER TEST",128);
-        gps_power_test_row("BEIDOU ONLY","SINGLE-SYSTEM RECEIVER TEST",246);
-        gps_power_test_row("GLONASS ONLY","SINGLE-SYSTEM RECEIVER TEST",364);
-        gps_power_test_row("GPS ONLY + NMEA OFF","SINGLE SYSTEM + OUTPUT OFF",482);
+        gps_power_test_row("GPS ONLY","SINGLE-SYSTEM REFERENCE",128);
+        gps_power_test_row("BEIDOU ONLY","SINGLE-SYSTEM REFERENCE",246);
+        gps_power_test_row("GLONASS ONLY","SINGLE-SYSTEM REFERENCE",364);
+        gps_power_test_row("BEIDOU ZERO SAT MASK","BDS-ONLY + ALL BDS CHANNELS DISABLED",482);
         settings_row("TIMEZONE",TIMEZONES[timezone_index].label,600);
-    }else if(gps_power_page==1){
-        gps_power_test_row("NMEA EVERY 9 FIXES","GGA + RMC OUTPUT REDUCED",128);
-        gps_power_test_row("NMEA OFF","ALL RECEIVER SENTENCES OFF",246);
-        gps_power_test_row("UART HIGH-Z","ESP32 UART RELEASE ONLY",364);
-        gps_power_test_row("5 SECOND FIX INTERVAL","OUT-OF-SPEC FIX INTERVAL TEST",482);
-        gps_power_test_row("10 SECOND FIX INTERVAL","OUT-OF-SPEC FIX INTERVAL TEST",600);
     }else{
-        gps_power_test_row("CASIC RF OFF","CASIC RF SECTION EXPERIMENT",128);
-        gps_power_test_row("RF OFF + UART HIGH-Z","CHIPSET + HOST INTERFACE TEST",246);
-        gps_power_test_row("CASIC STANDBY 60S","CASIC TIMED SLEEP PROBE",364);
-        gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED SAMPLES TO SERIAL",482);
-        const MeshInkUiRect note=meshink_outer_row_rect(layout,600,112);
-        ui_section_card(note);
-        ui_text("IMPORTANT",layout.content_text_x,note.y+ui_h(13),3,0,true);
-        ui_draw_wrapped("Battery-only gives the cleanest result. USB power is detected and flagged in every test log.",
-                        layout.content_text_x,note.y+ui_h(48),note.width-ui_w(32),2,0,false,3);
+        gps_power_test_row("NAVSYSTEM ZERO","BINARY CFG-NAVX: NO GNSS SYSTEMS",128);
+        gps_power_test_row("NAV RATE 65535MS","BINARY CFG-RATE MAXIMUM WAIT",246);
+        gps_power_test_row("WATCHDOG POWER-OFF","CFG-RST MODE 4 - MAY LATCH OFFLINE",364);
+        gps_power_test_row("ONLINE UPGRADE WAIT","PCAS20 LOADER / WAIT-FOREVER PROBE",482);
+        gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED SAMPLES TO SERIAL",600);
     }
 
     ui_action_button("PREV",gps_power_prev_rect(),gps_power_page>0);
-    ui_action_button("NEXT",gps_power_next_rect(),gps_power_page<2);
-    ui_text_fit("Tests restore normal GNSS settings and never send PCAS00.",
+    ui_action_button("NEXT",gps_power_next_rect(),gps_power_page<1);
+    ui_text_fit("Battery-only. Hang-state tests may require a full device power cycle.",
                 layout.content_text_x,ui_y(852),layout.content_right-layout.content_text_x,2,0,false);
 }
 
@@ -3784,26 +3774,21 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(local_mesh_gps_power_test_busy())return true;
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             if(hit(x,y,gps_power_prev_rect())&&gps_power_page>0){--gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,gps_power_next_rect())&&gps_power_page<2){++gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,gps_power_next_rect())&&gps_power_page<1){++gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             MeshInkGpsPowerExperiment experiment=MeshInkGpsPowerExperiment::GpsOnly;
             bool start=false;
             if(gps_power_page==0){
                 if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::GpsOnly;start=true;}
                 else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::BeiDouOnly;start=true;}
                 else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::GlonassOnly;start=true;}
-                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::GpsOnlyNmeaOff;start=true;}
+                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask;start=true;}
                 else if(hit_outer_row(x,y,600)){open_screen(Screen::Timezone);return true;}
-            }else if(gps_power_page==1){
-                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::NmeaEvery9;start=true;}
-                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::NmeaOff;start=true;}
-                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::UartHighImpedance;start=true;}
-                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::SlowFix5s;start=true;}
-                else if(hit_outer_row(x,y,600)){experiment=MeshInkGpsPowerExperiment::SlowFix10s;start=true;}
             }else{
-                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::RfOff;start=true;}
-                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::RfOffUartHighImpedance;start=true;}
-                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::CasicTimedStandby60s;start=true;}
-                else if(hit_outer_row(x,y,482)){
+                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::NavSystemZero;start=true;}
+                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::NavRate65535;start=true;}
+                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::WatchdogPowerOffReset;start=true;}
+                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::OnlineUpgradeWait;start=true;}
+                else if(hit_outer_row(x,y,600)){
                     show_toast(local_mesh_gps_power_test_replay_last()?"LOG REPLAYED":"NO SAVED LOG");
                     draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
