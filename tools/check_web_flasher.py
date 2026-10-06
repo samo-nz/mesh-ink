@@ -19,6 +19,8 @@ def require(condition, label):
 html = (WEB / "index.html").read_text(encoding="utf-8")
 js = (WEB / "flasher.js").read_text(encoding="utf-8")
 css = (WEB / "style.css").read_text(encoding="utf-8")
+serial_html = (WEB / "serial.html").read_text(encoding="utf-8")
+serial_js = (WEB / "serial.js").read_text(encoding="utf-8")
 require('value="update" checked' in html, "safe update must be selected by default")
 require('value="wipe"' in html and "Choose this to install MeshInk for the first time." in html, "first-time install option")
 require('id="firmware-source-select"' in html and '<option value="release" selected>Latest release</option>' in html,
@@ -85,6 +87,35 @@ require('progress.hidden = true;' in js and 'connectionRetry = connectionFailure
         "connection failure stops progress and enables retry guidance")
 require('setActivity("Checking firmware checksum…")' in js, "checksum progress is visible")
 
+require('href="./serial.html"' in html, "web flasher links to standalone serial monitor")
+require('id="connect-button"' in serial_html and 'id="disconnect-button"' in serial_html and
+        'id="reconnect-button"' in serial_html, "serial monitor exposes connect/disconnect/reconnect controls")
+require('id="copy-button"' in serial_html and "Copy all" in serial_html,
+        "serial monitor exposes copy-all control")
+require('id="clear-button"' in serial_html and "Clear window" in serial_html,
+        "serial monitor exposes clear-window control")
+require('id="serial-log"' in serial_html and 'id="autoscroll"' in serial_html,
+        "serial monitor has persistent log window and autoscroll control")
+require('import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";' in serial_js,
+        "serial monitor reuses local Android WebUSB serial polyfill")
+require('return usesWebUsbSerial() ? webUsbSerial : navigator.serial;' in serial_js,
+        "serial monitor selects Android WebUSB or native Web Serial")
+require('const chosenPort = await serialApi().requestPort();' in serial_js,
+        "serial monitor requests a user-selected serial port")
+require('await port.open({ baudRate });' in serial_js and '.readable.getReader()' in serial_js,
+        "serial monitor opens and continuously reads the chosen serial port")
+require('new TextDecoder()' in serial_js and 'appendDeviceText' in serial_js,
+        "serial monitor decodes device output as streaming text")
+require('reconnectButton.addEventListener("click"' in serial_js,
+        "serial monitor reconnect button is wired")
+require('await navigator.clipboard.writeText(text)' in serial_js and
+        'document.execCommand("copy")' in serial_js,
+        "copy-all supports secure clipboard plus fallback")
+require('logArea.textContent = "";' in serial_js,
+        "clear-window control clears only the visible device log")
+require('requestPort() is deliberately the first awaited operation' in serial_js,
+        "serial connect preserves Android user-gesture permission")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--build", type=Path, default=None, help="Pages output directory")
@@ -97,8 +128,9 @@ else:
     require(args.version is not None and re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.\d+)?", args.version),
             "invalid release version")
     build = args.build
-    for name in ("index.html", "style.css", "flasher.js", "vendor/esptool-js.js",
-                 "vendor/web-serial-polyfill.js", "vendor/web-serial-polyfill-LICENSE.txt"):
+    for name in ("index.html", "style.css", "flasher.js", "serial.html", "serial.js",
+                 "vendor/esptool-js.js", "vendor/web-serial-polyfill.js",
+                 "vendor/web-serial-polyfill-LICENSE.txt"):
         require((build / name).is_file() and (build / name).stat().st_size > 0,
                 f"missing Pages file: {name}")
     checksums = {}

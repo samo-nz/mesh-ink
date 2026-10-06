@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/vendor dist/assets
-          cp web/index.html web/style.css web/flasher.js dist/
+          cp web/index.html web/style.css web/flasher.js web/serial.html web/serial.js dist/
           touch dist/.nojekyll
           TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           test -n "$TAG"

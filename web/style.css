@@ -11,3 +11,20 @@ button[hidden]{display:none}
 #firmware-source-select{appearance:auto;background:#0c171f;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font:650 13px/1.2 inherit;cursor:pointer}
 #firmware-source-select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .hidden-file-input{position:fixed;left:-10000px;top:auto;width:1px;height:1px;opacity:0;pointer-events:none}
+
+
+/* Web flasher -> standalone serial monitor */
+.tool-links{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 18px;color:var(--muted);font-size:14px}
+.tool-link{display:inline-flex;align-items:center;border:1px solid var(--accent);border-radius:999px;padding:7px 12px;text-decoration:none;font-weight:800}
+.serial-toolbar,.serial-log-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.serial-toolbar label{color:var(--muted);font-weight:700}
+.serial-toolbar select{appearance:auto;background:#0c171f;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:650 14px/1.2 inherit}
+.secondary-button{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.serial-status{min-height:1.6em;margin:14px 0;color:var(--muted);font-weight:650}
+.serial-status[data-kind="ok"]{color:var(--accent)}
+.serial-status[data-kind="warn"],.serial-status[data-kind="error"]{color:var(--warn)}
+.serial-log-actions{margin:12px 0}
+.serial-autoscroll{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:14px}
+.serial-autoscroll input{width:18px;height:18px;accent-color:var(--accent)}
+.serial-monitor-log{min-height:360px;max-height:62vh;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:560px){.serial-toolbar button,.serial-log-actions button{flex:1 1 42%}.serial-monitor-log{min-height:320px;max-height:56vh}}
