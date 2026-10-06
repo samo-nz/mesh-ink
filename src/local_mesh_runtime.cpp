@@ -1188,11 +1188,12 @@ void local_mesh_loop(){
     const uint32_t gps_interval=meshink_meshcore().getNodePrefs()->gps_interval;
     const MeshInkGpsStatus gps_location=meshink_gps_read_status();
     const bool gps_power_test=meshink_gps_power_test_busy();
+    const bool gps_power_preserve=gps_power_test&&meshink_gps_power_test_preserves_receiver_state();
 
-    if(gps_power_test){
+    if(gps_power_test&&!gps_power_preserve){
         if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
         gps_duty_reset=false;gps_duty_next_wake=0;gps_duty_awake_since=0;
-    }else if(gps_duty_reset){
+    }else if(!gps_power_test&&gps_duty_reset){
         gps_duty_reset=false;
         gps_duty_next_wake=0;
         if(gps_enabled&&gps_duty_sleeping){
@@ -1312,8 +1313,10 @@ bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
         T5_DEBUGLN(T5_LOG_GPS,"[T5-GPS] power experiment rejected: GPS preference is disabled");
         return false;
     }
-    if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
-    gps_duty_reset=false;gps_duty_next_wake=0;gps_duty_awake_since=0;
+    if(experiment!=MeshInkGpsPowerExperiment::CurrentState){
+        if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
+        gps_duty_reset=false;gps_duty_next_wake=0;gps_duty_awake_since=0;
+    }
     return meshink_gps_power_test_start(experiment);
 }
 bool local_mesh_gps_power_test_busy(){return meshink_gps_power_test_busy();}
