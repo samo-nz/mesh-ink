@@ -1609,4 +1609,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.1\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.1\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.2\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.2\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
