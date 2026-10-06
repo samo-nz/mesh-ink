@@ -50,7 +50,16 @@ enum class MeshInkGpsPowerExperiment : uint8_t {
     NavSystemZero,
     NavRate65535,
     WatchdogPowerOffReset,
-    OnlineUpgradeWait
+    OnlineUpgradeWait,
+    CurrentState
+};
+
+enum class MeshInkGpsDiagnosticAction : uint8_t {
+    PassiveUartScan = 0,
+    IdentifyAllBauds,
+    Force9600Nmea,
+    FactoryStartSweep,
+    FullRescue
 };
 
 inline const char* meshink_gps_power_experiment_name(MeshInkGpsPowerExperiment experiment) {
@@ -63,6 +72,18 @@ inline const char* meshink_gps_power_experiment_name(MeshInkGpsPowerExperiment e
         case MeshInkGpsPowerExperiment::NavRate65535:return "NAV RATE 65535MS";
         case MeshInkGpsPowerExperiment::WatchdogPowerOffReset:return "WATCHDOG POWER-OFF RESET";
         case MeshInkGpsPowerExperiment::OnlineUpgradeWait:return "ONLINE UPGRADE WAIT";
+        case MeshInkGpsPowerExperiment::CurrentState:return "CURRENT STATE";
+        default:return "UNKNOWN";
+    }
+}
+
+inline const char* meshink_gps_diagnostic_action_name(MeshInkGpsDiagnosticAction action) {
+    switch(action) {
+        case MeshInkGpsDiagnosticAction::PassiveUartScan:return "PASSIVE UART SCAN";
+        case MeshInkGpsDiagnosticAction::IdentifyAllBauds:return "IDENTIFY ALL BAUDS";
+        case MeshInkGpsDiagnosticAction::Force9600Nmea:return "FORCE 9600 + NMEA";
+        case MeshInkGpsDiagnosticAction::FactoryStartSweep:return "FACTORY START SWEEP";
+        case MeshInkGpsDiagnosticAction::FullRescue:return "FULL RESCUE";
         default:return "UNKNOWN";
     }
 }
