@@ -2491,7 +2491,7 @@ static void draw_gps_tuning(){
         gps_power_test_row("NAVSYSTEM ZERO","BINARY CFG-NAVX: NO GNSS SYSTEMS",128);
         gps_power_test_row("NAV RATE 65535MS","BINARY CFG-RATE MAXIMUM WAIT",246);
         gps_power_test_row("WATCHDOG POWER-OFF","CFG-RST MODE 4 - MAY LATCH OFFLINE",364);
-        gps_power_test_row("ONLINE UPGRADE WAIT","PCAS20 - KEEP FOR REPRODUCTION",482);
+        gps_power_test_row("ONLINE UPGRADE WAIT","UPGRADE LOADER / WAIT-FOREVER PROBE",482);
         gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED POWER SAMPLES",600);
     }else if(gps_power_page==2){
         gps_power_test_row("PASSIVE UART SCAN","NO TX - RAW BYTES AT 8 BAUD RATES",128);
@@ -2500,9 +2500,9 @@ static void draw_gps_tuning(){
         settings_row("TIMEZONE",TIMEZONES[timezone_index].label,482);
     }else{
         gps_power_test_row("FORCE 9600 + NMEA","BAUD SWEEP + SAFE OUTPUT RESTORE",128);
-        gps_power_test_row("FACTORY START SWEEP","PCAS10,3 - CLEARS BACKUP/CONFIG",246);
+        gps_power_test_row("FACTORY START SWEEP","CLEARS BACKUP DATA + CONFIG",246);
         gps_power_test_row("FULL RESCUE","FORCE UART THEN FACTORY START",364);
-        gps_power_test_row("ONLINE UPGRADE WAIT","REPRODUCE PCAS20 AFTER RECOVERY",482);
+        gps_power_test_row("ONLINE UPGRADE WAIT","REPRODUCE ONLINE-UPGRADE STATE",482);
         gps_power_test_row("REPLAY LAST LOG","VERIFY POWER LOG BEFORE RECOVERY",600);
     }
 
