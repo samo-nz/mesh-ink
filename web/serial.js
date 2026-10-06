@@ -10,6 +10,9 @@ const logArea = $("serial-log");
 const copyButton = $("copy-button");
 const clearButton = $("clear-button");
 const autoscroll = $("autoscroll");
+const SERIAL_BUFFER_SIZE = 8192;
+const READ_RECOVERY_DELAY_MS = 20;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let activePort = null;
 let rememberedPort = null;
@@ -103,40 +106,69 @@ async function safeClose(port) {
 }
 async function readFromPort(port, token) {
   const decoder = new TextDecoder();
-  let localReader = null;
-  try {
-    if (!port.readable) throw new Error("Serial port opened without a readable stream.");
-    localReader = port.readable.getReader();
-    reader = localReader;
-    while (token === generation) {
-      const { value, done } = await localReader.read();
-      if (done) break;
-      if (value?.length) appendDeviceText(decoder.decode(value, { stream: true }));
-    }
-  } catch (error) {
-    if (token === generation && !userDisconnecting) {
-      setStatus("Serial connection lost: " + (error.message || String(error)), "error");
-    }
-  } finally {
-    if (localReader) {
-      try { localReader.releaseLock(); } catch { /* already released */ }
-    }
-    if (reader === localReader) reader = null;
-    if (token !== generation) return;
+  let recoverableErrors = 0;
 
-    appendDeviceText(decoder.decode());
-    connected = false;
-    everConnected = true;
-    rememberedPort = port;
-    rememberedInfo = readPortInfo(port);
-    await safeClose(port);
-    if (activePort === port) activePort = null;
+  // Web Serial deliberately replaces the readable stream after a recoverable
+  // read error. The WebUSB polyfill follows that model too: its readable
+  // getter creates a fresh stream while the underlying USB device is still
+  // open. Do NOT interpret one reader ending or throwing as a USB disconnect.
+  while (token === generation && !userDisconnecting) {
+    const stream = port.readable;
+    if (!stream) break;
 
-    if (!userDisconnecting) {
-      setStatus("Disconnected. Wait for the USB device to return, then press Reconnect.", "warn");
+    let localReader = null;
+    let streamFailed = false;
+    try {
+      localReader = stream.getReader();
+      reader = localReader;
+
+      while (token === generation && !userDisconnecting) {
+        const { value, done } = await localReader.read();
+        if (done) break;
+        if (value?.length) {
+          appendDeviceText(decoder.decode(value, { stream: true }));
+          recoverableErrors = 0;
+        }
+      }
+    } catch (error) {
+      streamFailed = true;
+      ++recoverableErrors;
+      // A read exception can be non-fatal. After releasing this reader the
+      // outer loop checks port.readable and acquires the replacement stream.
+      if (recoverableErrors === 1) {
+        setStatus("Serial stream hiccup — recovering without closing the USB port…", "warn");
+      }
+    } finally {
+      if (localReader) {
+        try { localReader.releaseLock(); } catch { /* stream already released */ }
+      }
+      if (reader === localReader) reader = null;
     }
-    updateControls();
+
+    if (token !== generation || userDisconnecting) return;
+
+    // A fatal removal makes readable null. If it is still non-null (or the
+    // polyfill can construct a replacement), keep the connection alive.
+    if (!port.readable) break;
+
+    // Prevent a tight retry loop on Android if WebUSB reports a transient USB
+    // transfer error. Even repeated recoverable errors leave the port open.
+    if (streamFailed || recoverableErrors) await sleep(READ_RECOVERY_DELAY_MS);
   }
+
+  if (token !== generation) return;
+  appendDeviceText(decoder.decode());
+  connected = false;
+  everConnected = true;
+  rememberedPort = port;
+  rememberedInfo = readPortInfo(port);
+  await safeClose(port);
+  if (activePort === port) activePort = null;
+
+  if (!userDisconnecting) {
+    setStatus("USB device disconnected. Wait for it to return, then press Reconnect.", "warn");
+  }
+  updateControls();
 }
 async function openPort(port, backendName) {
   const baudRate = Number(baudSelect.value);
@@ -145,7 +177,7 @@ async function openPort(port, backendName) {
   activePort = port;
   rememberedPort = port;
   rememberedInfo = readPortInfo(port);
-  await port.open({ baudRate });
+  await port.open({ baudRate, bufferSize: SERIAL_BUFFER_SIZE });
 
   connected = true;
   everConnected = true;

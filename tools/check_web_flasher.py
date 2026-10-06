@@ -114,6 +114,15 @@ require('async function reconnect()' in serial_js and
         "Reconnect is a distinct no-picker path")
 require('await openPort(port, backend.name);' in serial_js and '.readable.getReader()' in serial_js,
         "serial monitor opens and continuously reads the chosen serial port")
+require('const SERIAL_BUFFER_SIZE = 8192;' in serial_js and
+        'await port.open({ baudRate, bufferSize: SERIAL_BUFFER_SIZE });' in serial_js,
+        "serial console uses a larger receive buffer for bursty debug output")
+require('while (token === generation && !userDisconnecting)' in serial_js and
+        'if (!port.readable) break;' in serial_js and
+        'localReader.releaseLock()' in serial_js,
+        "serial console reacquires readers after recoverable stream errors")
+require('Serial stream hiccup' in serial_js and 'recovering without closing the USB port' in serial_js,
+        "recoverable serial read errors do not close the USB device")
 require('new TextDecoder()' in serial_js and 'appendDeviceText' in serial_js,
         "serial monitor decodes device output as streaming text")
 require('reconnectButton.addEventListener("click", reconnect)' in serial_js,
