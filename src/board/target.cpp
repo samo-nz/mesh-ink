@@ -1310,6 +1310,9 @@ void meshink_gps_power_test_tick() {
 }
 
 bool meshink_gps_power_test_busy(){return gps_power_test_running;}
+bool meshink_gps_power_test_preserves_receiver_state(){
+    return gps_power_test_running&&gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState;
+}
 
 bool meshink_gps_power_test_replay_last() {
     if((!gps_power_log_valid||gps_power_log_count==0)&&!gps_power_load_persisted_log()){
