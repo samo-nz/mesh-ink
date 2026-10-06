@@ -2470,31 +2470,49 @@ static void gps_power_test_row(const char* title,const char* detail,int y){
 static void draw_gps_tuning(){
     draw_app_header("GPS POWER",true);
     const MeshInkUiLayout& layout=portrait_layout();
-    char page[48];
+    char page[64];
     if(local_mesh_gps_power_test_busy())
-        snprintf(page,sizeof(page),"PAGE %u / 2   TEST RUNNING - SEE SERIAL",(unsigned)gps_power_page+1U);
+        snprintf(page,sizeof(page),"PAGE %u / 4   POWER CAPTURE RUNNING",(unsigned)gps_power_page+1U);
+    else if(gps_power_page<=1)
+        snprintf(page,sizeof(page),"PAGE %u / 4   POWER TESTS",(unsigned)gps_power_page+1U);
+    else if(gps_power_page==2)
+        snprintf(page,sizeof(page),"PAGE 3 / 4   FORENSICS - SEE SERIAL");
     else
-        snprintf(page,sizeof(page),"PAGE %u / 2   30S BASE + 60S POST",(unsigned)gps_power_page+1U);
+        snprintf(page,sizeof(page),"PAGE 4 / 4   RECOVERY - SEE SERIAL");
     ui_centred_fit(page,ui_y(101),layout.width-ui_w(36),2,0,false);
 
     if(gps_power_page==0){
-        gps_power_test_row("GPS ONLY","SINGLE-SYSTEM REFERENCE",128);
-        gps_power_test_row("BEIDOU ONLY","SINGLE-SYSTEM REFERENCE",246);
-        gps_power_test_row("GLONASS ONLY","SINGLE-SYSTEM REFERENCE",364);
-        gps_power_test_row("BEIDOU ZERO SAT MASK","BDS-ONLY + ALL BDS CHANNELS DISABLED",482);
-        settings_row("TIMEZONE",TIMEZONES[timezone_index].label,600);
-    }else{
+        gps_power_test_row("CURRENT STATE POWER","60S SAMPLE - NO GPS TX / NO RECOVERY",128);
+        gps_power_test_row("GPS ONLY","SINGLE-SYSTEM REFERENCE",246);
+        gps_power_test_row("BEIDOU ONLY","SINGLE-SYSTEM REFERENCE",364);
+        gps_power_test_row("GLONASS ONLY","SINGLE-SYSTEM REFERENCE",482);
+        gps_power_test_row("BEIDOU ZERO SAT MASK","BDS-ONLY + ALL BDS CHANNELS DISABLED",600);
+    }else if(gps_power_page==1){
         gps_power_test_row("NAVSYSTEM ZERO","BINARY CFG-NAVX: NO GNSS SYSTEMS",128);
         gps_power_test_row("NAV RATE 65535MS","BINARY CFG-RATE MAXIMUM WAIT",246);
         gps_power_test_row("WATCHDOG POWER-OFF","CFG-RST MODE 4 - MAY LATCH OFFLINE",364);
-        gps_power_test_row("ONLINE UPGRADE WAIT","PCAS20 LOADER / WAIT-FOREVER PROBE",482);
-        gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED SAMPLES TO SERIAL",600);
+        gps_power_test_row("ONLINE UPGRADE WAIT","PCAS20 - KEEP FOR REPRODUCTION",482);
+        gps_power_test_row("REPLAY LAST LOG","PRINT RETAINED POWER SAMPLES",600);
+    }else if(gps_power_page==2){
+        gps_power_test_row("PASSIVE UART SCAN","NO TX - RAW BYTES AT 8 BAUD RATES",128);
+        gps_power_test_row("IDENTIFY ALL BAUDS","PCAS06 + MON/CFG READ-ONLY QUERIES",246);
+        gps_power_test_row("REPLAY LAST LOG","POWER LOG IS KEPT SEPARATE",364);
+        settings_row("TIMEZONE",TIMEZONES[timezone_index].label,482);
+    }else{
+        gps_power_test_row("FORCE 9600 + NMEA","BAUD SWEEP + SAFE OUTPUT RESTORE",128);
+        gps_power_test_row("FACTORY START SWEEP","PCAS10,3 - CLEARS BACKUP/CONFIG",246);
+        gps_power_test_row("FULL RESCUE","FORCE UART THEN FACTORY START",364);
+        gps_power_test_row("ONLINE UPGRADE WAIT","REPRODUCE PCAS20 AFTER RECOVERY",482);
+        gps_power_test_row("REPLAY LAST LOG","VERIFY POWER LOG BEFORE RECOVERY",600);
     }
 
     ui_action_button("PREV",gps_power_prev_rect(),gps_power_page>0);
-    ui_action_button("NEXT",gps_power_next_rect(),gps_power_page<1);
-    ui_text_fit("Battery-only. Hang-state tests may require a full device power cycle.",
-                layout.content_text_x,ui_y(852),layout.content_right-layout.content_text_x,2,0,false);
+    ui_action_button("NEXT",gps_power_next_rect(),gps_power_page<3);
+    const char* footer=gps_power_page==3
+        ?"Recovery changes GNSS state. Capture CURRENT STATE POWER first."
+        :"Power capture and recovery are separate. See serial for diagnostics.";
+    ui_text_fit(footer,layout.content_text_x,ui_y(852),
+                layout.content_right-layout.content_text_x,2,0,false);
 }
 
 static void draw_timezone(){
@@ -3774,16 +3792,18 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(local_mesh_gps_power_test_busy())return true;
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             if(hit(x,y,gps_power_prev_rect())&&gps_power_page>0){--gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,gps_power_next_rect())&&gps_power_page<1){++gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,gps_power_next_rect())&&gps_power_page<3){++gps_power_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             MeshInkGpsPowerExperiment experiment=MeshInkGpsPowerExperiment::GpsOnly;
             bool start=false;
+            bool diagnostic=false;
+            MeshInkGpsDiagnosticAction diagnostic_action=MeshInkGpsDiagnosticAction::PassiveUartScan;
             if(gps_power_page==0){
-                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::GpsOnly;start=true;}
-                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::BeiDouOnly;start=true;}
-                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::GlonassOnly;start=true;}
-                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask;start=true;}
-                else if(hit_outer_row(x,y,600)){open_screen(Screen::Timezone);return true;}
-            }else{
+                if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::CurrentState;start=true;}
+                else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::GpsOnly;start=true;}
+                else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::BeiDouOnly;start=true;}
+                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::GlonassOnly;start=true;}
+                else if(hit_outer_row(x,y,600)){experiment=MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask;start=true;}
+            }else if(gps_power_page==1){
                 if(hit_outer_row(x,y,128)){experiment=MeshInkGpsPowerExperiment::NavSystemZero;start=true;}
                 else if(hit_outer_row(x,y,246)){experiment=MeshInkGpsPowerExperiment::NavRate65535;start=true;}
                 else if(hit_outer_row(x,y,364)){experiment=MeshInkGpsPowerExperiment::WatchdogPowerOffReset;start=true;}
@@ -3792,6 +3812,30 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     show_toast(local_mesh_gps_power_test_replay_last()?"LOG REPLAYED":"NO SAVED LOG");
                     draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
+            }else if(gps_power_page==2){
+                if(hit_outer_row(x,y,128)){diagnostic_action=MeshInkGpsDiagnosticAction::PassiveUartScan;diagnostic=true;}
+                else if(hit_outer_row(x,y,246)){diagnostic_action=MeshInkGpsDiagnosticAction::IdentifyAllBauds;diagnostic=true;}
+                else if(hit_outer_row(x,y,364)){
+                    show_toast(local_mesh_gps_power_test_replay_last()?"LOG REPLAYED":"NO SAVED LOG");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }else if(hit_outer_row(x,y,482)){open_screen(Screen::Timezone);return true;}
+            }else{
+                if(hit_outer_row(x,y,128)){diagnostic_action=MeshInkGpsDiagnosticAction::Force9600Nmea;diagnostic=true;}
+                else if(hit_outer_row(x,y,246)){diagnostic_action=MeshInkGpsDiagnosticAction::FactoryStartSweep;diagnostic=true;}
+                else if(hit_outer_row(x,y,364)){diagnostic_action=MeshInkGpsDiagnosticAction::FullRescue;diagnostic=true;}
+                else if(hit_outer_row(x,y,482)){experiment=MeshInkGpsPowerExperiment::OnlineUpgradeWait;start=true;}
+                else if(hit_outer_row(x,y,600)){
+                    show_toast(local_mesh_gps_power_test_replay_last()?"LOG REPLAYED":"NO SAVED LOG");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+            }
+            if(diagnostic){
+                show_toast("GPS ACTION - SEE SERIAL");
+                draw_screen();refresh(MeshInkRefreshMode::Direct,false);
+                const bool ran=local_mesh_gps_diagnostic_run(diagnostic_action);
+                show_toast(ran?"GPS ACTION COMPLETE":"GPS ACTION FAILED");
+                draw_screen();refresh(MeshInkRefreshMode::Direct,false);
+                return true;
             }
             if(start){
                 const bool started=local_mesh_gps_power_test_start(experiment);
