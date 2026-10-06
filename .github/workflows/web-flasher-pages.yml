@@ -7,6 +7,7 @@ on:
     paths:
       - 'web/**'
       - 'tools/check_web_flasher.py'
+      - 'tools/patch_web_serial_polyfill.py'
       - '.github/workflows/web-flasher-pages.yml'
   workflow_run:
     workflows: ['MeshInk build and release']
@@ -68,6 +69,10 @@ jobs:
           curl --fail --location --show-error --silent \
             https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js \
             --output dist/vendor/web-serial-polyfill.js
+          # web-serial-polyfill 1.0.15 does not return its asynchronous
+          # transferIn() from ReadableStream.pull(), which defeats stream
+          # backpressure and can queue overlapping USB IN transfers on Android.
+          python tools/patch_web_serial_polyfill.py dist/vendor/web-serial-polyfill.js
           curl --fail --location --show-error --silent \
             https://unpkg.com/web-serial-polyfill@1.0.15/LICENSE \
             --output dist/vendor/web-serial-polyfill-LICENSE.txt

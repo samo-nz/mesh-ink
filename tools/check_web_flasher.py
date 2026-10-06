@@ -153,6 +153,11 @@ else:
                  "vendor/web-serial-polyfill-LICENSE.txt"):
         require((build / name).is_file() and (build / name).stat().st_size > 0,
                 f"missing Pages file: {name}")
+    polyfill = (build / "vendor" / "web-serial-polyfill.js").read_text(encoding="utf-8")
+    require("MeshInk patch: serialize WebUSB transferIn via ReadableStream backpressure" in polyfill,
+            "Android WebUSB polyfill must include the serialized transferIn backpressure patch")
+    require(re.search(r"pull\(controller\)\s*\{[^{}]{0,300}return\s*\(async\s*\(\)\s*=>", polyfill, re.S) is not None,
+            "patched WebUSB pull() must return its asynchronous transfer promise")
     checksums = {}
     for line in (build / "assets" / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines():
         match = re.fullmatch(r"([0-9a-f]{64})\s+\*?([^/\\]+\.bin)", line)
