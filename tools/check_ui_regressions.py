@@ -899,7 +899,7 @@ assert "gps_power_measurement_quiet" in source and "if(!gps_power_measurement_qu
 assert "UI quiet mode ended: touch restored after measurement" in source, "GPS power measurement automatically restores interactive UI"
 assert "GPS_POWER_BASELINE_MS = 30000" in board_target_source and "GPS_POWER_POST_MS = 60000" in board_target_source, "GPS experiments retain 30-second baseline and 60-second post windows"
 assert "gps_power_prepare_baseline();" in board_target_source and '"PCAS04,3"' in board_target_source and "gps_power_test_preserves_receiver_state" in board_target_source, "normal GPS power experiments normalize while current-state capture remains explicit and untouched"
-assert "gps_power_print_summary();" in board_target_source and "detailed samples follow at throttled USB-safe rate" in board_target_source, "GPS replay emits summary before verbose samples"
+assert "gps_power_print_summary(true);" in board_target_source and "detailed samples follow at fully throttled USB-safe rate" in board_target_source, "GPS replay emits paced summary before verbose samples"
 assert "GPS_SERIAL_REPLAY_DELAY_MS = 60" in board_target_source and "gps_power_print_summary(true);" in board_target_source and "gps_serial_replay_pause();" in board_target_source and "REPLAY COMPLETE" in board_target_source, "GPS replay throttles every header, summary and sample line for Android WebUSB reliability"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
