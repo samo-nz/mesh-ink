@@ -14,6 +14,7 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment);
 void meshink_gps_power_test_tick();
 bool meshink_gps_power_test_busy();
 bool meshink_gps_power_test_replay_last();
+bool meshink_gps_diagnostic_run(MeshInkGpsDiagnosticAction action);
 void meshink_gps_enter_standby_power_mode();
 void meshink_gps_leave_standby_power_mode();
 MeshInkGpsConstellationMode meshink_gps_constellation_mode();
