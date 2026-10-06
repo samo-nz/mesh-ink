@@ -933,13 +933,12 @@ static void gps_power_send_casic_binary(uint8_t cls,uint8_t id,
 }
 
 static void gps_diag_set_uart(uint32_t baud) {
+    while(Serial1.available()>0)Serial1.read();
     Serial1.end();
     delay(10);
     Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
     Serial1.begin(baud);
     gps_power_uart_suspended=false;
-    delay(20);
-    while(Serial1.available()>0)Serial1.read();
     Serial.printf("[T5-GPS-DIAG] host UART=%lu baud\n",(unsigned long)baud);
     gps_serial_replay_pause();
 }
