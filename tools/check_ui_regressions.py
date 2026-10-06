@@ -890,7 +890,7 @@ assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
 for receiver_command in ("PCAS02","PCAS03","PCAS04","PCAS10","PCAS12"):
     assert receiver_command not in runtime_source and receiver_command not in source, "receiver command syntax must stay in the board GPS implementation"
-assert "MeshInkGpsPowerExperiment::GpsOnly" in source and "MeshInkGpsPowerExperiment::RfOffUartHighImpedance" in source, "GPS power page uses explicit board-independent experiment selections"
+assert "MeshInkGpsPowerExperiment::GpsOnly" in source and "MeshInkGpsPowerExperiment::OnlineUpgradeWait" in source, "GPS power page uses explicit board-independent experiment selections"
 assert '"REPLAY LAST LOG"' in source and "gps_power_page" in source, "GPS power experiments are paged explicit choices with retained-log replay"
 assert "local_mesh_gps_enter_standby_power_mode();" in source and "local_mesh_gps_leave_standby_power_mode();" in source, "both standby entry and normal wake route through GPS single-system power policy"
 assert "meshink_gps_power_test_start" in t5_gps_backend_source and "meshink_gps_enter_standby_power_mode" in t5_gps_backend_source, "T5 GPS backend exposes measured experiment and standby hooks"
@@ -900,7 +900,7 @@ assert "UI quiet mode ended: touch restored after measurement" in source, "GPS p
 assert "GPS_POWER_BASELINE_MS = 30000" in board_target_source and "GPS_POWER_POST_MS = 60000" in board_target_source, "GPS experiments retain 30-second baseline and 60-second post windows"
 assert "gps_power_prepare_baseline();" in board_target_source and '"PCAS04,3"' in board_target_source, "GPS power experiments normalize to a common dual-system baseline"
 assert "gps_power_print_summary();" in board_target_source and "detailed samples follow at throttled USB-safe rate" in board_target_source, "GPS replay emits summary before verbose samples"
-assert "delay(25);" in board_target_source and "REPLAY COMPLETE" in board_target_source, "GPS replay is throttled for Android WebUSB reliability"
+assert "delay(40);" in board_target_source and "REPLAY COMPLETE" in board_target_source, "GPS replay is throttled for Android WebUSB reliability"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
@@ -1611,4 +1611,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.3\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.3\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.4\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.4\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
