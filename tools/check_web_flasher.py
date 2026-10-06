@@ -98,23 +98,28 @@ require('id="serial-log"' in serial_html and 'id="autoscroll"' in serial_html,
         "serial monitor has persistent log window and autoscroll control")
 require('import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";' in serial_js,
         "serial monitor reuses local Android WebUSB serial polyfill")
-require('return usesWebUsbSerial() ? webUsbSerial : navigator.serial;' in serial_js,
-        "serial monitor selects Android WebUSB or native Web Serial")
-require('const chosenPort = await serialApi().requestPort();' in serial_js,
-        "serial monitor requests a user-selected serial port")
-require('await port.open({ baudRate });' in serial_js and '.readable.getReader()' in serial_js,
+require('if (nativeSerialAvailable()) return { api: navigator.serial, name: "Web Serial" };' in serial_js and
+        'if (webUsbSerialAvailable()) return { api: webUsbSerial, name: "Android WebUSB" };' in serial_js,
+        "serial monitor prefers native Web Serial and falls back to Android WebUSB")
+require('await findRememberedGrantedPort(backend.api)' in serial_js and
+        'port = await backend.api.requestPort();' in serial_js,
+        "Connect reuses authorized ports before opening a picker")
+require('async function reconnect()' in serial_js and
+        'No authorized T5 is available. Press Connect to choose it again.' in serial_js,
+        "Reconnect is a distinct no-picker path")
+require('await openPort(port, backend.name);' in serial_js and '.readable.getReader()' in serial_js,
         "serial monitor opens and continuously reads the chosen serial port")
 require('new TextDecoder()' in serial_js and 'appendDeviceText' in serial_js,
         "serial monitor decodes device output as streaming text")
-require('reconnectButton.addEventListener("click"' in serial_js,
-        "serial monitor reconnect button is wired")
+require('reconnectButton.addEventListener("click", reconnect)' in serial_js,
+        "serial monitor reconnect button is wired to the no-picker reconnect path")
 require('await navigator.clipboard.writeText(text)' in serial_js and
         'document.execCommand("copy")' in serial_js,
         "copy-all supports secure clipboard plus fallback")
 require('logArea.textContent = "";' in serial_js,
         "clear-window control clears only the visible device log")
-require('requestPort() is deliberately the first awaited operation' in serial_js,
-        "serial connect preserves Android user-gesture permission")
+require('requestPort() remains directly inside the Connect gesture path' in serial_js,
+        "serial Connect keeps explicit permission selection in the user gesture path")
 
 
 parser = argparse.ArgumentParser()
