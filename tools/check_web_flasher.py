@@ -112,7 +112,8 @@ require('await findRememberedGrantedPort(backend.api)' in serial_js and
 require('async function reconnect()' in serial_js and
         'Previous device is not currently authorized. Press Connect to select it again.' in serial_js,
         "Reconnect is a distinct no-picker path")
-require('await openPort(port, backend.name);' in serial_js and '.readable.getReader()' in serial_js,
+require('await openPort(port, backend.name);' in serial_js and
+        'const stream = port.readable;' in serial_js and 'localReader = stream.getReader();' in serial_js,
         "serial monitor opens and continuously reads the chosen serial port")
 require('const SERIAL_BUFFER_SIZE = 8192;' in serial_js and
         'await port.open({ baudRate, bufferSize: SERIAL_BUFFER_SIZE });' in serial_js,
