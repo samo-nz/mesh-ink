@@ -924,6 +924,2305 @@ static void gps_power_send_casic_binary(uint8_t cls,uint8_t id,
     Serial1.flush();
 }
 
+static void gps_diag_set_uart(uint32_t baud) {
+    Serial1.end();
+    delay(5);
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    Serial1.begin(baud);
+    gps_power_uart_suspended=false;
+    const uint32_t drain_until=millis()+20;
+    while((int32_t)(millis()-drain_until)<0){
+        while(Serial1.available()>0)Serial1.read();
+        yield();
+    }
+    Serial.printf("[T5-GPS-DIAG] host UART=%lu baud\n",(unsigned long)baud);
+}
+
+static int gps_diag_hex_nibble(uint8_t ch) {
+    if(ch>='0'&&ch<='9')return ch-'0';
+    if(ch>='A'&&ch<='F')return 10+ch-'A';
+    if(ch>='a'&&ch<='f')return 10+ch-'a';
+    return -1;
+}
+
+static void gps_diag_capture(const char* phase,uint32_t baud,uint32_t duration_ms) {
+    uint8_t first[64]{};
+    size_t first_count=0,total=0,printable=0,dollar=0,crlf=0,casic_sync=0,valid_nmea=0,bad_nmea=0;
+    uint8_t prev=0;
+    bool nmea=false,nmea_star=false;
+    uint8_t nmea_xor=0;
+    int checksum_hi=-1;
+    const uint32_t started=millis();
+    while(millis()-started<duration_ms){
+        while(Serial1.available()>0){
+            const uint8_t ch=(uint8_t)Serial1.read();
+            ++total;
+            if(first_count<sizeof(first))first[first_count++]=ch;
+            if(ch>=0x20&&ch<=0x7E)++printable;
+            if(ch=='
+    return gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
+        ? 3U : (uint8_t)gps_power_saved_constellation;
+}
+
+static void gps_power_prepare_baseline() {
+    gps_power_uart_resume();
+    gps_power_send("PCAS02,1000","normalize power-test baseline to documented 1 Hz");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","normalize baseline NMEA output");
+#else
+    gps_power_send("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","normalize baseline to compact GGA+RMC");
+#endif
+    gps_power_send("PCAS04,3","normalize baseline to GPS+BeiDou dual-system mode");
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    Serial.println("[T5-GPS-POWER] baseline normalized: GPS+BeiDou, 1 Hz, compact NMEA; no settings saved to receiver flash");
+}
+
+static void gps_power_restore_receiver(bool cancelled) {
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState){
+        Serial.println("[T5-GPS-POWER] CURRENT STATE measurement: receiver deliberately left untouched; no restore commands sent");
+        return;
+    }
+    Serial.printf("[T5-GPS-POWER] restore begin cancelled=%u experiment='%s'\n",
+                  cancelled?1U:0U,meshink_gps_power_experiment_name(gps_power_experiment));
+    gps_power_uart_resume();
+
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask){
+        gps_power_send("PCAS15,2,FFFFFFFF","restore BeiDou satellites 1-32 after zero-mask experiment");
+        delay(50);
+        gps_power_send("PCAS15,3,FFFFFFFF","restore BeiDou satellites 33-64 after zero-mask experiment");
+        delay(50);
+    }
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::WatchdogPowerOffReset||
+       gps_power_experiment==MeshInkGpsPowerExperiment::OnlineUpgradeWait)
+        Serial.println("[T5-GPS-POWER] NOTE: this experiment may intentionally leave GNSS unresponsive; normal restore is attempted, but a full device power cycle may be required");
+
+    gps_power_send("PCAS02,1000","restore documented 1 Hz fix interval");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","restore diagnostic NMEA output");
+#else
+    gps_power_send("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","restore compact GGA+RMC output");
+#endif
+    char constellation[16];
+    snprintf(constellation,sizeof(constellation),"PCAS04,%u",(unsigned)gps_restore_constellation_value());
+    gps_power_send(constellation,
+        gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
+            ?"restore known default GPS+BeiDou because preference was UNCHANGED"
+            :"restore saved constellation preference");
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    Serial.println("[T5-GPS-POWER] restore attempt complete; receiver settings were not saved with PCAS00");
+}
+
+static void gps_power_apply_experiment() {
+    Serial.printf("[T5-GPS-POWER] ===== APPLY '%s' =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment));
+    switch(gps_power_experiment) {
+        case MeshInkGpsPowerExperiment::GpsOnly:
+            gps_power_send("PCAS04,1","documented single-system GPS-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::BeiDouOnly:
+            gps_power_send("PCAS04,2","documented single-system BeiDou-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::GlonassOnly:
+            gps_power_send("PCAS04,4","documented single-system GLONASS-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask:
+            gps_power_send("PCAS04,2","select BeiDou-only before removing all BeiDou satellite channels");
+            delay(50);
+            gps_power_send("PCAS15,2,00000000","disable BeiDou satellites 1-32 without saving configuration");
+            delay(50);
+            gps_power_send("PCAS15,3,00000000","disable BeiDou satellites 33-64 without saving configuration");
+            break;
+        case MeshInkGpsPowerExperiment::NavSystemZero: {
+            uint8_t payload[44]{};
+            // CFG-NAVX mask B8 applies only navSystem; navSystem=0 requests
+            // no GPS/BDS/GLONASS navigation systems. Other zero fields are ignored.
+            payload[1]=0x01;
+            payload[13]=0x00;
+            gps_power_send_casic_binary(0x06,0x07,payload,sizeof(payload),
+                                        "CFG-NAVX mask B8 with navSystem=0 (undocumented no-system state)");
+            break;
+        }
+        case MeshInkGpsPowerExperiment::NavRate65535: {
+            const uint8_t payload[4]={0xFF,0xFF,0x00,0x00};
+            gps_power_send_casic_binary(0x06,0x04,payload,sizeof(payload),
+                                        "CFG-RATE interval=65535 ms to stretch navigation scheduler wait");
+            break;
+        }
+        case MeshInkGpsPowerExperiment::WatchdogPowerOffReset: {
+            // CFG-RST: navBbrMask=0, resetMode=4 ("hardware reset after power off
+            // via WATCHDOG"), startMode=0. Deliberately probes a possibly latched
+            // low-power/reset state; GNSS may need a full board power cycle.
+            const uint8_t payload[4]={0x00,0x00,0x04,0x00};
+            gps_power_send_casic_binary(0x06,0x02,payload,sizeof(payload),
+                                        "CFG-RST resetMode=4 watchdog power-off path");
+            break;
+        }
+        case MeshInkGpsPowerExperiment::OnlineUpgradeWait:
+            gps_power_send("PCAS20",
+                           "enter CASIC online-upgrade mode and measure the loader/wait state");
+            break;
+        case MeshInkGpsPowerExperiment::CurrentState:
+            Serial.println("[T5-GPS-POWER] CURRENT STATE sends no GNSS command");
+            break;
+    }
+    Serial.println("[T5-GPS-POWER] post-change measurement window is 60 seconds; one gauge sample per second");
+}
+
+struct GpsPowerSummary {
+    int32_t current_sum=0,avg_current_sum=0,avg_power_sum=0;
+    uint16_t current_count=0,avg_current_count=0,avg_power_count=0;
+    bool external_seen=false;
+};
+static GpsPowerSummary gps_power_summary(bool post) {
+    GpsPowerSummary result{};
+    for(size_t i=0;i<gps_power_log_count;++i) {
+        const auto& sample=gps_power_log[i];
+        if(sample.post!=post)continue;
+        result.external_seen=result.external_seen||sample.power.external_power;
+        if(sample.power.current_valid){
+            result.current_sum+=gps_discharge_ma(sample.power.current_ma);
+            ++result.current_count;
+        }
+        if(sample.power.average_current_valid){
+            result.avg_current_sum+=gps_discharge_ma(sample.power.average_current_ma);
+            ++result.avg_current_count;
+        }
+        if(sample.power.average_power_valid){
+            result.avg_power_sum+=gps_discharge_mw(sample.power.average_power_mw);
+            ++result.avg_power_count;
+        }
+    }
+    return result;
+}
+static int32_t gps_power_mean(int32_t sum,uint16_t count){return count?sum/(int32_t)count:0;}
+
+
+static bool gps_power_persist_log() {
+    if(!gps_power_log_count)return false;
+    Preferences pref;
+    if(!pref.begin("gps-pwrlog",false)){
+        Serial.println("[T5-GPS-POWER] WARNING: could not open NVS namespace for completed test log");
+        return false;
+    }
+    const size_t bytes=gps_power_log_count*sizeof(GpsPowerLoggedSample);
+    const bool ok=
+        pref.putUInt("magic",GPS_POWER_LOG_MAGIC)==sizeof(uint32_t)&&
+        pref.putUChar("experiment",(uint8_t)gps_power_experiment)==sizeof(uint8_t)&&
+        pref.putUInt("count",(uint32_t)gps_power_log_count)==sizeof(uint32_t)&&
+        pref.putBytes("samples",gps_power_log,bytes)==bytes;
+    pref.end();
+    Serial.printf("[T5-GPS-POWER] completed log NVS save=%s samples=%u bytes=%u; write occurs AFTER measurement window\n",
+                  ok?"OK":"FAILED",(unsigned)gps_power_log_count,(unsigned)bytes);
+    return ok;
+}
+
+static bool gps_power_load_persisted_log() {
+    Preferences pref;
+    if(!pref.begin("gps-pwrlog",true))return false;
+    const uint32_t magic=pref.getUInt("magic",0);
+    const uint32_t count=pref.getUInt("count",0);
+    const uint8_t experiment=pref.getUChar("experiment",0xFF);
+    const size_t bytes=pref.getBytesLength("samples");
+    bool ok=magic==GPS_POWER_LOG_MAGIC&&count>0&&count<=GPS_POWER_LOG_CAPACITY&&
+            experiment<=(uint8_t)MeshInkGpsPowerExperiment::CurrentState&&
+            bytes==count*sizeof(GpsPowerLoggedSample);
+    if(ok){
+        ok=pref.getBytes("samples",gps_power_log,bytes)==bytes;
+        if(ok){
+            gps_power_log_count=(size_t)count;
+            gps_power_experiment=(MeshInkGpsPowerExperiment)experiment;
+            gps_power_log_valid=true;
+        }
+    }
+    pref.end();
+    if(ok)Serial.printf("[T5-GPS-POWER] loaded persisted test log experiment='%s' samples=%u\n",
+                        meshink_gps_power_experiment_name(gps_power_experiment),
+                        (unsigned)gps_power_log_count);
+    return ok;
+}
+
+static void gps_power_print_summary() {
+    const auto base=gps_power_summary(false);
+    const auto post=gps_power_summary(true);
+    const int32_t base_i=gps_power_mean(base.current_sum,base.current_count);
+    const int32_t post_i=gps_power_mean(post.current_sum,post.current_count);
+    const int32_t base_ai=gps_power_mean(base.avg_current_sum,base.avg_current_count);
+    const int32_t post_ai=gps_power_mean(post.avg_current_sum,post.avg_current_count);
+    const int32_t base_p=gps_power_mean(base.avg_power_sum,base.avg_power_count);
+    const int32_t post_p=gps_power_mean(post.avg_power_sum,post.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] ===== RESULT '%s' =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment));
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState){
+        Serial.printf("[T5-GPS-POWER] untouched-state mean load: Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                      (long)post_i,(long)post_ai,(long)post_p,
+                      (unsigned)post.current_count,(unsigned)post.avg_current_count,(unsigned)post.avg_power_count);
+        if(post.external_seen)
+            Serial.println("[T5-GPS-POWER] WARNING: external/USB power was detected during untouched-state measurement");
+        else
+            Serial.println("[T5-GPS-POWER] untouched-state measurement remained battery-only according to charger power-good");
+        return;
+    }
+    Serial.printf("[T5-GPS-POWER] baseline mean load: Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                  (long)base_i,(long)base_ai,(long)base_p,
+                  (unsigned)base.current_count,(unsigned)base.avg_current_count,(unsigned)base.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] post mean load:     Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                  (long)post_i,(long)post_ai,(long)post_p,
+                  (unsigned)post.current_count,(unsigned)post.avg_current_count,(unsigned)post.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] apparent saving:    Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW (positive = less battery draw)\n",
+                  (long)(base_i-post_i),(long)(base_ai-post_ai),(long)(base_p-post_p));
+    if(base.external_seen||post.external_seen)
+        Serial.println("[T5-GPS-POWER] WARNING: external/USB power was detected during measurement; charger behaviour can invalidate the comparison");
+    else
+        Serial.println("[T5-GPS-POWER] measurement remained battery-only according to charger power-good");
+}
+
+static void gps_power_sample_now() {
+    MeshInkPowerMeasurement measurement{};
+    const uint32_t now=millis();
+    const uint32_t elapsed_seconds=(now-gps_power_phase_started)/1000U;
+    const uint16_t elapsed=(uint16_t)(elapsed_seconds>65535U?65535U:elapsed_seconds);
+    const bool ok=meshink_power_read_measurement(measurement);
+    if(gps_power_log_count<GPS_POWER_LOG_CAPACITY){
+        GpsPowerLoggedSample& entry=gps_power_log[gps_power_log_count++];
+        entry.post=gps_power_post_phase;
+        entry.elapsed_s=elapsed;
+        entry.power=measurement;
+    }
+    const int32_t load_i=measurement.current_valid?gps_discharge_ma(measurement.current_ma):0;
+    const int32_t load_ai=measurement.average_current_valid?gps_discharge_ma(measurement.average_current_ma):0;
+    const int32_t load_p=measurement.average_power_valid?gps_discharge_mw(measurement.average_power_mw):0;
+    const char* phase=gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState
+        ?"STATE":(gps_power_post_phase?"POST":"BASE");
+    Serial.printf("[T5-GPS-POWER] sample phase=%s t=%us read=%u valid[V/I/AI/AP/SOC]=%u/%u/%u/%u/%u V=%umV I=%dmA load=%ldmA AI=%dmA avg-load=%ldmA AP=%dmW avg-load=%ldmW SOC=%u%% ext=%u\n",
+                  phase,(unsigned)elapsed,ok?1U:0U,
+                  measurement.voltage_valid?1U:0U,measurement.current_valid?1U:0U,
+                  measurement.average_current_valid?1U:0U,measurement.average_power_valid?1U:0U,
+                  measurement.battery_percent_valid?1U:0U,
+                  (unsigned)measurement.voltage_mv,(int)measurement.current_ma,(long)load_i,
+                  (int)measurement.average_current_ma,(long)load_ai,
+                  (int)measurement.average_power_mw,(long)load_p,
+                  (unsigned)measurement.battery_percent,measurement.external_power?1U:0U);
+}
+
+static void gps_power_finish(bool cancelled) {
+    if(!gps_power_test_running)return;
+    if(!cancelled)gps_power_print_summary();
+    else Serial.println("[T5-GPS-POWER] experiment cancelled by standby transition");
+    gps_power_restore_receiver(cancelled);
+    gps_power_test_running=false;
+    gps_power_log_valid=gps_power_log_count>0;
+    if(gps_power_log_valid)gps_power_persist_log();
+    Serial.printf("[T5-GPS-POWER] test idle; retained %u samples for REPLAY LAST LOG (RAM + NVS when save succeeded)\n",
+                  (unsigned)gps_power_log_count);
+}
+} // namespace
+
+bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running){
+        Serial.println("[T5-GPS-POWER] start rejected: another experiment is already running");
+        return false;
+    }
+    const bool untouched=experiment==MeshInkGpsPowerExperiment::CurrentState;
+    if(!untouched&&(!gps_baud_locked||detected_gps_module!=GpsModule::L76K)){
+        Serial.printf("[T5-GPS-POWER] start rejected: experiment requires checksum-locked L76K; locked=%u module=%s baud=%lu\n",
+                      gps_baud_locked?1U:0U,gps_module_name(),(unsigned long)detected_gps_baud);
+        return false;
+    }
+    gps_load_tuning();
+    gps_power_experiment=experiment;
+    gps_power_saved_constellation=gps_constellation_mode;
+    if(untouched)
+        Serial.println("[T5-GPS-POWER] CURRENT STATE mode: no UART changes, no GNSS commands, no baseline normalization");
+    else
+        gps_power_prepare_baseline();
+    gps_power_log_count=0;
+    gps_power_log_valid=false;
+    gps_power_post_phase=untouched;
+    gps_power_measurement_started=false;
+    gps_power_test_running=true;
+    const uint32_t start_now=millis();
+    gps_power_settle_until=start_now+GPS_POWER_SETTLE_MS;
+    gps_power_phase_started=0;
+    gps_power_next_sample=0;
+    const auto status=meshink_gps_read_status();
+    const bool external=meshink_power_external_present();
+    Serial.println("[T5-GPS-POWER] ============================================================");
+    Serial.printf("[T5-GPS-POWER] START experiment='%s' settle=5s %s sample=1Hz\n",
+                  meshink_gps_power_experiment_name(experiment),
+                  untouched?"untouched-state=60s":"baseline=30s post=60s");
+    Serial.printf("[T5-GPS-POWER] receiver module=%s baud=%lu fix=%u sats=%ld constellation-pref=%u\n",
+                  gps_module_name(),(unsigned long)detected_gps_baud,status.valid?1U:0U,
+                  (long)status.satellites,(unsigned)gps_power_saved_constellation);
+    Serial.printf("[T5-GPS-POWER] external-power-at-start=%u; battery-only is strongly preferred\n",external?1U:0U);
+    if(external)Serial.println("[T5-GPS-POWER] WARNING: disconnect USB/charger and restart the test for trustworthy battery-current deltas");
+    Serial.println("[T5-GPS-POWER] SETTLE: 5 seconds for display/frontlight transients to finish; samples are not counted");
+    if(untouched)
+        Serial.println("[T5-GPS-POWER] STATE then measures exactly what the receiver is doing now for 60 seconds; UART is not touched");
+    else
+        Serial.println("[T5-GPS-POWER] BASELINE then measures the normalized receiver state for a full 30 seconds");
+    return true;
+#else
+    (void)experiment;
+    return false;
+#endif
+}
+
+void meshink_gps_power_test_tick() {
+#if ENV_INCLUDE_GPS == 1
+    if(!gps_power_test_running)return;
+    const uint32_t now=millis();
+    if(!gps_power_measurement_started){
+        if((int32_t)(now-gps_power_settle_until)<0)return;
+        gps_power_measurement_started=true;
+        gps_power_phase_started=now;
+        gps_power_next_sample=now+GPS_POWER_SAMPLE_MS;
+        if(gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState)
+            Serial.println("[T5-GPS-POWER] UNTOUCHED STATE MEASUREMENT START: 60 seconds, one BQ27220 sample per second; no GNSS traffic generated");
+        else
+            Serial.println("[T5-GPS-POWER] BASELINE MEASUREMENT START: 30 seconds, one BQ27220 sample per second");
+        return;
+    }
+    while((int32_t)(now-gps_power_next_sample)>=0) {
+        gps_power_sample_now();
+        gps_power_next_sample+=GPS_POWER_SAMPLE_MS;
+        if((uint32_t)(now-gps_power_phase_started) >=
+           (gps_power_post_phase?GPS_POWER_POST_MS:GPS_POWER_BASELINE_MS))break;
+    }
+    if(!gps_power_post_phase&&now-gps_power_phase_started>=GPS_POWER_BASELINE_MS) {
+        const auto base=gps_power_summary(false);
+        Serial.printf("[T5-GPS-POWER] BASELINE COMPLETE samples=%u mean-current-load=%ldmA mean-average-current-load=%ldmA mean-average-power-load=%ldmW\n",
+                      (unsigned)gps_power_log_count,
+                      (long)gps_power_mean(base.current_sum,base.current_count),
+                      (long)gps_power_mean(base.avg_current_sum,base.avg_current_count),
+                      (long)gps_power_mean(base.avg_power_sum,base.avg_power_count));
+        gps_power_apply_experiment();
+        gps_power_post_phase=true;
+        gps_power_phase_started=millis();
+        gps_power_next_sample=gps_power_phase_started+GPS_POWER_SAMPLE_MS;
+        return;
+    }
+    if(gps_power_post_phase&&now-gps_power_phase_started>=GPS_POWER_POST_MS)
+        gps_power_finish(false);
+#endif
+}
+
+bool meshink_gps_power_test_busy(){return gps_power_test_running;}
+
+bool meshink_gps_power_test_replay_last() {
+    if((!gps_power_log_valid||gps_power_log_count==0)&&!gps_power_load_persisted_log()){
+        Serial.println("[T5-GPS-POWER] REPLAY requested but no completed/cancelled measurement log is retained");
+        return false;
+    }
+    Serial.printf("[T5-GPS-POWER] ===== REPLAY '%s' %u samples =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment),(unsigned)gps_power_log_count);
+
+    // Put the useful answer first. Android WebUSB can be fragile during large
+    // CDC bursts, so the baseline/post means and saving must arrive before the
+    // verbose 90-line sample replay.
+    gps_power_print_summary();
+    Serial.println("[T5-GPS-POWER] detailed samples follow at throttled USB-safe rate");
+    Serial.flush();
+    delay(150);
+
+    for(size_t i=0;i<gps_power_log_count;++i){
+        const auto& sample=gps_power_log[i];
+        const auto& m=sample.power;
+        const char* replay_phase=gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState
+            ?"STATE":(sample.post?"POST":"BASE");
+        Serial.printf("[T5-GPS-POWER] replay phase=%s t=%us valid[V/I/AI/AP/SOC]=%u/%u/%u/%u/%u V=%umV I=%dmA load=%ldmA AI=%dmA avg-load=%ldmA AP=%dmW avg-load=%ldmW SOC=%u%% ext=%u\n",
+                      replay_phase,(unsigned)sample.elapsed_s,
+                      m.voltage_valid?1U:0U,m.current_valid?1U:0U,m.average_current_valid?1U:0U,
+                      m.average_power_valid?1U:0U,m.battery_percent_valid?1U:0U,
+                      (unsigned)m.voltage_mv,(int)m.current_ma,(long)(m.current_valid?gps_discharge_ma(m.current_ma):0),
+                      (int)m.average_current_ma,(long)(m.average_current_valid?gps_discharge_ma(m.average_current_ma):0),
+                      (int)m.average_power_mw,(long)(m.average_power_valid?gps_discharge_mw(m.average_power_mw):0),
+                      (unsigned)m.battery_percent,m.external_power?1U:0U);
+        // Avoid overrunning Android Chrome/WebUSB and give the USB task time
+        // to drain CDC packets. This occurs after measurement, so it cannot
+        // influence the captured power result.
+        delay(40);
+        yield();
+        if(((i+1U)%5U)==0U)Serial.flush();
+    }
+    Serial.println("[T5-GPS-POWER] ===== REPLAY COMPLETE =====");
+    Serial.flush();
+    return true;
+}
+
+bool meshink_gps_diagnostic_run(MeshInkGpsDiagnosticAction action) {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running){
+        Serial.println("[T5-GPS-DIAG] diagnostic rejected: power measurement is running");
+        return false;
+    }
+    Serial.println("[T5-GPS-DIAG] ============================================================");
+    Serial.printf("[T5-GPS-DIAG] START action='%s' locked=%u module=%s host-baud=%lu\n",
+                  meshink_gps_diagnostic_action_name(action),gps_baud_locked?1U:0U,
+                  gps_module_name(),(unsigned long)Serial1.baudRate());
+    switch(action){
+        case MeshInkGpsDiagnosticAction::PassiveUartScan:
+            gps_diag_passive_scan();
+            break;
+        case MeshInkGpsDiagnosticAction::IdentifyAllBauds:
+            gps_diag_identify_all_bauds();
+            break;
+        case MeshInkGpsDiagnosticAction::Force9600Nmea:
+            gps_diag_force_9600_nmea();
+            break;
+        case MeshInkGpsDiagnosticAction::FactoryStartSweep:
+            gps_diag_factory_start_sweep();
+            break;
+        case MeshInkGpsDiagnosticAction::FullRescue:
+            Serial.println("[T5-GPS-DIAG] FULL RESCUE stage 1/2: force UART/NMEA");
+            gps_diag_force_9600_nmea();
+            Serial.println("[T5-GPS-DIAG] FULL RESCUE stage 2/2: factory-start sweep");
+            gps_diag_factory_start_sweep();
+            break;
+        default:
+            return false;
+    }
+    Serial.printf("[T5-GPS-DIAG] COMPLETE action='%s'\n",meshink_gps_diagnostic_action_name(action));
+    Serial.println("[T5-GPS-DIAG] ============================================================");
+    return true;
+#else
+    (void)action;
+    return false;
+#endif
+}
+
+void meshink_gps_enter_standby_power_mode() {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running)gps_power_finish(true);
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] standby single-system skipped locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return;
+    }
+    gps_power_send("PCAS04,1","standby policy: force single-system GPS to reduce GNSS load");
+    gps_standby_forced_single=true;
+    gps_standby_magic=GPS_STANDBY_MAGIC;
+    Serial.println("[T5-GPS-POWER] standby policy active: GPS-only; shared LoRa/GNSS rail remains ON");
+#endif
+}
+
+void meshink_gps_leave_standby_power_mode() {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_standby_magic!=GPS_STANDBY_MAGIC&&!gps_standby_forced_single)return;
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] standby restore deferred until L76K baud lock; locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return;
+    }
+    gps_load_tuning();
+    const uint8_t restore=gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+        ? 3U:(uint8_t)gps_constellation_mode;
+    char payload[16];snprintf(payload,sizeof(payload),"PCAS04,%u",(unsigned)restore);
+    gps_power_send(payload,gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+        ?"wake policy: restore GPS+BeiDou default"
+        :"wake policy: restore saved constellation preference");
+    gps_standby_forced_single=false;
+    gps_standby_magic=0;
+    Serial.println("[T5-GPS-POWER] standby single-system policy cleared on interactive wake");
+#endif
+}
+
+void meshink_gps_shutdown(){
+#if ENV_INCLUDE_GPS == 1
+    if(auto* location=sensors.getLocationProvider())location->stop();
+    Serial1.end();
+#endif
+}
+
+
+// Run independently of T5GPS::loop(): MeshCore stops calling the provider
+// when GPS is OFF. Consume UART bytes ONLY while the provider is inactive,
+// so we can distinguish a quiet receiver from a stopped parser.
+void meshink_gps_background_tick(){
+    if(gps.isActive()||!gps_sleep_requested_at)return;
+    // Do not disable the OFF-state UART draining with diagnostics: otherwise
+    // the powered receiver fills the RX buffer before GPS is re-enabled.
+    uint32_t drained=0;
+    while(Serial1.available()>0&&drained<512){Serial1.read();++drained;}
+#if T5_LOG_GPS
+    const uint32_t now=millis();
+    // Ignore the first second (bytes already in flight after the stop request).
+    if(now-gps_sleep_requested_at>=1000){
+        gps_sleep_bytes_after+=drained;
+        gps_sleep_window_bytes+=drained;
+    }
+    if(now-gps_sleep_last_report>=5000){
+        gps_sleep_last_report=now;
+        const uint32_t off_ms=now-gps_sleep_requested_at;
+        T5_GPS_TRACE("gps probe: OFF +%lus UART bytes last ~5s=%lu total after 1s=%lu (%s; power not measured)\n",
+            (unsigned long)(off_ms/1000),
+            (unsigned long)gps_sleep_window_bytes,(unsigned long)gps_sleep_bytes_after,
+            gps_sleep_window_bytes?"UART ACTIVE":"UART QUIET");
+        gps_sleep_window_bytes=0;
+    }
+#else
+    (void)drained;
+#endif
+}
+
+uint16_t T5Board::getBattMilliVolts() {
+    // MeshCore and the local UI share the same board-selected power backend.
+    // Keep MeshCore's 30 s cache so repeated app requests do not create
+    // unnecessary fuel-gauge traffic.
+    static uint16_t cached_mv = 0;
+    static uint32_t sampled_at = 0;
+    const uint32_t now = millis();
+    if (sampled_at != 0 && now - sampled_at < 30000) return cached_mv;
+    sampled_at = now == 0 ? 1 : now;
+
+    uint16_t voltage = 0;
+    if (meshink_power_read_battery_mv(voltage))cached_mv = voltage;
+    return cached_mv;
+}
+
+void meshink_board_companion_exit_feedback_begin() {
+    // Companion startup performs additional board/radio initialization after
+    // the splash, so do not assume the early LEDC attachment is still intact.
+    // Reassert the board frontlight backend before driving the visible exit
+    // acknowledgement.
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(100);
+    T5_TRACE("frontlight: companion exit acknowledgement brightness=100%%\n");
+}
+
+void meshink_board_companion_release_resources() {
+    // Release the radio's own IRQ handler and shared SPI bus cleanly. The
+    // global Arduino GPIO ISR service can remain until the imminent reset;
+    // unlike test10, no same-boot EPDiy reinitialization needs that service.
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.end();
+    T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
+}
+
+void meshink_board_begin_companion(){board.begin();}
+void meshink_board_begin_local(){board.beginLocal();}
+void meshink_board_begin_local_rx_wake(bool packet_wake){board.beginLocalRxWake(packet_wake);}
+void meshink_board_boot_complete(){board.onBootComplete();}
+
+bool meshink_board_woke_from_radio() {
+    if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT1)return false;
+    return (esp_sleep_get_ext1_wakeup_status()&(1ULL<<P_LORA_DIO_1))!=0;
+}
+
+bool meshink_board_woke_from_primary_button() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+}
+
+bool meshink_board_woke_from_timer() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_TIMER;
+}
+
+bool meshink_board_radio_irq_asserted() {
+    pinMode(P_LORA_DIO_1,INPUT);
+    return digitalRead(P_LORA_DIO_1)==HIGH;
+}
+
+void meshink_board_restore_deep_sleep_wake_pads() {
+    // EXT0/EXT1 route their wake pads through RTC IO. Explicitly release any
+    // per-pad RTC hold before returning DIO1/BOOT to normal digital GPIO.
+    gpio_deep_sleep_hold_dis();
+    const esp_err_t radio_hold=rtc_gpio_hold_dis((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_hold=rtc_gpio_hold_dis((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    const esp_err_t radio_pad=rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_pad=rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    Serial.printf("[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
+                  (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
+}
+
+void meshink_board_prepare_retained_aux_wake() {
+    // Release only the automatic digital-pad hold so I2C/EPD pins can be used.
+    // Keep the explicit SX1262 NSS/RESET holds intact while a timer wake merely
+    // checks battery state.
+    gpio_deep_sleep_hold_dis();
+}
+
+void meshink_board_release_retained_radio_holds() {
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+}
+
+static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
+    60ULL*60ULL*1000000ULL;
+
+static bool t5_enable_deep_sleep_wake_sources() {
+    // deepsleep26 returns to the original repeatedly-tested wake assignment:
+    // BOOT uses EXT0 LOW and SX1262 DIO1 uses EXT1 ANY_HIGH.
+    const esp_err_t clear_wake=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
+        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
+    const esp_err_t timer_wake=esp_sleep_enable_timer_wakeup(
+        T5_DEEP_SLEEP_BATTERY_CHECK_US);
+    if(clear_wake!=ESP_OK||button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed clear=%d button-ext0=%d radio-ext1=%d timer=%d\n",
+                      (int)clear_wake,(int)button_wake,(int)radio_wake,(int)timer_wake);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        return false;
+    }
+    Serial.printf("[T5-DEEPSLEEP] wake armed button=EXT0 GPIO%d LOW radio=EXT1 GPIO%d ANY_HIGH timer=1h dio1=%d boot=%d\n",
+                  T5_PIN_BOOT_BUTTON,P_LORA_DIO_1,
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON));
+    return true;
+}
+
+bool meshink_board_enter_deep_sleep_standby() {
+    // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
+    // sleeps; DIO1 wakes through EXT1 ANY_HIGH and BOOT through EXT0 LOW.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: BOOT is still held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 DIO1 already asserted");
+        return false;
+    }
+
+    // Re-arm the physical SX1262 at the last possible point. This is the
+    // pre-Heltec behavior that repeatedly woke correctly: it re-applies the
+    // RX_DONE -> DIO1 mapping on every sleep interval. The ESP32 resets on
+    // deep sleep anyway, so RadioLibWrapper bookkeeping after this point is
+    // irrelevant.
+    const int16_t rx_rearm=radio.startReceive();
+    if(rx_rearm!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 RX re-arm failed code=%d\n",(int)rx_rearm);
+        return false;
+    }
+    delayMicroseconds(200);
+    Serial.printf("[T5-DEEPSLEEP] SX1262 RX re-armed before sleep dio1=%d busy=%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY));
+    if(digitalRead(P_LORA_BUSY)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 BUSY asserted after RX re-arm");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: DIO1 asserted during RX re-arm");
+        return false;
+    }
+
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // Keep the radio out of hardware reset while the ESP32 GPIO domain sleeps.
+    // The H752-01's external PCA9535 keeps the shared LoRa/GPS 3V3 rail on.
+    pinMode(P_LORA_NSS,OUTPUT);
+    digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(P_LORA_RESET,OUTPUT);
+    digitalWrite(P_LORA_RESET,HIGH);
+    const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+    if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] SX1262 pin hold failed nss=%d reset=%d\n",
+                      (int)nss_hold,(int)reset_hold);
+        return false;
+    }
+    gpio_deep_sleep_hold_en();
+
+    // Close the race immediately before sleep. DIO1 must remain LOW for
+    // EXT1-ANY_HIGH and BOOT must remain HIGH for EXT0-LOW.
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
+        gpio_deep_sleep_hold_dis();
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
+        return false;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] entering: DIO1 EXT1 GPIO%d=LOW BOOT EXT0 GPIO%d=HIGH NSS/RESET=held-high\n",
+                  P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
+
+bool meshink_board_return_to_retained_deep_sleep() {
+    // Timer and accidental short-BOOT wakes reset the ESP32 but leave the
+    // retained SX1262 hardware listening. Do not issue RadioLib commands here:
+    // its C++ object state was reset and no packet needs to be consumed.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: BOOT is held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: DIO1 is asserted");
+        return false;
+    }
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // NSS and RESET were individually held when the original deep sleep began.
+    // Keep the global automatic deep-sleep hold policy enabled for this next
+    // interval without unholding or reconfiguring the retained radio.
+    gpio_deep_sleep_hold_en();
+
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
+        gpio_deep_sleep_hold_dis();
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] retained re-sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
+        return false;
+    }
+
+    Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 1h)");
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
+
+void T5Board::begin() {
+    // The application renders and tears down the companion splash before this
+    // board lifecycle entry. EPDiy has released I2C/GPIO resources, so the
+    // upstream ESP32 board setup can safely take ownership here.
+    T5_TRACE("board: companion display released; MeshCore board/I2C begin\n");
+    ESP32Board::begin();
+    T5_TRACE("board: MeshCore I2C ready\n");
+    t5_radio_shared_bus_idle(true);
+    enableRadioGpsRail();
+    meshink_power_prepare_board();
+    const uint16_t startup_battery_mv=getBattMilliVolts();
+    if(startup_battery_mv)Serial.printf("[T5-INIT] battery-gauge=OK voltage=%umV\n",(unsigned)startup_battery_mv);
+    else Serial.println("[T5-ERROR] battery gauge unavailable during startup");
+    T5_TRACE("board: disabling touch and frontlight\n");
+    meshink_touch_set_power(false);
+    meshink_power_frontlight_set(0); // frontlight remains disabled in companion mode
+#if ENV_INCLUDE_GPS == 1
+    // MeshCore's historical macro names are counterintuitive here:
+    // HardwareSerial::setPins() takes (RX, TX).
+    Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
+    Serial1.begin(9600);
+    T5_TRACE("board: GPS UART ready; internal heap=%u\n", ESP.getFreeHeap());
+#endif
+}
+
+void T5Board::beginLocal() {
+    // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
+    // I2C driver here would abort; only perform MeshCore's remaining board work.
+    startup_reason = BD_STARTUP_NORMAL;
+    // ui_setup() normally started this rail while preparing the splash. Only
+    // wait for the remainder here; recover by starting it now if early start failed.
+    t5_wait_local_radio_settle();
+    // Unified/local mode calls beginLocal(), not begin(). Without this call
+    // the 1500mAh factory-profile migration ran only in BLE companion mode.
+    meshink_power_prepare_board();
+    const uint16_t startup_battery_mv=getBattMilliVolts();
+    if(startup_battery_mv)Serial.printf("[T5-INIT] battery-gauge=OK voltage=%umV\n",(unsigned)startup_battery_mv);
+    else Serial.println("[T5-ERROR] battery gauge unavailable during startup");
+#if ENV_INCLUDE_GPS == 1
+    Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
+    Serial1.begin(9600);
+#endif
+    T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
+}
+
+void T5Board::beginLocalRxWake(bool packet_wake) {
+    startup_reason=packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL;
+    Serial.printf("[T5-DEEPSLEEP] board wake capture mode=%s\n",
+                  packet_wake?"RX_PACKET":"NORMAL");
+}
+
+void T5Board::finishLocalRxWakeCapture() {
+    startup_reason=BD_STARTUP_NORMAL;
+    Serial.println("[T5-DEEPSLEEP] retained wake packet secured; startup reason returned to NORMAL");
+}
+
+static bool t5_sx1262_raw_wait_busy(uint32_t timeout_ms=50) {
+    const uint32_t started=millis();
+    while(digitalRead(P_LORA_BUSY)==HIGH){
+        if(millis()-started>=timeout_ms)return false;
+        delayMicroseconds(100);
+    }
+    return true;
+}
+
+static bool t5_sx1262_raw_read(const uint8_t* command,size_t command_len,
+                               uint8_t* data,size_t data_len,uint8_t* status_out=nullptr) {
+    if(!command||!command_len)return false;
+    if(!t5_sx1262_raw_wait_busy())return false;
+
+    radio_spi.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));
+    digitalWrite(P_LORA_NSS,LOW);
+    delayMicroseconds(2);
+    for(size_t i=0;i<command_len;++i)(void)radio_spi.transfer(command[i]);
+
+    // SX126x read commands return one status byte between the command bytes
+    // and the requested data. Use this raw framing only before RadioLib has
+    // rebuilt its process-local SX126x transport state after deep sleep.
+    const uint8_t status=radio_spi.transfer(0x00);
+    for(size_t i=0;i<data_len;++i)data[i]=radio_spi.transfer(0x00);
+
+    delayMicroseconds(2);
+    digitalWrite(P_LORA_NSS,HIGH);
+    radio_spi.endTransaction();
+    if(status_out)*status_out=status;
+    return t5_sx1262_raw_wait_busy();
+}
+
+static bool t5_sx1262_raw_capture_wake_packet(bool require_packet,uint16_t& captured_len) {
+    captured_len=0;
+
+    uint8_t irq_data[2]{};
+    uint8_t rx_status[2]{};
+    uint8_t packet_status[3]{};
+    uint8_t command_status=0;
+    const uint8_t get_irq[]={0x12};             // GetIrqStatus
+    const uint8_t get_rx_buffer[]={0x13};       // GetRxBufferStatus
+    const uint8_t get_packet_status[]={0x14};   // GetPacketStatus
+
+    if(!t5_sx1262_raw_read(get_irq,sizeof(get_irq),irq_data,sizeof(irq_data),&command_status)||
+       !t5_sx1262_raw_read(get_rx_buffer,sizeof(get_rx_buffer),rx_status,sizeof(rx_status))||
+       !t5_sx1262_raw_read(get_packet_status,sizeof(get_packet_status),
+                           packet_status,sizeof(packet_status))){
+        Serial.println("[T5-DEEPSLEEP] raw wake capture failed: SX1262 status/FIFO metadata unavailable");
+        return false;
+    }
+
+    const uint16_t irq=(uint16_t)(((uint16_t)irq_data[0]<<8)|irq_data[1]);
+    const uint16_t packet_len=rx_status[0];
+    const uint8_t offset=rx_status[1];
+    constexpr uint16_t IRQ_RX_DONE=0x0002U;
+
+    if(!(irq&IRQ_RX_DONE)||packet_len==0||packet_len>MAX_TRANS_UNIT){
+        Serial.printf("[T5-DEEPSLEEP] raw wake capture has no valid RX packet status=0x%02x irq=0x%04x len=%u offset=%u dio1=%u\n",
+                      (unsigned)command_status,(unsigned)irq,(unsigned)packet_len,
+                      (unsigned)offset,digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
+        return !require_packet;
+    }
+
+    uint8_t packet[MAX_TRANS_UNIT]{};
+    const uint8_t read_buffer[]={0x1E,offset};   // ReadBuffer(offset)
+    if(!t5_sx1262_raw_read(read_buffer,sizeof(read_buffer),packet,packet_len)){
+        Serial.printf("[T5-DEEPSLEEP] raw wake FIFO read failed irq=0x%04x len=%u offset=%u\n",
+                      (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
+        return false;
+    }
+
+    // RadioLib uses packet-status byte 2 for packet RSSI and byte 1 for SNR.
+    const float wake_rssi=-((float)packet_status[2])/2.0f;
+    const float wake_snr=((float)(int8_t)packet_status[1])/4.0f;
+    radio_driver.stageWakePacket(packet,packet_len,wake_rssi,wake_snr);
+    captured_len=packet_len;
+    Serial.printf("[T5-DEEPSLEEP] raw wake packet captured BEFORE RadioLib init len=%u offset=%u irq=0x%04x status=0x%02x rssi=%d snr_x4=%d\n",
+                  (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
+                  (unsigned)command_status,(int)wake_rssi,(int)(wake_snr*4.0f));
+    return true;
+}
+
+static bool radio_apply_post_init_board_settings() {
+    constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
+    const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
+    const int16_t rf_switch_state=tcxo_state==RADIOLIB_ERR_NONE
+        ?radio.setDio2AsRfSwitch(true):tcxo_state;
+    if(tcxo_state!=RADIOLIB_ERR_NONE||rf_switch_state!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] SX1262 post-init board setup failed tcxo=%d rf-switch=%d\n",
+                      (int)tcxo_state,(int)rf_switch_state);
+        return false;
+    }
+    return true;
+}
+
+static bool radio_resume_retained(bool packet_wake) {
+    if(!t5_release_held_radio_control_pins(packet_wake?"packet-wake":"button-wake")){
+        Serial.println("[T5-DEEPSLEEP] retained radio restore failed: control-pin hold release");
+        return false;
+    }
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+
+    uint16_t captured_len=0;
+    if(packet_wake){
+        // Critical ordering: copy the retained FIFO using raw SX1262 commands
+        // before RadioLib touches the chip. The ESP reset loses RadioLib's
+        // process-local Module/SX126x framing state while the radio hardware
+        // and FIFO remain powered and intact.
+        if(!t5_sx1262_raw_capture_wake_packet(true,captured_len)){
+            Serial.println("[T5-DEEPSLEEP] raw retained wake packet capture failed");
+            return false;
+        }
+    }
+
+    // The packet is now safe in ESP RAM. Rebuild the radio from a completely
+    // normal baseline, including RadioLib's SX126x-specific SPI framing.
+    radio.resetOnStartup=true;
+    if(!radio.std_init(&radio_spi)){
+        Serial.println("[T5-DEEPSLEEP] clean SX1262 reset/reinit failed after raw wake capture");
+        return false;
+    }
+    if(!radio_apply_post_init_board_settings())return false;
+
+    Serial.printf("[T5-DEEPSLEEP] clean SX1262/RadioLib init complete saved-packet=%u len=%u\n",
+                  radio_driver.hasWakePacket()?1U:0U,(unsigned)captured_len);
+    return true;
+}
+
+bool radio_resume_rx_wake() {
+    return radio_resume_retained(true);
+}
+
+bool radio_resume_retained_wake() {
+    return radio_resume_retained(false);
+}
+
+bool radio_init() {
+    T5_TRACE("radio: begin clock and RTC\n");
+    meshink_rtc_begin();
+    T5_TRACE("radio: SX1262 init SPI=%d/%d/%d ctrl=%d/%d/%d/%d\n",
+        P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
+
+    bool ready=false;
+    for(uint8_t attempt=1;attempt<=3&&!ready;++attempt){
+        if(attempt==2){
+            // Escalation 1: discard any partial IRQ/SPI state and give the
+            // SX1262 a clean hardware reset without disturbing the GPS rail.
+            radio_hal.detachInterrupt(P_LORA_DIO_1);
+            t5_radio_shared_bus_idle(true);
+            pinMode(P_LORA_RESET,OUTPUT);
+            digitalWrite(P_LORA_RESET,LOW);delay(20);
+            digitalWrite(P_LORA_RESET,HIGH);delay(120);
+            T5_TRACE("radio: recovery=spi-reset+sx1262-reset\n");
+        }else if(attempt==3){
+            // Escalation 2: this still occurs before removable storage is
+            // mounted, so the H752-01 shared LoRa/GPS rail can be safely
+            // power-cycled without invalidating any SD file or bus state.
+            radio_hal.detachInterrupt(P_LORA_DIO_1);
+            t5_radio_shared_bus_idle(true);
+            const bool off=t5_set_radio_gps_rail(false,250);
+            const bool on=off&&t5_set_radio_gps_rail(true,1500);
+            radio_gps_rail_start_ok=on;
+            radio_gps_rail_started_at=on?millis():0;
+            T5_TRACE("radio: recovery=rail-cycle off=%u on=%u\n",off?1U:0U,on?1U:0U);
+            if(!on)continue;
+        }else{
+            t5_radio_shared_bus_idle(true);
+        }
+
+        const uint32_t attempt_started=millis();
+        T5_TRACE("radio: init attempt=%u/3 lora-cs=%d sd-cs=%d busy=%d reset=%d\n",
+            attempt,digitalRead(T5_PIN_LORA_CS),digitalRead(T5_PIN_SD_CS),
+            digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET));
+        // CustomSX1262::std_init prints RadioLib's numeric failure code on error.
+        // With no MeshInk TCXO override it mirrors LilyGO's radio.begin() stage
+        // by using RadioLib's 1.6 V default during initialization.
+        ready=radio.std_init(&radio_spi);
+        if(ready){
+            // LilyGO H752-01 examples then switch the fitted TCXO to 2.4 V
+            // before assigning DIO2 to the RF switch. These are board-electrical
+            // settings; MeshCore's protocol parameters remain unchanged.
+            constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
+            const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
+            T5_TRACE("radio: post-init TCXO=%.1fV result=%d\n",
+                (double)LILYGO_TCXO_VOLTAGE,(int)tcxo_state);
+            if(tcxo_state!=RADIOLIB_ERR_NONE){
+                Serial.printf("[T5-ERROR] SX1262 TCXO 2.4V setup failed code=%d\n",(int)tcxo_state);
+                ready=false;
+            }
+            if(ready){
+                const int16_t rf_switch_state=radio.setDio2AsRfSwitch(true);
+                T5_TRACE("radio: post-init DIO2 RF-switch result=%d\n",
+                    (int)rf_switch_state);
+                if(rf_switch_state!=RADIOLIB_ERR_NONE){
+                    Serial.printf("[T5-ERROR] SX1262 DIO2 RF-switch setup failed code=%d\n",(int)rf_switch_state);
+                    ready=false;
+                }
+            }
+        }
+        T5_TRACE("radio: init attempt=%u result=%s elapsed=%lums busy=%d\n",
+            attempt,ready?"OK":"FAILED",(unsigned long)(millis()-attempt_started),
+            digitalRead(P_LORA_BUSY));
+        if(!ready&&attempt<3)delay(500);
+    }
+
+    T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
+    if(ready)Serial.println("[T5-INIT] radio=SX1262 OK");
+    else Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
+#if ENV_INCLUDE_GPS == 1
+    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
+    // ensures power is available before probing GPS. T5 boards carry either
+    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
+    // upstream sensors.begin() owns the UART, without changing radio state.
+    if (ready) {
+        bool found = false;
+        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
+            for (const uint32_t baud : {9600UL, 38400UL}) {
+                Serial1.updateBaudRate(baud);
+                gps_stream.clearValidation();
+                const uint32_t started = millis();
+                while (millis() - started < 1800) {
+                    while (gps_stream.available()) gps_stream.read();
+                    if (gps_stream.hasValidSentence()) { found = true; break; }
+                    delay(5);
+                }
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
+                              (unsigned)(pass+1),(unsigned long)baud,found);
+                if (found) {
+                    detected_gps_baud = baud;
+                    gps_baud_locked = true;
+                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                    gps_last_byte_at = millis();
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            detected_gps_baud = 9600;
+            Serial1.updateBaudRate(detected_gps_baud);
+            gps_stream.clearValidation();
+            Serial.println("[T5-WARN] gps=NMEA not confirmed; background retry active");
+        } else {
+            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
+                gps_module_name(),(unsigned long)Serial1.baudRate());
+        }
+        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
+            gps_module_name(),(unsigned long)Serial1.baudRate(),
+            gps_baud_locked?"":" (NMEA not yet confirmed)");
+        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
+                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
+    }
+#endif
+    return ready;
+}
+
+MeshInkRadioFailureClass t5_classify_radio_failure() {
+#if T5_BOARD_H752_01
+    // The H752-01 Pro Lite shares the Pro PCB but leaves both SX1262 and GNSS
+    // unpopulated. There is no dedicated Lite ID pin, so this is deliberately
+    // a hardware-match classification rather than an absolute identity claim.
+    uint8_t pca_config=0;
+    if(!pca_read(0x06,pca_config)) {
+        T5_TRACE("radio failure: PCA9535 absent; not classifying as H752-01 Lite\n");
+        return MeshInkRadioFailureClass::Unknown;
+    }
+
+    // If valid NMEA is present, this is a GPS-equipped Pro whose SX1262 failed.
+    // Probe both modules/baud rates independently of MeshCore's GPS UI setting.
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    if(!Serial1.baudRate())Serial1.begin(9600);
+    bool gps_present=false;
+    for(uint8_t pass=0;pass<2&&!gps_present;++pass) {
+        for(const uint32_t baud : {9600UL,38400UL}) {
+            Serial1.updateBaudRate(baud);
+            gps_stream.clearValidation();
+            while(Serial1.available()>0)Serial1.read();
+            const uint32_t started=millis();
+            while(millis()-started<1600) {
+                while(gps_stream.available())gps_stream.read();
+                if(gps_stream.hasValidSentence()){gps_present=true;break;}
+                delay(5);
+            }
+            if(gps_present)break;
+        }
+    }
+    T5_TRACE("radio failure classification: H752-01=yes GPS-NMEA=%s\n",
+                  gps_present?"yes":"no");
+    return gps_present?MeshInkRadioFailureClass::RadioFault:MeshInkRadioFailureClass::MissingHardwareVariant;
+#else
+    return MeshInkRadioFailureClass::Unknown;
+#endif
+}
+
+mesh::LocalIdentity radio_new_identity() {
+    T5_TRACE("identity: collecting SX1262 radio noise\n");
+    RadioNoiseListener rng(radio);
+    return mesh::LocalIdentity(&rng);
+}
+){++dollar;nmea=true;nmea_star=false;nmea_xor=0;checksum_hi=-1;}
+            else if(nmea){
+                if(!nmea_star){
+                    if(ch=='*')nmea_star=true;
+                    else if(ch!='\r'&&ch!='\n')nmea_xor^=ch;
+                }else if(checksum_hi<0){
+                    checksum_hi=gps_diag_hex_nibble(ch);
+                    if(checksum_hi<0)nmea=false;
+                }else{
+                    const int lo=gps_diag_hex_nibble(ch);
+                    if(lo>=0){
+                        const uint8_t expected=(uint8_t)((checksum_hi<<4)|lo);
+                        if(expected==nmea_xor)++valid_nmea; else ++bad_nmea;
+                    }
+                    nmea=false;
+                }
+            }
+            if(ch=='\n'||ch=='\r')++crlf;
+            if(prev==0xBA&&ch==0xCE)++casic_sync;
+            prev=ch;
+        }
+        yield();
+        delay(1);
+    }
+    Serial.printf("[T5-GPS-DIAG] capture phase='%s' baud=%lu window=%lums bytes=%u printable=%u '
+    return gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
+        ? 3U : (uint8_t)gps_power_saved_constellation;
+}
+
+static void gps_power_prepare_baseline() {
+    gps_power_uart_resume();
+    gps_power_send("PCAS02,1000","normalize power-test baseline to documented 1 Hz");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","normalize baseline NMEA output");
+#else
+    gps_power_send("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","normalize baseline to compact GGA+RMC");
+#endif
+    gps_power_send("PCAS04,3","normalize baseline to GPS+BeiDou dual-system mode");
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    Serial.println("[T5-GPS-POWER] baseline normalized: GPS+BeiDou, 1 Hz, compact NMEA; no settings saved to receiver flash");
+}
+
+static void gps_power_restore_receiver(bool cancelled) {
+    Serial.printf("[T5-GPS-POWER] restore begin cancelled=%u experiment='%s'\n",
+                  cancelled?1U:0U,meshink_gps_power_experiment_name(gps_power_experiment));
+    gps_power_uart_resume();
+
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask){
+        gps_power_send("PCAS15,2,FFFFFFFF","restore BeiDou satellites 1-32 after zero-mask experiment");
+        delay(50);
+        gps_power_send("PCAS15,3,FFFFFFFF","restore BeiDou satellites 33-64 after zero-mask experiment");
+        delay(50);
+    }
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::WatchdogPowerOffReset||
+       gps_power_experiment==MeshInkGpsPowerExperiment::OnlineUpgradeWait)
+        Serial.println("[T5-GPS-POWER] NOTE: this experiment may intentionally leave GNSS unresponsive; normal restore is attempted, but a full device power cycle may be required");
+
+    gps_power_send("PCAS02,1000","restore documented 1 Hz fix interval");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","restore diagnostic NMEA output");
+#else
+    gps_power_send("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","restore compact GGA+RMC output");
+#endif
+    char constellation[16];
+    snprintf(constellation,sizeof(constellation),"PCAS04,%u",(unsigned)gps_restore_constellation_value());
+    gps_power_send(constellation,
+        gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
+            ?"restore known default GPS+BeiDou because preference was UNCHANGED"
+            :"restore saved constellation preference");
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+    Serial.println("[T5-GPS-POWER] restore attempt complete; receiver settings were not saved with PCAS00");
+}
+
+static void gps_power_apply_experiment() {
+    Serial.printf("[T5-GPS-POWER] ===== APPLY '%s' =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment));
+    switch(gps_power_experiment) {
+        case MeshInkGpsPowerExperiment::GpsOnly:
+            gps_power_send("PCAS04,1","documented single-system GPS-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::BeiDouOnly:
+            gps_power_send("PCAS04,2","documented single-system BeiDou-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::GlonassOnly:
+            gps_power_send("PCAS04,4","documented single-system GLONASS-only mode");
+            break;
+        case MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask:
+            gps_power_send("PCAS04,2","select BeiDou-only before removing all BeiDou satellite channels");
+            delay(50);
+            gps_power_send("PCAS15,2,00000000","disable BeiDou satellites 1-32 without saving configuration");
+            delay(50);
+            gps_power_send("PCAS15,3,00000000","disable BeiDou satellites 33-64 without saving configuration");
+            break;
+        case MeshInkGpsPowerExperiment::NavSystemZero: {
+            uint8_t payload[44]{};
+            // CFG-NAVX mask B8 applies only navSystem; navSystem=0 requests
+            // no GPS/BDS/GLONASS navigation systems. Other zero fields are ignored.
+            payload[1]=0x01;
+            payload[13]=0x00;
+            gps_power_send_casic_binary(0x06,0x07,payload,sizeof(payload),
+                                        "CFG-NAVX mask B8 with navSystem=0 (undocumented no-system state)");
+            break;
+        }
+        case MeshInkGpsPowerExperiment::NavRate65535: {
+            const uint8_t payload[4]={0xFF,0xFF,0x00,0x00};
+            gps_power_send_casic_binary(0x06,0x04,payload,sizeof(payload),
+                                        "CFG-RATE interval=65535 ms to stretch navigation scheduler wait");
+            break;
+        }
+        case MeshInkGpsPowerExperiment::WatchdogPowerOffReset: {
+            // CFG-RST: navBbrMask=0, resetMode=4 ("hardware reset after power off
+            // via WATCHDOG"), startMode=0. Deliberately probes a possibly latched
+            // low-power/reset state; GNSS may need a full board power cycle.
+            const uint8_t payload[4]={0x00,0x00,0x04,0x00};
+            gps_power_send_casic_binary(0x06,0x02,payload,sizeof(payload),
+                                        "CFG-RST resetMode=4 watchdog power-off path");
+            break;
+        }
+        case MeshInkGpsPowerExperiment::OnlineUpgradeWait:
+            gps_power_send("PCAS20",
+                           "enter CASIC online-upgrade mode and measure the loader/wait state");
+            break;
+    }
+    Serial.println("[T5-GPS-POWER] post-change measurement window is 60 seconds; one gauge sample per second");
+}
+
+struct GpsPowerSummary {
+    int32_t current_sum=0,avg_current_sum=0,avg_power_sum=0;
+    uint16_t current_count=0,avg_current_count=0,avg_power_count=0;
+    bool external_seen=false;
+};
+static GpsPowerSummary gps_power_summary(bool post) {
+    GpsPowerSummary result{};
+    for(size_t i=0;i<gps_power_log_count;++i) {
+        const auto& sample=gps_power_log[i];
+        if(sample.post!=post)continue;
+        result.external_seen=result.external_seen||sample.power.external_power;
+        if(sample.power.current_valid){
+            result.current_sum+=gps_discharge_ma(sample.power.current_ma);
+            ++result.current_count;
+        }
+        if(sample.power.average_current_valid){
+            result.avg_current_sum+=gps_discharge_ma(sample.power.average_current_ma);
+            ++result.avg_current_count;
+        }
+        if(sample.power.average_power_valid){
+            result.avg_power_sum+=gps_discharge_mw(sample.power.average_power_mw);
+            ++result.avg_power_count;
+        }
+    }
+    return result;
+}
+static int32_t gps_power_mean(int32_t sum,uint16_t count){return count?sum/(int32_t)count:0;}
+
+
+static bool gps_power_persist_log() {
+    if(!gps_power_log_count)return false;
+    Preferences pref;
+    if(!pref.begin("gps-pwrlog",false)){
+        Serial.println("[T5-GPS-POWER] WARNING: could not open NVS namespace for completed test log");
+        return false;
+    }
+    const size_t bytes=gps_power_log_count*sizeof(GpsPowerLoggedSample);
+    const bool ok=
+        pref.putUInt("magic",GPS_POWER_LOG_MAGIC)==sizeof(uint32_t)&&
+        pref.putUChar("experiment",(uint8_t)gps_power_experiment)==sizeof(uint8_t)&&
+        pref.putUInt("count",(uint32_t)gps_power_log_count)==sizeof(uint32_t)&&
+        pref.putBytes("samples",gps_power_log,bytes)==bytes;
+    pref.end();
+    Serial.printf("[T5-GPS-POWER] completed log NVS save=%s samples=%u bytes=%u; write occurs AFTER measurement window\n",
+                  ok?"OK":"FAILED",(unsigned)gps_power_log_count,(unsigned)bytes);
+    return ok;
+}
+
+static bool gps_power_load_persisted_log() {
+    Preferences pref;
+    if(!pref.begin("gps-pwrlog",true))return false;
+    const uint32_t magic=pref.getUInt("magic",0);
+    const uint32_t count=pref.getUInt("count",0);
+    const uint8_t experiment=pref.getUChar("experiment",0xFF);
+    const size_t bytes=pref.getBytesLength("samples");
+    bool ok=magic==GPS_POWER_LOG_MAGIC&&count>0&&count<=GPS_POWER_LOG_CAPACITY&&
+            experiment<=(uint8_t)MeshInkGpsPowerExperiment::OnlineUpgradeWait&&
+            bytes==count*sizeof(GpsPowerLoggedSample);
+    if(ok){
+        ok=pref.getBytes("samples",gps_power_log,bytes)==bytes;
+        if(ok){
+            gps_power_log_count=(size_t)count;
+            gps_power_experiment=(MeshInkGpsPowerExperiment)experiment;
+            gps_power_log_valid=true;
+        }
+    }
+    pref.end();
+    if(ok)Serial.printf("[T5-GPS-POWER] loaded persisted test log experiment='%s' samples=%u\n",
+                        meshink_gps_power_experiment_name(gps_power_experiment),
+                        (unsigned)gps_power_log_count);
+    return ok;
+}
+
+static void gps_power_print_summary() {
+    const auto base=gps_power_summary(false);
+    const auto post=gps_power_summary(true);
+    const int32_t base_i=gps_power_mean(base.current_sum,base.current_count);
+    const int32_t post_i=gps_power_mean(post.current_sum,post.current_count);
+    const int32_t base_ai=gps_power_mean(base.avg_current_sum,base.avg_current_count);
+    const int32_t post_ai=gps_power_mean(post.avg_current_sum,post.avg_current_count);
+    const int32_t base_p=gps_power_mean(base.avg_power_sum,base.avg_power_count);
+    const int32_t post_p=gps_power_mean(post.avg_power_sum,post.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] ===== RESULT '%s' =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment));
+    Serial.printf("[T5-GPS-POWER] baseline mean load: Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                  (long)base_i,(long)base_ai,(long)base_p,
+                  (unsigned)base.current_count,(unsigned)base.avg_current_count,(unsigned)base.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] post mean load:     Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW samples=%u/%u/%u\n",
+                  (long)post_i,(long)post_ai,(long)post_p,
+                  (unsigned)post.current_count,(unsigned)post.avg_current_count,(unsigned)post.avg_power_count);
+    Serial.printf("[T5-GPS-POWER] apparent saving:    Current=%ldmA AverageCurrent=%ldmA AveragePower=%ldmW (positive = less battery draw)\n",
+                  (long)(base_i-post_i),(long)(base_ai-post_ai),(long)(base_p-post_p));
+    if(base.external_seen||post.external_seen)
+        Serial.println("[T5-GPS-POWER] WARNING: external/USB power was detected during measurement; charger behaviour can invalidate the comparison");
+    else
+        Serial.println("[T5-GPS-POWER] measurement remained battery-only according to charger power-good");
+}
+
+static void gps_power_sample_now() {
+    MeshInkPowerMeasurement measurement{};
+    const uint32_t now=millis();
+    const uint32_t elapsed_seconds=(now-gps_power_phase_started)/1000U;
+    const uint16_t elapsed=(uint16_t)(elapsed_seconds>65535U?65535U:elapsed_seconds);
+    const bool ok=meshink_power_read_measurement(measurement);
+    if(gps_power_log_count<GPS_POWER_LOG_CAPACITY){
+        GpsPowerLoggedSample& entry=gps_power_log[gps_power_log_count++];
+        entry.post=gps_power_post_phase;
+        entry.elapsed_s=elapsed;
+        entry.power=measurement;
+    }
+    const int32_t load_i=measurement.current_valid?gps_discharge_ma(measurement.current_ma):0;
+    const int32_t load_ai=measurement.average_current_valid?gps_discharge_ma(measurement.average_current_ma):0;
+    const int32_t load_p=measurement.average_power_valid?gps_discharge_mw(measurement.average_power_mw):0;
+    Serial.printf("[T5-GPS-POWER] sample phase=%s t=%us read=%u valid[V/I/AI/AP/SOC]=%u/%u/%u/%u/%u V=%umV I=%dmA load=%ldmA AI=%dmA avg-load=%ldmA AP=%dmW avg-load=%ldmW SOC=%u%% ext=%u\n",
+                  gps_power_post_phase?"POST":"BASE",(unsigned)elapsed,ok?1U:0U,
+                  measurement.voltage_valid?1U:0U,measurement.current_valid?1U:0U,
+                  measurement.average_current_valid?1U:0U,measurement.average_power_valid?1U:0U,
+                  measurement.battery_percent_valid?1U:0U,
+                  (unsigned)measurement.voltage_mv,(int)measurement.current_ma,(long)load_i,
+                  (int)measurement.average_current_ma,(long)load_ai,
+                  (int)measurement.average_power_mw,(long)load_p,
+                  (unsigned)measurement.battery_percent,measurement.external_power?1U:0U);
+}
+
+static void gps_power_finish(bool cancelled) {
+    if(!gps_power_test_running)return;
+    if(!cancelled)gps_power_print_summary();
+    else Serial.println("[T5-GPS-POWER] experiment cancelled by standby transition");
+    gps_power_restore_receiver(cancelled);
+    gps_power_test_running=false;
+    gps_power_log_valid=gps_power_log_count>0;
+    if(gps_power_log_valid)gps_power_persist_log();
+    Serial.printf("[T5-GPS-POWER] test idle; retained %u samples for REPLAY LAST LOG (RAM + NVS when save succeeded)\n",
+                  (unsigned)gps_power_log_count);
+}
+} // namespace
+
+bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running){
+        Serial.println("[T5-GPS-POWER] start rejected: another experiment is already running");
+        return false;
+    }
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] start rejected: requires checksum-locked L76K; locked=%u module=%s baud=%lu\n",
+                      gps_baud_locked?1U:0U,gps_module_name(),(unsigned long)detected_gps_baud);
+        return false;
+    }
+    gps_load_tuning();
+    gps_power_experiment=experiment;
+    gps_power_saved_constellation=gps_constellation_mode;
+    gps_power_prepare_baseline();
+    gps_power_log_count=0;
+    gps_power_log_valid=false;
+    gps_power_post_phase=false;
+    gps_power_measurement_started=false;
+    gps_power_test_running=true;
+    const uint32_t start_now=millis();
+    gps_power_settle_until=start_now+GPS_POWER_SETTLE_MS;
+    gps_power_phase_started=0;
+    gps_power_next_sample=0;
+    const auto status=meshink_gps_read_status();
+    const bool external=meshink_power_external_present();
+    Serial.println("[T5-GPS-POWER] ============================================================");
+    Serial.printf("[T5-GPS-POWER] START experiment='%s' settle=5s baseline=30s post=60s sample=1Hz\n",
+                  meshink_gps_power_experiment_name(experiment));
+    Serial.printf("[T5-GPS-POWER] receiver module=%s baud=%lu fix=%u sats=%ld constellation-pref=%u\n",
+                  gps_module_name(),(unsigned long)detected_gps_baud,status.valid?1U:0U,
+                  (long)status.satellites,(unsigned)gps_power_saved_constellation);
+    Serial.printf("[T5-GPS-POWER] external-power-at-start=%u; battery-only is strongly preferred\n",external?1U:0U);
+    if(external)Serial.println("[T5-GPS-POWER] WARNING: disconnect USB/charger and restart the test for trustworthy battery-current deltas");
+    Serial.println("[T5-GPS-POWER] SETTLE: 5 seconds for display/frontlight transients to finish; samples are not counted");
+    Serial.println("[T5-GPS-POWER] BASELINE then measures the normalized receiver state for a full 30 seconds");
+    return true;
+#else
+    (void)experiment;
+    return false;
+#endif
+}
+
+void meshink_gps_power_test_tick() {
+#if ENV_INCLUDE_GPS == 1
+    if(!gps_power_test_running)return;
+    const uint32_t now=millis();
+    if(!gps_power_measurement_started){
+        if((int32_t)(now-gps_power_settle_until)<0)return;
+        gps_power_measurement_started=true;
+        gps_power_phase_started=now;
+        gps_power_next_sample=now+GPS_POWER_SAMPLE_MS;
+        Serial.println("[T5-GPS-POWER] BASELINE MEASUREMENT START: 30 seconds, one BQ27220 sample per second");
+        return;
+    }
+    while((int32_t)(now-gps_power_next_sample)>=0) {
+        gps_power_sample_now();
+        gps_power_next_sample+=GPS_POWER_SAMPLE_MS;
+        if((uint32_t)(now-gps_power_phase_started) >=
+           (gps_power_post_phase?GPS_POWER_POST_MS:GPS_POWER_BASELINE_MS))break;
+    }
+    if(!gps_power_post_phase&&now-gps_power_phase_started>=GPS_POWER_BASELINE_MS) {
+        const auto base=gps_power_summary(false);
+        Serial.printf("[T5-GPS-POWER] BASELINE COMPLETE samples=%u mean-current-load=%ldmA mean-average-current-load=%ldmA mean-average-power-load=%ldmW\n",
+                      (unsigned)gps_power_log_count,
+                      (long)gps_power_mean(base.current_sum,base.current_count),
+                      (long)gps_power_mean(base.avg_current_sum,base.avg_current_count),
+                      (long)gps_power_mean(base.avg_power_sum,base.avg_power_count));
+        gps_power_apply_experiment();
+        gps_power_post_phase=true;
+        gps_power_phase_started=millis();
+        gps_power_next_sample=gps_power_phase_started+GPS_POWER_SAMPLE_MS;
+        return;
+    }
+    if(gps_power_post_phase&&now-gps_power_phase_started>=GPS_POWER_POST_MS)
+        gps_power_finish(false);
+#endif
+}
+
+bool meshink_gps_power_test_busy(){return gps_power_test_running;}
+
+bool meshink_gps_power_test_replay_last() {
+    if((!gps_power_log_valid||gps_power_log_count==0)&&!gps_power_load_persisted_log()){
+        Serial.println("[T5-GPS-POWER] REPLAY requested but no completed/cancelled measurement log is retained");
+        return false;
+    }
+    Serial.printf("[T5-GPS-POWER] ===== REPLAY '%s' %u samples =====\n",
+                  meshink_gps_power_experiment_name(gps_power_experiment),(unsigned)gps_power_log_count);
+
+    // Put the useful answer first. Android WebUSB can be fragile during large
+    // CDC bursts, so the baseline/post means and saving must arrive before the
+    // verbose 90-line sample replay.
+    gps_power_print_summary();
+    Serial.println("[T5-GPS-POWER] detailed samples follow at throttled USB-safe rate");
+    Serial.flush();
+    delay(150);
+
+    for(size_t i=0;i<gps_power_log_count;++i){
+        const auto& sample=gps_power_log[i];
+        const auto& m=sample.power;
+        Serial.printf("[T5-GPS-POWER] replay phase=%s t=%us valid[V/I/AI/AP/SOC]=%u/%u/%u/%u/%u V=%umV I=%dmA load=%ldmA AI=%dmA avg-load=%ldmA AP=%dmW avg-load=%ldmW SOC=%u%% ext=%u\n",
+                      sample.post?"POST":"BASE",(unsigned)sample.elapsed_s,
+                      m.voltage_valid?1U:0U,m.current_valid?1U:0U,m.average_current_valid?1U:0U,
+                      m.average_power_valid?1U:0U,m.battery_percent_valid?1U:0U,
+                      (unsigned)m.voltage_mv,(int)m.current_ma,(long)(m.current_valid?gps_discharge_ma(m.current_ma):0),
+                      (int)m.average_current_ma,(long)(m.average_current_valid?gps_discharge_ma(m.average_current_ma):0),
+                      (int)m.average_power_mw,(long)(m.average_power_valid?gps_discharge_mw(m.average_power_mw):0),
+                      (unsigned)m.battery_percent,m.external_power?1U:0U);
+        // Avoid overrunning Android Chrome/WebUSB and give the USB task time
+        // to drain CDC packets. This occurs after measurement, so it cannot
+        // influence the captured power result.
+        delay(40);
+        yield();
+        if(((i+1U)%5U)==0U)Serial.flush();
+    }
+    Serial.println("[T5-GPS-POWER] ===== REPLAY COMPLETE =====");
+    Serial.flush();
+    return true;
+}
+
+void meshink_gps_enter_standby_power_mode() {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running)gps_power_finish(true);
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] standby single-system skipped locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return;
+    }
+    gps_power_send("PCAS04,1","standby policy: force single-system GPS to reduce GNSS load");
+    gps_standby_forced_single=true;
+    gps_standby_magic=GPS_STANDBY_MAGIC;
+    Serial.println("[T5-GPS-POWER] standby policy active: GPS-only; shared LoRa/GNSS rail remains ON");
+#endif
+}
+
+void meshink_gps_leave_standby_power_mode() {
+#if ENV_INCLUDE_GPS == 1
+    if(gps_standby_magic!=GPS_STANDBY_MAGIC&&!gps_standby_forced_single)return;
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        Serial.printf("[T5-GPS-POWER] standby restore deferred until L76K baud lock; locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return;
+    }
+    gps_load_tuning();
+    const uint8_t restore=gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+        ? 3U:(uint8_t)gps_constellation_mode;
+    char payload[16];snprintf(payload,sizeof(payload),"PCAS04,%u",(unsigned)restore);
+    gps_power_send(payload,gps_constellation_mode==MeshInkGpsConstellationMode::Unchanged
+        ?"wake policy: restore GPS+BeiDou default"
+        :"wake policy: restore saved constellation preference");
+    gps_standby_forced_single=false;
+    gps_standby_magic=0;
+    Serial.println("[T5-GPS-POWER] standby single-system policy cleared on interactive wake");
+#endif
+}
+
+void meshink_gps_shutdown(){
+#if ENV_INCLUDE_GPS == 1
+    if(auto* location=sensors.getLocationProvider())location->stop();
+    Serial1.end();
+#endif
+}
+
+
+// Run independently of T5GPS::loop(): MeshCore stops calling the provider
+// when GPS is OFF. Consume UART bytes ONLY while the provider is inactive,
+// so we can distinguish a quiet receiver from a stopped parser.
+void meshink_gps_background_tick(){
+    if(gps.isActive()||!gps_sleep_requested_at)return;
+    // Do not disable the OFF-state UART draining with diagnostics: otherwise
+    // the powered receiver fills the RX buffer before GPS is re-enabled.
+    uint32_t drained=0;
+    while(Serial1.available()>0&&drained<512){Serial1.read();++drained;}
+#if T5_LOG_GPS
+    const uint32_t now=millis();
+    // Ignore the first second (bytes already in flight after the stop request).
+    if(now-gps_sleep_requested_at>=1000){
+        gps_sleep_bytes_after+=drained;
+        gps_sleep_window_bytes+=drained;
+    }
+    if(now-gps_sleep_last_report>=5000){
+        gps_sleep_last_report=now;
+        const uint32_t off_ms=now-gps_sleep_requested_at;
+        T5_GPS_TRACE("gps probe: OFF +%lus UART bytes last ~5s=%lu total after 1s=%lu (%s; power not measured)\n",
+            (unsigned long)(off_ms/1000),
+            (unsigned long)gps_sleep_window_bytes,(unsigned long)gps_sleep_bytes_after,
+            gps_sleep_window_bytes?"UART ACTIVE":"UART QUIET");
+        gps_sleep_window_bytes=0;
+    }
+#else
+    (void)drained;
+#endif
+}
+
+uint16_t T5Board::getBattMilliVolts() {
+    // MeshCore and the local UI share the same board-selected power backend.
+    // Keep MeshCore's 30 s cache so repeated app requests do not create
+    // unnecessary fuel-gauge traffic.
+    static uint16_t cached_mv = 0;
+    static uint32_t sampled_at = 0;
+    const uint32_t now = millis();
+    if (sampled_at != 0 && now - sampled_at < 30000) return cached_mv;
+    sampled_at = now == 0 ? 1 : now;
+
+    uint16_t voltage = 0;
+    if (meshink_power_read_battery_mv(voltage))cached_mv = voltage;
+    return cached_mv;
+}
+
+void meshink_board_companion_exit_feedback_begin() {
+    // Companion startup performs additional board/radio initialization after
+    // the splash, so do not assume the early LEDC attachment is still intact.
+    // Reassert the board frontlight backend before driving the visible exit
+    // acknowledgement.
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(100);
+    T5_TRACE("frontlight: companion exit acknowledgement brightness=100%%\n");
+}
+
+void meshink_board_companion_release_resources() {
+    // Release the radio's own IRQ handler and shared SPI bus cleanly. The
+    // global Arduino GPIO ISR service can remain until the imminent reset;
+    // unlike test10, no same-boot EPDiy reinitialization needs that service.
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.end();
+    T5_TRACE("companion exit: radio IRQ/SPI resources released\n");
+}
+
+void meshink_board_begin_companion(){board.begin();}
+void meshink_board_begin_local(){board.beginLocal();}
+void meshink_board_begin_local_rx_wake(bool packet_wake){board.beginLocalRxWake(packet_wake);}
+void meshink_board_boot_complete(){board.onBootComplete();}
+
+bool meshink_board_woke_from_radio() {
+    if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT1)return false;
+    return (esp_sleep_get_ext1_wakeup_status()&(1ULL<<P_LORA_DIO_1))!=0;
+}
+
+bool meshink_board_woke_from_primary_button() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+}
+
+bool meshink_board_woke_from_timer() {
+    return esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_TIMER;
+}
+
+bool meshink_board_radio_irq_asserted() {
+    pinMode(P_LORA_DIO_1,INPUT);
+    return digitalRead(P_LORA_DIO_1)==HIGH;
+}
+
+void meshink_board_restore_deep_sleep_wake_pads() {
+    // EXT0/EXT1 route their wake pads through RTC IO. Explicitly release any
+    // per-pad RTC hold before returning DIO1/BOOT to normal digital GPIO.
+    gpio_deep_sleep_hold_dis();
+    const esp_err_t radio_hold=rtc_gpio_hold_dis((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_hold=rtc_gpio_hold_dis((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    const esp_err_t radio_pad=rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
+    const esp_err_t button_pad=rtc_gpio_deinit((gpio_num_t)T5_PIN_BOOT_BUTTON);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    Serial.printf("[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
+                  (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
+}
+
+void meshink_board_prepare_retained_aux_wake() {
+    // Release only the automatic digital-pad hold so I2C/EPD pins can be used.
+    // Keep the explicit SX1262 NSS/RESET holds intact while a timer wake merely
+    // checks battery state.
+    gpio_deep_sleep_hold_dis();
+}
+
+void meshink_board_release_retained_radio_holds() {
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+    gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+}
+
+static constexpr uint64_t T5_DEEP_SLEEP_BATTERY_CHECK_US=
+    60ULL*60ULL*1000000ULL;
+
+static bool t5_enable_deep_sleep_wake_sources() {
+    // deepsleep26 returns to the original repeatedly-tested wake assignment:
+    // BOOT uses EXT0 LOW and SX1262 DIO1 uses EXT1 ANY_HIGH.
+    const esp_err_t clear_wake=esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    const esp_err_t button_wake=esp_sleep_enable_ext0_wakeup(
+        (gpio_num_t)T5_PIN_BOOT_BUTTON,0);
+    const esp_err_t radio_wake=esp_sleep_enable_ext1_wakeup(
+        1ULL<<P_LORA_DIO_1,ESP_EXT1_WAKEUP_ANY_HIGH);
+    const esp_err_t timer_wake=esp_sleep_enable_timer_wakeup(
+        T5_DEEP_SLEEP_BATTERY_CHECK_US);
+    if(clear_wake!=ESP_OK||button_wake!=ESP_OK||radio_wake!=ESP_OK||timer_wake!=ESP_OK){
+        Serial.printf("[T5-DEEPSLEEP] wake-source setup failed clear=%d button-ext0=%d radio-ext1=%d timer=%d\n",
+                      (int)clear_wake,(int)button_wake,(int)radio_wake,(int)timer_wake);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        return false;
+    }
+    Serial.printf("[T5-DEEPSLEEP] wake armed button=EXT0 GPIO%d LOW radio=EXT1 GPIO%d ANY_HIGH timer=1h dio1=%d boot=%d\n",
+                  T5_PIN_BOOT_BUTTON,P_LORA_DIO_1,
+                  digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON));
+    return true;
+}
+
+bool meshink_board_enter_deep_sleep_standby() {
+    // The SX1262 stays powered and in continuous receive. Only the ESP32-S3
+    // sleeps; DIO1 wakes through EXT1 ANY_HIGH and BOOT through EXT0 LOW.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: BOOT is still held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 DIO1 already asserted");
+        return false;
+    }
+
+    // Re-arm the physical SX1262 at the last possible point. This is the
+    // pre-Heltec behavior that repeatedly woke correctly: it re-applies the
+    // RX_DONE -> DIO1 mapping on every sleep interval. The ESP32 resets on
+    // deep sleep anyway, so RadioLibWrapper bookkeeping after this point is
+    // irrelevant.
+    const int16_t rx_rearm=radio.startReceive();
+    if(rx_rearm!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] sleep deferred: SX1262 RX re-arm failed code=%d\n",(int)rx_rearm);
+        return false;
+    }
+    delayMicroseconds(200);
+    Serial.printf("[T5-DEEPSLEEP] SX1262 RX re-armed before sleep dio1=%d busy=%d\n",
+                  digitalRead(P_LORA_DIO_1),digitalRead(P_LORA_BUSY));
+    if(digitalRead(P_LORA_BUSY)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: SX1262 BUSY asserted after RX re-arm");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] sleep deferred: DIO1 asserted during RX re-arm");
+        return false;
+    }
+
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // Keep the radio out of hardware reset while the ESP32 GPIO domain sleeps.
+    // The H752-01's external PCA9535 keeps the shared LoRa/GPS 3V3 rail on.
+    pinMode(P_LORA_NSS,OUTPUT);
+    digitalWrite(P_LORA_NSS,HIGH);
+    pinMode(P_LORA_RESET,OUTPUT);
+    digitalWrite(P_LORA_RESET,HIGH);
+    const esp_err_t nss_hold=gpio_hold_en((gpio_num_t)P_LORA_NSS);
+    const esp_err_t reset_hold=gpio_hold_en((gpio_num_t)P_LORA_RESET);
+    if(nss_hold!=ESP_OK||reset_hold!=ESP_OK){
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] SX1262 pin hold failed nss=%d reset=%d\n",
+                      (int)nss_hold,(int)reset_hold);
+        return false;
+    }
+    gpio_deep_sleep_hold_en();
+
+    // Close the race immediately before sleep. DIO1 must remain LOW for
+    // EXT1-ANY_HIGH and BOOT must remain HIGH for EXT0-LOW.
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
+        gpio_deep_sleep_hold_dis();
+        gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+        gpio_hold_dis((gpio_num_t)P_LORA_RESET);
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
+        return false;
+    }
+
+    Serial.printf("[T5-DEEPSLEEP] entering: DIO1 EXT1 GPIO%d=LOW BOOT EXT0 GPIO%d=HIGH NSS/RESET=held-high\n",
+                  P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
+
+bool meshink_board_return_to_retained_deep_sleep() {
+    // Timer and accidental short-BOOT wakes reset the ESP32 but leave the
+    // retained SX1262 hardware listening. Do not issue RadioLib commands here:
+    // its C++ object state was reset and no packet needs to be consumed.
+    pinMode(T5_PIN_BOOT_BUTTON,INPUT_PULLUP);
+    pinMode(P_LORA_DIO_1,INPUT);
+    if(digitalRead(T5_PIN_BOOT_BUTTON)==LOW){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: BOOT is held");
+        return false;
+    }
+    if(digitalRead(P_LORA_DIO_1)==HIGH){
+        Serial.println("[T5-DEEPSLEEP] retained re-sleep deferred: DIO1 is asserted");
+        return false;
+    }
+    if(!t5_enable_deep_sleep_wake_sources())return false;
+
+    // NSS and RESET were individually held when the original deep sleep began.
+    // Keep the global automatic deep-sleep hold policy enabled for this next
+    // interval without unholding or reconfiguring the retained radio.
+    gpio_deep_sleep_hold_en();
+
+    const int dio1_now=digitalRead(P_LORA_DIO_1);
+    const int boot_now=digitalRead(T5_PIN_BOOT_BUTTON);
+    if(boot_now==LOW||dio1_now==HIGH){
+        gpio_deep_sleep_hold_dis();
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        Serial.printf("[T5-DEEPSLEEP] retained re-sleep race avoided boot=%d dio1=%d\n",
+                      boot_now,dio1_now);
+        return false;
+    }
+
+    Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 1h)");
+    Serial.flush();
+    delay(20);
+    esp_deep_sleep_start();
+    return true;
+}
+
+void T5Board::begin() {
+    // The application renders and tears down the companion splash before this
+    // board lifecycle entry. EPDiy has released I2C/GPIO resources, so the
+    // upstream ESP32 board setup can safely take ownership here.
+    T5_TRACE("board: companion display released; MeshCore board/I2C begin\n");
+    ESP32Board::begin();
+    T5_TRACE("board: MeshCore I2C ready\n");
+    t5_radio_shared_bus_idle(true);
+    enableRadioGpsRail();
+    meshink_power_prepare_board();
+    const uint16_t startup_battery_mv=getBattMilliVolts();
+    if(startup_battery_mv)Serial.printf("[T5-INIT] battery-gauge=OK voltage=%umV\n",(unsigned)startup_battery_mv);
+    else Serial.println("[T5-ERROR] battery gauge unavailable during startup");
+    T5_TRACE("board: disabling touch and frontlight\n");
+    meshink_touch_set_power(false);
+    meshink_power_frontlight_set(0); // frontlight remains disabled in companion mode
+#if ENV_INCLUDE_GPS == 1
+    // MeshCore's historical macro names are counterintuitive here:
+    // HardwareSerial::setPins() takes (RX, TX).
+    Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
+    Serial1.begin(9600);
+    T5_TRACE("board: GPS UART ready; internal heap=%u\n", ESP.getFreeHeap());
+#endif
+}
+
+void T5Board::beginLocal() {
+    // The local UI initialized EPDiy and I2C first. Reinstalling the legacy
+    // I2C driver here would abort; only perform MeshCore's remaining board work.
+    startup_reason = BD_STARTUP_NORMAL;
+    // ui_setup() normally started this rail while preparing the splash. Only
+    // wait for the remainder here; recover by starting it now if early start failed.
+    t5_wait_local_radio_settle();
+    // Unified/local mode calls beginLocal(), not begin(). Without this call
+    // the 1500mAh factory-profile migration ran only in BLE companion mode.
+    meshink_power_prepare_board();
+    const uint16_t startup_battery_mv=getBattMilliVolts();
+    if(startup_battery_mv)Serial.printf("[T5-INIT] battery-gauge=OK voltage=%umV\n",(unsigned)startup_battery_mv);
+    else Serial.println("[T5-ERROR] battery gauge unavailable during startup");
+#if ENV_INCLUDE_GPS == 1
+    Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
+    Serial1.begin(9600);
+#endif
+    T5_TRACE("board: local UI handoff complete; shared I2C retained\n");
+}
+
+void T5Board::beginLocalRxWake(bool packet_wake) {
+    startup_reason=packet_wake?BD_STARTUP_RX_PACKET:BD_STARTUP_NORMAL;
+    Serial.printf("[T5-DEEPSLEEP] board wake capture mode=%s\n",
+                  packet_wake?"RX_PACKET":"NORMAL");
+}
+
+void T5Board::finishLocalRxWakeCapture() {
+    startup_reason=BD_STARTUP_NORMAL;
+    Serial.println("[T5-DEEPSLEEP] retained wake packet secured; startup reason returned to NORMAL");
+}
+
+static bool t5_sx1262_raw_wait_busy(uint32_t timeout_ms=50) {
+    const uint32_t started=millis();
+    while(digitalRead(P_LORA_BUSY)==HIGH){
+        if(millis()-started>=timeout_ms)return false;
+        delayMicroseconds(100);
+    }
+    return true;
+}
+
+static bool t5_sx1262_raw_read(const uint8_t* command,size_t command_len,
+                               uint8_t* data,size_t data_len,uint8_t* status_out=nullptr) {
+    if(!command||!command_len)return false;
+    if(!t5_sx1262_raw_wait_busy())return false;
+
+    radio_spi.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE0));
+    digitalWrite(P_LORA_NSS,LOW);
+    delayMicroseconds(2);
+    for(size_t i=0;i<command_len;++i)(void)radio_spi.transfer(command[i]);
+
+    // SX126x read commands return one status byte between the command bytes
+    // and the requested data. Use this raw framing only before RadioLib has
+    // rebuilt its process-local SX126x transport state after deep sleep.
+    const uint8_t status=radio_spi.transfer(0x00);
+    for(size_t i=0;i<data_len;++i)data[i]=radio_spi.transfer(0x00);
+
+    delayMicroseconds(2);
+    digitalWrite(P_LORA_NSS,HIGH);
+    radio_spi.endTransaction();
+    if(status_out)*status_out=status;
+    return t5_sx1262_raw_wait_busy();
+}
+
+static bool t5_sx1262_raw_capture_wake_packet(bool require_packet,uint16_t& captured_len) {
+    captured_len=0;
+
+    uint8_t irq_data[2]{};
+    uint8_t rx_status[2]{};
+    uint8_t packet_status[3]{};
+    uint8_t command_status=0;
+    const uint8_t get_irq[]={0x12};             // GetIrqStatus
+    const uint8_t get_rx_buffer[]={0x13};       // GetRxBufferStatus
+    const uint8_t get_packet_status[]={0x14};   // GetPacketStatus
+
+    if(!t5_sx1262_raw_read(get_irq,sizeof(get_irq),irq_data,sizeof(irq_data),&command_status)||
+       !t5_sx1262_raw_read(get_rx_buffer,sizeof(get_rx_buffer),rx_status,sizeof(rx_status))||
+       !t5_sx1262_raw_read(get_packet_status,sizeof(get_packet_status),
+                           packet_status,sizeof(packet_status))){
+        Serial.println("[T5-DEEPSLEEP] raw wake capture failed: SX1262 status/FIFO metadata unavailable");
+        return false;
+    }
+
+    const uint16_t irq=(uint16_t)(((uint16_t)irq_data[0]<<8)|irq_data[1]);
+    const uint16_t packet_len=rx_status[0];
+    const uint8_t offset=rx_status[1];
+    constexpr uint16_t IRQ_RX_DONE=0x0002U;
+
+    if(!(irq&IRQ_RX_DONE)||packet_len==0||packet_len>MAX_TRANS_UNIT){
+        Serial.printf("[T5-DEEPSLEEP] raw wake capture has no valid RX packet status=0x%02x irq=0x%04x len=%u offset=%u dio1=%u\n",
+                      (unsigned)command_status,(unsigned)irq,(unsigned)packet_len,
+                      (unsigned)offset,digitalRead(P_LORA_DIO_1)==HIGH?1U:0U);
+        return !require_packet;
+    }
+
+    uint8_t packet[MAX_TRANS_UNIT]{};
+    const uint8_t read_buffer[]={0x1E,offset};   // ReadBuffer(offset)
+    if(!t5_sx1262_raw_read(read_buffer,sizeof(read_buffer),packet,packet_len)){
+        Serial.printf("[T5-DEEPSLEEP] raw wake FIFO read failed irq=0x%04x len=%u offset=%u\n",
+                      (unsigned)irq,(unsigned)packet_len,(unsigned)offset);
+        return false;
+    }
+
+    // RadioLib uses packet-status byte 2 for packet RSSI and byte 1 for SNR.
+    const float wake_rssi=-((float)packet_status[2])/2.0f;
+    const float wake_snr=((float)(int8_t)packet_status[1])/4.0f;
+    radio_driver.stageWakePacket(packet,packet_len,wake_rssi,wake_snr);
+    captured_len=packet_len;
+    Serial.printf("[T5-DEEPSLEEP] raw wake packet captured BEFORE RadioLib init len=%u offset=%u irq=0x%04x status=0x%02x rssi=%d snr_x4=%d\n",
+                  (unsigned)packet_len,(unsigned)offset,(unsigned)irq,
+                  (unsigned)command_status,(int)wake_rssi,(int)(wake_snr*4.0f));
+    return true;
+}
+
+static bool radio_apply_post_init_board_settings() {
+    constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
+    const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
+    const int16_t rf_switch_state=tcxo_state==RADIOLIB_ERR_NONE
+        ?radio.setDio2AsRfSwitch(true):tcxo_state;
+    if(tcxo_state!=RADIOLIB_ERR_NONE||rf_switch_state!=RADIOLIB_ERR_NONE){
+        Serial.printf("[T5-DEEPSLEEP] SX1262 post-init board setup failed tcxo=%d rf-switch=%d\n",
+                      (int)tcxo_state,(int)rf_switch_state);
+        return false;
+    }
+    return true;
+}
+
+static bool radio_resume_retained(bool packet_wake) {
+    if(!t5_release_held_radio_control_pins(packet_wake?"packet-wake":"button-wake")){
+        Serial.println("[T5-DEEPSLEEP] retained radio restore failed: control-pin hold release");
+        return false;
+    }
+    pinMode(T5_PIN_SD_CS,OUTPUT);digitalWrite(T5_PIN_SD_CS,HIGH);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_hal.detachInterrupt(P_LORA_DIO_1);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+
+    uint16_t captured_len=0;
+    if(packet_wake){
+        // Critical ordering: copy the retained FIFO using raw SX1262 commands
+        // before RadioLib touches the chip. The ESP reset loses RadioLib's
+        // process-local Module/SX126x framing state while the radio hardware
+        // and FIFO remain powered and intact.
+        if(!t5_sx1262_raw_capture_wake_packet(true,captured_len)){
+            Serial.println("[T5-DEEPSLEEP] raw retained wake packet capture failed");
+            return false;
+        }
+    }
+
+    // The packet is now safe in ESP RAM. Rebuild the radio from a completely
+    // normal baseline, including RadioLib's SX126x-specific SPI framing.
+    radio.resetOnStartup=true;
+    if(!radio.std_init(&radio_spi)){
+        Serial.println("[T5-DEEPSLEEP] clean SX1262 reset/reinit failed after raw wake capture");
+        return false;
+    }
+    if(!radio_apply_post_init_board_settings())return false;
+
+    Serial.printf("[T5-DEEPSLEEP] clean SX1262/RadioLib init complete saved-packet=%u len=%u\n",
+                  radio_driver.hasWakePacket()?1U:0U,(unsigned)captured_len);
+    return true;
+}
+
+bool radio_resume_rx_wake() {
+    return radio_resume_retained(true);
+}
+
+bool radio_resume_retained_wake() {
+    return radio_resume_retained(false);
+}
+
+bool radio_init() {
+    T5_TRACE("radio: begin clock and RTC\n");
+    meshink_rtc_begin();
+    T5_TRACE("radio: SX1262 init SPI=%d/%d/%d ctrl=%d/%d/%d/%d\n",
+        P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
+
+    bool ready=false;
+    for(uint8_t attempt=1;attempt<=3&&!ready;++attempt){
+        if(attempt==2){
+            // Escalation 1: discard any partial IRQ/SPI state and give the
+            // SX1262 a clean hardware reset without disturbing the GPS rail.
+            radio_hal.detachInterrupt(P_LORA_DIO_1);
+            t5_radio_shared_bus_idle(true);
+            pinMode(P_LORA_RESET,OUTPUT);
+            digitalWrite(P_LORA_RESET,LOW);delay(20);
+            digitalWrite(P_LORA_RESET,HIGH);delay(120);
+            T5_TRACE("radio: recovery=spi-reset+sx1262-reset\n");
+        }else if(attempt==3){
+            // Escalation 2: this still occurs before removable storage is
+            // mounted, so the H752-01 shared LoRa/GPS rail can be safely
+            // power-cycled without invalidating any SD file or bus state.
+            radio_hal.detachInterrupt(P_LORA_DIO_1);
+            t5_radio_shared_bus_idle(true);
+            const bool off=t5_set_radio_gps_rail(false,250);
+            const bool on=off&&t5_set_radio_gps_rail(true,1500);
+            radio_gps_rail_start_ok=on;
+            radio_gps_rail_started_at=on?millis():0;
+            T5_TRACE("radio: recovery=rail-cycle off=%u on=%u\n",off?1U:0U,on?1U:0U);
+            if(!on)continue;
+        }else{
+            t5_radio_shared_bus_idle(true);
+        }
+
+        const uint32_t attempt_started=millis();
+        T5_TRACE("radio: init attempt=%u/3 lora-cs=%d sd-cs=%d busy=%d reset=%d\n",
+            attempt,digitalRead(T5_PIN_LORA_CS),digitalRead(T5_PIN_SD_CS),
+            digitalRead(P_LORA_BUSY),digitalRead(P_LORA_RESET));
+        // CustomSX1262::std_init prints RadioLib's numeric failure code on error.
+        // With no MeshInk TCXO override it mirrors LilyGO's radio.begin() stage
+        // by using RadioLib's 1.6 V default during initialization.
+        ready=radio.std_init(&radio_spi);
+        if(ready){
+            // LilyGO H752-01 examples then switch the fitted TCXO to 2.4 V
+            // before assigning DIO2 to the RF switch. These are board-electrical
+            // settings; MeshCore's protocol parameters remain unchanged.
+            constexpr float LILYGO_TCXO_VOLTAGE=2.4f;
+            const int16_t tcxo_state=radio.setTCXO(LILYGO_TCXO_VOLTAGE);
+            T5_TRACE("radio: post-init TCXO=%.1fV result=%d\n",
+                (double)LILYGO_TCXO_VOLTAGE,(int)tcxo_state);
+            if(tcxo_state!=RADIOLIB_ERR_NONE){
+                Serial.printf("[T5-ERROR] SX1262 TCXO 2.4V setup failed code=%d\n",(int)tcxo_state);
+                ready=false;
+            }
+            if(ready){
+                const int16_t rf_switch_state=radio.setDio2AsRfSwitch(true);
+                T5_TRACE("radio: post-init DIO2 RF-switch result=%d\n",
+                    (int)rf_switch_state);
+                if(rf_switch_state!=RADIOLIB_ERR_NONE){
+                    Serial.printf("[T5-ERROR] SX1262 DIO2 RF-switch setup failed code=%d\n",(int)rf_switch_state);
+                    ready=false;
+                }
+            }
+        }
+        T5_TRACE("radio: init attempt=%u result=%s elapsed=%lums busy=%d\n",
+            attempt,ready?"OK":"FAILED",(unsigned long)(millis()-attempt_started),
+            digitalRead(P_LORA_BUSY));
+        if(!ready&&attempt<3)delay(500);
+    }
+
+    T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
+    if(ready)Serial.println("[T5-INIT] radio=SX1262 OK");
+    else Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
+#if ENV_INCLUDE_GPS == 1
+    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
+    // ensures power is available before probing GPS. T5 boards carry either
+    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
+    // upstream sensors.begin() owns the UART, without changing radio state.
+    if (ready) {
+        bool found = false;
+        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
+            for (const uint32_t baud : {9600UL, 38400UL}) {
+                Serial1.updateBaudRate(baud);
+                gps_stream.clearValidation();
+                const uint32_t started = millis();
+                while (millis() - started < 1800) {
+                    while (gps_stream.available()) gps_stream.read();
+                    if (gps_stream.hasValidSentence()) { found = true; break; }
+                    delay(5);
+                }
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
+                              (unsigned)(pass+1),(unsigned long)baud,found);
+                if (found) {
+                    detected_gps_baud = baud;
+                    gps_baud_locked = true;
+                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                    gps_last_byte_at = millis();
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            detected_gps_baud = 9600;
+            Serial1.updateBaudRate(detected_gps_baud);
+            gps_stream.clearValidation();
+            Serial.println("[T5-WARN] gps=NMEA not confirmed; background retry active");
+        } else {
+            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
+                gps_module_name(),(unsigned long)Serial1.baudRate());
+        }
+        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
+            gps_module_name(),(unsigned long)Serial1.baudRate(),
+            gps_baud_locked?"":" (NMEA not yet confirmed)");
+        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
+                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
+    }
+#endif
+    return ready;
+}
+
+MeshInkRadioFailureClass t5_classify_radio_failure() {
+#if T5_BOARD_H752_01
+    // The H752-01 Pro Lite shares the Pro PCB but leaves both SX1262 and GNSS
+    // unpopulated. There is no dedicated Lite ID pin, so this is deliberately
+    // a hardware-match classification rather than an absolute identity claim.
+    uint8_t pca_config=0;
+    if(!pca_read(0x06,pca_config)) {
+        T5_TRACE("radio failure: PCA9535 absent; not classifying as H752-01 Lite\n");
+        return MeshInkRadioFailureClass::Unknown;
+    }
+
+    // If valid NMEA is present, this is a GPS-equipped Pro whose SX1262 failed.
+    // Probe both modules/baud rates independently of MeshCore's GPS UI setting.
+    Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
+    if(!Serial1.baudRate())Serial1.begin(9600);
+    bool gps_present=false;
+    for(uint8_t pass=0;pass<2&&!gps_present;++pass) {
+        for(const uint32_t baud : {9600UL,38400UL}) {
+            Serial1.updateBaudRate(baud);
+            gps_stream.clearValidation();
+            while(Serial1.available()>0)Serial1.read();
+            const uint32_t started=millis();
+            while(millis()-started<1600) {
+                while(gps_stream.available())gps_stream.read();
+                if(gps_stream.hasValidSentence()){gps_present=true;break;}
+                delay(5);
+            }
+            if(gps_present)break;
+        }
+    }
+    T5_TRACE("radio failure classification: H752-01=yes GPS-NMEA=%s\n",
+                  gps_present?"yes":"no");
+    return gps_present?MeshInkRadioFailureClass::RadioFault:MeshInkRadioFailureClass::MissingHardwareVariant;
+#else
+    return MeshInkRadioFailureClass::Unknown;
+#endif
+}
+
+mesh::LocalIdentity radio_new_identity() {
+    T5_TRACE("identity: collecting SX1262 radio noise\n");
+    RadioNoiseListener rng(radio);
+    return mesh::LocalIdentity(&rng);
+}
+=%u CRLF=%u valid-NMEA=%u bad-NMEA=%u CASIC-BA-CE=%u\n",
+                  phase?phase:"capture",(unsigned long)baud,(unsigned long)duration_ms,
+                  (unsigned)total,(unsigned)printable,(unsigned)dollar,(unsigned)crlf,
+                  (unsigned)valid_nmea,(unsigned)bad_nmea,(unsigned)casic_sync);
+    Serial.print("[T5-GPS-DIAG] first-bytes hex=");
+    if(!first_count)Serial.print("<none>");
+    for(size_t i=0;i<first_count;++i)Serial.printf("%02X%s",(unsigned)first[i],i+1==first_count?"":" ");
+    Serial.println();
+    Serial.print("[T5-GPS-DIAG] first-bytes ascii='");
+    for(size_t i=0;i<first_count;++i){
+        const uint8_t ch=first[i];
+        Serial.write((ch>=0x20&&ch<=0x7E)?ch:'.');
+    }
+    Serial.println("'");
+}
+
+static void gps_diag_send_pcas(const char* payload,const char* label) {
+    Serial.printf("[T5-GPS-DIAG] TX PCAS label='%s' payload='$%s*<xor>'\n",
+                  label?label:"query",payload?payload:"");
+    gps_send_pcas(payload);
+    Serial1.flush();
+}
+
+static void gps_diag_send_identification_queries() {
+    static const struct {const char* payload;const char* label;} queries[]={
+        {"PCAS06,0","firmware version SW"},
+        {"PCAS06,1","hardware/model HW"},
+        {"PCAS06,2","working mode MO"},
+        {"PCAS06,3","customer ID CI"},
+        {"PCAS06,5","upgrade code BS"},
+        {"PCAS06,6","chip ID IC"}
+    };
+    for(const auto& q:queries){gps_diag_send_pcas(q.payload,q.label);delay(35);}
+    gps_power_send_casic_binary(0x0A,0x04,nullptr,0,"diagnostic MON-VER poll");
+    delay(35);
+    gps_power_send_casic_binary(0x0A,0x09,nullptr,0,"diagnostic MON-HW poll");
+    delay(35);
+    gps_power_send_casic_binary(0x06,0x00,nullptr,0,"diagnostic CFG-PRT poll");
+    delay(35);
+    gps_power_send_casic_binary(0x06,0x04,nullptr,0,"diagnostic CFG-RATE poll");
+    delay(35);
+    gps_power_send_casic_binary(0x06,0x07,nullptr,0,"diagnostic CFG-NAVX poll");
+    delay(35);
+}
+
+static void gps_diag_return_to_probe() {
+    gps_diag_set_uart(9600);
+    gps_stream.clearValidation();
+    gps_baud_locked=false;
+    detected_gps_baud=9600;
+    detected_gps_module=GpsModule::Unknown;
+    gps_last_byte_at=millis();
+    next_baud_retry=millis()+6000;
+    Serial.println("[T5-GPS-DIAG] returned host to 9600; normal checksum/NMEA background detection re-armed");
+}
+
+static void gps_diag_passive_scan() {
+    static const uint32_t bauds[]={4800,9600,19200,38400,57600,115200,230400,256000};
+    Serial.println("[T5-GPS-DIAG] ===== PASSIVE UART SCAN: NO GNSS BYTES WILL BE TRANSMITTED =====");
+    for(uint32_t baud:bauds){
+        gps_diag_set_uart(baud);
+        gps_diag_capture("passive",baud,1500);
+    }
+    gps_diag_return_to_probe();
+}
+
+static void gps_diag_identify_all_bauds() {
+    static const uint32_t bauds[]={4800,9600,19200,38400,57600,115200};
+    Serial.println("[T5-GPS-DIAG] ===== IDENTIFY ALL DOCUMENTED PCAS BAUDS =====");
+    Serial.println("[T5-GPS-DIAG] sending read/query traffic only: PCAS06 identity/state plus CASIC MON/CFG polls");
+    for(uint32_t baud:bauds){
+        gps_diag_set_uart(baud);
+        gps_diag_send_identification_queries();
+        gps_diag_capture("identify replies",baud,1800);
+    }
+    gps_diag_return_to_probe();
+}
+
+static void gps_diag_force_9600_nmea() {
+    static const struct {uint32_t baud;uint8_t code;} bauds[]={
+        {115200,5},{57600,4},{38400,3},{19200,2},{4800,0},{9600,1}
+    };
+    Serial.println("[T5-GPS-DIAG] ===== FORCE 9600 + NMEA RECOVERY =====");
+    Serial.println("[T5-GPS-DIAG] PCAS01,1 is repeated at every documented PCAS baud; receiver FLASH is NOT saved");
+    for(const auto& b:bauds){
+        gps_diag_set_uart(b.baud);
+        for(uint8_t repeat=0;repeat<3;++repeat){
+            gps_diag_send_pcas("PCAS01,1","force receiver UART to documented 9600 baud");
+            delay(45);
+        }
+    }
+    gps_diag_set_uart(9600);
+    gps_diag_send_pcas("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","restore compact GGA+RMC output");
+    delay(80);
+    gps_diag_send_pcas("PCAS02,1000","restore documented 1 Hz update interval");
+    delay(80);
+    gps_diag_send_pcas("PCAS04,3","restore default GPS+BeiDou working mode");
+    delay(150);
+    gps_diag_send_identification_queries();
+    gps_diag_capture("force-9600 recovery",9600,4000);
+    gps_diag_return_to_probe();
+}
+
+static void gps_diag_factory_start_sweep() {
+    // Put 9600 last: if a valid command at any earlier rate reboots the
+    // receiver into factory 9600, the last pass can still talk to it.
+    static const uint32_t bauds[]={115200,57600,38400,19200,4800,9600};
+    Serial.println("[T5-GPS-DIAG] ===== FACTORY START SWEEP =====");
+    Serial.println("[T5-GPS-DIAG] WARNING: documented PCAS10,3 clears backup data/configuration and resets factory defaults");
+    for(uint32_t baud:bauds){
+        gps_diag_set_uart(baud);
+        gps_diag_send_pcas("PCAS10,3","documented factory start / clear backup and configuration");
+        delay(300);
+    }
+    delay(1800);
+    gps_diag_set_uart(9600);
+    gps_diag_send_pcas("PCAS01,1","reassert factory UART 9600 after reset sweep");
+    delay(80);
+    gps_diag_send_pcas("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0","enable compact GGA+RMC after factory start");
+    delay(80);
+    gps_diag_send_pcas("PCAS02,1000","restore 1 Hz after factory start");
+    delay(80);
+    gps_diag_send_pcas("PCAS04,3","restore GPS+BeiDou after factory start");
+    delay(250);
+    gps_diag_send_identification_queries();
+    gps_diag_capture("factory-start recovery",9600,5000);
+    gps_diag_return_to_probe();
+}
+
 static uint8_t gps_restore_constellation_value() {
     return gps_power_saved_constellation==MeshInkGpsConstellationMode::Unchanged
         ? 3U : (uint8_t)gps_power_saved_constellation;
