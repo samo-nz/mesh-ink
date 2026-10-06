@@ -681,6 +681,7 @@ class T5GPS : public MicroNMEALocationProvider {
 public:
     T5GPS() : MicroNMEALocationProvider(gps_stream, &t5_rtc_clock()) {}
     bool isActive() const { return active; }
+    void rearmBaudProbe() { next_baud_retry = millis() + 6000; }
     void begin() override {
         Serial1.updateBaudRate(detected_gps_baud);
         gps_wake_previous_stamp=(uint32_t)getTimestamp();
@@ -1035,7 +1036,7 @@ static void gps_diag_return_to_probe() {
     detected_gps_baud=9600;
     detected_gps_module=GpsModule::Unknown;
     gps_last_byte_at=millis();
-    next_baud_retry=millis()+6000;
+    gps.rearmBaudProbe();
     Serial.println("[T5-GPS-DIAG] returned host to 9600; normal checksum/NMEA background detection re-armed");
     gps_serial_replay_pause();
 }
