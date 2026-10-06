@@ -1346,7 +1346,7 @@ bool meshink_gps_power_test_replay_last() {
         // Avoid overrunning Android Chrome/WebUSB and give the USB task time
         // to drain CDC packets. This occurs after measurement, so it cannot
         // influence the captured power result.
-        delay(40);
+        delay(60);
         yield();
         if(((i+1U)%5U)==0U)Serial.flush();
     }
