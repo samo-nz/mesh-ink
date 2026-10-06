@@ -899,6 +899,8 @@ assert "gps_power_measurement_quiet" in source and "if(!gps_power_measurement_qu
 assert "UI quiet mode ended: touch restored after measurement" in source, "GPS power measurement automatically restores interactive UI"
 assert "GPS_POWER_BASELINE_MS = 30000" in board_target_source and "GPS_POWER_POST_MS = 60000" in board_target_source, "GPS experiments retain 30-second baseline and 60-second post windows"
 assert "gps_power_prepare_baseline();" in board_target_source and '"PCAS04,3"' in board_target_source, "GPS power experiments normalize to a common dual-system baseline"
+assert "gps_power_print_summary();" in board_target_source and "detailed samples follow at throttled USB-safe rate" in board_target_source, "GPS replay emits summary before verbose samples"
+assert "delay(25);" in board_target_source and "REPLAY COMPLETE" in board_target_source, "GPS replay is throttled for Android WebUSB reliability"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
@@ -1609,4 +1611,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.2\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.2\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.3\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.3\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
