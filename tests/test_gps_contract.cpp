@@ -51,12 +51,16 @@ int main(){
     meshink_gps_background_tick();
     assert(meshink_gps_mock_ticks==1);
 
-    assert(meshink_gps_power_test_start(MeshInkGpsPowerExperiment::OnlineUpgradeWait));
+    assert(meshink_gps_power_test_start(MeshInkGpsPowerExperiment::CurrentState));
     assert(meshink_gps_power_test_busy());
-    assert(meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::OnlineUpgradeWait);
+    assert(meshink_gps_power_test_preserves_receiver_state());
+    assert(meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::CurrentState);
     meshink_gps_mock_power_test_busy=false;
     assert(meshink_gps_power_test_replay_last());
     assert(meshink_gps_mock_power_replayed);
+    assert(meshink_gps_diagnostic_run(MeshInkGpsDiagnosticAction::PassiveUartScan));
+    assert(meshink_gps_mock_diagnostic_ran);
+    assert(meshink_gps_mock_diagnostic_action==MeshInkGpsDiagnosticAction::PassiveUartScan);
     meshink_gps_enter_standby_power_mode();
     assert(meshink_gps_mock_standby);
     meshink_gps_leave_standby_power_mode();
