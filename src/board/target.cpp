@@ -886,23 +886,42 @@ static void gps_power_uart_resume() {
                   (unsigned long)detected_gps_baud,(int)PIN_GPS_TX,(int)PIN_GPS_RX);
 }
 
-static void gps_power_uart_suspend() {
-    if(gps_power_uart_suspended)return;
-    Serial1.flush();
-    Serial1.end();
-    gpio_set_pull_mode((gpio_num_t)PIN_GPS_TX,GPIO_FLOATING);
-    gpio_set_pull_mode((gpio_num_t)PIN_GPS_RX,GPIO_FLOATING);
-    gpio_set_direction((gpio_num_t)PIN_GPS_TX,GPIO_MODE_INPUT);
-    gpio_set_direction((gpio_num_t)PIN_GPS_RX,GPIO_MODE_INPUT);
-    gps_power_uart_suspended=true;
-    Serial.printf("[T5-GPS-POWER] host UART released: TX/RX are floating inputs; GNSS/shared LoRa rail remains ON\n");
-}
-
 static void gps_power_send(const char* payload,const char* reason) {
     gps_power_uart_resume();
     Serial.printf("[T5-GPS-POWER] receiver command reason='%s' payload='$%s*<xor>'\n",
                   reason?reason:"experiment",payload?payload:"");
     gps_send_pcas(payload);
+}
+
+static void gps_power_send_casic_binary(uint8_t cls,uint8_t id,
+                                        const uint8_t* payload,uint16_t len,
+                                        const char* reason) {
+    gps_power_uart_resume();
+    if((len&3U)!=0U||(!payload&&len!=0U)){
+        Serial.printf("[T5-GPS-POWER] binary command rejected locally class=0x%02X id=0x%02X len=%u reason='%s'\n",
+                      (unsigned)cls,(unsigned)id,(unsigned)len,reason?reason:"experiment");
+        return;
+    }
+    uint32_t checksum=((uint32_t)id<<24)|((uint32_t)cls<<16)|(uint32_t)len;
+    for(uint16_t offset=0;offset<len;offset+=4){
+        const uint32_t word=(uint32_t)payload[offset]|
+                            ((uint32_t)payload[offset+1]<<8)|
+                            ((uint32_t)payload[offset+2]<<16)|
+                            ((uint32_t)payload[offset+3]<<24);
+        checksum+=word;
+    }
+    const uint8_t header[6]={0xBA,0xCE,(uint8_t)(len&0xFFU),(uint8_t)(len>>8),cls,id};
+    const uint8_t trailer[4]={
+        (uint8_t)(checksum&0xFFU),(uint8_t)((checksum>>8)&0xFFU),
+        (uint8_t)((checksum>>16)&0xFFU),(uint8_t)((checksum>>24)&0xFFU)
+    };
+    Serial.printf("[T5-GPS-POWER] CASIC binary reason='%s' class=0x%02X id=0x%02X len=%u checksum=0x%08lX\n",
+                  reason?reason:"experiment",(unsigned)cls,(unsigned)id,(unsigned)len,
+                  (unsigned long)checksum);
+    Serial1.write(header,sizeof(header));
+    if(len)Serial1.write(payload,len);
+    Serial1.write(trailer,sizeof(trailer));
+    Serial1.flush();
 }
 
 static uint8_t gps_restore_constellation_value() {
@@ -928,15 +947,17 @@ static void gps_power_restore_receiver(bool cancelled) {
     Serial.printf("[T5-GPS-POWER] restore begin cancelled=%u experiment='%s'\n",
                   cancelled?1U:0U,meshink_gps_power_experiment_name(gps_power_experiment));
     gps_power_uart_resume();
-    switch(gps_power_experiment) {
-        case MeshInkGpsPowerExperiment::RfOff:
-        case MeshInkGpsPowerExperiment::RfOffUartHighImpedance:
-        case MeshInkGpsPowerExperiment::CasicTimedStandby60s:
-            gps_power_send("PCAS10,9","restore RF/serial section after experimental low-power command");
-            delay(100);
-            break;
-        default:break;
+
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask){
+        gps_power_send("PCAS15,2,FFFFFFFF","restore BeiDou satellites 1-32 after zero-mask experiment");
+        delay(50);
+        gps_power_send("PCAS15,3,FFFFFFFF","restore BeiDou satellites 33-64 after zero-mask experiment");
+        delay(50);
     }
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::WatchdogPowerOffReset||
+       gps_power_experiment==MeshInkGpsPowerExperiment::OnlineUpgradeWait)
+        Serial.println("[T5-GPS-POWER] NOTE: this experiment may intentionally leave GNSS unresponsive; normal restore is attempted, but a full device power cycle may be required");
+
     gps_power_send("PCAS02,1000","restore documented 1 Hz fix interval");
 #if T5_GPS_FULL_NMEA_DIAGNOSTIC
     gps_power_send("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0","restore diagnostic NMEA output");
@@ -951,7 +972,7 @@ static void gps_power_restore_receiver(bool cancelled) {
             :"restore saved constellation preference");
     gps_stream.clearValidation();
     gps_last_byte_at=millis();
-    Serial.println("[T5-GPS-POWER] restore complete; receiver settings were not saved with PCAS00");
+    Serial.println("[T5-GPS-POWER] restore attempt complete; receiver settings were not saved with PCAS00");
 }
 
 static void gps_power_apply_experiment() {
@@ -967,44 +988,41 @@ static void gps_power_apply_experiment() {
         case MeshInkGpsPowerExperiment::GlonassOnly:
             gps_power_send("PCAS04,4","documented single-system GLONASS-only mode");
             break;
-        case MeshInkGpsPowerExperiment::NmeaEvery9:
-            gps_power_send("PCAS03,9,0,0,0,9,0,0,0,0,0,,,0,0",
-                           "GGA+RMC only once every nine fixes");
+        case MeshInkGpsPowerExperiment::BeiDouZeroSatelliteMask:
+            gps_power_send("PCAS04,2","select BeiDou-only before removing all BeiDou satellite channels");
+            delay(50);
+            gps_power_send("PCAS15,2,00000000","disable BeiDou satellites 1-32 without saving configuration");
+            delay(50);
+            gps_power_send("PCAS15,3,00000000","disable BeiDou satellites 33-64 without saving configuration");
             break;
-        case MeshInkGpsPowerExperiment::NmeaOff:
-            gps_power_send("PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0",
-                           "disable all L76K NMEA output");
+        case MeshInkGpsPowerExperiment::NavSystemZero: {
+            uint8_t payload[44]{};
+            // CFG-NAVX mask B8 applies only navSystem; navSystem=0 requests
+            // no GPS/BDS/GLONASS navigation systems. Other zero fields are ignored.
+            payload[1]=0x01;
+            payload[13]=0x00;
+            gps_power_send_casic_binary(0x06,0x07,payload,sizeof(payload),
+                                        "CFG-NAVX mask B8 with navSystem=0 (undocumented no-system state)");
             break;
-        case MeshInkGpsPowerExperiment::GpsOnlyNmeaOff:
-            gps_power_send("PCAS04,1","combine GPS-only with no NMEA");
-            gps_power_send("PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0",
-                           "combine GPS-only with no NMEA");
+        }
+        case MeshInkGpsPowerExperiment::NavRate65535: {
+            const uint8_t payload[4]={0xFF,0xFF,0x00,0x00};
+            gps_power_send_casic_binary(0x06,0x04,payload,sizeof(payload),
+                                        "CFG-RATE interval=65535 ms to stretch navigation scheduler wait");
             break;
-        case MeshInkGpsPowerExperiment::UartHighImpedance:
-            Serial.println("[T5-GPS-POWER] no receiver command: measuring host UART electrical release only");
-            gps_power_uart_suspend();
+        }
+        case MeshInkGpsPowerExperiment::WatchdogPowerOffReset: {
+            // CFG-RST: navBbrMask=0, resetMode=4 ("hardware reset after power off
+            // via WATCHDOG"), startMode=0. Deliberately probes a possibly latched
+            // low-power/reset state; GNSS may need a full board power cycle.
+            const uint8_t payload[4]={0x00,0x00,0x04,0x00};
+            gps_power_send_casic_binary(0x06,0x02,payload,sizeof(payload),
+                                        "CFG-RST resetMode=4 watchdog power-off path");
             break;
-        case MeshInkGpsPowerExperiment::RfOff:
-            gps_power_send("PCAS10,8",
-                           "CASIC chipset experiment: disable serial output and RF section");
-            break;
-        case MeshInkGpsPowerExperiment::RfOffUartHighImpedance:
-            gps_power_send("PCAS10,8",
-                           "CASIC chipset experiment: RF/serial off before host UART release");
-            delay(100);
-            gps_power_uart_suspend();
-            break;
-        case MeshInkGpsPowerExperiment::CasicTimedStandby60s:
-            gps_power_send("PCAS12,60",
-                           "unsupported-on-L76K CASIC timed standby probe for a recoverable 60 second window");
-            break;
-        case MeshInkGpsPowerExperiment::SlowFix5s:
-            gps_power_send("PCAS02,5000",
-                           "out-of-spec slow positioning interval probe: 5000 ms");
-            break;
-        case MeshInkGpsPowerExperiment::SlowFix10s:
-            gps_power_send("PCAS02,10000",
-                           "out-of-spec slow positioning interval probe: 10000 ms");
+        }
+        case MeshInkGpsPowerExperiment::OnlineUpgradeWait:
+            gps_power_send("PCAS20",
+                           "enter CASIC online-upgrade mode and measure the loader/wait state");
             break;
     }
     Serial.println("[T5-GPS-POWER] post-change measurement window is 60 seconds; one gauge sample per second");
@@ -1066,7 +1084,7 @@ static bool gps_power_load_persisted_log() {
     const uint8_t experiment=pref.getUChar("experiment",0xFF);
     const size_t bytes=pref.getBytesLength("samples");
     bool ok=magic==GPS_POWER_LOG_MAGIC&&count>0&&count<=GPS_POWER_LOG_CAPACITY&&
-            experiment<=(uint8_t)MeshInkGpsPowerExperiment::SlowFix10s&&
+            experiment<=(uint8_t)MeshInkGpsPowerExperiment::OnlineUpgradeWait&&
             bytes==count*sizeof(GpsPowerLoggedSample);
     if(ok){
         ok=pref.getBytes("samples",gps_power_log,bytes)==bytes;
@@ -1258,7 +1276,7 @@ bool meshink_gps_power_test_replay_last() {
         // Avoid overrunning Android Chrome/WebUSB and give the USB task time
         // to drain CDC packets. This occurs after measurement, so it cannot
         // influence the captured power result.
-        delay(25);
+        delay(40);
         yield();
         if(((i+1U)%5U)==0U)Serial.flush();
     }
