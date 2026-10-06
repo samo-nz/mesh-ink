@@ -1318,6 +1318,16 @@ bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
 }
 bool local_mesh_gps_power_test_busy(){return meshink_gps_power_test_busy();}
 bool local_mesh_gps_power_test_replay_last(){return meshink_gps_power_test_replay_last();}
+bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction action){
+    if(!local_mesh_gps_enabled()){
+        T5_DEBUGLN(T5_LOG_GPS,"[T5-GPS] diagnostic rejected: GPS preference is disabled");
+        return false;
+    }
+    if(local_mesh_gps_power_test_busy())return false;
+    if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
+    gps_duty_reset=false;gps_duty_next_wake=0;gps_duty_awake_since=0;
+    return meshink_gps_diagnostic_run(action);
+}
 void local_mesh_gps_enter_standby_power_mode(){meshink_gps_enter_standby_power_mode();}
 void local_mesh_gps_leave_standby_power_mode(){meshink_gps_leave_standby_power_mode();}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=meshink_meshcore().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];meshink_meshcore().savePrefs();meshink_meshcore().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
@@ -1332,6 +1342,7 @@ const char* local_mesh_gps_tuning_note(){return "";}
 bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment){return false;}
 bool local_mesh_gps_power_test_busy(){return false;}
 bool local_mesh_gps_power_test_replay_last(){return false;}
+bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction){return false;}
 void local_mesh_gps_enter_standby_power_mode(){}
 void local_mesh_gps_leave_standby_power_mode(){}
 void local_mesh_cycle_gps_interval(){}
