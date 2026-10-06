@@ -31,6 +31,9 @@ inline bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
 }
 inline void meshink_gps_power_test_tick(){}
 inline bool meshink_gps_power_test_busy(){return meshink_gps_mock_power_test_busy;}
+inline bool meshink_gps_power_test_preserves_receiver_state(){
+    return meshink_gps_mock_power_test_busy&&meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::CurrentState;
+}
 inline bool meshink_gps_power_test_replay_last(){meshink_gps_mock_power_replayed=true;return true;}
 inline bool meshink_gps_diagnostic_run(MeshInkGpsDiagnosticAction action){
     meshink_gps_mock_diagnostic_action=action;
