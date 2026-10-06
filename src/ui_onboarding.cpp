@@ -2455,7 +2455,7 @@ static void draw_gps_settings() {
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
     settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
-    settings_row("GPS POWER SAVING","MEASURED POWER EXPERIMENTS",710);
+    settings_row("GPS POWER TESTS","MEASURED POWER EXPERIMENTS",710);
 }
 
 static MeshInkUiRect gps_power_prev_rect(){
@@ -2468,13 +2468,14 @@ static void gps_power_test_row(const char* title,const char* detail,int y){
     settings_row(title,detail,y);
 }
 static void draw_gps_tuning(){
-    draw_app_header("GPS POWER SAVING",true);
+    draw_app_header("GPS POWER",true);
     const MeshInkUiLayout& layout=portrait_layout();
     char page[48];
-    snprintf(page,sizeof(page),"MEASURED EXPERIMENTS  %u / 3",(unsigned)gps_power_page+1U);
-    ui_text(page,layout.content_text_x,ui_y(76),2,0,true);
-    ui_text(local_mesh_gps_power_test_busy()?"TEST RUNNING - SEE SERIAL":"30S BASELINE + 60S POST TEST",
-            layout.content_text_x,ui_y(99),2,0,false);
+    if(local_mesh_gps_power_test_busy())
+        snprintf(page,sizeof(page),"PAGE %u / 3   TEST RUNNING - SEE SERIAL",(unsigned)gps_power_page+1U);
+    else
+        snprintf(page,sizeof(page),"PAGE %u / 3   30S BASE + 60S POST",(unsigned)gps_power_page+1U);
+    ui_centred_fit(page,ui_y(101),layout.width-ui_w(36),2,0,false);
 
     if(gps_power_page==0){
         gps_power_test_row("GPS ONLY","SINGLE-SYSTEM RECEIVER TEST",128);
