@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101b24">
-  <title>MeshInk · Serial Monitor</title>
+  <title>MeshInk · Serial Console</title>
   <link rel="stylesheet" href="./style.css">
   <script type="module" src="./serial.js"></script>
 </head>
@@ -12,9 +12,9 @@
   <main class="shell">
     <header class="brand">
       <div class="brand-icon" aria-hidden="true">M</div>
-      <div><p class="eyebrow">LILYGO T5 E-PAPER S3 PRO · USB SERIAL</p><h1>MeshInk <span>Serial Monitor</span></h1></div>
+      <div><p class="eyebrow">USB SERIAL DEBUGGING</p><h1>MeshInk <span>Serial Console</span></h1></div>
     </header>
-    <p class="intro">Connect to the T5 USB serial port, capture diagnostics, then copy the entire device log. Disconnecting or reconnecting does not clear the window.</p>
+    <p class="intro">Connect to a USB serial device, view its output, and copy or clear the captured log. Disconnecting or reconnecting does not clear the window.</p>
 
     <section class="panel" aria-labelledby="serial-heading">
       <h2 id="serial-heading">Serial connection</h2>
@@ -41,20 +41,15 @@
       <pre id="serial-log" class="serial-monitor-log" role="log" aria-live="off"></pre>
     </section>
 
-    <section class="panel" aria-labelledby="serial-help-heading">
-      <h2 id="serial-help-heading">GPS power-test workflow</h2>
-      <ol>
-        <li>Run the GPS power experiment with USB disconnected so charging does not contaminate the current measurement.</li>
-        <li>After the test finishes, reconnect USB and open this Serial Monitor.</li>
-        <li>On the T5 choose <strong>GPS Power Saving → Replay Last Log</strong>.</li>
-        <li>Press <strong>Copy all</strong> here, then paste the result into ChatGPT.</li>
-      </ol>
-      <p>If the T5 resets and its USB serial port disappears, wait for it to return and press <strong>Reconnect</strong>. Reconnect reuses the previously authorized T5 without opening the device picker; use Connect only if permission has been lost. The existing log remains untouched. Flashing and serial monitoring cannot use the same USB port at the same time.</p>
+    <section class="panel" aria-labelledby="console-help-heading">
+      <h2 id="console-help-heading">Using the console</h2>
+      <p><strong>Connect</strong> selects or opens a USB serial device. <strong>Disconnect</strong> closes it while keeping the captured log. <strong>Reconnect</strong> tries to reopen the previously authorized device without opening the device picker.</p>
+      <p>If a device resets, its USB port may disappear for several seconds. Wait for it to re-enumerate, then press <strong>Reconnect</strong>. If the browser no longer exposes the previous authorization, use Connect to select it again.</p>
     </section>
 
     <section class="panel" aria-labelledby="browser-heading">
       <h2 id="browser-heading">Browser support</h2>
-      <p>Use Chrome or Edge on desktop, or Chrome on Android. Android uses the same WebUSB serial compatibility layer as the MeshInk web flasher. USB serial access requires a secure HTTPS page and your explicit device selection.</p>
+      <p>Use Chrome or Edge on desktop, or Chrome on Android. Android always uses the WebUSB serial compatibility layer; desktop browsers use native Web Serial when available. USB access requires HTTPS and explicit device permission.</p>
     </section>
 
     <footer><a href="./">Back to Web Flasher</a> · <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">MeshInk on GitHub</a></footer>

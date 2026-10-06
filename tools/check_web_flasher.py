@@ -87,7 +87,11 @@ require('progress.hidden = true;' in js and 'connectionRetry = connectionFailure
         "connection failure stops progress and enables retry guidance")
 require('setActivity("Checking firmware checksum…")' in js, "checksum progress is visible")
 
-require('href="./serial.html"' in html, "web flasher links to standalone serial monitor")
+require('class="serial-console-button" href="./serial.html">Serial Console</a>' in html,
+        "web flasher places Serial Console beside firmware source controls")
+require(html.index('id="firmware-source-select"') < html.index('class="serial-console-button"') <
+        html.index('id="flash-heading"'),
+        "Serial Console button is adjacent to the firmware selector rather than a separate promo row")
 require('id="connect-button"' in serial_html and 'id="disconnect-button"' in serial_html and
         'id="reconnect-button"' in serial_html, "serial monitor exposes connect/disconnect/reconnect controls")
 require('id="copy-button"' in serial_html and "Copy all" in serial_html,
@@ -98,14 +102,15 @@ require('id="serial-log"' in serial_html and 'id="autoscroll"' in serial_html,
         "serial monitor has persistent log window and autoscroll control")
 require('import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";' in serial_js,
         "serial monitor reuses local Android WebUSB serial polyfill")
-require('if (nativeSerialAvailable()) return { api: navigator.serial, name: "Web Serial" };' in serial_js and
-        'if (webUsbSerialAvailable()) return { api: webUsbSerial, name: "Android WebUSB" };' in serial_js,
-        "serial monitor prefers native Web Serial and falls back to Android WebUSB")
+require('if (isAndroidPlatform()) {' in serial_js and
+        'return navigator.usb && webUsbSerial ? { api: webUsbSerial, name: "Android WebUSB" } : null;' in serial_js and
+        'return navigator.serial ? { api: navigator.serial, name: "Web Serial" } : null;' in serial_js,
+        "serial console always uses WebUSB polyfill on Android and native Web Serial on desktop")
 require('await findRememberedGrantedPort(backend.api)' in serial_js and
         'port = await backend.api.requestPort();' in serial_js,
         "Connect reuses authorized ports before opening a picker")
 require('async function reconnect()' in serial_js and
-        'No authorized T5 is available. Press Connect to choose it again.' in serial_js,
+        'Previous device is not currently authorized. Press Connect to select it again.' in serial_js,
         "Reconnect is a distinct no-picker path")
 require('await openPort(port, backend.name);' in serial_js and '.readable.getReader()' in serial_js,
         "serial monitor opens and continuously reads the chosen serial port")
@@ -118,8 +123,8 @@ require('await navigator.clipboard.writeText(text)' in serial_js and
         "copy-all supports secure clipboard plus fallback")
 require('logArea.textContent = "";' in serial_js,
         "clear-window control clears only the visible device log")
-require('requestPort() remains directly inside the Connect gesture path' in serial_js,
-        "serial Connect keeps explicit permission selection in the user gesture path")
+require('Keep requestPort() directly in the user-triggered Connect path' in serial_js,
+        "serial Connect keeps Android WebUSB permission selection in the user gesture path")
 
 
 parser = argparse.ArgumentParser()
@@ -156,3 +161,6 @@ else:
         manifest["files"][mode] = {"name": name, "size": length, "sha256": digest}
     (build / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print("PASS: " + args.version + " firmware SHA-256 verified; Pages manifest generated")
+
+for forbidden in ["GPS power-test workflow","GPS Power Saving","power experiment","Replay Last Log"]:
+    require(forbidden not in serial_html, f"serial console must stay generic: {forbidden}")

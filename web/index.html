@@ -15,7 +15,6 @@
       <div><p class="eyebrow">LILYGO T5 E-PAPER S3 PRO · ESP32-S3</p><h1>MeshInk <span>Web Flasher</span></h1></div>
     </header>
     <p class="intro">Connect your T5 with a USB data cable, then choose whether you’re updating MeshInk or installing it for the first time.</p>
-    <p class="tool-links"><a class="tool-link" href="./serial.html">Open Serial Monitor</a> <span>Capture and copy T5 diagnostic logs without leaving the browser.</span></p>
     <div class="status-line firmware-status">
       <span id="site-status" role="status">Checking the latest GitHub release…</span>
       <label class="source-select-label" for="firmware-source-select">Firmware</label>
@@ -24,6 +23,7 @@
         <option value="custom">Custom BIN file</option>
       </select>
       <input id="custom-file" class="hidden-file-input" type="file" accept=".bin,application/octet-stream" tabindex="-1" aria-hidden="true">
+      <a class="serial-console-button" href="./serial.html">Serial Console</a>
     </div>
     <section class="panel" aria-labelledby="flash-heading">
       <h2 id="flash-heading">What would you like to do?</h2>
@@ -59,7 +59,7 @@
       </ol>
       <p>Installing for the first time resets any data already on the device. Updating is for devices that already have MeshInk installed.</p>
     </section>
-    <footer><a href="./serial.html">Serial Monitor</a> · Open-source firmware and release checksums on <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">GitHub</a>. <a href="https://github.com/samo-nz/mesh-ink/releases/latest" target="_blank" rel="noopener noreferrer">Download release binaries</a> · <a href="https://github.com/samo-nz/mesh-ink#installing" target="_blank" rel="noopener noreferrer">Command-line flashing</a></footer>
+    <footer>Open-source firmware and release checksums on <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">GitHub</a>. <a href="https://github.com/samo-nz/mesh-ink/releases/latest" target="_blank" rel="noopener noreferrer">Download release binaries</a> · <a href="https://github.com/samo-nz/mesh-ink#installing" target="_blank" rel="noopener noreferrer">Command-line flashing</a></footer>
   </main>
 </body>
 </html>

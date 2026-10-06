@@ -21,25 +21,17 @@ let connecting = false;
 let connected = false;
 let everConnected = false;
 let userDisconnecting = false;
-let activeBackendName = "";
 
 function isAndroidPlatform() {
   return navigator.userAgentData?.platform === "Android" || /Android/i.test(navigator.userAgent || "");
 }
-function nativeSerialAvailable() {
-  return !!navigator.serial;
-}
-function webUsbSerialAvailable() {
-  return isAndroidPlatform() && !!navigator.usb && !!webUsbSerial;
-}
 function serialBackend() {
-  // Current Android Chrome can expose native Web Serial. Prefer it for a
-  // long-lived terminal because it survives CDC traffic better than the
-  // WebUSB compatibility layer on devices that support both. Keep WebUSB as
-  // the fallback used on Android versions without native Web Serial.
-  if (nativeSerialAvailable()) return { api: navigator.serial, name: "Web Serial" };
-  if (webUsbSerialAvailable()) return { api: webUsbSerial, name: "Android WebUSB" };
-  return null;
+  // Android Chrome must use the WebUSB serial polyfill. Some Android builds
+  // expose navigator.serial but do not enumerate this ESP32-S3 CDC device.
+  if (isAndroidPlatform()) {
+    return navigator.usb && webUsbSerial ? { api: webUsbSerial, name: "Android WebUSB" } : null;
+  }
+  return navigator.serial ? { api: navigator.serial, name: "Web Serial" } : null;
 }
 function serialAvailable() {
   return window.isSecureContext && !!serialBackend();
@@ -78,10 +70,8 @@ function readPortInfo(port) {
   }
 }
 function samePortInfo(a, b) {
-  if (!a || !b) return false;
-  if (a.usbVendorId === null || b.usbVendorId === null) return false;
-  return a.usbVendorId === b.usbVendorId &&
-         a.usbProductId === b.usbProductId;
+  if (!a || !b || a.usbVendorId === null || b.usbVendorId === null) return false;
+  return a.usbVendorId === b.usbVendorId && a.usbProductId === b.usbProductId;
 }
 function portDescription(port) {
   const info = readPortInfo(port);
@@ -92,8 +82,7 @@ function portDescription(port) {
 }
 async function grantedPorts(api) {
   try {
-    if (typeof api?.getPorts !== "function") return [];
-    return await api.getPorts();
+    return typeof api?.getPorts === "function" ? await api.getPorts() : [];
   } catch {
     return [];
   }
@@ -101,19 +90,16 @@ async function grantedPorts(api) {
 async function findRememberedGrantedPort(api) {
   const ports = await grantedPorts(api);
   if (!ports.length) return null;
-
   if (rememberedPort && ports.includes(rememberedPort)) return rememberedPort;
   if (rememberedInfo) {
     const match = ports.find((candidate) => samePortInfo(readPortInfo(candidate), rememberedInfo));
     if (match) return match;
   }
-  // If this origin has permission for exactly one serial device, it is the
-  // least surprising reconnect target and avoids another Android picker.
   return ports.length === 1 ? ports[0] : null;
 }
 async function safeClose(port) {
   if (!port) return;
-  try { await port.close(); } catch { /* unplugged/already closed */ }
+  try { await port.close(); } catch { /* unplugged or already closed */ }
 }
 async function readFromPort(port, token) {
   const decoder = new TextDecoder();
@@ -147,7 +133,7 @@ async function readFromPort(port, token) {
     if (activePort === port) activePort = null;
 
     if (!userDisconnecting) {
-      setStatus("Disconnected. Press Reconnect to reuse the authorized T5; use Connect only if permission is lost.", "warn");
+      setStatus("Disconnected. Wait for the USB device to return, then press Reconnect.", "warn");
     }
     updateControls();
   }
@@ -159,7 +145,6 @@ async function openPort(port, backendName) {
   activePort = port;
   rememberedPort = port;
   rememberedInfo = readPortInfo(port);
-  activeBackendName = backendName;
   await port.open({ baudRate });
 
   connected = true;
@@ -177,24 +162,20 @@ async function connect() {
 
   const backend = serialBackend();
   try {
-    // Reuse an already-authorized device first. Once the user has granted a
-    // T5 to this origin, ordinary reconnects should not reopen the picker.
     let port = await findRememberedGrantedPort(backend.api);
     if (!port) {
-      setStatus("Choose the T5 USB serial port…");
-      // requestPort() remains directly inside the Connect gesture path.
+      setStatus("Choose a USB serial device…");
+      // Keep requestPort() directly in the user-triggered Connect path so
+      // Android Chrome/WebUSB is allowed to show its permission picker.
       port = await backend.api.requestPort();
     } else {
-      setStatus("Opening the previously authorized T5…");
+      setStatus("Opening the previously authorized serial device…");
     }
     await openPort(port, backend.name);
   } catch (error) {
     connected = false;
-    if (error?.name === "NotFoundError") {
-      setStatus("No serial port selected.", "warn");
-    } else {
-      setStatus("Could not open serial port: " + (error.message || String(error)), "error");
-    }
+    if (error?.name === "NotFoundError") setStatus("No serial device selected.", "warn");
+    else setStatus("Could not open serial device: " + (error.message || String(error)), "error");
     if (activePort && !connected) {
       await safeClose(activePort);
       activePort = null;
@@ -208,14 +189,16 @@ async function reconnect() {
   if (connecting || connected || !serialAvailable()) return;
   connecting = true;
   updateControls();
-  setStatus("Looking for the previously authorized T5…");
+  setStatus("Looking for the previously authorized serial device…");
 
   const backend = serialBackend();
   try {
+    // A reset can create a new JS port object. Match an already-authorized
+    // re-enumerated device by USB VID/PID before falling back to the old object.
     let port = await findRememberedGrantedPort(backend.api);
     if (!port && rememberedPort) port = rememberedPort;
     if (!port) {
-      setStatus("No authorized T5 is available. Press Connect to choose it again.", "warn");
+      setStatus("Previous device is not currently authorized. Press Connect to select it again.", "warn");
       return;
     }
     await openPort(port, backend.name);
@@ -225,9 +208,7 @@ async function reconnect() {
       await safeClose(activePort);
       activePort = null;
     }
-    // Do not invoke requestPort() here. Reconnect is intentionally a no-picker
-    // operation; Connect is the explicit permission/device-selection action.
-    setStatus("Reconnect failed: " + (error.message || String(error)) + ". If the T5 re-enumerated, press Connect once.", "warn");
+    setStatus("Reconnect failed: " + (error.message || String(error)) + ". Wait for USB to reappear, or use Connect if permission was lost.", "warn");
   } finally {
     connecting = false;
     updateControls();
@@ -248,7 +229,7 @@ async function disconnect() {
       try { await activeReader.cancel(); } catch { /* device may already be gone */ }
     }
     if (readLoopPromise) {
-      try { await readLoopPromise; } catch { /* read errors are handled in loop */ }
+      try { await readLoopPromise; } catch { /* handled in read loop */ }
     }
     await safeClose(port);
   } finally {
@@ -258,7 +239,7 @@ async function disconnect() {
     connected = false;
     everConnected = true;
     userDisconnecting = false;
-    setStatus("Disconnected by user. Reconnect will reuse the authorized T5.");
+    setStatus("Disconnected by user. Press Reconnect to reopen the previous device.");
     updateControls();
   }
 }
@@ -299,8 +280,7 @@ clearButton.addEventListener("click", clearWindow);
 if (!serialAvailable()) {
   setStatus("Serial access unavailable. Use Chrome/Edge on desktop or Chrome on Android over HTTPS.", "error");
 } else {
-  const backend = serialBackend();
-  setStatus("Ready · " + backend.name + (isAndroidPlatform() ? " on Android." : "."));
+  setStatus("Ready · " + serialBackend().name + ".");
 }
 updateLogButtons();
 updateControls();
