@@ -1309,7 +1309,7 @@ MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_g
 bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){return meshink_gps_set_constellation_mode(mode);}
 const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
 bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
-    if(!local_mesh_gps_enabled()){
+    if(experiment!=MeshInkGpsPowerExperiment::CurrentState&&!local_mesh_gps_enabled()){
         T5_DEBUGLN(T5_LOG_GPS,"[T5-GPS] power experiment rejected: GPS preference is disabled");
         return false;
     }
@@ -1322,10 +1322,6 @@ bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
 bool local_mesh_gps_power_test_busy(){return meshink_gps_power_test_busy();}
 bool local_mesh_gps_power_test_replay_last(){return meshink_gps_power_test_replay_last();}
 bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction action){
-    if(!local_mesh_gps_enabled()){
-        T5_DEBUGLN(T5_LOG_GPS,"[T5-GPS] diagnostic rejected: GPS preference is disabled");
-        return false;
-    }
     if(local_mesh_gps_power_test_busy())return false;
     if(gps_duty_sleeping){meshink_gps_set_provider_enabled(true);gps_duty_sleeping=false;}
     gps_duty_reset=false;gps_duty_next_wake=0;gps_duty_awake_since=0;
