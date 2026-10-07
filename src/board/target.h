@@ -6,6 +6,7 @@
 #include <SPI.h>
 #include "board_profile.h"
 #include "../hardware/radio_types.h"
+#include "../hardware/rtc_types.h"
 
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
@@ -15,11 +16,25 @@ class T5RTCClock : public mesh::RTCClock {
     uint32_t deferred_hardware_time_ = 0;
     uint32_t trusted_gps_time_ = 0;
     uint32_t trusted_gps_until_ = 0;
+    uint32_t expected_companion_time_ = 0;
+    uint32_t expected_companion_until_ = 0;
+    uint32_t last_gps_sync_utc_ = 0;
+    MeshInkTimeSource time_source_ = MeshInkTimeSource::Unknown;
+    bool metadata_loaded_ = false;
+
+    void loadMetadata();
+    void saveMetadata();
+    bool gpsAuthorityActive(uint32_t current) const;
+    bool writeAcceptedTime(uint32_t utc,MeshInkTimeSource source);
 public:
     void begin();
     uint32_t getCurrentTime() override;
     void setCurrentTime(uint32_t time) override;
     void expectGpsTime(uint32_t time);
+    void expectCompanionTime(uint32_t time);
+    bool setManualTime(uint32_t time);
+    MeshInkTimeSource timeSource();
+    bool gpsAuthoritative();
     bool isValid() const { return valid_; }
 };
 
