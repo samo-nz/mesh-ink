@@ -455,7 +455,8 @@ static uint32_t gps_last_byte_at = 0;
 // LoRa and GPS share VCC3V3. Constellation selection remains user-controlled;
 // compact GGA+RMC NMEA output is always configured on the inferred L76K.
 // Neither setting shuts down receiver power or changes the 1 Hz fix rate.
-// The generic 1..7 GPS/BDS/GLO bitmask maps directly to documented PCAS04.
+// The generic 1..7 GPS/BDS/GLO bitmask maps directly to documented PCAS04;
+// generic mode 0 means disabled and is parked with the proven BeiDou-zero state.
 #ifndef T5_GPS_FULL_NMEA_DIAGNOSTIC
 #define T5_GPS_FULL_NMEA_DIAGNOSTIC 0
 #endif
@@ -463,9 +464,9 @@ static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellatio
 static bool gps_tuning_loaded=false;
 static bool gps_constellation_dirty=false;
 // Defensive T5/L76K boot recovery: the receiver can retain PCAS15 satellite
-// masks across an ESP reset while its shared rail remains powered. Restore the
-// full BeiDou masks once after each boot before applying the user's selection.
-static bool gps_satellite_masks_restore_pending=true;
+// masks across an ESP reset while its shared rail remains powered.
+static bool gps_boot_mask_recovery_pending=true;
+static bool gps_receiver_masks_zeroed=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 
 // T5/L76K-only retained marker. The application and generic GPS surface never
@@ -481,17 +482,22 @@ static void gps_load_tuning(){
     gps_tuning_loaded=true;
     Preferences pref;
     if(pref.begin("t5-gnss",false)){
+        const bool mode_v2=pref.getBool("mode_v2",false);
         const auto stored=pref.getUChar(
             "constellation",(uint8_t)MeshInkGpsConstellationMode::GpsBeiDou);
         const auto mode=static_cast<MeshInkGpsConstellationMode>(stored);
-        if(meshink_gps_constellation_mode_valid(mode)){
+        if(!mode_v2&&stored==0){
+            // Pre-GPS-MODE firmware used zero to mean "unchanged". Migrate that
+            // one ambiguous legacy value to the previous effective default.
+            gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
+            pref.putUChar("constellation",(uint8_t)gps_constellation_mode);
+        }else if(meshink_gps_constellation_mode_valid(mode)){
             gps_constellation_mode=mode;
         }else{
-            // Legacy UNCHANGED/0 becomes the previous effective default:
-            // GPS + BeiDou. Persist the migration so future boots are explicit.
             gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
             pref.putUChar("constellation",(uint8_t)gps_constellation_mode);
         }
+        pref.putBool("mode_v2",true);
         pref.end();
     }
     // Ignore the pre-1.5.0 "compact" preference: full output is now a
@@ -506,28 +512,46 @@ static void gps_send_pcas(const char* payload) {
     Serial1.flush();
     T5_GPS_TRACE("gps tuning: TX $%s*%02X (receiver acceptance not confirmed)\n",payload,checksum);
 }
+static void gps_restore_full_bds_masks(){
+    gps_send_pcas("PCAS15,2,FFFFFFFF");
+    gps_send_pcas("PCAS15,3,FFFFFFFF");
+    gps_receiver_masks_zeroed=false;
+}
+static void gps_apply_low_work(bool deep_sleep){
+    gps_send_pcas("PCAS04,2");
+    gps_send_pcas("PCAS15,2,00000000");
+    gps_send_pcas("PCAS15,3,00000000");
+    gps_receiver_masks_zeroed=true;
+    if(deep_sleep)gps_deep_sleep_low_work_magic=GPS_DEEP_SLEEP_LOW_WORK_MAGIC;
+}
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
 
-    if(gps_satellite_masks_restore_pending||
+    if(gps_boot_mask_recovery_pending||
        gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
-        // Always recover the documented BeiDou masks once after boot. This
-        // covers both an expected deep-sleep wake and an unexpected ESP reset
-        // that occurred while the separately-powered L76K retained zero masks.
-        gps_send_pcas("PCAS15,2,FFFFFFFF");
-        gps_send_pcas("PCAS15,3,FFFFFFFF");
-        gps_satellite_masks_restore_pending=false;
+        // Recover any retained zero masks first on every interactive boot.
+        gps_restore_full_bds_masks();
+        gps_boot_mask_recovery_pending=false;
         gps_deep_sleep_low_work_magic=0;
         gps_constellation_dirty=true;
         Serial.println("[T5-GPS] startup GNSS satellite masks restored");
     }
 
-    if(gps_constellation_dirty){
-        gps_constellation_dirty=false;
-        char payload[16];
-        snprintf(payload,sizeof(payload),"PCAS04,%u",
-                 (unsigned)static_cast<uint8_t>(gps_constellation_mode));
-        gps_send_pcas(payload);
+    if(gps_constellation_mode==MeshInkGpsConstellationMode::None){
+        if(gps_constellation_dirty||!gps_receiver_masks_zeroed){
+            gps_constellation_dirty=false;
+            gps_apply_low_work(false);
+            Serial.println("[T5-GPS] GPS mode disabled; receiver parked in BeiDou zero-mask state");
+        }
+    }else{
+        if(gps_receiver_masks_zeroed)gps_restore_full_bds_masks();
+        if(gps_constellation_dirty){
+            gps_constellation_dirty=false;
+            char payload[16];
+            snprintf(payload,sizeof(payload),"PCAS04,%u",
+                     (unsigned)static_cast<uint8_t>(gps_constellation_mode));
+            gps_send_pcas(payload);
+        }
     }
     if(gps_nmea_dirty){
         gps_nmea_dirty=false;
@@ -554,6 +578,7 @@ bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     Preferences pref;
     if(!pref.begin("t5-gnss",false))return false;
     const bool saved=pref.putUChar("constellation",stored)==1;
+    if(saved)pref.putBool("mode_v2",true);
     pref.end();
     if(!saved)return false;
     gps_constellation_mode=mode;
@@ -572,10 +597,7 @@ static bool t5_gps_prepare_deep_sleep_low_work(){
                       gps_baud_locked?1U:0U,gps_module_name());
         return false;
     }
-    gps_send_pcas("PCAS04,2");
-    gps_send_pcas("PCAS15,2,00000000");
-    gps_send_pcas("PCAS15,3,00000000");
-    gps_deep_sleep_low_work_magic=GPS_DEEP_SLEEP_LOW_WORK_MAGIC;
+    gps_apply_low_work(true);
     Serial.println("[T5-GPS] deep-sleep GNSS low-work active: BeiDou zero mask");
     return true;
 #else
