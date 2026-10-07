@@ -3526,6 +3526,7 @@ static void touch_sampler_task(void*){
     for(;;){
         if(!touch_enabled){
             held=false;home_held=false;map_multi=false;map_previous=false;
+            quick_slider_dragging=false;display_slider_dragging=false;
             keyboard_delete_hold=false;keyboard_delete_repeated=false;
             meshink_touch_reset_tracking();
             ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
@@ -3539,6 +3540,7 @@ static void touch_sampler_task(void*){
             !keyboard_landscape&&!quick_panel_active;
         if(on_map!=map_previous) {
             held=false;home_held=false;map_multi=false;
+            quick_slider_dragging=false;display_slider_dragging=false;
             keyboard_delete_hold=false;keyboard_delete_repeated=false;
             meshink_touch_reset_tracking();
             map_previous=on_map;
@@ -3622,7 +3624,8 @@ static void touch_sampler_task(void*){
             }else if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
                 home_held=true;
-                held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                held=false;quick_slider_dragging=false;display_slider_dragging=false;
+                keyboard_delete_hold=false;keyboard_delete_repeated=false;
             }else if(home_held){
                 if(!pressed)home_held=false;
             }else if(pressed){
@@ -3670,7 +3673,6 @@ static void touch_sampler_task(void*){
             }else if(held){
                 held=false;
                 quick_slider_dragging=false;display_slider_dragging=false;
-                display_slider_dragging=false;
                 const int16_t dx=(int16_t)(last_x-start_x);
                 const int16_t dy=(int16_t)(last_y-start_y);
                 int16_t event_x=last_x,event_y=last_y;
