@@ -2624,28 +2624,37 @@ static void settings_info_row(const char* title,const char* subtitle,int referen
                 subtitle_width,subtitle_scale,0,false);
 }
 
+enum class SettingsAction:uint8_t{IdentityRadio,Gps,DateTime,Privacy,DisplayPower,About};
+struct SettingsMenuItem{const char* title;const char* subtitle;SettingsAction action;};
+
+static size_t settings_menu_items(SettingsMenuItem out[6]){
+    size_t count=0;
+    out[count++]={"ID & RADIO",active_radio_label(),SettingsAction::IdentityRadio};
+    if(meshink_board_has_gps())
+        out[count++]={"LOCATION & GPS","Position, interval, advert",SettingsAction::Gps};
+    out[count++]={"DATE & TIME","Clock, source, timezone",SettingsAction::DateTime};
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_PRIVACY))
+        out[count++]={"PRIVACY","Contacts and telemetry",SettingsAction::Privacy};
+    out[count++]={"DISPLAY & POWER","Frontlight, refresh, standby",SettingsAction::DisplayPower};
+    out[count++]={"ABOUT","Firmware and device info",SettingsAction::About};
+    return count;
+}
+
+static int settings_menu_y(size_t index){return 118+(int)index*120;}
+
 static void draw_settings() {
     draw_app_header("SETTINGS",true);
-    settings_row("ID & RADIO",active_radio_label(),118);
-    if(meshink_board_has_gps()){
-        settings_row("LOCATION & GPS","Position, interval, advert",238);
-        settings_row("DATE & TIME","Clock, source, timezone",358);
-        settings_row("PRIVACY","Contacts and telemetry",478);
-        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",598);
-        settings_row("ABOUT","Firmware and device info",718);
-    }else{
-        settings_row("DATE & TIME","Clock, source, timezone",238);
-        settings_row("PRIVACY","Contacts and telemetry",358);
-        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478);
-        settings_row("ABOUT","Firmware and device info",598);
-    }
+    SettingsMenuItem items[6]{};
+    const size_t count=settings_menu_items(items);
+    for(size_t i=0;i<count;++i)
+        settings_row(items[i].title,items[i].subtitle,settings_menu_y(i));
 }
 
 static void draw_radio_settings() {
     draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
     settings_row("REGION PRESET",active_radio_label(),250);
     settings_row("ACTIVE RADIO",active_radio_label(),380);
-    if(!keyboard_visible)settings_row("PATH HASH MODE",path_hash_label(),510);
+    if(!keyboard_visible&&mesh_protocol_has(MESHINK_PROTOCOL_CAP_PATH_HASH))settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
 }
 
@@ -4158,27 +4167,29 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 show_toast(mesh_protocol_request_diagnostics()?"REFRESHING STATS":"DIAGNOSTICS BUSY");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }break;
-        case Screen::Settings:
+        case Screen::Settings:{
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
-            if(hit_outer_row(x,y,118)){open_screen(Screen::RadioSettings);return true;}
-            if(meshink_board_has_gps()){
-                if(hit_outer_row(x,y,238)){open_screen(Screen::GpsSettings);return true;}
-                if(hit_outer_row(x,y,358)){open_screen(Screen::DateTime);return true;}
-                if(hit_outer_row(x,y,478)){open_screen(Screen::PrivacySettings);return true;}
-                if(hit_outer_row(x,y,598)){open_screen(Screen::DisplaySettings);return true;}
-                if(hit_outer_row(x,y,718)){open_screen(Screen::About);return true;}
-            }else{
-                if(hit_outer_row(x,y,238)){open_screen(Screen::DateTime);return true;}
-                if(hit_outer_row(x,y,358)){open_screen(Screen::PrivacySettings);return true;}
-                if(hit_outer_row(x,y,478)){open_screen(Screen::DisplaySettings);return true;}
-                if(hit_outer_row(x,y,598)){open_screen(Screen::About);return true;}
+            SettingsMenuItem items[6]{};
+            const size_t count=settings_menu_items(items);
+            for(size_t i=0;i<count;++i){
+                if(!hit_outer_row(x,y,settings_menu_y(i)))continue;
+                switch(items[i].action){
+                    case SettingsAction::IdentityRadio:open_screen(Screen::RadioSettings);break;
+                    case SettingsAction::Gps:open_screen(Screen::GpsSettings);break;
+                    case SettingsAction::DateTime:open_screen(Screen::DateTime);break;
+                    case SettingsAction::Privacy:open_screen(Screen::PrivacySettings);break;
+                    case SettingsAction::DisplayPower:open_screen(Screen::DisplaySettings);break;
+                    case SettingsAction::About:open_screen(Screen::About);break;
+                }
+                return true;
             }
             break;
+        }
         case Screen::RadioSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,120)){replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,250)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}
-            if(hit_outer_row(x,y,510)){mesh_protocol_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_PATH_HASH)&&hit_outer_row(x,y,510)){mesh_protocol_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             return true;
         case Screen::GpsSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
