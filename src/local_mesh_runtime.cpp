@@ -113,6 +113,16 @@ static void format_time(uint32_t timestamp,char out[10]){
     time_t raw=timestamp?(time_t)timestamp:time(nullptr);struct tm value{};localtime_r(&raw,&value);
     snprintf(out,10,"%02d:%02d",value.tm_hour,value.tm_min);
 }
+static UiNodeRole meshcore_ui_role(uint8_t type){
+    switch(type){
+        case ADV_TYPE_CHAT:return UiNodeRole::Chat;
+        case ADV_TYPE_REPEATER:return UiNodeRole::Repeater;
+        case ADV_TYPE_ROOM:return UiNodeRole::Room;
+        case ADV_TYPE_SENSOR:return UiNodeRole::Sensor;
+        default:return UiNodeRole::Unknown;
+    }
+}
+
 static void format_node_role(uint8_t type,char* out,size_t len){
     switch(type){
         case ADV_TYPE_CHAT:strncpy(out,"CHAT",len);break;
@@ -257,7 +267,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         for(size_t i=0;i<contact_count_;++i){
             for(uint8_t b:contacts_[i].key){hash^=b;hash*=16777619UL;}
             for(const char* p=contacts_[i].title;*p;++p){hash^=(uint8_t)*p;hash*=16777619UL;}
-            hash^=contacts_[i].entry.node_type;hash*=16777619UL;
+            hash^=(uint8_t)contacts_[i].entry.role;hash*=16777619UL;
         }
         hash^=(uint32_t)contact_count_;hash*=16777619UL;
         return hash;
@@ -291,7 +301,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
             format_time(item.timestamp,summary.time);
             memcpy(summary.key,contacts_[contact].key,sizeof(summary.key));
             summary.entry.unread=direct_unread_count(summary.key);
-            summary.entry.node_type=contacts_[contact].entry.node_type;
+            summary.entry.role=contacts_[contact].entry.role;
         }
         conversation_store_revision_=store_.revision();
         conversation_contacts_signature_=contact_signature;
@@ -303,7 +313,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
                 if(memcmp(conversations_[i].key,contacts_[contact].key,6))continue;
                 strncpy(conversations_[i].title,contacts_[contact].title,
                         sizeof(conversations_[i].title)-1);
-                conversations_[i].entry.node_type=contacts_[contact].entry.node_type;
+                conversations_[i].entry.role=contacts_[contact].entry.role;
                 break;
             }
         }
@@ -426,7 +436,7 @@ public:
             else strcpy(item.time,"--:--");
             memcpy(item.key,contact.id.pub_key,7);
             item.entry.unread=direct_unread_count(item.key);
-            item.entry.node_type=contact.type;
+            item.entry.role=meshcore_ui_role(contact.type);
 
         }
         const uint32_t contact_signature=contacts_signature();
@@ -451,7 +461,7 @@ public:
             if(const auto* saved=meshink_meshcore().lookupContactByPubKey(heard[i].pubkey_prefix,7))node_type=saved->type;
             else for(const auto& discovered:discovered_)if(discovered.len&&!memcmp(discovered.prefix,heard[i].pubkey_prefix,7)){const size_t type_offset=1+PUB_KEY_SIZE;if(discovered.len>type_offset)node_type=discovered.frame[type_offset];break;}
             char role[20]{};format_node_role(node_type,role,sizeof(role));
-            strncpy(item.title,heard[i].name,sizeof(item.title)-1);snprintf(item.subtitle,sizeof(item.subtitle),hops?"%s  ADVERT  %u HOP%s":"%s  ADVERT  ZERO HOP",role,hops,hops==1?"":"S");format_time(heard[i].recv_timestamp,item.time);memcpy(item.key,heard[i].pubkey_prefix,7);item.entry.node_type=node_type;
+            strncpy(item.title,heard[i].name,sizeof(item.title)-1);snprintf(item.subtitle,sizeof(item.subtitle),hops?"%s  ADVERT  %u HOP%s":"%s  ADVERT  ZERO HOP",role,hops,hops==1?"":"S");format_time(heard[i].recv_timestamp,item.time);memcpy(item.key,heard[i].pubkey_prefix,7);item.entry.role=meshcore_ui_role(node_type);
             T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] advert '%s' type=%u path=0x%02x hops=%u\n",item.title,node_type,heard[i].path_len,hops);
         }
         // MeshCore's saved contacts are the single source of last-known GPS.
@@ -466,7 +476,7 @@ public:
             strncpy(item.name,positioned.name[0]?positioned.name:"UNNAMED",sizeof(item.name)-1);
             memcpy(item.key,positioned.id.pub_key,sizeof(item.key));
             item.latitude=positioned.gps_lat;item.longitude=positioned.gps_lon;
-            item.node_type=positioned.type;
+            item.role=meshcore_ui_role(positioned.type);
             item.advertised_at=positioned.last_advert_timestamp;
         }
         // A node with no saved advert GPS may still have returned valid GPS
@@ -482,7 +492,7 @@ public:
                         recent_info_.key,PUB_KEY_SIZE)){
                     strncpy(item.name,contact->name[0]?contact->name:"UNNAMED",
                             sizeof(item.name)-1);
-                    item.node_type=contact->type;
+                    item.role=meshcore_ui_role(contact->type);
                     item.advertised_at=contact->last_advert_timestamp;
                     memcpy(item.key,recent_info_.key,sizeof(item.key));
                     item.latitude=recent_info_.lat;
@@ -703,11 +713,15 @@ public:
             strcpy(self->detail_position_,"NO SAVED POSITION");
             strcpy(self->detail_position_source_,"NO GPS REPORTED");
         }
+        uint32_t capabilities=UI_NODE_CAP_TELEMETRY|UI_NODE_CAP_PATH|UI_NODE_CAP_TRACE;
+        if(detail_contact_.type==ADV_TYPE_REPEATER||detail_contact_.type==ADV_TYPE_ROOM)
+            capabilities|=UI_NODE_CAP_STATUS|UI_NODE_CAP_LOGIN;
         out={detail_contact_.name,self->detail_identity_,self->detail_seen_,
              self->detail_route_,self->detail_position_,self->detail_status_,
              self->detail_telemetry_,self->detail_path_,self->detail_trace_,self->detail_lat_,
              self->detail_lon_,detail_request_active_,detail_request_type_,
-             detail_login_active_,detail_authenticated_,self->detail_access_,detail_contact_.type,detail_saved_,
+             detail_login_active_,detail_authenticated_,self->detail_access_,
+             meshcore_ui_role(detail_contact_.type),capabilities,detail_saved_,
              self->detail_advert_age_,self->detail_position_source_};
         return true;
     }
