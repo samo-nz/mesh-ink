@@ -889,8 +889,11 @@ assert "Serial1" not in runtime_source and "Serial1" not in companion_source and
 assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
 assert "PCAS03" not in runtime_source and "PCAS04" not in runtime_source and "PCAS03" not in source and "PCAS04" not in source, "receiver command syntax must stay in the board GPS implementation"
-assert "meshink_gps_constellation_mode_set(" in source and "KEEP ONE SYSTEM ON" in source, "UI uses board-independent constellation toggles and refuses all-off"
-assert 'draw_app_header("GPS OPTIONS",true);' in source, "GPS options page uses neutral constellation wording"
+assert "meshink_gps_constellation_mode_set(" in source and "GPS DISABLED" in source and "GPS ENABLED" in source, "UI uses board-independent GPS mode toggles including disabled state"
+assert 'draw_app_header("GPS MODE",true);' in source, "GPS mode page uses final user-facing wording"
+assert 'settings_row("GPS MODE",gps_mode_label(),120);' in source, "Location and GPS opens GPS MODE instead of a redundant power toggle"
+assert "GPS POWER" not in source, "GPS power row is removed because empty GPS mode owns disabled state"
+assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explains the empty-selection behavior"
 assert 'settings_row("GPS",gps_constellation_state(MeshInkGpsConstellation::Gps),118);' in source, "GPS constellation toggle row present"
 assert 'settings_row("BEIDOU",gps_constellation_state(MeshInkGpsConstellation::BeiDou),238);' in source, "BeiDou constellation toggle row present"
 assert 'settings_row("GLONASS",gps_constellation_state(MeshInkGpsConstellation::Glonass),358);' in source, "GLONASS constellation toggle row present"
@@ -898,9 +901,24 @@ assert "GPS POWER SAVING" not in source, "final constellation UI must not presen
 assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
 assert 'gps_send_pcas("PCAS04,2");' in board_target_source and 'gps_send_pcas("PCAS15,2,00000000");' in board_target_source and 'gps_send_pcas("PCAS15,3,00000000");' in board_target_source, "T5 deep sleep owns the proven BeiDou zero-mask low-work state"
 assert 'gps_send_pcas("PCAS15,2,FFFFFFFF");' in board_target_source and 'gps_send_pcas("PCAS15,3,FFFFFFFF");' in board_target_source, "T5 startup restores full BeiDou masks before user constellation selection"
-assert "gps_satellite_masks_restore_pending=true" in board_target_source and "startup GNSS satellite masks restored" in board_target_source, "T5 defensively clears retained BeiDou masks once after every boot"
+assert "gps_boot_mask_recovery_pending=true" in board_target_source and "startup GNSS satellite masks restored" in board_target_source, "T5 defensively clears retained BeiDou masks once after every boot"
 assert "t5_gps_prepare_deep_sleep_low_work();" in board_target_source, "T5 board deep-sleep handoff applies GNSS low-work state only at final sleep entry"
 assert "PCAS15" not in runtime_source and "PCAS15" not in companion_source and "PCAS15" not in source, "T5/L76K deep-sleep mask commands must not leak into generic runtime or UI"
+
+# Hardware-portability clock boundary and standalone manual time.
+rtc_header_source = (root / "src" / "hardware" / "rtc.h").read_text(encoding="utf-8")
+rtc_types_source = (root / "src" / "hardware" / "rtc_types.h").read_text(encoding="utf-8")
+assert "MESHINK_RTC_BACKEND_HEADER" in rtc_header_source, "RTC backend is compile-time selectable"
+assert "MeshInkTimeSource" in rtc_types_source, "time-source vocabulary is board independent"
+assert "local_mesh_set_manual_time" in runtime_source and "meshink_rtc_set_manual_time" in runtime_source, "manual time routes through generic RTC backend"
+assert "meshink_rtc_expect_companion_time" in companion_source and "CMD_SET_DEVICE_TIME" in companion_source, "companion SET_DEVICE_TIME is explicitly identified before upstream handling"
+assert "T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL" in board_target_source, "trusted GPS time owns a 24-hour authority window"
+assert "trusted_companion" in board_target_source and "gpsAuthorityActive(current)" in board_target_source, "companion time is gated only by fresh GPS authority after upstream command validation"
+assert "setManualTime" in board_target_source and "MeshInkTimeSource::Manual" in board_target_source, "manual time bypass exists and records its source"
+assert 'settings_row("DATE & TIME","Clock, source, timezone"' in source, "Date and Time is available from Settings independently of GPS"
+assert 'draw_app_header("DATE & TIME",true);' in source and 'draw_app_header("SET DATE & TIME",true);' in source, "standalone clock pages are present"
+assert 'settings_row("TIMEZONE",TIMEZONES[timezone_index].label,478);' in source, "timezone belongs to Date and Time instead of GPS"
+assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explanatory text remains visible"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
