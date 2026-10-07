@@ -6,12 +6,24 @@ enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Fail
 enum class UiNodeInfoRequest : uint8_t { Status=0, Telemetry=1, Path=2, Trace=3, None=255 };
 enum class UiNodeRole : uint8_t { Unknown=0, Chat=1, Repeater=2, Room=3, Sensor=4 };
 
+enum UiNodeCapability : uint32_t {
+    UI_NODE_CAP_STATUS    = 1u << 0,
+    UI_NODE_CAP_TELEMETRY = 1u << 1,
+    UI_NODE_CAP_PATH      = 1u << 2,
+    UI_NODE_CAP_TRACE     = 1u << 3,
+    UI_NODE_CAP_LOGIN     = 1u << 4,
+};
+
+inline bool ui_node_has_capability(uint32_t capabilities, UiNodeCapability capability) {
+    return (capabilities & (uint32_t)capability) != 0;
+}
+
 struct UiListEntry {
     const char* title;
     const char* subtitle;
     const char* time;
     uint8_t unread;
-    uint8_t node_type; // MeshCore advert type; unknown future values are preserved.
+    UiNodeRole role = UiNodeRole::Unknown;
 };
 
 struct UiMessage {
@@ -39,7 +51,8 @@ struct UiNodeDetails {
     bool login_active;
     bool authenticated;
     const char* access_level;
-    uint8_t node_type; // Raw MeshCore advert type for future role support.
+    UiNodeRole role = UiNodeRole::Unknown;
+    uint32_t capabilities = 0; // Optional node-detail pages/actions exposed by the active protocol helper.
     bool saved_contact;
     const char* advert_age;       // time since the last saved advertisement
     const char* position_source;  // last advert vs GPS reply receipt age
@@ -50,8 +63,8 @@ struct UiMapNode {
     uint8_t key[7];
     int32_t latitude;
     int32_t longitude;
-    uint8_t node_type=0; // Raw MeshCore advert type; repeaters get a distinct map marker.
-    uint32_t advertised_at; // MeshCore last advert, not a GPS fix timestamp.
+    UiNodeRole role = UiNodeRole::Unknown;
+    uint32_t advertised_at; // Protocol-reported advertisement/last-seen timestamp when available.
     uint32_t gps_received_millis=0; // local reception of GPS telemetry
     bool gps_from_reply=false;
 };
