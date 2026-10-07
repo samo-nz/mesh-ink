@@ -228,6 +228,18 @@ void mesh_protocol_apply_name(const char* name) {
     if (active_backend().apply_name) active_backend().apply_name(name);
 }
 
+bool mesh_protocol_name_character_allowed(char c) {
+    if (active_backend().name_character_allowed)
+        return active_backend().name_character_allowed(c);
+    return c >= 32 && c < 127;
+}
+
+size_t mesh_protocol_node_name_max_length() {
+    return active_backend().node_name_max_length
+        ? active_backend().node_name_max_length()
+        : 20;
+}
+
 const char* mesh_protocol_node_name() {
     return active_backend().node_name ? safe_text(active_backend().node_name()) : "";
 }
