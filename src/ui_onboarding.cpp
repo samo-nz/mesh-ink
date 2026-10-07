@@ -3912,13 +3912,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,118)){open_screen(Screen::RadioSettings);return true;}
             if(meshink_board_has_gps()){
                 if(hit_outer_row(x,y,238)){open_screen(Screen::GpsSettings);return true;}
+                if(hit_outer_row(x,y,358)){open_screen(Screen::DateTime);return true;}
+                if(hit_outer_row(x,y,478)){open_screen(Screen::PrivacySettings);return true;}
+                if(hit_outer_row(x,y,598)){open_screen(Screen::DisplaySettings);return true;}
+                if(hit_outer_row(x,y,718)){open_screen(Screen::About);return true;}
+            }else{
+                if(hit_outer_row(x,y,238)){open_screen(Screen::DateTime);return true;}
                 if(hit_outer_row(x,y,358)){open_screen(Screen::PrivacySettings);return true;}
                 if(hit_outer_row(x,y,478)){open_screen(Screen::DisplaySettings);return true;}
                 if(hit_outer_row(x,y,598)){open_screen(Screen::About);return true;}
-            }else{
-                if(hit_outer_row(x,y,238)){open_screen(Screen::PrivacySettings);return true;}
-                if(hit_outer_row(x,y,358)){open_screen(Screen::DisplaySettings);return true;}
-                if(hit_outer_row(x,y,478)){open_screen(Screen::About);return true;}
             }
             break;
         case Screen::RadioSettings:
@@ -3969,8 +3971,42 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         }
+        case Screen::DateTime:
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
+            if(hit_outer_row(x,y,358)){
+                load_manual_time_draft();
+                open_screen(Screen::ManualTime);
+                return true;
+            }
+            if(hit_outer_row(x,y,478)){open_screen(Screen::Timezone);return true;}
+            break;
+        case Screen::ManualTime:{
+            if(hit_header_back(x,y)){open_screen(Screen::DateTime);return true;}
+            const int rows[]={118,238,358,478,598};
+            for(uint8_t i=0;i<5;++i){
+                if(hit(x,y,manual_time_adjust_button_rect(rows[i],false))){
+                    adjust_manual_time_field(i,-1);
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(hit(x,y,manual_time_adjust_button_rect(rows[i],true))){
+                    adjust_manual_time_field(i,1);
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+            }
+            if(hit(x,y,manual_time_save_rect())){
+                if(save_manual_time_draft()){
+                    status_dirty=true;status_bar_dirty=true;
+                    screen=Screen::DateTime;
+                    show_toast("DATE & TIME SAVED");
+                }else{
+                    show_toast("INVALID DATE OR TIME");
+                }
+                draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
+            }
+            break;
+        }
         case Screen::Timezone:
-            if(hit_header_back(x,y)){open_screen(Screen::GpsTuning);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::DateTime);return true;}
             for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
                 if(!hit_outer_row(x,y,118+i*102,92))continue;
                 timezone_index=i;
