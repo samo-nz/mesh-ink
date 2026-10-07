@@ -2742,7 +2742,7 @@ static void time_mode_label(char* out,size_t len){
     switch(mesh_protocol_time_source()){
         case MeshInkTimeSource::Gps:source="GPS FIX";break;
         case MeshInkTimeSource::Companion:source="COMPANION";break;
-        case MeshInkTimeSource::MeshCore:source="MESHCORE";break;
+        case MeshInkTimeSource::Protocol:source=mesh_protocol_name();break;
         case MeshInkTimeSource::HardwareRtc:source="VALID RTC";break;
         case MeshInkTimeSource::Manual:source="VALID RTC";break;
         default:source=mesh_protocol_time_valid()?"VALID RTC":"WAITING";break;
