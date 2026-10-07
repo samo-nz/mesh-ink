@@ -30,6 +30,7 @@ bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode);
 const char* local_mesh_gps_tuning_note();
 bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment);
 bool local_mesh_gps_power_test_busy();
+bool local_mesh_gps_power_test_isolation_active();
 bool local_mesh_gps_power_test_replay_last();
 bool local_mesh_gps_power_matrix_replay_last();
 bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction action);
