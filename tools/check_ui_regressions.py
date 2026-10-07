@@ -889,8 +889,12 @@ assert "Serial1" not in runtime_source and "Serial1" not in companion_source and
 assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
 assert "PCAS03" not in runtime_source and "PCAS04" not in runtime_source and "PCAS03" not in source and "PCAS04" not in source, "receiver command syntax must stay in the board GPS implementation"
-assert "meshink_gps_next_constellation_mode(mode)" in source, "UI uses board-independent GPS constellation cycle"
-assert "local_mesh_gps_tuning_note()" in source, "GPS board-specific explanatory text comes from backend"
+assert "meshink_gps_constellation_mode_set(" in source and "KEEP ONE SYSTEM ON" in source, "UI uses board-independent constellation toggles and refuses all-off"
+assert 'draw_app_header("GPS OPTIONS",true);' in source, "GPS options page uses neutral constellation wording"
+assert 'settings_row("GPS",gps_constellation_state(MeshInkGpsConstellation::Gps),118);' in source, "GPS constellation toggle row present"
+assert 'settings_row("BEIDOU",gps_constellation_state(MeshInkGpsConstellation::BeiDou),238);' in source, "BeiDou constellation toggle row present"
+assert 'settings_row("GLONASS",gps_constellation_state(MeshInkGpsConstellation::Glonass),358);' in source, "GLONASS constellation toggle row present"
+assert "GPS POWER SAVING" not in source, "final constellation UI must not present experimental power-saving wording"
 assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
