@@ -23,7 +23,7 @@ struct UiListEntry {
     const char* subtitle;
     const char* time;
     uint8_t unread;
-    UiNodeRole role = UiNodeRole::Unknown;
+    UiNodeRole role;
 };
 
 struct UiMessage {
@@ -52,7 +52,7 @@ struct UiNodeDetails {
     bool authenticated;
     const char* access_level;
     UiNodeRole role = UiNodeRole::Unknown;
-    uint32_t capabilities = 0; // Optional node-detail pages/actions exposed by the active protocol helper.
+    uint32_t capabilities; // Optional node-detail pages/actions exposed by the active protocol helper.
     bool saved_contact;
     const char* advert_age;       // time since the last saved advertisement
     const char* position_source;  // last advert vs GPS reply receipt age
