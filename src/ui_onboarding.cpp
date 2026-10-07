@@ -1219,9 +1219,10 @@ static void draw_keyboard() {
         // keyboards with a wide space bar and an isolated action at right.
         key("SPACE",metrics.space_key);
         key(keyboard_password_mode?"LOGIN":"SEND",metrics.action_key);
+    }else if(mesh_protocol_name_character_allowed(' ')){
+        key("SPACE",metrics.space_key);
+        key("SAVE",metrics.action_key);
     }else{
-        // MeshCore node names do not accept spaces. Use the entire remaining
-        // row for SAVE instead of showing dead SPACE/HIDE controls.
         key("SAVE",metrics.wide_action_key);
     }
     if(keyboard_message_mode)message_keyboard_case_dirty=false;
@@ -1271,7 +1272,7 @@ static void draw_landscape_keyboard(){
     landscape_key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),metrics.mode_key);
     landscape_key("DEL",metrics.delete_key);
     landscape_key("PORTRAIT",metrics.orientation_key);
-    landscape_key("SPACE",metrics.space_key);
+    landscape_key(mesh_protocol_name_character_allowed(' ')||keyboard_message_mode||keyboard_password_mode?"SPACE":"",metrics.space_key);
     landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),metrics.action_key);
     if(keyboard_message_mode)message_keyboard_case_dirty=false;
 }
@@ -3748,7 +3749,6 @@ static void touch_sampler_task(void*){
     }
 }
 
-static bool legal_name_character(char c) { return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_'; }
 static void cycle_keyboard_mode(){
     if(keyboard_symbols){keyboard_symbols=false;keyboard_upper=true;}
     else if(keyboard_upper)keyboard_upper=false;
@@ -3771,9 +3771,10 @@ static void append(char c) {
         }
         return;
     }
-    if(!legal_name_character(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
+    if(!mesh_protocol_name_character_allowed(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded protocol-invalid name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
-    size_t n=strlen(node_name); if (n<20) { node_name[n]=c; node_name[n+1]=0; saved=false; }
+    const size_t limit=min(sizeof(node_name)-1,mesh_protocol_node_name_max_length());
+    size_t n=strlen(node_name); if (n<limit) { node_name[n]=c; node_name[n+1]=0; saved=false; }
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
 static bool hit(int16_t x,int16_t y,const MeshInkUiRect& rect) {
@@ -3890,7 +3891,12 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
         if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(false);return true;}
-        if(x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
+        if(x<meshink_keyboard::action_split(metrics)){
+            if(keyboard_message_mode||keyboard_password_mode||mesh_protocol_name_character_allowed(' ')){
+                append(' ');queue_text_refresh();
+            }
+            return true;
+        }
         if(keyboard_password_mode){
             const bool ok=ui_data&&ui_data->login_active_node(remote_password,save_remote_password);
             memset(remote_password,0,sizeof(remote_password));keyboard_password_mode=false;keyboard_visible=false;save_remote_password=false;
@@ -3989,6 +3995,7 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
         if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
+        if(mesh_protocol_name_character_allowed(' ')&&x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
         const bool was_setup=screen==Screen::Welcome;
         save_node_name();
         if(was_setup){
