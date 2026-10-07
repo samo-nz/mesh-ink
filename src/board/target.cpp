@@ -546,6 +546,18 @@ static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
 enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
 static GpsModule detected_gps_module = GpsModule::Unknown;
+static MeshInkGpsError gps_error = MeshInkGpsError::None;
+
+// GNSS identity is a hardware fact worth retaining across ESP32 deep sleep.
+// It lets an interactive resume restore the correct UART/tuning immediately,
+// while a short bounded NMEA verification still catches a receiver that failed
+// to resume cleanly.
+static constexpr uint32_t GPS_RETAINED_IDENTITY_MAGIC=0x47504931; // "GPI1"
+RTC_DATA_ATTR uint32_t gps_retained_identity_magic=0;
+RTC_DATA_ATTR uint8_t gps_retained_module=0;
+RTC_DATA_ATTR uint32_t gps_retained_baud=0;
+static bool gps_resume_verify_pending=false;
+static uint32_t gps_resume_verify_deadline=0;
 // Tracks the MeshCore provider's stopped state. GPS is NOT electrically
 // switched off: LoRa and GPS share the same power rail.
 static bool gps_command_sleeping = false;
@@ -575,6 +587,39 @@ static constexpr uint32_t GPS_DEEP_SLEEP_LOW_WORK_MAGIC=0x47505A31; // "GPZ1"
 RTC_DATA_ATTR uint32_t gps_deep_sleep_low_work_magic=0;
 
 static const char* gps_module_name();
+
+static bool gps_supported_identity(GpsModule module,uint32_t baud){
+    return (module==GpsModule::L76K&&baud==9600UL)||
+           (module==GpsModule::MiaM10Q&&baud==38400UL);
+}
+static void gps_clear_retained_identity(){
+    gps_retained_identity_magic=0;
+    gps_retained_module=(uint8_t)GpsModule::Unknown;
+    gps_retained_baud=0;
+}
+static void gps_retain_identity(){
+    if(!gps_supported_identity(detected_gps_module,detected_gps_baud)){
+        gps_clear_retained_identity();
+        return;
+    }
+    gps_retained_module=(uint8_t)detected_gps_module;
+    gps_retained_baud=detected_gps_baud;
+    gps_retained_identity_magic=GPS_RETAINED_IDENTITY_MAGIC;
+}
+static bool gps_restore_retained_identity(){
+    if(esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_UNDEFINED||
+       gps_retained_identity_magic!=GPS_RETAINED_IDENTITY_MAGIC)return false;
+    const GpsModule retained=(GpsModule)gps_retained_module;
+    if(!gps_supported_identity(retained,gps_retained_baud)){
+        gps_clear_retained_identity();
+        return false;
+    }
+    detected_gps_module=retained;
+    detected_gps_baud=gps_retained_baud;
+    gps_baud_locked=true;
+    gps_error=MeshInkGpsError::None;
+    return true;
+}
 
 static void gps_load_tuning(){
     if(gps_tuning_loaded)return;
@@ -688,6 +733,10 @@ bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
 
 static bool t5_gps_prepare_deep_sleep_low_work(){
 #if ENV_INCLUDE_GPS == 1
+    // Preserve a previously identified receiver even though the ESP32 process
+    // state will be rebuilt on the next deep-sleep wake.
+    gps_retain_identity();
+
     // The final handoff is allowed to be a no-op if this boot never identified
     // an L76K. Never send L76K-specific commands to an unknown receiver.
     if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
@@ -880,10 +929,31 @@ public:
                 (unsigned long)(millis()-gps_wake_started_at),(long)satellitesCount());
         }
 #endif
+        if(active&&gps_resume_verify_pending){
+            if(gps_stream.hasValidSentence()){
+                gps_resume_verify_pending=false;
+                gps_resume_verify_deadline=0;
+                gps_error=MeshInkGpsError::None;
+                gps_last_byte_at=millis();
+                gps_retain_identity();
+                Serial.printf("[T5-GPS] deep-sleep GNSS resume verified module=%s baud=%lu\n",
+                              gps_module_name(),(unsigned long)detected_gps_baud);
+            }else if((int32_t)(millis()-gps_resume_verify_deadline)>=0){
+                gps_resume_verify_pending=false;
+                gps_resume_verify_deadline=0;
+                gps_error=MeshInkGpsError::NmeaUnavailable;
+                gps_baud_locked=false;
+                next_baud_retry=millis();
+                Serial.printf("[T5-ERROR] deep-sleep GNSS resume has no valid NMEA module=%s baud=%lu; reprobe active\n",
+                              gps_module_name(),(unsigned long)Serial1.baudRate());
+            }
+        }
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
             gps_baud_locked = true;
             detected_gps_baud = Serial1.baudRate();
             detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+            gps_error = MeshInkGpsError::None;
+            gps_retain_identity();
             T5_GPS_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
             gps_apply_tuning();
         } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
@@ -896,6 +966,7 @@ public:
         }
         if (active && gps_baud_locked && !gps_command_sleeping && gps_last_byte_at && millis() - gps_last_byte_at > 30000) {
             T5_GPS_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
+            gps_error=MeshInkGpsError::NmeaUnavailable;
             // Loss of NMEA is not proof of standby. Retry baud detection
             // without sending any unverified GPS wake or sleep command.
             gps_stream.clearValidation();
@@ -938,14 +1009,25 @@ T5EnvironmentSensorManager sensors(gps);
 
 void meshink_gps_prepare_runtime(){
 #if ENV_INCLUDE_GPS == 1
-    // Retained radio wake skips T5Board::beginLocal(), so restore the GNSS UART
-    // only. The running SX1262 and its shared rail remain untouched.
+    // Retained radio wake skips T5Board::beginLocal(). Restore the receiver
+    // identity first so UART/tuning are correct before MeshCore starts its GPS
+    // provider. Verification is asynchronous so UI promotion is never blocked.
+    const bool restored=gps_restore_retained_identity();
     Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
     Serial1.begin(detected_gps_baud);
     gps_stream.clearValidation();
     gps_last_byte_at=millis();
-    T5_GPS_TRACE("gps: retained UI promotion UART ready baud=%lu\n",
-                 (unsigned long)Serial1.baudRate());
+    gps_resume_verify_pending=restored;
+    gps_resume_verify_deadline=restored?millis()+2500UL:0;
+    if(restored){
+        gps_load_tuning();
+        gps_apply_tuning();
+        Serial.printf("[T5-GPS] deep-sleep GNSS identity restored module=%s baud=%lu; NMEA verification armed\n",
+                      gps_module_name(),(unsigned long)Serial1.baudRate());
+    }else{
+        gps_error=MeshInkGpsError::ModuleNotIdentified;
+        Serial.println("[T5-ERROR] deep-sleep GNSS identity unavailable; live NMEA identification required");
+    }
 #endif
 }
 
@@ -966,8 +1048,9 @@ MeshInkGpsStatus meshink_gps_read_status(){
 #if ENV_INCLUDE_GPS == 1
     auto* location=sensors.getLocationProvider();
     status.available=location!=nullptr;
+    status.error=location?gps_error:MeshInkGpsError::ProviderUnavailable;
     if(location){
-        status.valid=location->isValid();
+        status.valid=location->isValid()&&status.error==MeshInkGpsError::None;
         status.waiting_time_sync=location->waitingTimeSync();
         status.satellites=(int32_t)location->satellitesCount();
         status.latitude=location->getLatitude();
@@ -1538,6 +1621,8 @@ bool radio_init() {
                     detected_gps_baud = baud;
                     gps_baud_locked = true;
                     detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                    gps_error = MeshInkGpsError::None;
+                    gps_retain_identity();
                     gps_last_byte_at = millis();
                     break;
                 }
@@ -1545,9 +1630,13 @@ bool radio_init() {
         }
         if (!found) {
             detected_gps_baud = 9600;
+            gps_baud_locked = false;
+            detected_gps_module = GpsModule::Unknown;
+            gps_error = MeshInkGpsError::ModuleNotIdentified;
+            gps_clear_retained_identity();
             Serial1.updateBaudRate(detected_gps_baud);
             gps_stream.clearValidation();
-            Serial.println("[T5-WARN] gps=NMEA not confirmed; background retry active");
+            Serial.println("[T5-ERROR] gps module not identified: no valid NMEA at supported baud; background retry active");
         } else {
             Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
                 gps_module_name(),(unsigned long)Serial1.baudRate());

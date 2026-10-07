@@ -200,6 +200,7 @@ static uint16_t status_unread = 0;
 static uint16_t status_channel_unread = 0;
 static bool status_gps_enabled = false;
 static bool status_gps_fix = false;
+static MeshInkGpsError status_gps_error = MeshInkGpsError::None;
 static int16_t status_gps_satellites = 0;
 static int16_t status_gps_satellites_bar = 0;
 static long status_gps_latitude = 0;
@@ -1199,6 +1200,15 @@ static void draw_search_icon(int x,int y) {
     draw_status_bold_line(x+20,y+20,x+29,y+29,3,0);
 }
 
+static void draw_gps_error_icon(int x,int y) {
+    // Warning ring: a working GPS setting with a receiver/backend fault must
+    // never be visually confused with ordinary satellite searching.
+    rounded_fill(x+3,y+3,25,25,12,0);
+    rounded_fill(x+7,y+7,17,17,8,0xFF);
+    draw_status_bold_line(x+15,y+8,x+15,y+18,2,0);
+    draw_status_disc(x+15,y+24,2,0);
+}
+
 static void draw_envelope_icon(int x,int y) {
     // Rounded, heavy envelope silhouette with a bold folded flap.
     rounded_fill(x,y+5,30,22,5,0);
@@ -1288,6 +1298,7 @@ static void draw_status_bar() {
     int left=ui_x(6);
     if(meshink_board_has_gps()){
         if(!status_gps_enabled)draw_target_icon(ui_x(6),ui_y(9),true);
+        else if(status_gps_error!=MeshInkGpsError::None)draw_gps_error_icon(ui_x(6),ui_y(9));
         else if(status_gps_fix)draw_target_icon(ui_x(6),ui_y(9),false);
         else draw_search_icon(ui_x(6),ui_y(9));
         left=ui_x(46);
@@ -1295,7 +1306,7 @@ static void draw_status_bar() {
         // clock and battery percentage. If both unread classes are present,
         // reserve the left half for their two counters and keep only the GPS
         // state icon so the enlarged numbers cannot collide with the clock.
-        if(!standby_active&&status_gps_enabled&&status_gps_fix&&
+        if(!standby_active&&status_gps_enabled&&status_gps_error==MeshInkGpsError::None&&status_gps_fix&&
            !(status_unread&&status_channel_unread)) {
             char satellites[4];
             snprintf(satellites,sizeof(satellites),"%d",max(0,min(99,(int)status_gps_satellites_bar)));
@@ -1333,7 +1344,7 @@ static void draw_status_bar() {
     status_bar_painted_slot=painted_minute>=0?(int16_t)(painted_minute/5):-1;
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] status-bar clock=%02d:%02d battery=%d%% direct=%u channel=%u gps=%s\n",
         status_hour,status_minute,status_battery,status_unread,status_channel_unread,
-        status_gps_enabled?(status_gps_fix?"fix":"searching"):"off");
+        status_gps_enabled?(status_gps_error!=MeshInkGpsError::None?"error":(status_gps_fix?"fix":"searching")):"off");
 }
 
 // Share the same small black notification style between ordinary settings
@@ -2480,7 +2491,20 @@ static const char* gps_mode_label(){
 static void draw_gps_settings() {
     draw_app_header("LOCATION & GPS",true);
     settings_row("GPS MODE",gps_mode_label(),120);
-    char fix[32];snprintf(fix,sizeof(fix),status_gps_fix?"FIXED  %d SATELLITES":"SEARCHING  %d SATELLITES",status_gps_satellites);settings_row("CURRENT STATUS",local_mesh_gps_enabled()?fix:"DISABLED",238);
+    char fix[40]{};
+    const char* current_status="DISABLED";
+    if(local_mesh_gps_enabled()){
+        switch(status_gps_error){
+            case MeshInkGpsError::ModuleNotIdentified:current_status="ERROR - MODULE NOT IDENTIFIED";break;
+            case MeshInkGpsError::NmeaUnavailable:current_status="ERROR - NO VALID NMEA";break;
+            case MeshInkGpsError::ProviderUnavailable:current_status="ERROR - GPS PROVIDER UNAVAILABLE";break;
+            default:
+                snprintf(fix,sizeof(fix),status_gps_fix?"FIXED  %d SATELLITES":"SEARCHING  %d SATELLITES",status_gps_satellites);
+                current_status=fix;
+                break;
+        }
+    }
+    settings_row("CURRENT STATUS",current_status,238);
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
     settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
@@ -4967,17 +4991,18 @@ void ui_status_set_channel_unread(uint16_t count) {
     if(status_channel_unread!=count){status_channel_unread=count;status_bar_dirty=true;}
 }
 
-void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp) {
+void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp,MeshInkGpsError error) {
     if(!meshink_board_has_gps()){
-        (void)enabled;(void)has_fix;(void)satellites;(void)latitude;(void)longitude;(void)timestamp;
+        (void)enabled;(void)has_fix;(void)satellites;(void)latitude;(void)longitude;(void)timestamp;(void)error;
         return;
     }
-    const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix;
+    if(error!=MeshInkGpsError::None)has_fix=false;
+    const bool state_changed=status_gps_enabled!=enabled||status_gps_fix!=has_fix||status_gps_error!=error;
     const bool detail_changed=status_gps_satellites!=satellites||status_gps_latitude!=latitude||status_gps_longitude!=longitude;
-    if(state_changed)T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] state %s sats=%d lat=%ld lon=%ld\n",enabled?(has_fix?"fixed":"searching"):"disabled",satellites,latitude,longitude);
+    if(state_changed)T5_DEBUGF(T5_LOG_GPS,"[T5-GPS] state %s error=%u sats=%d lat=%ld lon=%ld\n",enabled?(error!=MeshInkGpsError::None?"error":(has_fix?"fixed":"searching")):"disabled",(unsigned)error,satellites,latitude,longitude);
     const long previous_latitude=status_gps_latitude;
     const long previous_longitude=status_gps_longitude;
-    status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
+    status_gps_enabled=enabled;status_gps_fix=has_fix;status_gps_error=error;status_gps_satellites=satellites;status_gps_latitude=latitude;status_gps_longitude=longitude;status_gps_timestamp=timestamp;
     // Only verified live fixes update the retained map location. GPS disabled
     // or searching may report (0,0), which must not erase the last fix.
     if(enabled&&has_fix&&latitude>=-85051100L&&latitude<=85051100L&&

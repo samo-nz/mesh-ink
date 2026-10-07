@@ -45,10 +45,18 @@ inline bool meshink_gps_constellation_mode_set(
     return true;
 }
 
+enum class MeshInkGpsError : uint8_t {
+    None = 0,
+    ModuleNotIdentified,
+    NmeaUnavailable,
+    ProviderUnavailable
+};
+
 struct MeshInkGpsStatus {
     bool available = false;
     bool valid = false;
     bool waiting_time_sync = true;
+    MeshInkGpsError error = MeshInkGpsError::None;
     int32_t satellites = 0;
     long latitude = 0;
     long longitude = 0;

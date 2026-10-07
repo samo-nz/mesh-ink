@@ -28,6 +28,7 @@ companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(enco
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
+gps_types_source = (root / "src" / "hardware" / "gps_types.h").read_text(encoding="utf-8")
 wireless_selector_source = (root / "src" / "hardware" / "wireless.h").read_text(encoding="utf-8")
 wireless_types_source = (root / "src" / "hardware" / "wireless_types.h").read_text(encoding="utf-8")
 wireless_backend_source = (root / "src" / "board" / "t5_wireless_backend.h").read_text(encoding="utf-8")
@@ -1629,6 +1630,21 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
+
+# 2.1.1-test.2: GNSS identity survives deep sleep, resume verifies NMEA without
+# delaying UI promotion, and Location & GPS exposes backend failures directly.
+assert "enum class MeshInkGpsError" in gps_types_source and "ModuleNotIdentified" in gps_types_source and "NmeaUnavailable" in gps_types_source, "generic GPS status carries explicit receiver failures"
+assert "GPS_RETAINED_IDENTITY_MAGIC" in board_target_source and "RTC_DATA_ATTR uint32_t gps_retained_identity_magic" in board_target_source, "T5 retains GNSS identity in RTC memory"
+assert "gps_retain_identity();" in board_target_source[board_target_source.index("static bool t5_gps_prepare_deep_sleep_low_work"):board_target_source.index("static uint32_t gps_sleep_requested_at")], "deep-sleep handoff retains known GNSS identity"
+prepare_gps_runtime=board_target_source[board_target_source.index("void meshink_gps_prepare_runtime()"):board_target_source.index("void meshink_gps_service_begin()")]
+assert "gps_restore_retained_identity()" in prepare_gps_runtime and "gps_apply_tuning();" in prepare_gps_runtime, "interactive resume restores GNSS identity and tuning before provider startup"
+assert "gps_resume_verify_pending=restored;" in prepare_gps_runtime and "millis()+2500UL" in prepare_gps_runtime, "deep-sleep GNSS NMEA verification is bounded and asynchronous"
+assert "MeshInkGpsError::NmeaUnavailable" in board_target_source and "MeshInkGpsError::ModuleNotIdentified" in board_target_source, "GNSS detection/watchdog failures become status errors"
+assert 'current_status="ERROR - MODULE NOT IDENTIFIED"' in source and 'current_status="ERROR - NO VALID NMEA"' in source and 'current_status="ERROR - GPS PROVIDER UNAVAILABLE"' in source, "GPS CURRENT STATUS displays receiver/backend failures"
+assert "draw_gps_error_icon" in source and "status_gps_error!=MeshInkGpsError::None" in source, "status bar distinguishes GPS errors from normal searching"
+assert "ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp,location.error);" in runtime_source, "runtime propagates GPS backend errors to UI"
+assert "if(gps_error){" in runtime_source and "stable_fix=false;" in runtime_source, "GPS errors immediately suppress stale fixed state"
+
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"

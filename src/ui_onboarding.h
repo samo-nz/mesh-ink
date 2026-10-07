@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "hardware/radio_types.h"
 #include "hardware/power_types.h"
+#include "hardware/gps_types.h"
 class UiDataProvider;
 
 struct MeshInkUiStartupPlan {
@@ -34,7 +35,7 @@ void ui_finish_startup(); // reveal interactive UI after storage/mesh initializa
 void ui_loop();
 void ui_status_set_unread(uint16_t count);
 void ui_status_set_channel_unread(uint16_t count);
-void ui_status_set_gps(bool enabled, bool has_fix, int satellites, long latitude, long longitude, uint32_t timestamp);
+void ui_status_set_gps(bool enabled, bool has_fix, int satellites, long latitude, long longitude, uint32_t timestamp, MeshInkGpsError error);
 void ui_notify_message_received(bool channel);
 bool ui_restore_failed_compose(const char* text);
 void ui_notify_advert_result(bool flood, bool ok);

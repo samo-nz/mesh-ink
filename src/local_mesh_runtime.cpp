@@ -1250,7 +1250,37 @@ void local_mesh_loop(){
     }
 #if ENV_INCLUDE_GPS == 1
     const MeshInkGpsStatus location=meshink_gps_read_status();
-    static uint32_t next_ui_gps=0,candidate_since=0;static bool stable_fix=false,candidate_fix=false;static int stable_sats=0;static long stable_lat=0,stable_lon=0;static uint32_t stable_stamp=0;const uint32_t now=millis();if((int32_t)(now-next_ui_gps)>=0){next_ui_gps=now+(ui_is_standby()?10000:1000);const bool enabled=local_mesh_gps_enabled();const bool raw_fix=location.valid;if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}if(raw_fix==stable_fix||now-candidate_since>=3000){stable_fix=raw_fix;if(raw_fix){stable_sats=(int)location.satellites;stable_lat=location.latitude;stable_lon=location.longitude;stable_stamp=location.timestamp;}}ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp);}
+    static uint32_t next_ui_gps=0,candidate_since=0;
+    static bool stable_fix=false,candidate_fix=false;
+    static int stable_sats=0;
+    static long stable_lat=0,stable_lon=0;
+    static uint32_t stable_stamp=0;
+    const uint32_t now=millis();
+    if((int32_t)(now-next_ui_gps)>=0){
+        next_ui_gps=now+(ui_is_standby()?10000:1000);
+        const bool enabled=local_mesh_gps_enabled();
+        const bool gps_error=location.error!=MeshInkGpsError::None;
+        const bool raw_fix=!gps_error&&location.valid;
+        if(gps_error){
+            // Faults are immediate user information; never hold a stale "FIXED"
+            // state through the normal three-second fix/search debounce.
+            stable_fix=false;
+            candidate_fix=false;
+            candidate_since=now;
+        }else{
+            if(raw_fix!=candidate_fix){candidate_fix=raw_fix;candidate_since=now;}
+            if(raw_fix==stable_fix||now-candidate_since>=3000){
+                stable_fix=raw_fix;
+                if(raw_fix){
+                    stable_sats=(int)location.satellites;
+                    stable_lat=location.latitude;
+                    stable_lon=location.longitude;
+                    stable_stamp=location.timestamp;
+                }
+            }
+        }
+        ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp,location.error);
+    }
 #if T5_LOG_GPS
     static bool was_waiting=true;
     if(location.available){const bool waiting=location.waiting_time_sync;if(was_waiting&&!waiting)T5_DEBUGF(T5_LOG_GPS,"[T5-RTC] GPS provider finished sync request UTC=%lu; hardware RTC write may have been skipped (see [T5] rtc log)\n",(unsigned long)location.timestamp);was_waiting=waiting;}
