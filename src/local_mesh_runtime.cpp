@@ -1345,6 +1345,8 @@ bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     reset_gps_duty_cycle();
     return true;
 }
+bool local_mesh_gps_deep_sleep_power_save(){return meshink_gps_deep_sleep_power_save();}
+bool local_mesh_gps_set_deep_sleep_power_save(bool enabled){return meshink_gps_set_deep_sleep_power_save(enabled);}
 const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=meshink_meshcore().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];meshink_meshcore().savePrefs();meshink_meshcore().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
 #else
@@ -1354,6 +1356,8 @@ bool local_mesh_gps_fix(){return false;}
 uint32_t local_mesh_gps_interval(){return 0;}
 MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return MeshInkGpsConstellationMode::None;}
 bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode){return false;}
+bool local_mesh_gps_deep_sleep_power_save(){return false;}
+bool local_mesh_gps_set_deep_sleep_power_save(bool){return false;}
 const char* local_mesh_gps_tuning_note(){return "";}
 void local_mesh_cycle_gps_interval(){}
 #endif

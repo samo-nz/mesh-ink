@@ -2645,6 +2645,7 @@ static void draw_gps_settings() {
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
     settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
+    settings_row("DEEP SLEEP POWER SAVE",local_mesh_gps_deep_sleep_power_save()?"ON":"OFF",710);
 }
 
 static const char* gps_constellation_state(MeshInkGpsConstellation constellation){
@@ -4125,7 +4126,14 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 return true;
             }
             if(hit_outer_row(x,y,474)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
+            if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit_outer_row(x,y,710)){
+                const bool enabled=!local_mesh_gps_deep_sleep_power_save();
+                if(local_mesh_gps_set_deep_sleep_power_save(enabled))
+                    show_toast(enabled?"DEEP SLEEP POWER SAVE ON":"DEEP SLEEP POWER SAVE OFF");
+                else show_toast("SAVE FAILED");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }break;
         case Screen::GpsTuning:{
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             const MeshInkGpsConstellation constellations[]={

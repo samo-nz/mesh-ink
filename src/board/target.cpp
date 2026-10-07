@@ -665,6 +665,7 @@ static uint32_t gps_last_byte_at = 0;
 #endif
 static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
 static bool gps_tuning_loaded=false;
+static bool gps_deep_sleep_power_save=false; // default OFF: retain live tracking
 static bool gps_constellation_dirty=false;
 // Defensive T5/L76K boot recovery: the receiver can retain PCAS15 satellite
 // masks across an ESP reset while its shared rail remains powered.
@@ -719,6 +720,7 @@ static void gps_load_tuning(){
     Preferences pref;
     if(pref.begin("t5-gnss",false)){
         const bool mode_v2=pref.getBool("mode_v2",false);
+        gps_deep_sleep_power_save=pref.getBool("ds_power_save",false);
         const auto stored=pref.getUChar(
             "constellation",(uint8_t)MeshInkGpsConstellationMode::GpsBeiDou);
         const auto mode=static_cast<MeshInkGpsConstellationMode>(stored);
@@ -823,12 +825,39 @@ bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     gps_apply_tuning();
     return true;
 }
+bool meshink_gps_deep_sleep_power_save(){
+    gps_load_tuning();
+    return gps_deep_sleep_power_save;
+}
+bool meshink_gps_set_deep_sleep_power_save(bool enabled){
+    gps_load_tuning();
+    if(gps_deep_sleep_power_save==enabled)return true;
+    Preferences pref;
+    if(!pref.begin("t5-gnss",false))return false;
+    const bool saved=pref.putBool("ds_power_save",enabled)==1;
+    pref.end();
+    if(!saved)return false;
+    gps_deep_sleep_power_save=enabled;
+    return true;
+}
 
 static bool t5_gps_prepare_deep_sleep_low_work(){
 #if ENV_INCLUDE_GPS == 1
     // Preserve a previously identified receiver even though the ESP32 process
     // state will be rebuilt on the next deep-sleep wake.
     gps_retain_identity();
+    gps_load_tuning();
+
+    // Default behavior keeps GNSS tracking alive across ESP32 deep sleep.
+    // The radio/GPS rail remains powered, so no receiver command is needed.
+    if(!gps_deep_sleep_power_save){
+        gps_deep_sleep_low_work_magic=0;
+        if(gps_constellation_mode==MeshInkGpsConstellationMode::None)
+            Serial.println("[T5-GPS] deep-sleep GNSS power save OFF; GPS mode already disabled");
+        else
+            Serial.println("[T5-GPS] deep-sleep GNSS power save OFF; receiver tracking retained");
+        return true;
+    }
 
     // The final handoff is allowed to be a no-op if this boot never identified
     // an L76K. Never send L76K-specific commands to an unknown receiver.
@@ -839,7 +868,7 @@ static bool t5_gps_prepare_deep_sleep_low_work(){
         return false;
     }
     gps_apply_low_work(true);
-    Serial.println("[T5-GPS] deep-sleep GNSS low-work active: BeiDou zero mask");
+    Serial.println("[T5-GPS] deep-sleep GNSS power save ON: BeiDou zero mask");
     return true;
 #else
     return false;
@@ -1143,6 +1172,21 @@ void meshink_gps_prepare_runtime(){
     gps_resume_verify_deadline=restored?millis()+2500UL:0;
     if(restored){
         gps_load_tuning();
+        const bool tracking_retained=
+            !gps_deep_sleep_power_save&&
+            gps_deep_sleep_low_work_magic!=GPS_DEEP_SLEEP_LOW_WORK_MAGIC;
+        if(tracking_retained){
+            // The shared rail never went down and we deliberately left the
+            // receiver tracking. Preserve that hot state: do not resend masks,
+            // constellation selection, or NMEA configuration before verifying
+            // the already-running stream.
+            gps_boot_mask_recovery_pending=false;
+            gps_constellation_dirty=false;
+            gps_nmea_dirty=false;
+            Serial.println("[T5-GPS] deep-sleep GNSS tracking retained; receiver reconfiguration skipped");
+            meshink_board_wake_log_append(
+                "[T5-GPS] deep-sleep GNSS tracking retained; receiver reconfiguration skipped");
+        }
         gps_apply_tuning();
         Serial.printf("[T5-GPS] deep-sleep GNSS identity restored module=%s baud=%lu; NMEA verification armed\n",
                       gps_module_name(),(unsigned long)Serial1.baudRate());

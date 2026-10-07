@@ -1694,6 +1694,17 @@ assert 'quick_slider_dragging||display_slider_dragging' in source and 'frontligh
 assert 'screen==Screen::DisplaySettings' in source and 'meshink_display_slider_touch_rect(layout)' in source and 'display_set_brightness(value);' in source, "Display slider commits its clamped release value from the original touch-down gesture"
 assert 'static void commit_brightness(int value)' in source and 'quick_set_brightness(int value)' in source and 'display_set_brightness(int value)' in source, "both brightness sliders share the same commit semantics"
 
+
+# 2.1.1-test.8: GPS deep-sleep power saving is explicit, persisted, and
+# defaults OFF so the L76K can retain a hot tracking state across ESP sleep.
+assert 'static bool gps_deep_sleep_power_save=false;' in board_target_source, "GPS deep-sleep power save defaults OFF"
+assert 'pref.getBool("ds_power_save",false)' in board_target_source and 'pref.putBool("ds_power_save",enabled)' in board_target_source, "GPS deep-sleep power-save preference persists"
+assert 'if(!gps_deep_sleep_power_save)' in board_target_source and 'receiver tracking retained' in board_target_source, "OFF skips the L76K zero-mask sleep handoff"
+assert 'deep-sleep GNSS power save ON: BeiDou zero mask' in board_target_source, "ON retains the existing zero-mask battery-saving behavior"
+assert 'deep-sleep GNSS tracking retained; receiver reconfiguration skipped' in board_target_source, "retained wake preserves hot GNSS configuration when power save is OFF"
+assert 'settings_row("DEEP SLEEP POWER SAVE",local_mesh_gps_deep_sleep_power_save()?"ON":"OFF",710);' in source, "GPS settings exposes the power-save toggle"
+assert 'local_mesh_gps_set_deep_sleep_power_save(enabled)' in source, "GPS settings toggle writes the persisted backend preference"
+
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"

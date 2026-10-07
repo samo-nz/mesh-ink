@@ -47,6 +47,12 @@ int main(){
     assert(meshink_gps_constellation_mode()==
            MeshInkGpsConstellationMode::None);
 
+    assert(!meshink_gps_deep_sleep_power_save());
+    assert(meshink_gps_set_deep_sleep_power_save(true));
+    assert(meshink_gps_deep_sleep_power_save());
+    assert(meshink_gps_set_deep_sleep_power_save(false));
+    assert(!meshink_gps_deep_sleep_power_save());
+
     meshink_gps_service_begin();
     assert(meshink_gps_mock_started);
     meshink_gps_service_loop();

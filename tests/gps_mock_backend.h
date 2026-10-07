@@ -8,6 +8,7 @@ inline bool meshink_gps_mock_shutdown=false;
 inline MeshInkGpsStatus meshink_gps_mock_status{};
 inline MeshInkGpsConstellationMode meshink_gps_mock_mode=
     MeshInkGpsConstellationMode::GpsBeiDou;
+inline bool meshink_gps_mock_deep_sleep_power_save=false;
 
 inline const char* meshink_gps_backend_name(){return "mock";}
 inline const char* meshink_gps_tuning_note(){return "mock GPS tuning note";}
@@ -22,6 +23,11 @@ inline MeshInkGpsConstellationMode meshink_gps_constellation_mode(){
 inline bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     if(!meshink_gps_constellation_mode_valid(mode))return false;
     meshink_gps_mock_mode=mode;
+    return true;
+}
+inline bool meshink_gps_deep_sleep_power_save(){return meshink_gps_mock_deep_sleep_power_save;}
+inline bool meshink_gps_set_deep_sleep_power_save(bool enabled){
+    meshink_gps_mock_deep_sleep_power_save=enabled;
     return true;
 }
 inline void meshink_gps_shutdown(){meshink_gps_mock_shutdown=true;}

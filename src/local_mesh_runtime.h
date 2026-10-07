@@ -28,6 +28,8 @@ bool local_mesh_my_location(long& latitude, long& longitude);
 void local_mesh_cycle_gps_interval();
 MeshInkGpsConstellationMode local_mesh_gps_constellation_mode();
 bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode);
+bool local_mesh_gps_deep_sleep_power_save();
+bool local_mesh_gps_set_deep_sleep_power_save(bool enabled);
 const char* local_mesh_gps_tuning_note();
 
 void local_mesh_toggle_gps_advert_location();
