@@ -1673,6 +1673,13 @@ assert 'AUTO (GPS-DERIVED)' in source and 'resolve_gps_timezone' in source and '
 assert 'CUSTOM UTC OFFSET' in source and 'custom_timezone_minutes' in source and 'FIXED OFFSET - NO DST' in source, "timezone list supports fixed custom UTC offset"
 assert 'timezone_v2' in source and 'timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);' in source, "legacy timezone indexes migrate without changing selected zone"
 
+
+# 2.1.1-test.6: AUTO mode refreshes stale/non-GPS RTC time on the first
+# valid GPS fix rather than waiting up to an hour after boot/wake.
+assert 'const bool gps_time_stale = !t5_rtc_clock().gpsAuthoritative();' in board_target_source, "GPS time freshness uses persisted 24-hour authority metadata"
+assert 'if (rtc_needs_time || gps_time_stale || hourly_correction_due)' in board_target_source, "first valid GPS fix immediately refreshes stale or never-GPS RTC time"
+assert 'first fresh fix accepted because GPS clock authority was stale' in board_target_source, "stale GPS-authority refresh remains diagnosable"
+
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"

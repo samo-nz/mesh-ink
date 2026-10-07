@@ -1010,22 +1010,25 @@ public:
         }
 #endif
         // MeshCore's provider may call RTCClock::setCurrentTime whenever it sees
-        // valid GPS time. Only mark a GPS write as trusted when the RTC is
-        // invalid, or when our deliberate hourly correction is due.
+        // valid GPS time. Trust the first valid fix immediately when the RTC has
+        // never had a GPS correction, or its persisted GPS authority is older
+        // than 24 hours. Once GPS is fresh again, keep the normal hourly
+        // correction cadence to avoid rewriting the RTC for every fix.
         static uint32_t last_gps_clock_sync_ms = 0;
         if (!last_gps_clock_sync_ms) {
-            // Start the hourly correction window at boot. A valid RTC
-            // must not be reset merely because the first GPS fix arrived.
             last_gps_clock_sync_ms = millis() ? millis() : 1;
         }
         if (isValid()) {
             const uint32_t now_ms = millis();
             const bool rtc_needs_time = !t5_rtc_clock().isValid();
+            const bool gps_time_stale = !t5_rtc_clock().gpsAuthoritative();
             const bool hourly_correction_due = last_gps_clock_sync_ms == 0 ||
                 now_ms - last_gps_clock_sync_ms >= 3600000UL;
-            if (rtc_needs_time || hourly_correction_due) {
+            if (rtc_needs_time || gps_time_stale || hourly_correction_due) {
                 t5_rtc_clock().expectGpsTime((uint32_t)getTimestamp());
                 last_gps_clock_sync_ms = now_ms ? now_ms : 1;
+                if(gps_time_stale)
+                    T5_GPS_TRACE("gps: first fresh fix accepted because GPS clock authority was stale\n");
             }
         }
         MicroNMEALocationProvider::loop();
