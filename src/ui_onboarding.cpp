@@ -37,7 +37,7 @@
 
 // UI milestone 0.1.0: standalone onboarding. Bluetooth, radio and GPS are not
 // started in this target. Saved values are device-owned and will be handed to
-// the MeshCore application adapter in the next milestone.
+// the active protocol helper when the full firmware runtime is attached.
 static constexpr char UI_VERSION[] = T5_FIRMWARE_VERSION;
 
 struct Glyph { char c; uint8_t r[7]; };
@@ -424,7 +424,7 @@ static const char* map_source_badge(const MapRenderResult& result) {
     return "---";
 }
 // GPS-capable boards prefer the live/retained receiver fix. Boards without
-// GPS use MeshCore's configured static "My Location" coordinates.
+// GPS use the active protocol helper's configured static "My Location" coordinates.
 static bool map_device_position(long& latitude,long& longitude,bool& current_fix){
     if(meshink_board_has_gps()){
         current_fix=status_gps_enabled&&status_gps_fix;
@@ -717,7 +717,7 @@ static bool apply_selected_preset() {
     const Preset& preset=PRESETS[selected_preset];
     if(preset.path_hash_bytes==0)return true; // KEEP CURRENT never alters the radio
     // Apply the *same typed values* displayed by the preset selector.
-    // The MeshCore property uses 0/1/2 for a 1/2/3-byte path hash.
+    // Protocol helpers expose path-hash mode as 0/1/2 for a 1/2/3-byte hash.
     const bool applied=mesh_protocol_apply_radio(preset.frequency_khz/1000.0f,
         preset.bandwidth_khz,preset.spreading_factor,preset.coding_rate,
         preset.path_hash_bytes-1);
@@ -2773,7 +2773,7 @@ static void draw_date_time(){
     settings_info_row("CURRENT TIME",current,118);settings_row("TIME MODE",mode,238);
     settings_row("SET DATE & TIME","MANUAL ENTRY",358);settings_row("TIMEZONE",zone,478);
     const MeshInkUiLayout& layout=portrait_layout();
-    ui_draw_wrapped("AUTO accepts trusted clock updates. MANUAL locks the RTC against GPS, companion and MeshCore time changes.",
+    ui_draw_wrapped("AUTO accepts trusted clock updates. MANUAL locks the RTC against GPS, companion and protocol time changes.",
                     layout.section_margin,ui_y(650),layout.section_width,2,0,false,5);
 }
 static MeshInkUiRect manual_time_group_rect(bool time_group){
@@ -3449,7 +3449,7 @@ static void request_hardware_shutdown() {
         Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\n",
                       source?source:"unknown");
 
-    // No touch, storage, GPS or MeshCore startup here. Bring up only the
+    // No touch, storage, GPS or protocol startup here. Bring up only the
     // frontlight pin (kept at zero) and EPD long enough to leave persistent
     // user guidance before board-level ship mode removes battery power.
     meshink_power_frontlight_begin();
@@ -4629,7 +4629,7 @@ bool ui_service_headless_message_alert() {
     const bool was_active=message_alert_active;
     service_message_alert();
     if(was_active&&!message_alert_active){
-        // The final GC16 refresh is synchronous. Service MeshCore immediately
+        // The final GC16 refresh is synchronous. Service the active protocol immediately
         // while keeping EPDiy initialized. A packet landing during that redraw
         // can therefore update unread counts and reuse the same session.
         mesh_protocol_service_startup();
@@ -4673,7 +4673,7 @@ bool ui_promote_headless_to_interactive() {
     plan.splash=false;
     plan.battery_guard=false;
     // ui_mesh_ready() takes the first useful status sample after retained RTC
-    // startup; do not deliberately paint --:-- before MeshCore is attached.
+    // startup; do not deliberately paint --:-- before the protocol helper is attached.
     plan.sample_status=false;
     plan.service_mesh_between_steps=true;
     ui_startup(plan);
@@ -4707,7 +4707,7 @@ bool ui_promote_headless_to_interactive() {
     if(!setup_complete)screen=Screen::Welcome;
     keyboard_visible=!setup_complete;
     ui_finish_startup();
-    Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing MeshCore runtime");
+    Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing protocol runtime");
     return true;
 }
 
@@ -4931,7 +4931,7 @@ void ui_finish_startup() {
             if(setup_complete)frontlight_event();
         }
     }
-    // The first interactive frame already includes the MeshCore status
+    // The first interactive frame already includes the protocol status
     // populated during startup; don't immediately refresh it a second time.
     status_dirty=false;status_bar_dirty=false;
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
@@ -5401,9 +5401,9 @@ void ui_request_data_refresh(const char* reason){
 }
 
 void ui_apply_initial_radio_preset(){
-    // On a clean install the UI defaults to NZ NARROW, while MeshCore's
+    // On a clean install the UI defaults to NZ NARROW, while the active protocol's
     // compiled defaults use SF8. Apply the displayed selection immediately
-    // after MeshCore has loaded its prefs, before the UI becomes interactive.
+    // after the protocol helper has loaded its settings, before the UI becomes interactive.
     // Do not override a completed installation's stored radio configuration,
     // and honour KEEP CURRENT as a deliberate no-change selection.
     if(setup_complete||selected_preset==0)return;
@@ -5419,14 +5419,14 @@ void ui_apply_initial_radio_preset(){
 }
 
 void ui_mesh_ready(){
-    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){mesh_protocol_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to MeshCore '%s'\n",node_name);}else{strncpy(node_name,mesh_protocol_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from MeshCore '%s'\n",node_name);}state.putString("name",node_name);state.end();}
+    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){mesh_protocol_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to active protocol '%s'\n",node_name);}else{strncpy(node_name,mesh_protocol_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from active protocol '%s'\n",node_name);}state.putString("name",node_name);state.end();}
     update_status_hardware();status_bar_dirty=true;
 }
 
 void ui_use_data_provider(UiDataProvider* provider) {
     if (!provider) return;
     ui_data=provider;
-    T5_DEBUGLN(T5_LOG_UI,"[T5-UI] live MeshCore data provider attached");
+    T5_DEBUGLN(T5_LOG_UI,"[T5-UI] live protocol data provider attached");
     // ui_finish_startup() presents the first interactive screen only after
-    // the blocking storage / MeshCore boot sequence has completed.
+    // the blocking storage / protocol boot sequence has completed.
 }
