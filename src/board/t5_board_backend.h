@@ -26,5 +26,11 @@ void meshink_board_release_retained_radio_holds();
 bool meshink_board_enter_deep_sleep_standby();
 bool meshink_board_return_to_retained_deep_sleep();
 
+// RTC-retained early-wake transcript. Append calls are no-ops unless a
+// deep-sleep interval armed the buffer; replay never clears it.
+void meshink_board_wake_log_append(const char* line);
+void meshink_board_wake_log_appendf(const char* format,...);
+void meshink_board_wake_log_replay();
+
 void meshink_board_companion_exit_feedback_begin();
 void meshink_board_companion_release_resources();

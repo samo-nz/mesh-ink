@@ -13,6 +13,7 @@
 #include <driver/rtc_io.h>
 #include <esp_sleep.h>
 #include <sys/time.h>
+#include <stdarg.h>
 #include <RTClib.h>
 #include "target.h"
 #include "t5_board_backend.h"
@@ -28,6 +29,63 @@
 #define T5_GPS_TRACE(...) T5_DEBUGF(T5_LOG_GPS, "[T5] " __VA_ARGS__)
 
 T5Board board;
+
+// A small RTC-retained transcript captures the early deep-sleep wake path while
+// native USB CDC is still disconnected. It is never written to flash. The
+// transcript survives serial reconnects and is replaced only when the device
+// enters the next deep-sleep interval.
+static constexpr uint32_t T5_WAKE_LOG_MAGIC=0x574C4731; // "WLG1"
+static constexpr size_t T5_WAKE_LOG_BYTES=2048;
+struct T5WakeLogState {
+    uint32_t magic=0;
+    uint16_t length=0;
+    uint16_t dropped=0;
+    char data[T5_WAKE_LOG_BYTES]{};
+};
+RTC_DATA_ATTR T5WakeLogState t5_wake_log_state{};
+
+static void t5_wake_log_reset_for_sleep(){
+    t5_wake_log_state.magic=T5_WAKE_LOG_MAGIC;
+    t5_wake_log_state.length=0;
+    t5_wake_log_state.dropped=0;
+    t5_wake_log_state.data[0]=0;
+}
+void meshink_board_wake_log_append(const char* line){
+    if(!line||t5_wake_log_state.magic!=T5_WAKE_LOG_MAGIC)return;
+    const size_t input_len=strlen(line);
+    size_t copied=0;
+    while(copied<input_len&&t5_wake_log_state.length+1<T5_WAKE_LOG_BYTES){
+        t5_wake_log_state.data[t5_wake_log_state.length++]=line[copied++];
+    }
+    if(copied<input_len)++t5_wake_log_state.dropped;
+    if(t5_wake_log_state.length+1<T5_WAKE_LOG_BYTES&&
+       (t5_wake_log_state.length==0||t5_wake_log_state.data[t5_wake_log_state.length-1]!='\n'))
+        t5_wake_log_state.data[t5_wake_log_state.length++]='\n';
+    t5_wake_log_state.data[t5_wake_log_state.length]=0;
+}
+void meshink_board_wake_log_appendf(const char* format,...){
+    if(!format||t5_wake_log_state.magic!=T5_WAKE_LOG_MAGIC)return;
+    char line[256]{};
+    va_list args;
+    va_start(args,format);
+    vsnprintf(line,sizeof(line),format,args);
+    va_end(args);
+    meshink_board_wake_log_append(line);
+}
+void meshink_board_wake_log_replay(){
+    if(t5_wake_log_state.magic!=T5_WAKE_LOG_MAGIC||!t5_wake_log_state.length){
+        Serial.println("[T5-WAKELOG] no retained wake transcript");
+        return;
+    }
+    Serial.println("[T5-WAKELOG] ---- retained wake transcript ----");
+    Serial.write(reinterpret_cast<const uint8_t*>(t5_wake_log_state.data),
+                 t5_wake_log_state.length);
+    if(t5_wake_log_state.data[t5_wake_log_state.length-1]!='\n')Serial.println();
+    if(t5_wake_log_state.dropped)
+        Serial.printf("[T5-WAKELOG] WARNING: %u transcript fragments truncated\n",
+                      (unsigned)t5_wake_log_state.dropped);
+    Serial.println("[T5-WAKELOG] ---- end retained wake transcript ----");
+}
 
 static constexpr uint8_t PCA9535_ADDR=0x20;
 static bool pca_read(uint8_t reg,uint8_t& value){
@@ -679,6 +737,7 @@ static void gps_apply_tuning(){
         gps_deep_sleep_low_work_magic=0;
         gps_constellation_dirty=true;
         Serial.println("[T5-GPS] startup GNSS satellite masks restored");
+        meshink_board_wake_log_append("[T5-GPS] startup GNSS satellite masks restored");
     }
 
     if(gps_constellation_mode==MeshInkGpsConstellationMode::None){
@@ -958,6 +1017,9 @@ public:
                 gps_retain_identity();
                 Serial.printf("[T5-GPS] deep-sleep GNSS resume verified module=%s baud=%lu\n",
                               gps_module_name(),(unsigned long)detected_gps_baud);
+                meshink_board_wake_log_appendf(
+                    "[T5-GPS] deep-sleep GNSS resume verified module=%s baud=%lu",
+                    gps_module_name(),(unsigned long)detected_gps_baud);
             }else if((int32_t)(millis()-gps_resume_verify_deadline)>=0){
                 gps_resume_verify_pending=false;
                 gps_resume_verify_deadline=0;
@@ -966,6 +1028,9 @@ public:
                 next_baud_retry=millis();
                 Serial.printf("[T5-ERROR] deep-sleep GNSS resume has no valid NMEA module=%s baud=%lu; reprobe active\n",
                               gps_module_name(),(unsigned long)Serial1.baudRate());
+                meshink_board_wake_log_appendf(
+                    "[T5-ERROR] deep-sleep GNSS resume has no valid NMEA module=%s baud=%lu; reprobe active",
+                    gps_module_name(),(unsigned long)Serial1.baudRate());
             }
         }
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
@@ -1044,9 +1109,14 @@ void meshink_gps_prepare_runtime(){
         gps_apply_tuning();
         Serial.printf("[T5-GPS] deep-sleep GNSS identity restored module=%s baud=%lu; NMEA verification armed\n",
                       gps_module_name(),(unsigned long)Serial1.baudRate());
+        meshink_board_wake_log_appendf(
+            "[T5-GPS] deep-sleep GNSS identity restored module=%s baud=%lu; NMEA verification armed",
+            gps_module_name(),(unsigned long)Serial1.baudRate());
     }else{
         gps_error=MeshInkGpsError::ModuleNotIdentified;
         Serial.println("[T5-ERROR] deep-sleep GNSS identity unavailable; live NMEA identification required");
+        meshink_board_wake_log_append(
+            "[T5-ERROR] deep-sleep GNSS identity unavailable; live NMEA identification required");
     }
 #endif
 }
@@ -1189,6 +1259,10 @@ void meshink_board_restore_deep_sleep_wake_pads() {
     Serial.printf("[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d\n",
                   digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
                   (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d",
+        digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
+        (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
 }
 
 void meshink_board_prepare_retained_aux_wake() {
@@ -1299,9 +1373,13 @@ bool meshink_board_enter_deep_sleep_standby() {
         return false;
     }
 
-    // All sleep-deferral/race checks have passed. Only now alter the GNSS
-    // receiver, so a failed/deferred sleep attempt never changes the user's
-    // active constellation configuration.
+    // All sleep-deferral/race checks have passed. Start a fresh RTC transcript
+    // only when this deep-sleep interval is definitely going ahead. A deferred
+    // attempt must not erase the previous wake evidence.
+    t5_wake_log_reset_for_sleep();
+
+    // Only now alter the GNSS receiver, so a failed/deferred sleep attempt
+    // never changes the user's active constellation configuration.
     t5_gps_prepare_deep_sleep_low_work();
 
     Serial.printf("[T5-DEEPSLEEP] entering: DIO1 EXT1 GPIO%d=LOW BOOT EXT0 GPIO%d=HIGH NSS/RESET=held-high\n",
@@ -1343,6 +1421,9 @@ bool meshink_board_return_to_retained_deep_sleep() {
         return false;
     }
 
+    // This is a new deep-sleep interval; discard the prior wake transcript
+    // only after every re-sleep race/deferral check has passed.
+    t5_wake_log_reset_for_sleep();
     Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 1h)");
     Serial.flush();
     delay(20);

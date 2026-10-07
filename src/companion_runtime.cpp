@@ -665,6 +665,9 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
     local_runtime_ready=false;
     Serial.printf("[T5-DEEPSLEEP] retained startup: reason=%s require-packet=%u\n",
                   reason?reason:"unknown",require_packet?1U:0U);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] retained startup reason=%s require-packet=%u",
+        reason?reason:"unknown",require_packet?1U:0U);
 
     meshink_board_begin_local_rx_wake(require_packet);
     const bool radio_ready=require_packet
@@ -672,8 +675,10 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
         :meshink_radio_resume_retained_wake();
     if(!radio_ready){
         Serial.println("[T5-DEEPSLEEP] retained startup failed before MeshCore");
+        meshink_board_wake_log_append("[T5-DEEPSLEEP] retained SX1262 restore FAILED");
         return false;
     }
+    meshink_board_wake_log_append("[T5-DEEPSLEEP] retained SX1262 runtime restored");
 
     if(!SPIFFS.begin(false)){
         Serial.println("[T5-DEEPSLEEP] retained startup failed: SPIFFS mount unavailable");
@@ -711,6 +716,13 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
                   (unsigned long)local_rx_wake_stats.receive_errors,
                   (unsigned long)local_rx_wake_stats.packets_sent,
                   local_rx_wake_stats.continuous_rx?1U:0U);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] MeshCore retained runtime READY +%lums rx=%lu err=%lu tx=%lu rxmode=%u",
+        (unsigned long)(millis()-started),
+        (unsigned long)local_rx_wake_stats.packets_received,
+        (unsigned long)local_rx_wake_stats.receive_errors,
+        (unsigned long)local_rx_wake_stats.packets_sent,
+        local_rx_wake_stats.continuous_rx?1U:0U);
     return true;
 }
 
@@ -738,6 +750,7 @@ void local_mesh_prepare_interactive_services() {
     // Radio-first retained wake skipped RTC/GNSS startup. At UI promotion the
     // display has already installed the shared I2C bus, so restore only the
     // interactive RTC/GPS services without touching the running SX1262.
+    meshink_board_wake_log_append("[T5-DEEPSLEEP] interactive peripheral restore begin");
     meshink_rtc_begin();
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_prepare_runtime();
@@ -752,6 +765,10 @@ void local_mesh_prepare_interactive_services() {
     Serial.printf("[T5-DEEPSLEEP] interactive peripherals ready rtc=%u gps=%u\n",
                   meshink_rtc_valid()?1U:0U,
                   meshink_gps_read_status().available?1U:0U);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] interactive peripherals ready rtc=%u gps=%u",
+        meshink_rtc_valid()?1U:0U,
+        meshink_gps_read_status().available?1U:0U);
 }
 
 bool local_mesh_promote_to_ui(const char* source) {
@@ -783,6 +800,8 @@ bool local_mesh_promote_to_ui(const char* source) {
     local_rx_wake_runtime=false;
     local_rx_wake_promoted_to_ui=true;
     Serial.println("[T5-DEEPSLEEP] retained MeshCore promoted to interactive UI without radio restart");
+    meshink_board_wake_log_append(
+        "[T5-DEEPSLEEP] retained MeshCore promoted to interactive UI without radio restart");
     return true;
 }
 

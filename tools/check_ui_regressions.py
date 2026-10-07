@@ -1648,6 +1648,17 @@ assert "talker_g" not in board_target_source, "GNSS identification must not reje
 assert "hasStandardNmeaHeader()" in board_target_source and "sentence_header[0] != 'P'" in board_target_source, "GNSS probe accepts standard multi-constellation NMEA while excluding proprietary command echoes"
 assert "sentence_valid = hasStandardNmeaHeader() && checksum == expected;" in board_target_source, "GNSS identification requires a standard checksum-valid NMEA sentence independent of talker prefix"
 
+
+# 2.1.1-test.4: early deep-sleep wake evidence survives slow phone USB CDC
+# enumeration and can be replayed on every serial reconnect without flash wear.
+assert "RTC_DATA_ATTR T5WakeLogState t5_wake_log_state" in board_target_source and "T5_WAKE_LOG_BYTES=2048" in board_target_source, "early wake transcript is retained in RTC RAM rather than flash"
+assert "t5_wake_log_reset_for_sleep();" in board_target_source, "a new transcript is armed only for an actual next deep-sleep interval"
+assert "meshink_board_wake_log_appendf(" in board_target_source and "deep-sleep GNSS identity restored" in board_target_source and "deep-sleep GNSS resume verified" in board_target_source, "GNSS restore and NMEA verification are captured in the retained wake transcript"
+assert "retained SX1262 runtime restored" in companion_source and "MeshCore retained runtime READY" in companion_source and "interactive peripherals ready" in companion_source, "retained radio, MeshCore and interactive-service milestones are captured"
+assert "if(serial_connected&&!terminal_serial_connected)" in unified_source and "meshink_board_wake_log_replay();" in unified_source, "retained wake transcript replays automatically when USB serial reconnects"
+assert 'strcmp(terminal_line,"wakelog")' in unified_source and "screenshot | shot | wakelog | help" in unified_source, "wake transcript can also be replayed manually without reconnecting"
+assert "SPIFFS" not in board_target_source[board_target_source.index("static constexpr uint32_t T5_WAKE_LOG_MAGIC"):board_target_source.index("static constexpr uint8_t PCA9535_ADDR")], "RTC wake transcript implementation performs no flash writes"
+
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"

@@ -23,6 +23,7 @@ static char terminal_line[48]{};
 static uint8_t terminal_length=0;
 static bool screenshot_capture_mode=false;
 static bool terminal_last_was_cr=false;
+static bool terminal_serial_connected=false;
 
 static void terminal_screenshot_prompt() {
     Serial.println("[T5-CMD] Press Enter to save a screenshot");
@@ -38,6 +39,11 @@ static void terminal_save_screenshot() {
 }
 
 static void service_local_terminal() {
+    const bool serial_connected=(bool)Serial;
+    if(serial_connected&&!terminal_serial_connected)
+        meshink_board_wake_log_replay();
+    terminal_serial_connected=serial_connected;
+
     // Native USB CDC reports false once the host closes/disconnects the port.
     // Capture mode is deliberately session-scoped, so a reconnect starts clean.
     if(screenshot_capture_mode&&!Serial) {
@@ -77,8 +83,10 @@ static void service_local_terminal() {
                 Serial.println("[T5-CMD] Screenshot mode armed");
                 terminal_screenshot_prompt();
                 Serial.println("[T5-CMD] Disconnect serial to exit screenshot mode");
+            } else if(!strcmp(terminal_line,"wakelog")) {
+                meshink_board_wake_log_replay();
             } else if(!strcmp(terminal_line,"help")) {
-                Serial.println("[T5-CMD] commands: screenshot | shot | help");
+                Serial.println("[T5-CMD] commands: screenshot | shot | wakelog | help");
             } else {
                 Serial.printf("[T5-CMD] unknown command: %s (try 'help')\n",terminal_line);
             }
@@ -204,9 +212,13 @@ void setup() {
         }
     }
 
-    if(radio_wake||button_wake||timer_wake)
+    if(radio_wake||button_wake||timer_wake){
         Serial.printf("[T5-DEEPSLEEP] reset wake radio=%u button=%u timer=%u\n",
                       radio_wake?1U:0U,button_wake?1U:0U,timer_wake?1U:0U);
+        meshink_board_wake_log_appendf(
+            "[T5-DEEPSLEEP] reset wake radio=%u button=%u timer=%u",
+            radio_wake?1U:0U,button_wake?1U:0U,timer_wake?1U:0U);
+    }
 
     if(timer_wake&&!radio_wake){
         MeshInkPowerCriticalState timer_power{};
@@ -243,6 +255,8 @@ void setup() {
             meshink_power_frontlight_begin();
             meshink_power_frontlight_set(100);
             Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; frontlight=100%; restoring retained radio/MeshCore before UI");
+            meshink_board_wake_log_append(
+                "[T5-DEEPSLEEP] BOOT wake confirmed; restoring retained radio/MeshCore before UI");
             deep_sleep_rx_mode=true;
             companion_mode=false;
             check_local_wireless_state("deep-button-pre",
@@ -254,6 +268,8 @@ void setup() {
             if(local_mesh_promote_to_ui("deep-button-wake")){
                 deep_sleep_rx_mode=false;
                 Serial.println("[T5-DEEPSLEEP] BOOT wake interactive UI ready; retained radio runtime preserved");
+                meshink_board_wake_log_append(
+                    "[T5-DEEPSLEEP] BOOT wake interactive UI ready; retained radio runtime preserved");
                 return;
             }
             Serial.println("[T5-DEEPSLEEP] BOOT wake UI promotion failed; remaining in headless MeshCore mode");
