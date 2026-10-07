@@ -918,7 +918,7 @@ assert "trusted_companion" in board_target_source and "gpsAuthorityActive(curren
 assert "setManualTime" in board_target_source and "MeshInkTimeSource::Manual" in board_target_source, "manual time bypass exists and records its source"
 assert 'settings_row("DATE & TIME","Clock, source, timezone"' in source, "Date and Time is available from Settings independently of GPS"
 assert 'draw_app_header("DATE & TIME",true);' in source and 'draw_app_header("SET DATE & TIME",true);' in source, "standalone clock pages are present"
-assert 'settings_row("TIMEZONE",TIMEZONES[timezone_index].label,478);' in source, "timezone belongs to Date and Time instead of GPS"
+assert 'settings_row("TIMEZONE",zone,478);' in source and 'timezone_display_label(zone,sizeof(zone));' in source, "timezone belongs to Date and Time and supports dynamic AUTO/CUSTOM labels"
 assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explanatory text remains visible"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
