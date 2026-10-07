@@ -822,13 +822,14 @@ class NMEAProbeStream : public Stream {
     bool hasStandardNmeaHeader() const {
         // Standard NMEA sentences use a two-character talker ID followed by a
         // three-character sentence type (for example GPGGA, GNRMC, BDGGA).
-        // Proprietary messages begin with P and must not be used to identify a
-        // GNSS receiver merely because their checksum is valid.
+        // Proprietary messages begin with P and must not identify a receiver
+        // merely because their checksum is valid.
         return payload_chars >= 5 && sentence_header[0] != 'P' &&
             upperAlpha(sentence_header[0]) && upperAlpha(sentence_header[1]) &&
             upperAlpha(sentence_header[2]) && upperAlpha(sentence_header[3]) &&
             upperAlpha(sentence_header[4]);
     }
+
     static int hexValue(char c) {
         if (c >= '0' && c <= '9') return c - '0';
         if (c >= 'A' && c <= 'F') return c - 'A' + 10;
