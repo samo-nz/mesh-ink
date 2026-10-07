@@ -33,18 +33,17 @@ static bool consume_companion_request() {
 static const MeshInkProtocolBackend& backend() {
     static const MeshInkProtocolBackend value = [] {
         MeshInkProtocolBackend b{};
-        b.descriptor = {
-            1,
-            "MESHCORE",
-            "MeshCore",
-            MESHCORE_RELEASE " (" MESHCORE_REVISION ")",
+        b.descriptor.id = 1;
+        b.descriptor.name = "MESHCORE";
+        b.descriptor.core_name = "MeshCore";
+        b.descriptor.core_version = MESHCORE_RELEASE " (" MESHCORE_REVISION ")";
+        b.descriptor.capabilities =
             MESHINK_PROTOCOL_CAP_DISCOVERY |
             MESHINK_PROTOCOL_CAP_ADVERTISE |
             MESHINK_PROTOCOL_CAP_COMPANION |
             MESHINK_PROTOCOL_CAP_DIAGNOSTICS |
             MESHINK_PROTOCOL_CAP_PRIVACY |
-            MESHINK_PROTOCOL_CAP_PATH_HASH
-        };
+            MESHINK_PROTOCOL_CAP_PATH_HASH;
 
         b.setup = local_mesh_setup;
         b.setup_rx_wake = local_mesh_setup_rx_wake;
