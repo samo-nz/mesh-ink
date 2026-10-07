@@ -35,6 +35,11 @@ inline bool meshink_gps_power_test_busy(){return meshink_gps_mock_power_test_bus
 inline bool meshink_gps_power_test_preserves_receiver_state(){
     return meshink_gps_mock_power_test_busy&&meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::CurrentState;
 }
+inline bool meshink_gps_power_test_isolation_active(){
+    return meshink_gps_mock_power_test_busy&&
+        (meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep||
+         meshink_gps_mock_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner);
+}
 inline bool meshink_gps_power_test_replay_last(){meshink_gps_mock_power_replayed=true;return true;}
 inline bool meshink_gps_power_matrix_replay_last(){meshink_gps_mock_matrix_replayed=true;return true;}
 inline bool meshink_gps_diagnostic_run(MeshInkGpsDiagnosticAction action){
