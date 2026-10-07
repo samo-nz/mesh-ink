@@ -3,6 +3,7 @@
 #include <string.h>
 #include "ui_onboarding.h"
 #include "companion_runtime.h"
+#include "local_mesh_runtime.h"
 #include "map_tiles.h"
 #include "hardware/wireless.h"
 #include "hardware/buttons.h"
