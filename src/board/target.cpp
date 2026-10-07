@@ -901,6 +901,7 @@ static uint32_t gps_matrix_voltage_sum=0;
 static int16_t gps_matrix_current_min=32767;
 static int16_t gps_matrix_current_max=-32768;
 static uint16_t gps_matrix_sample_count=0;
+static uint16_t gps_matrix_voltage_count=0;
 static bool gps_matrix_external_seen=false;
 
 static void gps_serial_replay_pause() {
