@@ -442,7 +442,8 @@ contains("draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));"
 assert "chat_page_bounds(" not in source, "conversation drawing must not rescan all historical pages to calculate a total"
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
 contains("static uint8_t node_info_page_count(uint32_t capabilities)", "Node Info page count is capability-aware")
-contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
+contains("node_has_capability(capabilities,UI_NODE_CAP_STATUS)", "Node Info status pages are driven by helper capabilities")
+assert "capabilities|=UI_NODE_CAP_STATUS|UI_NODE_CAP_LOGIN;" in runtime_source, "MeshCore helper marks protected status nodes with status/login capabilities"
 contains("screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60", "Node Info pages use vertical swipe paging")
 contains('UiNodeInfoRequest::Status,"REQUEST STATUS"', "Node Info exposes an individual status request")
 contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes an individual telemetry request")
@@ -452,11 +453,11 @@ assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote r
 contains("draw_node_role_icon(item.role", "Contacts and Discovery show generic node role icons")
 contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
 contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
-contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
+contains('case UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
 contains("Radio tower: tapered mast plus two signal arcs", "Contacts and Discovery repeater icon uses the radio-tower glyph")
-contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
+contains('case UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
 contains("Simple house silhouette: peaked roof", "Contacts and Discovery room-server icon uses the house glyph")
-contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
+contains('case UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
 assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
 assert "frame[0]=26" in runtime_source, "protected-node login uses MeshCore CMD_SEND_LOGIN"
