@@ -470,6 +470,8 @@ static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 static constexpr uint32_t GPS_DEEP_SLEEP_LOW_WORK_MAGIC=0x47505A31; // "GPZ1"
 RTC_DATA_ATTR uint32_t gps_deep_sleep_low_work_magic=0;
 
+static const char* gps_module_name();
+
 static void gps_load_tuning(){
     if(gps_tuning_loaded)return;
     gps_tuning_loaded=true;
