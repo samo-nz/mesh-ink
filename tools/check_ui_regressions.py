@@ -897,7 +897,8 @@ assert 'settings_row("GLONASS",gps_constellation_state(MeshInkGpsConstellation::
 assert "GPS POWER SAVING" not in source, "final constellation UI must not present experimental power-saving wording"
 assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
 assert 'gps_send_pcas("PCAS04,2");' in board_target_source and 'gps_send_pcas("PCAS15,2,00000000");' in board_target_source and 'gps_send_pcas("PCAS15,3,00000000");' in board_target_source, "T5 deep sleep owns the proven BeiDou zero-mask low-work state"
-assert 'gps_send_pcas("PCAS15,2,FFFFFFFF");' in board_target_source and 'gps_send_pcas("PCAS15,3,FFFFFFFF");' in board_target_source, "T5 interactive resume restores full BeiDou masks before user constellation selection"
+assert 'gps_send_pcas("PCAS15,2,FFFFFFFF");' in board_target_source and 'gps_send_pcas("PCAS15,3,FFFFFFFF");' in board_target_source, "T5 startup restores full BeiDou masks before user constellation selection"
+assert "gps_satellite_masks_restore_pending=true" in board_target_source and "startup GNSS satellite masks restored" in board_target_source, "T5 defensively clears retained BeiDou masks once after every boot"
 assert "t5_gps_prepare_deep_sleep_low_work();" in board_target_source, "T5 board deep-sleep handoff applies GNSS low-work state only at final sleep entry"
 assert "PCAS15" not in runtime_source and "PCAS15" not in companion_source and "PCAS15" not in source, "T5/L76K deep-sleep mask commands must not leak into generic runtime or UI"
 
