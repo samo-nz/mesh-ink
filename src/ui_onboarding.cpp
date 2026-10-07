@@ -294,7 +294,8 @@ static bool headless_display_session=false;
 static bool display_session_active=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
-static volatile bool quick_slider_dragging=false;
+static volatile bool quick_slider_dragging=false;display_slider_dragging=false;
+static volatile bool display_slider_dragging=false;
 static volatile uint8_t quick_slider_preview=30;
 static uint8_t message_alert_phase=0;
 static uint32_t message_alert_deadline=0;
@@ -584,15 +585,15 @@ static bool night_window_active(){const uint16_t now=status_hour<0?0:(uint16_t)(
 static bool frontlight_allowed(){return frontlight_mode==FrontlightMode::On||(frontlight_mode==FrontlightMode::NightTimer&&night_window_active());}
 static void frontlight_drive(bool on){frontlight_lit=on&&frontlight_allowed();meshink_power_frontlight_set(frontlight_lit?frontlight_brightness:0);}
 static void frontlight_preview(uint8_t level){
-    // Live PWM feedback for the quick slider only. Do not alter the persisted
-    // brightness or redraw the e-paper until the release event is handled.
+    // Live PWM feedback while either brightness slider is being dragged.
+    // Do not alter persisted brightness or redraw e-paper until release.
     frontlight_lit=level>0;
     meshink_power_frontlight_set(level);
     const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];
     frontlight_deadline=timeout?millis()+timeout:0;
 }
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
-static void frontlight_service(){if(message_alert_active||quick_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
+static void frontlight_service(){if(message_alert_active||quick_slider_dragging||display_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putBool("deep_standby",deep_sleep_standby);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 // Keep the original five-field single-touch event compatible with all UI
@@ -3152,13 +3153,22 @@ static void open_quick_panel() {
     refresh(MeshInkRefreshMode::FastGray16,true);
 }
 
-static void quick_set_brightness(int value) {
+static void commit_brightness(int value) {
     frontlight_brightness=(uint8_t)max(0,min(100,value));
     frontlight_mode=frontlight_brightness?FrontlightMode::On:FrontlightMode::Off;
     save_frontlight_settings();
-    if(frontlight_brightness) frontlight_event();
-    else { frontlight_drive(false);frontlight_deadline=0; }
+    if(frontlight_brightness)frontlight_event();
+    else {frontlight_drive(false);frontlight_deadline=0;}
+}
+static void quick_set_brightness(int value) {
+    commit_brightness(value);
     draw_quick_panel();
+    refresh(MeshInkRefreshMode::Direct,false);
+}
+static void display_set_brightness(int value) {
+    commit_brightness(value);
+    T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);
+    draw_screen();
     refresh(MeshInkRefreshMode::Direct,false);
 }
 
@@ -3607,7 +3617,7 @@ static void touch_sampler_task(void*){
                 // pressed=true with no meaningful coordinate. Consume the
                 // entire frame while a keyboard is active so it cannot fall
                 // through as a (0,0) tap and dismiss the portrait keyboard.
-                held=false;home_held=false;quick_slider_dragging=false;
+                held=false;home_held=false;quick_slider_dragging=false;display_slider_dragging=false;
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
             }else if(home){
                 if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
@@ -3628,15 +3638,21 @@ static void touch_sampler_task(void*){
                         if(keyboard_delete_hold)
                             keyboard_delete_repeat_at=pressed_at+350;
                     }
-                    const MeshInkUiRect slider_touch=
-                        meshink_quick_slider_touch_rect(portrait_layout());
+                    const MeshInkUiLayout& layout=portrait_layout();
+                    const MeshInkUiRect quick_touch=meshink_quick_slider_touch_rect(layout);
                     quick_slider_dragging=quick_panel_active&&
-                        x>=slider_touch.x&&x<slider_touch.x+slider_touch.width&&
-                        y>=slider_touch.y&&y<slider_touch.y+slider_touch.height;
+                        x>=quick_touch.x&&x<quick_touch.x+quick_touch.width&&
+                        y>=quick_touch.y&&y<quick_touch.y+quick_touch.height;
+                    const MeshInkUiRect display_touch=meshink_display_slider_touch_rect(layout);
+                    display_slider_dragging=!quick_panel_active&&screen==Screen::DisplaySettings&&
+                        x>=display_touch.x&&x<display_touch.x+display_touch.width&&
+                        y>=display_touch.y&&y<display_touch.y+display_touch.height;
                 }
-                if(quick_slider_dragging) {
-                    const MeshInkUiRect slider=
-                        meshink_quick_slider_track_rect(portrait_layout());
+                if(quick_slider_dragging||display_slider_dragging) {
+                    const MeshInkUiLayout& layout=portrait_layout();
+                    const MeshInkUiRect slider=quick_slider_dragging?
+                        meshink_quick_slider_track_rect(layout):
+                        meshink_display_slider_track_rect(layout);
                     const int slider_right=slider.x+slider.width;
                     const int clamped=max(slider.x,min(slider_right,(int)x));
                     const int value=((clamped-slider.x)*100+slider.width/2)/
@@ -3653,7 +3669,8 @@ static void touch_sampler_task(void*){
                 }
             }else if(held){
                 held=false;
-                quick_slider_dragging=false;
+                quick_slider_dragging=false;display_slider_dragging=false;
+                display_slider_dragging=false;
                 const int16_t dx=(int16_t)(last_x-start_x);
                 const int16_t dy=(int16_t)(last_y-start_y);
                 int16_t event_x=last_x,event_y=last_y;
@@ -4201,10 +4218,6 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             if(hit_outer_row(x,y,118)){frontlight_mode=(FrontlightMode)(((uint8_t)frontlight_mode+1)%3);save_frontlight_settings();if(frontlight_mode==FrontlightMode::Off)frontlight_drive(false);else frontlight_event();show_toast(frontlight_mode_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,238)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,meshink_display_slider_touch_rect(portrait_layout()))){
-                const MeshInkUiRect slider=meshink_display_slider_track_rect(portrait_layout());
-                int value=((int)x-slider.x)*100/slider.width;
-                frontlight_brightness=(uint8_t)min(100,max(1,value));save_frontlight_settings();frontlight_event();T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] brightness=%u%%\n",frontlight_brightness);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),538))){deep_sleep_standby=!deep_sleep_standby;save_frontlight_settings();show_toast(deep_sleep_standby?"DEEP SLEEP ON":"NORMAL STANDBY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
@@ -4315,7 +4328,7 @@ static void enter_standby(const char* reason){
     // A panel opened over the landscape keyboard has already switched the
     // physical display to portrait, so keyboard_landscape alone is not enough.
     const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);
-    quick_panel_active=false;quick_panel_restore_landscape=false;quick_slider_dragging=false;
+    quick_panel_active=false;quick_panel_restore_landscape=false;quick_slider_dragging=false;display_slider_dragging=false;
     // Standby is always portrait, but remember a landscape keyboard so wake
     // returns to the exact editing view that was active before standby.
     standby_restore_landscape=restore_landscape;
@@ -4969,6 +4982,19 @@ void ui_loop() {
             }
             // Non-gesture movement and map-control taps are not delayed.
             map_taps={};
+        }
+        if(screen==Screen::DisplaySettings) {
+            const MeshInkUiLayout& layout=portrait_layout();
+            const MeshInkUiRect slider_touch=meshink_display_slider_touch_rect(layout);
+            const int start_x=tap.x-tap.dx,start_y=tap.y-tap.dy;
+            if(start_x>=slider_touch.x&&start_x<slider_touch.x+slider_touch.width&&
+               start_y>=slider_touch.y&&start_y<slider_touch.y+slider_touch.height) {
+                const MeshInkUiRect slider=meshink_display_slider_track_rect(layout);
+                const int clamped=max(slider.x,min(slider.x+slider.width,(int)tap.x));
+                const int value=((clamped-slider.x)*100+slider.width/2)/slider.width;
+                display_set_brightness(value);
+                continue;
+            }
         }
         if(screen==Screen::Maps&&(abs(tap.dx)>22||abs(tap.dy)>22)&&
            meshink_map_gestures::terrain_point(tap.x,tap.y,portrait_layout())) {

@@ -1666,7 +1666,7 @@ rtc_types_source = (root / "src" / "hardware" / "rtc_types.h").read_text(encodin
 assert "enum class MeshInkTimeMode" in rtc_types_source, "RTC contract exposes AUTO/MANUAL policy"
 assert 'if(time_mode_==MeshInkTimeMode::Manual)' in board_target_source and 'manual mode rejected external set' in board_target_source, "manual clock policy rejects GPS/companion/MeshCore writes in backend"
 assert 'time_mode_=MeshInkTimeMode::Manual;' in board_target_source and 'setTimeMode(MeshInkTimeMode mode)' in board_target_source, "manual save and explicit mode changes persist in RTC metadata"
-assert 'AUTO (%s)' in source and 'MESHCORE FALLBACK' in source and 'GPS FIX' in source and 'VALID RTC' in source, "AUTO mode reports the last accepted clock origin"
+assert 'AUTO (%s)' in source and 'source="MESHCORE"' in source and 'GPS FIX' in source and 'VALID RTC' in source, "AUTO mode reports the last accepted clock origin"
 assert 'ui_action_button("CANCEL",manual_time_action_rect(false),false);' in source and 'ui_action_button("SAVE",manual_time_action_rect(true),true);' in source, "manual date/time editor has cancel and save"
 assert 'manual_time_adjust_button_rect(uint8_t field,bool plus)' in source and 'draw_manual_time_field(0,"YEAR"' in source and 'draw_manual_time_field(3,"HOUR"' in source, "date/time fields use vertical plus/value/minus controls"
 assert 'AUTO (GPS-DERIVED)' in source and 'resolve_gps_timezone' in source and 'update_auto_timezone_from_gps(latitude,longitude);' in source, "timezone list supports offline GPS-derived resolution"
@@ -1688,6 +1688,11 @@ assert 'return local_mesh_radio_summary();' in source and '"%.3f / SF%u / BW%.1f
 assert 'NMEA OUTPUT' not in source and 'RMC + GGA (AUTOMATIC)' not in source, "non-actionable NMEA output row is removed"
 assert 'case MeshInkTimeSource::MeshCore:source="MESHCORE";break;' in source, "MeshCore source wording fits the normal time-mode text size"
 assert 'MESHCORE FALLBACK' not in source, "oversized MeshCore fallback wording is removed"
+
+assert 'static volatile bool display_slider_dragging=false;' in source, "Display & Power brightness slider has live drag state"
+assert 'quick_slider_dragging||display_slider_dragging' in source and 'frontlight_preview(quick_slider_preview);' in source, "quick and Display sliders share immediate PWM preview while dragging"
+assert 'screen==Screen::DisplaySettings' in source and 'meshink_display_slider_touch_rect(layout)' in source and 'display_set_brightness(value);' in source, "Display slider commits its clamped release value from the original touch-down gesture"
+assert 'static void commit_brightness(int value)' in source and 'quick_set_brightness(int value)' in source and 'display_set_brightness(int value)' in source, "both brightness sliders share the same commit semantics"
 
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
