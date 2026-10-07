@@ -213,7 +213,17 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
 public:
     size_t checkRecvFrame(uint8_t* dest) override {
         const size_t len=SerialBLEInterface::checkRecvFrame(dest);
-        if(len)remember_app_send(dest,len);
+        if(len){
+            remember_app_send(dest,len);
+            if(dest[0]==CMD_SET_DEVICE_TIME&&len>=5){
+                uint32_t utc=0;
+                memcpy(&utc,dest+1,4);
+                // Mark this exact timestamp as an explicit companion request.
+                // Upstream MyMesh still decides whether the command itself is
+                // legal (including its no-backwards-time stipulation).
+                meshink_rtc_expect_companion_time(utc);
+            }
+        }
         return len;
     }
     size_t writeFrame(const uint8_t* src,size_t len) override {
