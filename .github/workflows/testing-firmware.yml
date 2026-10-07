@@ -136,6 +136,14 @@ jobs:
           PY
           )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify testing version label
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          [[ "$VERSION" =~ -test\.[0-9]+$ ]] || {
+            echo "Testing branch firmware must use a -test.N version, got: $VERSION"
+            exit 1
+          }
       - name: Prepare testing firmware
         env:
           VERSION: ${{ steps.version.outputs.version }}
