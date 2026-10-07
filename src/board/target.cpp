@@ -669,13 +669,12 @@ static bool gps_deep_sleep_power_save=false; // default OFF: retain live trackin
 static bool gps_constellation_dirty=false;
 // Defensive T5/L76K boot recovery: the receiver can retain PCAS15 satellite
 // masks across an ESP reset while its shared rail remains powered.
-static bool gps_boot_mask_recovery_pending=true;
 static bool gps_receiver_masks_zeroed=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 
-// T5/L76K-only retained marker. The application and generic GPS surface never
-// need to know that this board parks the receiver in a BeiDou zero-mask state
-// while the ESP32 is in true deep sleep.
+// T5/L76K-only retained marker. This is the authority for whether MeshInk
+// itself applied the BeiDou zero masks. Do not "repair" masks speculatively:
+// PCAS15 has no documented readback/query form on this receiver.
 static constexpr uint32_t GPS_DEEP_SLEEP_LOW_WORK_MAGIC=0x47505A31; // "GPZ1"
 RTC_DATA_ATTR uint32_t gps_deep_sleep_low_work_magic=0;
 
@@ -765,11 +764,10 @@ static void gps_apply_low_work(bool deep_sleep){
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
 
-    if(gps_boot_mask_recovery_pending||
-       gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
-        // Recover any retained zero masks first on every interactive boot.
+    if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
+        // Restore only when the retained marker proves MeshInk applied the
+        // zero masks before deep sleep.
         gps_restore_full_bds_masks();
-        gps_boot_mask_recovery_pending=false;
         gps_deep_sleep_low_work_magic=0;
         gps_constellation_dirty=true;
         Serial.println("[T5-GPS] startup GNSS satellite masks restored");
@@ -1180,7 +1178,6 @@ void meshink_gps_prepare_runtime(){
             // receiver tracking. Preserve that hot state: do not resend masks,
             // constellation selection, or NMEA configuration before verifying
             // the already-running stream.
-            gps_boot_mask_recovery_pending=false;
             gps_constellation_dirty=false;
             gps_nmea_dirty=false;
             Serial.println("[T5-GPS] deep-sleep GNSS tracking retained; receiver reconfiguration skipped");
