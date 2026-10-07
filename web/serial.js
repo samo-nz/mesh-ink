@@ -10,8 +10,11 @@ const logArea = $("serial-log");
 const copyButton = $("copy-button");
 const clearButton = $("clear-button");
 const autoscroll = $("autoscroll");
-const SERIAL_BUFFER_SIZE = 8192;
+const receiveStats = $("serial-stats");
+const SERIAL_BUFFER_SIZE = 65536;
 const READ_RECOVERY_DELAY_MS = 20;
+const DISPLAY_FLUSH_MS = 50;
+const VISIBLE_LOG_MAX_CHARS = 512 * 1024;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let activePort = null;
@@ -24,6 +27,15 @@ let connecting = false;
 let connected = false;
 let everConnected = false;
 let userDisconnecting = false;
+let capturedChunks = [];
+let capturedLength = 0;
+let pendingDisplayChunks = [];
+let displayFlushTimer = null;
+let receivedBytes = 0;
+let readChunks = 0;
+let streamRecoveries = 0;
+const visibleTextNode = document.createTextNode("");
+logArea.append(visibleTextNode);
 
 function isAndroidPlatform() {
   return navigator.userAgentData?.platform === "Android" || /Android/i.test(navigator.userAgent || "");
@@ -44,9 +56,42 @@ function setStatus(message, kind = "") {
   statusLine.dataset.kind = kind;
 }
 function updateLogButtons() {
-  const empty = logArea.textContent.length === 0;
+  const empty = capturedLength === 0;
   copyButton.disabled = empty;
   clearButton.disabled = empty;
+}
+function formatBytes(value) {
+  if (value < 1024) return value + " B";
+  if (value < 1024 * 1024) return (value / 1024).toFixed(value < 10 * 1024 ? 1 : 0) + " KiB";
+  return (value / (1024 * 1024)).toFixed(1) + " MiB";
+}
+function updateReceiveStats() {
+  if (!receiveStats) return;
+  const hidden = Math.max(0, capturedLength - visibleTextNode.length);
+  receiveStats.textContent =
+    formatBytes(receivedBytes) + " received · " +
+    readChunks + " chunks · " +
+    streamRecoveries + " recoveries" +
+    (hidden ? " · full capture retained; visible tail hides " + formatBytes(hidden) : "");
+}
+function flushDisplay() {
+  displayFlushTimer = null;
+  if (pendingDisplayChunks.length) {
+    const text = pendingDisplayChunks.join("");
+    pendingDisplayChunks.length = 0;
+    if (text) {
+      visibleTextNode.appendData(text);
+      const excess = visibleTextNode.length - VISIBLE_LOG_MAX_CHARS;
+      if (excess > 0) visibleTextNode.deleteData(0, excess);
+    }
+  }
+  updateLogButtons();
+  updateReceiveStats();
+  if (autoscroll.checked) logArea.scrollTop = logArea.scrollHeight;
+}
+function scheduleDisplayFlush() {
+  if (displayFlushTimer !== null) return;
+  displayFlushTimer = window.setTimeout(flushDisplay, DISPLAY_FLUSH_MS);
 }
 function updateControls() {
   const available = serialAvailable();
@@ -55,11 +100,17 @@ function updateControls() {
   reconnectButton.disabled = !available || connecting || connected || !everConnected;
   baudSelect.disabled = connecting || connected;
 }
-function appendDeviceText(text) {
-  if (!text) return;
-  logArea.append(document.createTextNode(text));
-  updateLogButtons();
-  if (autoscroll.checked) logArea.scrollTop = logArea.scrollHeight;
+function captureDeviceText(text, byteLength = 0) {
+  if (byteLength > 0) {
+    receivedBytes += byteLength;
+    ++readChunks;
+  }
+  if (text) {
+    capturedChunks.push(text);
+    capturedLength += text.length;
+    pendingDisplayChunks.push(text);
+  }
+  scheduleDisplayFlush();
 }
 function readPortInfo(port) {
   try {
@@ -126,13 +177,15 @@ async function readFromPort(port, token) {
         const { value, done } = await localReader.read();
         if (done) break;
         if (value?.length) {
-          appendDeviceText(decoder.decode(value, { stream: true }));
+          captureDeviceText(decoder.decode(value, { stream: true }), value.byteLength);
           recoverableErrors = 0;
         }
       }
     } catch (error) {
       streamFailed = true;
       ++recoverableErrors;
+      ++streamRecoveries;
+      scheduleDisplayFlush();
       // A read exception can be non-fatal. After releasing this reader the
       // outer loop checks port.readable and acquires the replacement stream.
       if (recoverableErrors === 1) {
@@ -157,7 +210,8 @@ async function readFromPort(port, token) {
   }
 
   if (token !== generation) return;
-  appendDeviceText(decoder.decode());
+  captureDeviceText(decoder.decode());
+  flushDisplay();
   connected = false;
   everConnected = true;
   rememberedPort = port;
@@ -276,7 +330,7 @@ async function disconnect() {
   }
 }
 async function copyAll() {
-  const text = logArea.textContent;
+  const text = capturedChunks.join("");
   if (!text) return;
   let copied = false;
   try {
@@ -298,8 +352,19 @@ async function copyAll() {
   window.setTimeout(() => { copyButton.textContent = previous; }, 1200);
 }
 function clearWindow() {
-  logArea.textContent = "";
+  if (displayFlushTimer !== null) {
+    window.clearTimeout(displayFlushTimer);
+    displayFlushTimer = null;
+  }
+  capturedChunks = [];
+  capturedLength = 0;
+  pendingDisplayChunks = [];
+  receivedBytes = 0;
+  readChunks = 0;
+  streamRecoveries = 0;
+  visibleTextNode.data = "";
   updateLogButtons();
+  updateReceiveStats();
   logArea.scrollTop = 0;
 }
 
@@ -315,4 +380,5 @@ if (!serialAvailable()) {
   setStatus("Ready · " + serialBackend().name + ".");
 }
 updateLogButtons();
+updateReceiveStats();
 updateControls();
