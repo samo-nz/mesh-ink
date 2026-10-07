@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "ui_data.h"
 #include "hardware/gps_types.h"
+#include "hardware/rtc_types.h"
 
 
 void local_mesh_setup();
@@ -32,6 +33,9 @@ const char* local_mesh_gps_tuning_note();
 void local_mesh_toggle_gps_advert_location();
 uint32_t local_mesh_current_time();
 bool local_mesh_time_valid();
+bool local_mesh_set_manual_time(uint32_t utc);
+MeshInkTimeSource local_mesh_time_source();
+bool local_mesh_gps_time_authoritative();
 const char* local_mesh_node_name();
 const char* local_mesh_radio_summary();
 const char* local_mesh_privacy_value(uint8_t item);
