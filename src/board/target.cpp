@@ -538,6 +538,10 @@ void meshink_rtc_begin(){t5_rtc_clock().begin();}
 void meshink_rtc_tick(){t5_rtc_clock().tick();}
 uint32_t meshink_rtc_current_time(){return t5_rtc_clock().getCurrentTime();}
 bool meshink_rtc_valid(){return t5_rtc_clock().isValid();}
+bool meshink_rtc_set_manual_time(uint32_t utc){return t5_rtc_clock().setManualTime(utc);}
+void meshink_rtc_expect_companion_time(uint32_t utc){t5_rtc_clock().expectCompanionTime(utc);}
+MeshInkTimeSource meshink_rtc_time_source(){return t5_rtc_clock().timeSource();}
+bool meshink_rtc_gps_authoritative(){return t5_rtc_clock().gpsAuthoritative();}
 static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
 enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
