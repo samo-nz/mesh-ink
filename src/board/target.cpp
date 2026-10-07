@@ -264,7 +264,7 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
             (unsigned long)utc,(unsigned long)current);
         return;
     }
-    writeAcceptedTime(utc,MeshInkTimeSource::MeshCore);
+    writeAcceptedTime(utc,MeshInkTimeSource::Protocol);
 }
 void T5RTCClock::expectGpsTime(uint32_t utc){
     loadMetadata();
