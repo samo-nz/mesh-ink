@@ -1507,16 +1507,29 @@ static void gps_matrix_print_summary(bool paced) {
         if(paced)gps_serial_replay_pause();
         return;
     }
-    Serial.printf("[T5-GPS-MATRIX] ===== SUMMARY %u CONFIGURATIONS binary-satmask=%s =====\n",
+    Serial.printf("[T5-GPS-MATRIX] ===== SUMMARY %u CONFIGURATIONS LOWEST TO HIGHEST binary-satmask=%s =====\n",
                   (unsigned)gps_matrix_result_count,
                   gps_matrix_binary_satmask_supported?"SUPPORTED/EXPERIMENTAL":"UNSUPPORTED/SKIPPED");
     if(paced)gps_serial_replay_pause();
+    uint8_t order[GPS_MATRIX_MAX_RESULTS]{};
+    for(size_t i=0;i<gps_matrix_result_count;++i)order[i]=(uint8_t)i;
     for(size_t i=0;i<gps_matrix_result_count;++i){
-        const auto& r=gps_matrix_results[i];
+        size_t best=i;
+        for(size_t j=i+1;j<gps_matrix_result_count;++j){
+            const auto& a=gps_matrix_results[order[j]];
+            const auto& b=gps_matrix_results[order[best]];
+            if(a.mean_current_ma<b.mean_current_ma||
+               (a.mean_current_ma==b.mean_current_ma&&a.code<b.code))
+                best=j;
+        }
+        const uint8_t tmp=order[i];order[i]=order[best];order[best]=tmp;
+    }
+    for(size_t rank=0;rank<gps_matrix_result_count;++rank){
+        const auto& r=gps_matrix_results[order[rank]];
         char label[64];
         gps_matrix_format_label(r.code,label,sizeof(label));
-        Serial.printf("[T5-GPS-MATRIX] %02u %-34s mean=%dmA range=%d-%dmA voltage=%umV power=%ldmW samples=%u%s%s\n",
-                      (unsigned)(i+1),label,(int)r.mean_current_ma,(int)r.min_current_ma,
+        Serial.printf("[T5-GPS-MATRIX] #%02u %-34s mean=%dmA range=%d-%dmA voltage=%umV power=%ldmW samples=%u%s%s\n",
+                      (unsigned)(rank+1),label,(int)r.mean_current_ma,(int)r.min_current_ma,
                       (int)r.max_current_ma,(unsigned)r.mean_voltage_mv,
                       (long)gps_matrix_power_mw(r),(unsigned)r.samples,
                       (r.flags&0x01)?" EXTERNAL-POWER":"",
