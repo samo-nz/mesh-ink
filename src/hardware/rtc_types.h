@@ -4,7 +4,7 @@
 enum class MeshInkTimeSource : uint8_t {
     Unknown = 0,
     HardwareRtc = 1,
-    MeshCore = 2,
+    Protocol = 2,
     Companion = 3,
     Gps = 4,
     Manual = 5
