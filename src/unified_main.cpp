@@ -360,7 +360,10 @@ void loop() {
         companion_loop();
         companion_exit_button();
     } else {
-        service_local_terminal();
+        // During the automatic GPS power matrix, do not even poll the USB
+        // terminal. The local runtime reduces itself to the gauge/test tick,
+        // and the UI loop returns immediately as well.
+        if(!local_mesh_gps_power_test_isolation_active())service_local_terminal();
         if(local_mesh_is_running())local_mesh_loop();
         ui_loop();
     }
