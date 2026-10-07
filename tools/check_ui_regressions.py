@@ -1644,6 +1644,9 @@ assert 'current_status="ERROR - MODULE NOT IDENTIFIED"' in source and 'current_s
 assert "draw_gps_error_icon" in source and "status_gps_error!=MeshInkGpsError::None" in source, "status bar distinguishes GPS errors from normal searching"
 assert "ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp,location.error);" in runtime_source, "runtime propagates GPS backend errors to UI"
 assert "if(gps_error){" in runtime_source and "stable_fix=false;" in runtime_source, "GPS errors immediately suppress stale fixed state"
+assert "talker_g" not in board_target_source, "GNSS identification must not reject valid non-G talker IDs such as BD"
+assert "hasStandardNmeaHeader()" in board_target_source and "sentence_header[0] != 'P'" in board_target_source, "GNSS probe accepts standard multi-constellation NMEA while excluding proprietary command echoes"
+assert "sentence_valid = hasStandardNmeaHeader() && checksum == expected;" in board_target_source, "GNSS identification requires a standard checksum-valid NMEA sentence independent of talker prefix"
 
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
