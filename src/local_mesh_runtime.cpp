@@ -1179,6 +1179,15 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
 }
 void local_mesh_runtime_begin(){provider.begin();}
 void local_mesh_loop(){
+#if ENV_INCLUDE_GPS == 1
+    // Matrix/verification measurements deliberately freeze every nonessential
+    // runtime activity. Only the gauge sampler / GNSS state machine below runs.
+    if(meshink_gps_power_test_isolation_active()){
+        meshink_gps_power_test_tick();
+        yield();
+        return;
+    }
+#endif
     meshink_meshcore().loop();
     local_mesh_flush_contacts_save_if_due();
     provider.refresh();
@@ -1320,6 +1329,7 @@ bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
     return meshink_gps_power_test_start(experiment);
 }
 bool local_mesh_gps_power_test_busy(){return meshink_gps_power_test_busy();}
+bool local_mesh_gps_power_test_isolation_active(){return meshink_gps_power_test_isolation_active();}
 bool local_mesh_gps_power_test_replay_last(){return meshink_gps_power_test_replay_last();}
 bool local_mesh_gps_power_matrix_replay_last(){return meshink_gps_power_matrix_replay_last();}
 bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction action){
@@ -1341,6 +1351,7 @@ bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode){return f
 const char* local_mesh_gps_tuning_note(){return "";}
 bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment){return false;}
 bool local_mesh_gps_power_test_busy(){return false;}
+bool local_mesh_gps_power_test_isolation_active(){return false;}
 bool local_mesh_gps_power_test_replay_last(){return false;}
 bool local_mesh_gps_power_matrix_replay_last(){return false;}
 bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction){return false;}
