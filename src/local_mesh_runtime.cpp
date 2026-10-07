@@ -1293,12 +1293,28 @@ bool local_mesh_send_advert(bool flood){if(pending_advert>=0)return false;const 
 bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=meshink_meshcore().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);meshink_meshcore().savePrefs();meshink_radio_apply_params(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=meshink_meshcore().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;meshink_meshcore().savePrefs();}
 #if ENV_INCLUDE_GPS == 1
-void local_mesh_apply_gps(bool enabled){auto* p=meshink_meshcore().getNodePrefs();p->gps_enabled=enabled?1:0;meshink_meshcore().savePrefs();meshink_meshcore().applyGpsPrefs();gps_duty_sleeping=!enabled;reset_gps_duty_cycle();}
-bool local_mesh_gps_enabled(){return meshink_meshcore().getNodePrefs()->gps_enabled!=0;}
+bool local_mesh_gps_enabled(){return meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;}
+void local_mesh_apply_gps(bool enabled){
+    const auto current=meshink_gps_constellation_mode();
+    const auto requested=enabled
+        ?(current==MeshInkGpsConstellationMode::None?MeshInkGpsConstellationMode::GpsBeiDou:current)
+        :MeshInkGpsConstellationMode::None;
+    local_mesh_gps_set_constellation_mode(requested);
+}
 bool local_mesh_gps_fix(){return meshink_gps_read_status().valid;}
 uint32_t local_mesh_gps_interval(){return meshink_meshcore().getNodePrefs()->gps_interval;}
 MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_gps_constellation_mode();}
-bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){return meshink_gps_set_constellation_mode(mode);}
+bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
+    if(!meshink_gps_set_constellation_mode(mode))return false;
+    const bool enabled=mode!=MeshInkGpsConstellationMode::None;
+    auto* p=meshink_meshcore().getNodePrefs();
+    p->gps_enabled=enabled?1:0;
+    meshink_meshcore().savePrefs();
+    meshink_meshcore().applyGpsPrefs();
+    gps_duty_sleeping=!enabled;
+    reset_gps_duty_cycle();
+    return true;
+}
 const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=meshink_meshcore().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];meshink_meshcore().savePrefs();meshink_meshcore().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
 #else
