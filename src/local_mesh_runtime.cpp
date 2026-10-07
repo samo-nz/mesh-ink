@@ -1318,7 +1318,11 @@ MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_g
 bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){return meshink_gps_set_constellation_mode(mode);}
 const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
 bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment){
-    if(experiment!=MeshInkGpsPowerExperiment::CurrentState&&!local_mesh_gps_enabled()){
+    const bool self_contained=
+        experiment==MeshInkGpsPowerExperiment::CurrentState||
+        experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep||
+        experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner;
+    if(!self_contained&&!local_mesh_gps_enabled()){
         T5_DEBUGLN(T5_LOG_GPS,"[T5-GPS] power experiment rejected: GPS preference is disabled");
         return false;
     }
