@@ -2504,6 +2504,115 @@ static void draw_gps_tuning(){
                     layout.section_margin,ui_y(650),layout.section_width,3,0,false,3);
 }
 
+static const char* const MONTH_NAMES[]={
+    "JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"
+};
+static bool manual_time_leap_year(uint16_t year){
+    return (year%4U==0U&&year%100U!=0U)||(year%400U==0U);
+}
+static uint8_t manual_time_days_in_month(uint16_t year,uint8_t month){
+    static constexpr uint8_t DAYS[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    if(month<1||month>12)return 31;
+    if(month==2&&manual_time_leap_year(year))return 29;
+    return DAYS[month-1];
+}
+static void clamp_manual_time_day(){
+    manual_time_day=min(manual_time_day,manual_time_days_in_month(
+        manual_time_year,manual_time_month));
+    if(manual_time_day<1)manual_time_day=1;
+}
+static void load_manual_time_draft(){
+    time_t now=(time_t)local_mesh_current_time();
+    struct tm local{};
+    if(now>=(time_t)946684800&&localtime_r(&now,&local)&&
+       local.tm_year+1900>=2000&&local.tm_year+1900<=2099){
+        manual_time_year=(uint16_t)(local.tm_year+1900);
+        manual_time_month=(uint8_t)(local.tm_mon+1);
+        manual_time_day=(uint8_t)local.tm_mday;
+        manual_time_hour=(uint8_t)local.tm_hour;
+        manual_time_minute=(uint8_t)local.tm_min;
+    }else{
+        manual_time_year=2026;manual_time_month=1;manual_time_day=1;
+        manual_time_hour=12;manual_time_minute=0;
+    }
+    clamp_manual_time_day();
+}
+static const char* time_source_label(){
+    switch(local_mesh_time_source()){
+        case MeshInkTimeSource::Gps:
+            return local_mesh_gps_time_authoritative()?"GPS - AUTHORITATIVE":"GPS";
+        case MeshInkTimeSource::Companion:return "COMPANION";
+        case MeshInkTimeSource::Manual:return "MANUAL";
+        case MeshInkTimeSource::HardwareRtc:return "HARDWARE RTC";
+        case MeshInkTimeSource::MeshCore:return "MESHCORE";
+        default:return "UNKNOWN";
+    }
+}
+static void current_datetime_label(char* out,size_t len){
+    if(!out||!len)return;
+    if(!local_mesh_time_valid()){
+        strncpy(out,"NOT SET",len-1);out[len-1]=0;return;
+    }
+    const time_t now=(time_t)local_mesh_current_time();
+    struct tm local{};
+    if(!localtime_r(&now,&local)){
+        strncpy(out,"NOT SET",len-1);out[len-1]=0;return;
+    }
+    snprintf(out,len,"%02d %s %04d  %02d:%02d",
+             local.tm_mday,MONTH_NAMES[min(11,max(0,local.tm_mon))],
+             local.tm_year+1900,local.tm_hour,local.tm_min);
+}
+static void draw_date_time(){
+    draw_app_header("DATE & TIME",true);
+    char current[32]{};
+    current_datetime_label(current,sizeof(current));
+    settings_info_row("CURRENT TIME",current,118);
+    settings_info_row("TIME SOURCE",time_source_label(),238);
+    settings_row("SET DATE & TIME","MANUAL",358);
+    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,478);
+    const MeshInkUiLayout& layout=portrait_layout();
+    ui_draw_wrapped("A trusted GPS time remains authoritative for 24 hours. Manual changes are always allowed.",
+                    layout.section_margin,ui_y(650),layout.section_width,2,0,false,5);
+}
+static MeshInkUiRect manual_time_adjust_button_rect(int reference_y,bool plus){
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
+    const int bw=ui_w(62),gap=ui_w(12),margin=ui_w(16);
+    const int plus_x=row.x+row.width-margin-bw;
+    const int x=plus?plus_x:plus_x-gap-bw;
+    return {x,row.y+ui_h(20),bw,ui_h(72)};
+}
+static void draw_manual_time_adjust_row(const char* title,const char* value,int reference_y){
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
+    ui_section_card(row);
+    const MeshInkUiRect minus=manual_time_adjust_button_rect(reference_y,false);
+    ui_text_fit(title,layout.content_text_x,row.y+ui_h(13),
+                minus.x-layout.content_text_x-ui_w(12),3,0,true);
+    ui_text_fit(value,layout.content_text_x,row.y+ui_h(55),
+                minus.x-layout.content_text_x-ui_w(12),3,0,false);
+    ui_action_button("-",minus,false);
+    ui_action_button("+",manual_time_adjust_button_rect(reference_y,true),false);
+}
+static MeshInkUiRect manual_time_save_rect(){
+    return meshink_outer_row_rect(portrait_layout(),730,112);
+}
+static void draw_manual_time(){
+    draw_app_header("SET DATE & TIME",true);
+    char value[16]{};
+    snprintf(value,sizeof(value),"%u",(unsigned)manual_time_year);
+    draw_manual_time_adjust_row("YEAR",value,118);
+    snprintf(value,sizeof(value),"%s",MONTH_NAMES[manual_time_month-1]);
+    draw_manual_time_adjust_row("MONTH",value,238);
+    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_day);
+    draw_manual_time_adjust_row("DAY",value,358);
+    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_hour);
+    draw_manual_time_adjust_row("HOUR (24H)",value,478);
+    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_minute);
+    draw_manual_time_adjust_row("MINUTE",value,598);
+    ui_action_button("SAVE DATE & TIME",manual_time_save_rect(),true);
+}
+
 static void draw_timezone(){
     draw_app_header("TIMEZONE",true);
     const MeshInkUiLayout& layout=portrait_layout();
