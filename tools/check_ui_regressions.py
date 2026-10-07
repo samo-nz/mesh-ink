@@ -1034,7 +1034,7 @@ for release_power_debug_source in (source, runtime_source, unified_source, board
 assert "delay(12);" in source and "if(!standby_active)delay(12);" not in source, "UI restores the established unconditional 12 ms idle delay"
 
 # Test40 release serial policy: normal operation is quiet; actionable faults remain.
-assert '[T5-BOOT] MeshInk %s board=%s mode=%s' in unified_source, "release boot prints a concise version/board/mode header"
+assert '[T5-BOOT] MeshInk %s board=%s protocol=%s mode=%s' in unified_source, "release boot prints a concise version/board/protocol/mode header"
 assert '[T5-BLE] scan response name=' not in companion_source, "release companion mode must not print BLE setup chatter"
 assert 'companion shutdown complete elapsed=' not in companion_source, "release companion shutdown must not print routine timing"
 assert 'Serial.printf("[T5-RADIO]' not in board_target_source and 'Serial.println("[T5-RADIO]' not in board_target_source, "release radio bring-up must not print routine diagnostics"
