@@ -14,9 +14,18 @@ static BackendSlot backend_slots[] = {
     meshink_protocol_backend_slot_4,
 };
 
-static const MeshInkProtocolBackend fallback_backend = {
-    {0, "NO PROTOCOL", "NO CORE", "", 0}
-};
+static const MeshInkProtocolBackend& fallback_backend() {
+    static const MeshInkProtocolBackend value = [] {
+        MeshInkProtocolBackend b{};
+        b.descriptor.id = 0;
+        b.descriptor.name = "NO PROTOCOL";
+        b.descriptor.core_name = "NO CORE";
+        b.descriptor.core_version = "";
+        b.descriptor.capabilities = 0;
+        return b;
+    }();
+    return value;
+}
 
 static const MeshInkProtocolBackend* slot_backend(size_t index) {
     if (index >= sizeof(backend_slots) / sizeof(backend_slots[0])) return nullptr;
@@ -28,7 +37,7 @@ static const MeshInkProtocolBackend* first_backend() {
     for (size_t i = 0; i < sizeof(backend_slots) / sizeof(backend_slots[0]); ++i) {
         if (const auto* backend = slot_backend(i)) return backend;
     }
-    return &fallback_backend;
+    return &fallback_backend();
 }
 
 static uint8_t selected_protocol_id() {
