@@ -25,5 +25,6 @@ button[hidden]{display:none}
 .serial-log-actions{margin:12px 0}
 .serial-autoscroll{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:14px}
 .serial-autoscroll input{width:18px;height:18px;accent-color:var(--accent)}
-.serial-monitor-log{min-height:360px;max-height:62vh;white-space:pre-wrap;overflow-wrap:anywhere}
+.serial-stats{margin:6px 0 10px;color:var(--muted);font:12px/1.4 ui-monospace,Consolas,monospace}
+.serial-monitor-log{min-height:360px;max-height:62vh;white-space:pre;overflow-wrap:normal;overflow:auto}
 @media(max-width:560px){.serial-toolbar button,.serial-log-actions button{flex:1 1 42%}.serial-monitor-log{min-height:320px;max-height:56vh}}
