@@ -1184,7 +1184,10 @@ void local_mesh_loop(){
     // runtime activity. Only the gauge sampler / GNSS state machine below runs.
     if(meshink_gps_power_test_isolation_active()){
         meshink_gps_power_test_tick();
-        yield();
+        // Keep the application task quiescent instead of spinning at 80 MHz.
+        // A 10 ms idle slice is tiny versus the 1 Hz gauge sample cadence and
+        // gives every matrix state the same low-noise CPU background.
+        delay(10);
         return;
     }
 #endif
