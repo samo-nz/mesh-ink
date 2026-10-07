@@ -1420,6 +1420,10 @@ static void gps_power_apply_experiment() {
         case MeshInkGpsPowerExperiment::CurrentState:
             Serial.println("[T5-GPS-POWER] CURRENT STATE sends no GNSS command");
             break;
+        case MeshInkGpsPowerExperiment::AutoMatrixSweep:
+        case MeshInkGpsPowerExperiment::VerifyMatrixWinner:
+            // These modes use the dedicated quiet matrix state machine.
+            break;
     }
     Serial.println("[T5-GPS-POWER] post-change measurement window is 60 seconds; one gauge sample per second");
 }
@@ -1810,6 +1814,18 @@ static void gps_power_sample_now() {
 
 static void gps_power_finish(bool cancelled) {
     if(!gps_power_test_running)return;
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep){
+        gps_matrix_finish_sweep(cancelled);
+        return;
+    }
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner){
+        if(cancelled){
+            gps_matrix_restore_receiver_after_run();
+            gps_power_test_running=false;
+            Serial.println("[T5-GPS-MATRIX] winner verification cancelled; receiver restore attempted");
+        }
+        return;
+    }
     if(!cancelled)gps_power_print_summary(false);
     else Serial.println("[T5-GPS-POWER] experiment cancelled by standby transition");
     gps_power_restore_receiver(cancelled);
@@ -1828,6 +1844,8 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
         return false;
     }
     const bool untouched=experiment==MeshInkGpsPowerExperiment::CurrentState;
+    const bool matrix=experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep||
+                      experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner;
     if(!untouched&&(!gps_baud_locked||detected_gps_module!=GpsModule::L76K)){
         Serial.printf("[T5-GPS-POWER] start rejected: experiment requires checksum-locked L76K; locked=%u module=%s baud=%lu\n",
                       gps_baud_locked?1U:0U,gps_module_name(),(unsigned long)detected_gps_baud);
@@ -1837,6 +1855,64 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
     gps_load_tuning();
     gps_power_experiment=experiment;
     gps_power_saved_constellation=gps_constellation_mode;
+
+    if(matrix){
+        gps_power_log_count=0;
+        gps_power_log_valid=false;
+        gps_power_post_phase=false;
+        gps_power_measurement_started=false;
+
+        if(experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep){
+            gps_matrix_result_count=0;
+            gps_matrix_winner_code=0;
+            gps_matrix_log_valid=false;
+            gps_matrix_binary_satmask_supported=gps_matrix_probe_binary_satmask();
+            gps_matrix_current_code=gps_matrix_next_supported_code(0);
+        }else{
+            if((!gps_matrix_log_valid||!gps_matrix_winner_code)&&!gps_matrix_load_results()){
+                Serial.println("[T5-GPS-MATRIX] VERIFY rejected: run AUTO MATRIX SWEEP first");
+                return false;
+            }
+            const uint8_t winner=gps_matrix_winner_code;
+            const bool needs_binary=gps_matrix_requires_binary_mask(winner);
+            const bool binary_now=gps_matrix_probe_binary_satmask();
+            if(needs_binary&&!binary_now){
+                Serial.println("[T5-GPS-MATRIX] VERIFY rejected: saved winner requires experimental CFG-SATMASK but receiver did not answer its poll");
+                return false;
+            }
+            gps_matrix_binary_satmask_supported=binary_now;
+            gps_matrix_current_code=winner;
+        }
+
+        if(!gps_matrix_current_code){
+            Serial.println("[T5-GPS-MATRIX] start rejected: no supported configuration");
+            return false;
+        }
+
+        gps_power_test_running=true;
+        gps_matrix_sampling=false;
+        gps_matrix_apply_config(gps_matrix_current_code);
+        gps_matrix_settle_until=millis()+GPS_MATRIX_SETTLE_MS;
+
+        char label[64];
+        gps_matrix_format_label(gps_matrix_current_code,label,sizeof(label));
+        const bool external=meshink_power_external_present();
+        Serial.println("[T5-GPS-MATRIX] ============================================================");
+        Serial.printf("[T5-GPS-MATRIX] START '%s' first=%s binary-satmask=%s\n",
+                      meshink_gps_power_experiment_name(experiment),label,
+                      gps_matrix_binary_satmask_supported?"SUPPORTED/EXPERIMENTAL":"UNSUPPORTED/SKIPPED");
+        Serial.printf("[T5-GPS-MATRIX] strict isolation=ON settle=%lus sample=%lus per configuration; UART output is silent during each measured window\n",
+                      (unsigned long)(GPS_MATRIX_SETTLE_MS/1000U),
+                      (unsigned long)((experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner
+                          ?GPS_POWER_POST_MS:GPS_MATRIX_MEASURE_MS)/1000U));
+        if(experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep)
+            Serial.printf("[T5-GPS-MATRIX] configurations=%u (all non-empty OFF/FULL/ZERO combinations supported by this receiver)\n",
+                          gps_matrix_binary_satmask_supported?26U:11U);
+        Serial.printf("[T5-GPS-MATRIX] external-power-at-start=%u; battery-only is required for trustworthy ranking\n",
+                      external?1U:0U);
+        return true;
+    }
+
     if(untouched)
         Serial.println("[T5-GPS-POWER] CURRENT STATE mode: no UART changes, no GNSS commands, no baseline normalization");
     else
@@ -1878,6 +1954,11 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
 void meshink_gps_power_test_tick() {
 #if ENV_INCLUDE_GPS == 1
     if(!gps_power_test_running)return;
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep||
+       gps_power_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner){
+        gps_matrix_tick();
+        return;
+    }
     const uint32_t now=millis();
     if(!gps_power_measurement_started){
         if((int32_t)(now-gps_power_settle_until)<0)return;
@@ -1923,6 +2004,12 @@ bool meshink_gps_power_test_preserves_receiver_state(){
     return gps_power_test_running&&gps_power_experiment==MeshInkGpsPowerExperiment::CurrentState;
 }
 
+bool meshink_gps_power_test_isolation_active(){
+    return gps_power_test_running&&
+        (gps_power_experiment==MeshInkGpsPowerExperiment::AutoMatrixSweep||
+         gps_power_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner);
+}
+
 bool meshink_gps_power_test_replay_last() {
     if((!gps_power_log_valid||gps_power_log_count==0)&&!gps_power_load_persisted_log()){
         Serial.println("[T5-GPS-POWER] REPLAY requested but no completed/cancelled measurement log is retained");
@@ -1957,6 +2044,21 @@ bool meshink_gps_power_test_replay_last() {
     Serial.println("[T5-GPS-POWER] ===== REPLAY COMPLETE =====");
     gps_serial_replay_pause();
     return true;
+}
+
+bool meshink_gps_power_matrix_replay_last(){
+#if ENV_INCLUDE_GPS == 1
+    if(gps_power_test_running){
+        Serial.println("[T5-GPS-MATRIX] replay rejected: measurement is running");
+        return false;
+    }
+    if((!gps_matrix_log_valid||!gps_matrix_result_count)&&!gps_matrix_load_results())
+        return false;
+    gps_matrix_print_summary(true);
+    return true;
+#else
+    return false;
+#endif
 }
 
 bool meshink_gps_diagnostic_run(MeshInkGpsDiagnosticAction action) {
