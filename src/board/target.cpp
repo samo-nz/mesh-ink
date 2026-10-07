@@ -872,6 +872,37 @@ static MeshInkGpsConstellationMode gps_power_saved_constellation = MeshInkGpsCon
 static bool gps_power_uart_suspended = false;
 static constexpr uint32_t GPS_POWER_LOG_MAGIC = 0x47504C31; // "GPL1"
 
+enum class GpsMatrixSatState : uint8_t { Off=0, Full=1, Zero=2 };
+struct GpsMatrixResult {
+    uint8_t code=0;
+    int16_t mean_current_ma=0;
+    int16_t min_current_ma=0;
+    int16_t max_current_ma=0;
+    uint16_t mean_voltage_mv=0;
+    uint8_t samples=0;
+    uint8_t flags=0; // B0 external power seen; B1 experimental binary mask used
+};
+static constexpr uint32_t GPS_MATRIX_MAGIC=0x47504D31; // "GPM1"
+static constexpr uint32_t GPS_MATRIX_SETTLE_MS=5000;
+static constexpr uint32_t GPS_MATRIX_MEASURE_MS=10000;
+static constexpr size_t GPS_MATRIX_MAX_RESULTS=26;
+static GpsMatrixResult gps_matrix_results[GPS_MATRIX_MAX_RESULTS]{};
+static size_t gps_matrix_result_count=0;
+static uint8_t gps_matrix_current_code=0;
+static uint8_t gps_matrix_winner_code=0;
+static bool gps_matrix_binary_satmask_supported=false;
+static bool gps_matrix_log_valid=false;
+static bool gps_matrix_sampling=false;
+static uint32_t gps_matrix_settle_until=0;
+static uint32_t gps_matrix_sample_started=0;
+static uint32_t gps_matrix_next_sample=0;
+static int32_t gps_matrix_current_sum=0;
+static uint32_t gps_matrix_voltage_sum=0;
+static int16_t gps_matrix_current_min=32767;
+static int16_t gps_matrix_current_max=-32768;
+static uint16_t gps_matrix_sample_count=0;
+static bool gps_matrix_external_seen=false;
+
 static void gps_serial_replay_pause() {
     Serial.flush();
     delay(GPS_SERIAL_REPLAY_DELAY_MS);
