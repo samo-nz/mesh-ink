@@ -105,7 +105,7 @@ struct MeshInkProtocolBackend {
 // Protocol helpers register into generic slots. The dispatcher treats missing
 // weak slots as unavailable, so another upstream core/helper can be added
 // without changing the shared UI or boot flow.
-const MeshInkProtocolBackend* meshink_protocol_backend_slot_1();
-const MeshInkProtocolBackend* meshink_protocol_backend_slot_2();
-const MeshInkProtocolBackend* meshink_protocol_backend_slot_3();
-const MeshInkProtocolBackend* meshink_protocol_backend_slot_4();
+const MeshInkProtocolBackend* meshink_protocol_backend_slot_1() __attribute__((weak));
+const MeshInkProtocolBackend* meshink_protocol_backend_slot_2() __attribute__((weak));
+const MeshInkProtocolBackend* meshink_protocol_backend_slot_3() __attribute__((weak));
+const MeshInkProtocolBackend* meshink_protocol_backend_slot_4() __attribute__((weak));
