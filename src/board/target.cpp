@@ -964,6 +964,156 @@ static void gps_power_send_casic_binary(uint8_t cls,uint8_t id,
     Serial1.flush();
 }
 
+static void gps_matrix_send_pcas(const char* payload) {
+    gps_power_uart_resume();
+    uint8_t checksum=0;
+    for(const char* p=payload;*p;++p)checksum^=(uint8_t)*p;
+    Serial1.printf("$%s*%02X\r\n",payload,checksum);
+    Serial1.flush();
+}
+
+static void gps_matrix_send_binary(uint8_t cls,uint8_t id,
+                                   const uint8_t* payload,uint16_t len) {
+    gps_power_uart_resume();
+    if((len&3U)!=0U||(!payload&&len!=0U))return;
+    uint32_t checksum=((uint32_t)id<<24)|((uint32_t)cls<<16)|(uint32_t)len;
+    for(uint16_t offset=0;offset<len;offset+=4){
+        const uint32_t word=(uint32_t)payload[offset]|
+                            ((uint32_t)payload[offset+1]<<8)|
+                            ((uint32_t)payload[offset+2]<<16)|
+                            ((uint32_t)payload[offset+3]<<24);
+        checksum+=word;
+    }
+    const uint8_t header[6]={0xBA,0xCE,(uint8_t)(len&0xFFU),(uint8_t)(len>>8),cls,id};
+    const uint8_t trailer[4]={
+        (uint8_t)(checksum&0xFFU),(uint8_t)((checksum>>8)&0xFFU),
+        (uint8_t)((checksum>>16)&0xFFU),(uint8_t)((checksum>>24)&0xFFU)
+    };
+    Serial1.write(header,sizeof(header));
+    if(len)Serial1.write(payload,len);
+    Serial1.write(trailer,sizeof(trailer));
+    Serial1.flush();
+}
+
+static GpsMatrixSatState gps_matrix_state(uint8_t code,uint8_t position) {
+    for(uint8_t i=0;i<position;++i)code=(uint8_t)(code/3U);
+    return (GpsMatrixSatState)(code%3U);
+}
+
+static const char* gps_matrix_state_name(GpsMatrixSatState state) {
+    switch(state){
+        case GpsMatrixSatState::Off:return "OFF";
+        case GpsMatrixSatState::Full:return "FULL";
+        case GpsMatrixSatState::Zero:return "ZERO";
+        default:return "?";
+    }
+}
+
+static void gps_matrix_format_label(uint8_t code,char* out,size_t out_len) {
+    snprintf(out,out_len,"GPS=%s BDS=%s GLO=%s",
+             gps_matrix_state_name(gps_matrix_state(code,0)),
+             gps_matrix_state_name(gps_matrix_state(code,1)),
+             gps_matrix_state_name(gps_matrix_state(code,2)));
+}
+
+static bool gps_matrix_requires_binary_mask(uint8_t code) {
+    return gps_matrix_state(code,0)==GpsMatrixSatState::Zero||
+           gps_matrix_state(code,2)==GpsMatrixSatState::Zero;
+}
+
+static bool gps_matrix_config_supported(uint8_t code) {
+    if(code==0||code>26)return false;
+    return !gps_matrix_requires_binary_mask(code)||gps_matrix_binary_satmask_supported;
+}
+
+static uint8_t gps_matrix_next_supported_code(uint8_t after) {
+    for(uint8_t code=(uint8_t)(after+1U);code<=26U;++code)
+        if(gps_matrix_config_supported(code))return code;
+    return 0;
+}
+
+static bool gps_matrix_probe_binary_satmask() {
+    // Newer/reverse-engineered CASBIN material defines CFG-SATMASK (06/21)
+    // as seven 64-bit satellite masks. It is not documented for this L76K,
+    // so only use it when a read-only poll actually returns the expected
+    // 56-byte CFG-SATMASK response header.
+    while(Serial1.available()>0)Serial1.read();
+    gps_matrix_send_binary(0x06,0x21,nullptr,0);
+    uint8_t window[6]{};
+    size_t have=0;
+    const uint32_t until=millis()+800;
+    while((int32_t)(millis()-until)<0){
+        while(Serial1.available()>0){
+            const uint8_t ch=(uint8_t)Serial1.read();
+            if(have<sizeof(window))window[have++]=ch;
+            else{
+                memmove(window,window+1,sizeof(window)-1);
+                window[sizeof(window)-1]=ch;
+            }
+            if(have==sizeof(window)&&
+               window[0]==0xBA&&window[1]==0xCE&&
+               window[2]==0x38&&window[3]==0x00&&
+               window[4]==0x06&&window[5]==0x21){
+                gps_last_byte_at=millis();
+                return true;
+            }
+        }
+        yield();
+        delay(1);
+    }
+    gps_last_byte_at=millis();
+    return false;
+}
+
+static void gps_matrix_send_binary_satmask(bool gps_zero,bool glo_zero) {
+    uint8_t payload[56];
+    memset(payload,0xFF,sizeof(payload));
+    if(gps_zero)memset(payload+0,0x00,8);
+    if(glo_zero)memset(payload+16,0x00,8);
+    gps_matrix_send_binary(0x06,0x21,payload,sizeof(payload));
+}
+
+static void gps_matrix_restore_masks() {
+    if(gps_matrix_binary_satmask_supported){
+        uint8_t payload[56];
+        memset(payload,0xFF,sizeof(payload));
+        gps_matrix_send_binary(0x06,0x21,payload,sizeof(payload));
+        delay(40);
+    }
+    gps_matrix_send_pcas("PCAS15,2,FFFFFFFF");
+    delay(40);
+    gps_matrix_send_pcas("PCAS15,3,FFFFFFFF");
+    delay(40);
+}
+
+static void gps_matrix_apply_config(uint8_t code) {
+    const auto gps=gps_matrix_state(code,0);
+    const auto bds=gps_matrix_state(code,1);
+    const auto glo=gps_matrix_state(code,2);
+    const uint8_t mode=(gps==GpsMatrixSatState::Off?0U:1U)|
+                       (bds==GpsMatrixSatState::Off?0U:2U)|
+                       (glo==GpsMatrixSatState::Off?0U:4U);
+    gps_matrix_restore_masks();
+    char constellation[16];
+    snprintf(constellation,sizeof(constellation),"PCAS04,%u",(unsigned)mode);
+    gps_matrix_send_pcas(constellation);
+    delay(80);
+    if(gps_matrix_binary_satmask_supported&&
+       (gps==GpsMatrixSatState::Zero||glo==GpsMatrixSatState::Zero)){
+        gps_matrix_send_binary_satmask(gps==GpsMatrixSatState::Zero,
+                                       glo==GpsMatrixSatState::Zero);
+        delay(80);
+    }
+    if(bds==GpsMatrixSatState::Zero){
+        gps_matrix_send_pcas("PCAS15,2,00000000");
+        delay(40);
+        gps_matrix_send_pcas("PCAS15,3,00000000");
+        delay(80);
+    }
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+}
+
 static void gps_diag_set_uart(uint32_t baud) {
     while(Serial1.available()>0)Serial1.read();
     Serial1.end();
