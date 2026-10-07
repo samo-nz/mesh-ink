@@ -920,7 +920,7 @@ assert "meshink_rtc_expect_companion_time" in companion_source and "CMD_SET_DEVI
 assert "T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL" in board_target_source, "trusted GPS time owns a 24-hour authority window"
 assert "trusted_companion" in board_target_source and "gpsAuthorityActive(current)" in board_target_source, "companion time is gated only by fresh GPS authority after upstream command validation"
 assert "setManualTime" in board_target_source and "MeshInkTimeSource::Manual" in board_target_source, "manual time bypass exists and records its source"
-assert 'settings_row("DATE & TIME","Clock, source, timezone"' in source, "Date and Time is available from Settings independently of GPS"
+assert '{"DATE & TIME","Clock, source, timezone",SettingsAction::DateTime}' in source, "Date and Time is available from Settings independently of GPS"
 assert 'draw_app_header("DATE & TIME",true);' in source and 'draw_app_header("SET DATE & TIME",true);' in source, "standalone clock pages are present"
 assert 'settings_row("TIMEZONE",zone,478);' in source and 'timezone_display_label(zone,sizeof(zone));' in source, "timezone belongs to Date and Time and supports dynamic AUTO/CUSTOM labels"
 assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explanatory text remains visible"
@@ -1119,7 +1119,7 @@ assert "MESHINK_PROTOCOL_CAP_DIAGNOSTICS" in source and "Live protocol and radio
 assert "mesh_protocol_request_diagnostics()" in source and "draw_diagnostics()" in source, "diagnostics UI requests and renders active-protocol stats"
 assert "frame[2]={56,type}" in runtime_source, "diagnostics uses upstream CMD_GET_STATS"
 assert "PACKETS RX/TX %lu / %lu" in runtime_source and "AIRTIME TX/RX %lu / %lu S" in runtime_source, "diagnostics decodes packet and radio counters"
-assert 'settings_row("HELP","Using MeshInk",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
+assert '{"HELP","Using MeshInk",MoreAction::Help}' in source, "Help remains a shared More action after protocol-specific rows"
 
 # Test46: a message received while its conversation is visibly open is already
 # seen and must not create contact/channel or bottom-tab unread dots.
@@ -1527,7 +1527,7 @@ assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REF
 assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
 assert "ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);" in source, "portrait composer uses the clipped bottom-tail entry renderer"
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
-assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
+assert '{"SETTINGS","Device and radio",MoreAction::Settings}' in source and '{"DISPLAY & POWER","Frontlight, refresh, standby",SettingsAction::DisplayPower}' in source, "More/Settings subtitles use calmer sentence case"
 
 # Test62: native smooth tiers are deliberately a little larger than the old
 # 5x7 primary sizes (21/28/35/42px) without any bitmap enlargement.
@@ -1580,7 +1580,7 @@ assert "layout.height-ui_h(38)" in history_branch, "older history pages retain o
 assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key labels use native font height for vertical centring"
 assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
 assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
-assert "saved_route_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic trace extent"
+assert "next_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic capability-driven extent"
 
 
 # Test66: release cleanup retires the one-off pre-release message migrator.
@@ -1687,7 +1687,7 @@ assert 'first fresh fix accepted because GPS clock authority was stale' in board
 
 # 2.1.1-test.7: user-facing radio/GPS/time cleanup.
 assert 'static const char* active_radio_label()' in source and 'mesh_protocol_radio_matches(' in source, "radio menu resolves actual settings back to a known preset"
-assert 'settings_row("ID & RADIO",active_radio_label(),118);' in source, "top-level radio menu shows the preset name when the active configuration matches"
+assert '{"ID & RADIO",active_radio_label(),SettingsAction::IdentityRadio}' in source, "top-level radio menu shows the preset name when the active configuration matches"
 assert 'return mesh_protocol_radio_summary();' in source and '"%.3f / SF%u / BW%.1f / CR%u"' in runtime_source, "unmatched radio settings use compact raw numbers without a CUSTOM prefix"
 assert 'NMEA OUTPUT' not in source and 'RMC + GGA (AUTOMATIC)' not in source, "non-actionable NMEA output row is removed"
 assert 'case MeshInkTimeSource::Protocol:source=mesh_protocol_name();break;' in source, "protocol time source uses the active helper name"
