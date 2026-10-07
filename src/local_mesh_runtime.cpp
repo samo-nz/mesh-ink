@@ -1306,7 +1306,7 @@ void local_mesh_apply_gps(bool){}
 bool local_mesh_gps_enabled(){return false;}
 bool local_mesh_gps_fix(){return false;}
 uint32_t local_mesh_gps_interval(){return 0;}
-MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return MeshInkGpsConstellationMode::Unchanged;}
+MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return MeshInkGpsConstellationMode::None;}
 bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode){return false;}
 const char* local_mesh_gps_tuning_note(){return "";}
 void local_mesh_cycle_gps_interval(){}
