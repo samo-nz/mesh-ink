@@ -48,10 +48,70 @@ static bool idf_write(uint8_t address,uint8_t reg,const uint8_t* data,size_t len
 static uint8_t from_bcd(uint8_t v){return (uint8_t)((v>>4)*10+(v&0x0F));}
 static uint8_t to_bcd(uint8_t v){return (uint8_t)(((v/10)<<4)|(v%10));}
 
+static constexpr uint32_t T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL;
+
+void T5RTCClock::loadMetadata(){
+    if(metadata_loaded_)return;
+    metadata_loaded_=true;
+    Preferences pref;
+    if(pref.begin("t5-rtc",true)){
+        last_gps_sync_utc_=pref.getULong("gps_sync",0);
+        const uint8_t raw_source=pref.getUChar("source",(uint8_t)MeshInkTimeSource::Unknown);
+        time_source_=raw_source<=(uint8_t)MeshInkTimeSource::Manual
+            ?(MeshInkTimeSource)raw_source:MeshInkTimeSource::Unknown;
+        pref.end();
+    }
+}
+void T5RTCClock::saveMetadata(){
+    Preferences pref;
+    if(pref.begin("t5-rtc",false)){
+        pref.putULong("gps_sync",last_gps_sync_utc_);
+        pref.putUChar("source",(uint8_t)time_source_);
+        pref.end();
+    }
+}
+bool T5RTCClock::gpsAuthorityActive(uint32_t current) const{
+    return last_gps_sync_utc_&&current>=last_gps_sync_utc_&&
+           current-last_gps_sync_utc_<=T5_GPS_TIME_AUTHORITY_SECONDS;
+}
+bool T5RTCClock::writeAcceptedTime(uint32_t utc,MeshInkTimeSource source){
+    timeval tv{(time_t)utc,0};
+    settimeofday(&tv,nullptr);
+
+    if(source==MeshInkTimeSource::Gps)last_gps_sync_utc_=utc;
+    else if(source==MeshInkTimeSource::Manual)last_gps_sync_utc_=0;
+    time_source_=source;
+    saveMetadata();
+
+    if(!i2c_ready_){
+        // MeshCore bootstraps a plausible clock from contact timestamps during
+        // retained radio-first startup. Keep that as system time only: the
+        // headless path deliberately has no shared I2C driver yet.
+        deferred_hardware_time_=utc;
+        T5_TRACE("rtc: deferred hardware write UTC=%lu source=%u; I2C lifecycle not initialized\n",
+            (unsigned long)utc,(unsigned)source);
+        return true;
+    }
+
+    const DateTime dt(utc);
+    if(dt.year()<2000||dt.year()>2099){
+        Serial.printf("[T5-WARN] rtc write outside PCF8563 year range UTC=%lu\n",
+                      (unsigned long)utc);
+        return false;
+    }
+    const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
+        to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),
+        to_bcd((uint8_t)(dt.year()-2000))};
+    valid_=idf_write(0x51,0x02,r,sizeof(r));
+    if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
+    return valid_;
+}
+
 void T5RTCClock::begin(){
     // begin() is only reached once the shared I2C lifecycle is active.
     // Retained headless wakes intentionally skip it.
     i2c_ready_=true;
+    loadMetadata();
     uint8_t r[7]{};
     const bool read_ok=idf_read(0x51,0x02,r,sizeof(r));
     if(read_ok){
@@ -63,6 +123,10 @@ void T5RTCClock::begin(){
             deferred_hardware_time_=0;
             const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
             timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+            if(time_source_==MeshInkTimeSource::Unknown){
+                time_source_=MeshInkTimeSource::HardwareRtc;
+                saveMetadata();
+            }
             Serial.println("[T5-INIT] rtc=PCF8563 OK");
             return;
         }
@@ -72,8 +136,7 @@ void T5RTCClock::begin(){
 
     // MeshCore may already have bootstrapped software time from saved contact
     // timestamps while this retained wake was headless. Only use that deferred
-    // value when the hardware RTC itself is unavailable/invalid; a valid RTC
-    // above always remains authoritative.
+    // value when the hardware RTC itself is unavailable/invalid.
     const uint32_t deferred=deferred_hardware_time_;
     deferred_hardware_time_=0;
     if(deferred){
@@ -99,34 +162,66 @@ uint32_t T5RTCClock::getCurrentTime(){
         from_bcd(r[2]&0x3F),from_bcd(r[1]&0x7F),from_bcd(r[0]&0x7F)).unixtime();
 }
 void T5RTCClock::setCurrentTime(uint32_t utc){
+    loadMetadata();
+    const uint32_t now_ms=millis();
     const uint32_t current=getCurrentTime();
-    const bool trusted_gps=trusted_gps_time_&&millis()<=trusted_gps_until_&&
+    const bool trusted_gps=trusted_gps_time_&&now_ms<=trusted_gps_until_&&
         (utc>trusted_gps_time_?utc-trusted_gps_time_:trusted_gps_time_-utc)<=3;
+    const bool trusted_companion=expected_companion_time_&&now_ms<=expected_companion_until_&&
+        (utc>expected_companion_time_?utc-expected_companion_time_:expected_companion_time_-utc)<=3;
     trusted_gps_time_=0;trusted_gps_until_=0;
-    if(valid_&&!trusted_gps){
-        // Once the hardware RTC is known-good, generic MeshCore/system time
-        // sources must not overwrite it. GPS corrections are explicitly
-        // authorised by expectGpsTime() above.
-        T5_TRACE("rtc: ignored non-GPS set UTC=%lu current=%lu (RTC already valid)\n",
+    expected_companion_time_=0;expected_companion_until_=0;
+
+    if(trusted_gps){
+        writeAcceptedTime(utc,MeshInkTimeSource::Gps);
+        return;
+    }
+
+    if(trusted_companion){
+        if(valid_&&gpsAuthorityActive(current)){
+            T5_TRACE("rtc: ignored companion UTC=%lu; GPS authority age=%lus\n",
+                (unsigned long)utc,(unsigned long)(current-last_gps_sync_utc_));
+            return;
+        }
+        writeAcceptedTime(utc,MeshInkTimeSource::Companion);
+        return;
+    }
+
+    // Preserve MeshInk's protection against unsolicited provider/bootstrap
+    // writes once the hardware RTC is valid. Companion time is the explicit
+    // exception above, and keeps MeshCore's own command validation intact.
+    if(valid_){
+        T5_TRACE("rtc: ignored untrusted set UTC=%lu current=%lu\n",
             (unsigned long)utc,(unsigned long)current);
         return;
     }
-    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-    if(!i2c_ready_){
-        // MeshCore bootstraps a plausible clock from contact timestamps during
-        // retained radio-first startup. Keep that as system time only: the
-        // headless path deliberately has no shared I2C driver yet.
-        deferred_hardware_time_=utc;
-        T5_TRACE("rtc: deferred hardware write UTC=%lu; I2C lifecycle not initialized\n",
-            (unsigned long)utc);
-        return;
-    }
-    const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
-        to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
-    valid_=idf_write(0x51,0x02,r,sizeof(r));
-    if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
+    writeAcceptedTime(utc,MeshInkTimeSource::MeshCore);
 }
-void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
+void T5RTCClock::expectGpsTime(uint32_t utc){
+    trusted_gps_time_=utc;
+    trusted_gps_until_=millis()+1500;
+}
+void T5RTCClock::expectCompanionTime(uint32_t utc){
+    expected_companion_time_=utc;
+    expected_companion_until_=millis()+1500;
+}
+bool T5RTCClock::setManualTime(uint32_t utc){
+    loadMetadata();
+    trusted_gps_time_=0;trusted_gps_until_=0;
+    expected_companion_time_=0;expected_companion_until_=0;
+    return writeAcceptedTime(utc,MeshInkTimeSource::Manual);
+}
+MeshInkTimeSource T5RTCClock::timeSource(){
+    loadMetadata();
+    if(time_source_==MeshInkTimeSource::Unknown&&valid_)
+        return MeshInkTimeSource::HardwareRtc;
+    return time_source_;
+}
+bool T5RTCClock::gpsAuthoritative(){
+    loadMetadata();
+    if(!valid_)return false;
+    return gpsAuthorityActive(getCurrentTime());
+}
 
 static bool t5_set_radio_gps_rail(bool enabled,uint32_t settle_ms){
 #if !T5_BOARD_H752_01
