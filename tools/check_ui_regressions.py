@@ -1629,6 +1629,6 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\\\"([^\\\"]+)\\\"'",platformio_source)
-ui_version_match=re.search(r"-DT5_UI_VERSION='\\\"([^\\\"]+)\\\"'",platformio_source)
+firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
+ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"
