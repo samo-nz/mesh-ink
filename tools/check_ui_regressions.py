@@ -884,6 +884,7 @@ assert "MeshInkGpsConstellationMode" in gps_types_source and "MeshInkGpsPowerExp
 assert '#include "hardware/gps.h"' in runtime_source, "local runtime must use generic GPS surface"
 assert '#include "hardware/gps.h"' in companion_source, "companion runtime must use generic GPS surface"
 assert "meshink_gps_background_tick();" in runtime_source and "meshink_gps_power_test_tick();" in runtime_source, "GPS background and measured power-test servicing route through generic backend"
+assert "talker_g" not in board_target_source and "sentence_valid = payload_chars > 0 && checksum == expected;" in board_target_source, "GPS baud lock accepts any checksum-valid NMEA talker instead of assuming G-prefixed talkers"
 assert "meshink_gps_shutdown();" in runtime_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through generic backend"
 assert "Serial1" not in runtime_source and "Serial1" not in companion_source and "Serial1" not in source, "application code must not own the GPS UART"
 assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
@@ -1611,4 +1612,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.5\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.5\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.6\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.6\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
