@@ -1551,6 +1551,11 @@ bool radio_init() {
         } else {
             Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
                 gps_module_name(),(unsigned long)Serial1.baudRate());
+            // Apply saved mode during the board probe, not only when MeshCore's
+            // provider starts. This keeps explicit GPS MODE=DISABLED parked
+            // correctly after a cold boot and performs defensive mask recovery.
+            gps_load_tuning();
+            gps_apply_tuning();
         }
         T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
             gps_module_name(),(unsigned long)Serial1.baudRate(),
