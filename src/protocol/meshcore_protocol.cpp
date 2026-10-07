@@ -8,6 +8,14 @@
 
 namespace {
 
+static bool name_character_allowed(char c) {
+    return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_';
+}
+
+static size_t node_name_max_length() {
+    return 20;
+}
+
 static void request_companion_mode() {
     if (local_mesh_is_running()) local_mesh_flush_contacts_save_now();
 
@@ -72,6 +80,8 @@ static const MeshInkProtocolBackend& backend() {
 
         b.apply_radio = local_mesh_apply_radio;
         b.apply_name = local_mesh_apply_name;
+        b.name_character_allowed = name_character_allowed;
+        b.node_name_max_length = node_name_max_length;
         b.node_name = local_mesh_node_name;
         b.radio_summary = local_mesh_radio_summary;
         b.radio_matches = local_mesh_radio_matches;
