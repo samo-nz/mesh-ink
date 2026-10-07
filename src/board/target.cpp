@@ -624,7 +624,6 @@ class NMEAProbeStream : public Stream {
     HardwareSerial& serial;
     bool collecting = false;
     bool after_star = false;
-    bool talker_g = false;
     bool sentence_valid = false;
     uint8_t checksum = 0;
     uint8_t expected = 0;
@@ -641,7 +640,6 @@ class NMEAProbeStream : public Stream {
         if (c == '$') {
             collecting = true;
             after_star = false;
-            talker_g = false;
             checksum = expected = checksum_digits = payload_chars = 0;
             return;
         }
@@ -649,7 +647,7 @@ class NMEAProbeStream : public Stream {
         if (!after_star) {
             if (c == '*') { after_star = true; return; }
             if (c == '\r' || c == '\n' || c < 32 || c > 126) { collecting = false; return; }
-            if (payload_chars++ == 0) talker_g = (c == 'G');
+            ++payload_chars;
             checksum ^= static_cast<uint8_t>(c);
             return;
         }
@@ -657,7 +655,10 @@ class NMEAProbeStream : public Stream {
         if (nibble < 0 || checksum_digits >= 2) { collecting = false; return; }
         expected = static_cast<uint8_t>((expected << 4) | nibble);
         if (++checksum_digits == 2) {
-            sentence_valid = talker_g && checksum == expected;
+            // Baud/protocol lock is deliberately receiver-agnostic: accept
+            // any printable NMEA sentence with a valid checksum, regardless
+            // of talker ID (GP/GN/BD/GL/GA/proprietary/etc.).
+            sentence_valid = payload_chars > 0 && checksum == expected;
             collecting = false;
         }
     }
@@ -670,7 +671,7 @@ public:
     int peek() override { return serial.peek(); }
     void flush() override { serial.flush(); }
     size_t write(uint8_t value) override { return serial.write(value); }
-    void clearValidation() { sentence_valid = collecting = after_star = talker_g = false; checksum = expected = checksum_digits = payload_chars = 0; }
+    void clearValidation() { sentence_valid = collecting = after_star = false; checksum = expected = checksum_digits = payload_chars = 0; }
     bool hasValidSentence() const { return sentence_valid; }
 };
 
