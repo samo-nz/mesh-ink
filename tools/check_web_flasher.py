@@ -127,14 +127,16 @@ require('capturedChunks' in serial_js and 'capturedLength' in serial_js and
         'const text = capturedChunks.join("");' in serial_js,
         "copy-all uses the complete in-memory capture rather than the bounded terminal DOM")
 require('receivedBytes' in serial_js and 'readChunks' in serial_js and
-        'streamRecoveries' in serial_js and 'updateReceiveStats()' in serial_js,
-        "serial console exposes receive counters without touching the DOM on every USB chunk")
+        'streamRecoveries' in serial_js and 'read retries' in serial_js and
+        'updateReceiveStats()' in serial_js,
+        "serial console exposes receive counters and labels transient failures as read retries")
 require('while (token === generation && !userDisconnecting)' in serial_js and
         'if (!port.readable) break;' in serial_js and
         'localReader.releaseLock()' in serial_js,
         "serial console reacquires readers after recoverable stream errors")
-require('Serial stream hiccup' in serial_js and 'recovering without closing the USB port' in serial_js,
-        "recoverable serial read errors do not close the USB device")
+require('Serial stream hiccup' in serial_js and 'recovering without closing the USB port' in serial_js and
+        'connectedStatusText + " · stream recovered"' in serial_js,
+        "recoverable serial read errors do not close the USB device and successful reads clear stale recovery status")
 require('new TextDecoder()' in serial_js and 'captureDeviceText' in serial_js and
         'visibleTextNode.appendData(text)' in serial_js,
         "serial monitor decodes into immediate capture while rendering batches into one text node")
