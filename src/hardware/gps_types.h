@@ -51,7 +51,9 @@ enum class MeshInkGpsPowerExperiment : uint8_t {
     NavRate65535,
     WatchdogPowerOffReset,
     OnlineUpgradeWait,
-    CurrentState
+    CurrentState,
+    AutoMatrixSweep,
+    VerifyMatrixWinner
 };
 
 enum class MeshInkGpsDiagnosticAction : uint8_t {
@@ -73,6 +75,8 @@ inline const char* meshink_gps_power_experiment_name(MeshInkGpsPowerExperiment e
         case MeshInkGpsPowerExperiment::WatchdogPowerOffReset:return "WATCHDOG POWER-OFF RESET";
         case MeshInkGpsPowerExperiment::OnlineUpgradeWait:return "ONLINE UPGRADE WAIT";
         case MeshInkGpsPowerExperiment::CurrentState:return "CURRENT STATE";
+        case MeshInkGpsPowerExperiment::AutoMatrixSweep:return "AUTO MATRIX SWEEP";
+        case MeshInkGpsPowerExperiment::VerifyMatrixWinner:return "VERIFY MATRIX WINNER";
         default:return "UNKNOWN";
     }
 }
