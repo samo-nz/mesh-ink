@@ -902,7 +902,7 @@ assert "GPS POWER SAVING" not in source, "final constellation UI must not presen
 assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
 assert 'gps_send_pcas("PCAS04,2");' in board_target_source and 'gps_send_pcas("PCAS15,2,00000000");' in board_target_source and 'gps_send_pcas("PCAS15,3,00000000");' in board_target_source, "T5 deep sleep owns the proven BeiDou zero-mask low-work state"
 assert 'gps_send_pcas("PCAS15,2,FFFFFFFF");' in board_target_source and 'gps_send_pcas("PCAS15,3,FFFFFFFF");' in board_target_source, "T5 can restore full BeiDou masks after a known MeshInk zero-mask sleep"
-assert "gps_boot_mask_recovery_pending" not in board_target_source and 'if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC)' in board_target_source, "T5 restores masks only when the retained marker proves MeshInk applied them"
+assert "gps_boot_mask_recovery_pending" not in board_target_source and 'gps_persisted_deep_sleep_masks' in board_target_source, "T5 mask recovery is driven only by MeshInk retained/persisted state rather than every boot"
 assert "t5_gps_prepare_deep_sleep_low_work();" in board_target_source, "T5 board deep-sleep handoff applies GNSS low-work state only at final sleep entry"
 assert "PCAS15" not in runtime_source and "PCAS15" not in companion_source and "PCAS15" not in source, "T5/L76K deep-sleep mask commands must not leak into generic runtime or UI"
 
@@ -1702,8 +1702,10 @@ assert 'pref.getBool("ds_power_save",false)' in board_target_source and 'pref.pu
 assert 'if(!gps_deep_sleep_power_save)' in board_target_source and 'receiver tracking retained' in board_target_source, "OFF skips the L76K zero-mask sleep handoff"
 assert 'deep-sleep GNSS power save ON: BeiDou zero mask' in board_target_source, "ON retains the existing zero-mask battery-saving behavior"
 assert 'deep-sleep GNSS tracking retained; receiver reconfiguration skipped' in board_target_source, "retained wake preserves hot GNSS configuration when power save is OFF"
-assert 'PCAS15 has no documented readback/query form' in board_target_source, "mask recovery policy documents why retained state is authoritative rather than speculative query/readback"
 assert 'settings_row("DEEP SLEEP POWER SAVE",local_mesh_gps_deep_sleep_power_save()?"ON":"OFF",710);' in source, "GPS settings exposes the power-save toggle"
+assert 'pref.getBool("ds_masks_zero",false)' in board_target_source and 'pref.putBool("ds_masks_zero",active)' in board_target_source, "zero-mask recovery survives ESP reboot while GNSS backup state remains powered"
+assert 'gps_set_deep_sleep_mask_marker(true);' in board_target_source and 'gps_set_deep_sleep_mask_marker(false);' in board_target_source, "mask marker is set before zero-mask commands and cleared only after full-mask restore"
+assert '!gps_persisted_deep_sleep_masks' in board_target_source, "hot retained wake is disabled while persistent mask recovery is pending"
 assert 'local_mesh_gps_set_deep_sleep_power_save(enabled)' in source, "GPS settings toggle writes the persisted backend preference"
 
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)

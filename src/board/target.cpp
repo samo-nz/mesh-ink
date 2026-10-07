@@ -666,15 +666,17 @@ static uint32_t gps_last_byte_at = 0;
 static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
 static bool gps_tuning_loaded=false;
 static bool gps_deep_sleep_power_save=false; // default OFF: retain live tracking
+static bool gps_persisted_deep_sleep_masks=false;
 static bool gps_constellation_dirty=false;
 // Defensive T5/L76K boot recovery: the receiver can retain PCAS15 satellite
 // masks across an ESP reset while its shared rail remains powered.
 static bool gps_receiver_masks_zeroed=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 
-// T5/L76K-only retained marker. This is the authority for whether MeshInk
-// itself applied the BeiDou zero masks. Do not "repair" masks speculatively:
-// PCAS15 has no documented readback/query form on this receiver.
+// T5/L76K zero-mask recovery state. PCAS15 has no documented readback/query
+// form, and the receiver can retain configuration while V_BCKP remains alive.
+// RTC state handles normal deep sleep; Preferences covers an ESP reboot/reset
+// while the GNSS backup domain still remembers the masks.
 static constexpr uint32_t GPS_DEEP_SLEEP_LOW_WORK_MAGIC=0x47505A31; // "GPZ1"
 RTC_DATA_ATTR uint32_t gps_deep_sleep_low_work_magic=0;
 
@@ -720,6 +722,7 @@ static void gps_load_tuning(){
     if(pref.begin("t5-gnss",false)){
         const bool mode_v2=pref.getBool("mode_v2",false);
         gps_deep_sleep_power_save=pref.getBool("ds_power_save",false);
+        gps_persisted_deep_sleep_masks=pref.getBool("ds_masks_zero",false);
         const auto stored=pref.getUChar(
             "constellation",(uint8_t)MeshInkGpsConstellationMode::GpsBeiDou);
         const auto mode=static_cast<MeshInkGpsConstellationMode>(stored);
@@ -749,24 +752,39 @@ static void gps_send_pcas(const char* payload) {
     Serial1.flush();
     T5_GPS_TRACE("gps tuning: TX $%s*%02X (receiver acceptance not confirmed)\n",payload,checksum);
 }
+static void gps_set_deep_sleep_mask_marker(bool active){
+    gps_deep_sleep_low_work_magic=active?GPS_DEEP_SLEEP_LOW_WORK_MAGIC:0;
+    if(gps_persisted_deep_sleep_masks==active)return;
+    Preferences pref;
+    if(pref.begin("t5-gnss",false)){
+        if(pref.putBool("ds_masks_zero",active)==1)
+            gps_persisted_deep_sleep_masks=active;
+        pref.end();
+    }
+}
 static void gps_restore_full_bds_masks(){
     gps_send_pcas("PCAS15,2,FFFFFFFF");
     gps_send_pcas("PCAS15,3,FFFFFFFF");
     gps_receiver_masks_zeroed=false;
+    gps_set_deep_sleep_mask_marker(false);
 }
 static void gps_apply_low_work(bool deep_sleep){
+    // Mark first so an ESP reset between the marker write and the GNSS command
+    // is recoverable. A false-positive restore is harmless; an unmarked
+    // retained zero mask is not.
+    if(deep_sleep)gps_set_deep_sleep_mask_marker(true);
     gps_send_pcas("PCAS04,2");
     gps_send_pcas("PCAS15,2,00000000");
     gps_send_pcas("PCAS15,3,00000000");
     gps_receiver_masks_zeroed=true;
-    if(deep_sleep)gps_deep_sleep_low_work_magic=GPS_DEEP_SLEEP_LOW_WORK_MAGIC;
 }
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
 
-    if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
-        // Restore only when the retained marker proves MeshInk applied the
-        // zero masks before deep sleep.
+    if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC||
+       gps_persisted_deep_sleep_masks){
+        // Restore only when MeshInk's retained/persisted marker says it may
+        // have applied the zero masks before deep sleep.
         gps_restore_full_bds_masks();
         gps_deep_sleep_low_work_magic=0;
         gps_constellation_dirty=true;
@@ -849,7 +867,8 @@ static bool t5_gps_prepare_deep_sleep_low_work(){
     // Default behavior keeps GNSS tracking alive across ESP32 deep sleep.
     // The radio/GPS rail remains powered, so no receiver command is needed.
     if(!gps_deep_sleep_power_save){
-        gps_deep_sleep_low_work_magic=0;
+        if(!gps_persisted_deep_sleep_masks)
+            gps_deep_sleep_low_work_magic=0;
         if(gps_constellation_mode==MeshInkGpsConstellationMode::None)
             Serial.println("[T5-GPS] deep-sleep GNSS power save OFF; GPS mode already disabled");
         else
@@ -860,7 +879,8 @@ static bool t5_gps_prepare_deep_sleep_low_work(){
     // The final handoff is allowed to be a no-op if this boot never identified
     // an L76K. Never send L76K-specific commands to an unknown receiver.
     if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
-        gps_deep_sleep_low_work_magic=0;
+        if(!gps_persisted_deep_sleep_masks)
+            gps_deep_sleep_low_work_magic=0;
         Serial.printf("[T5-GPS] deep-sleep GNSS low-work skipped locked=%u module=%s\n",
                       gps_baud_locked?1U:0U,gps_module_name());
         return false;
@@ -1172,7 +1192,8 @@ void meshink_gps_prepare_runtime(){
         gps_load_tuning();
         const bool tracking_retained=
             !gps_deep_sleep_power_save&&
-            gps_deep_sleep_low_work_magic!=GPS_DEEP_SLEEP_LOW_WORK_MAGIC;
+            gps_deep_sleep_low_work_magic!=GPS_DEEP_SLEEP_LOW_WORK_MAGIC&&
+            !gps_persisted_deep_sleep_masks;
         if(tracking_retained){
             // The shared rail never went down and we deliberately left the
             // receiver tracking. Preserve that hot state: do not resend masks,
