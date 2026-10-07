@@ -1870,6 +1870,10 @@ bool meshink_gps_power_test_start(MeshInkGpsPowerExperiment experiment) {
     gps_power_saved_constellation=gps_constellation_mode;
 
     if(matrix){
+        if(meshink_power_external_present()){
+            Serial.println("[T5-GPS-MATRIX] start rejected: disconnect USB/charger; automatic ranking requires battery-only measurement");
+            return false;
+        }
         gps_power_log_count=0;
         gps_power_log_valid=false;
         gps_power_post_phase=false;
