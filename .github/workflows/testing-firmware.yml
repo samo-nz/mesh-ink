@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - testing
+      - mesh-agnostic
   # Always test pull requests. MeshCore submodule, build-system and integration
   # changes are too important to depend on a hand-maintained path allow-list.
   pull_request: {}
