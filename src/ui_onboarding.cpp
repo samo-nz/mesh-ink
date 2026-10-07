@@ -340,12 +340,25 @@ static Screen screen_for_retained_tab(uint8_t tab){
     }
 }
 enum class NodeInfoPage:uint8_t{Overview=0,Status,Telemetry,Path};
-static bool node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}
-static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}
-static NodeInfoPage node_info_page(uint8_t type,uint8_t page){
+static bool node_has_capability(uint32_t capabilities,UiNodeCapability capability){
+    return ui_node_has_capability(capabilities,capability);
+}
+static uint8_t node_info_page_count(uint32_t capabilities){
+    uint8_t count=1;
+    if(node_has_capability(capabilities,UI_NODE_CAP_STATUS))++count;
+    if(node_has_capability(capabilities,UI_NODE_CAP_TELEMETRY))++count;
+    if(node_has_capability(capabilities,UI_NODE_CAP_PATH)||
+       node_has_capability(capabilities,UI_NODE_CAP_TRACE))++count;
+    return count;
+}
+static NodeInfoPage node_info_page(uint32_t capabilities,uint8_t page){
     if(page==0)return NodeInfoPage::Overview;
-    if(node_has_status(type)){if(page==1)return NodeInfoPage::Status;return page==2?NodeInfoPage::Telemetry:NodeInfoPage::Path;}
-    return page==1?NodeInfoPage::Telemetry:NodeInfoPage::Path;
+    uint8_t next=1;
+    if(node_has_capability(capabilities,UI_NODE_CAP_STATUS)&&page==next++)return NodeInfoPage::Status;
+    if(node_has_capability(capabilities,UI_NODE_CAP_TELEMETRY)&&page==next++)return NodeInfoPage::Telemetry;
+    if((node_has_capability(capabilities,UI_NODE_CAP_PATH)||
+        node_has_capability(capabilities,UI_NODE_CAP_TRACE))&&page==next)return NodeInfoPage::Path;
+    return NodeInfoPage::Overview;
 }
 // Screen-edge geometry is derived from the logical portrait surface. On the
 // T5 this remains exactly 540x960 with a 48 px status bar and 60 px bottom nav.
@@ -387,7 +400,7 @@ static uint32_t map_base_media_epoch=0;
 // marker updates without refreshing the e-paper for every GPS sample.
 static bool map_device_marker_visible=false;
 static int map_device_marker_x=0,map_device_marker_y=0;
-struct MapMarkerHit {int16_t x,y;size_t index;uint8_t node_type;};
+struct MapMarkerHit {int16_t x,y;size_t index;UiNodeRole role;};
 static MapMarkerHit map_marker_hits[50]{};
 static size_t map_marker_hit_count=0;
 static bool map_cache_hit() {
@@ -1630,15 +1643,13 @@ static void draw_app_header(const char* title,bool back=false,const char* action
     }
 }
 
-static const char* node_role_label(uint8_t type){
-    static char unknown[16];
-    switch(type){
-        case (uint8_t)UiNodeRole::Unknown:return "UNKNOWN";
-        case (uint8_t)UiNodeRole::Chat:return "CHAT";
-        case (uint8_t)UiNodeRole::Repeater:return "REPEATER";
-        case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";
-        case (uint8_t)UiNodeRole::Sensor:return "SENSOR";
-        default:snprintf(unknown,sizeof(unknown),"TYPE %u",(unsigned)type);return unknown;
+static const char* node_role_label(UiNodeRole role){
+    switch(role){
+        case UiNodeRole::Chat:return "CHAT";
+        case UiNodeRole::Repeater:return "REPEATER";
+        case UiNodeRole::Room:return "ROOM SERVER";
+        case UiNodeRole::Sensor:return "SENSOR";
+        default:return "UNKNOWN";
     }
 }
 static void thick_line(int x1,int y1,int x2,int y2){
@@ -1647,9 +1658,9 @@ static void thick_line(int x1,int y1,int x2,int y2){
 static void thick_rect(int x,int y,int w,int h){
     for(int d=0;d<3;++d)meshink_display_draw_rect({x+d,y+d,w-2*d,h-2*d},0,fb);
 }
-static void draw_node_role_icon(uint8_t type,int x,int y){
-    if(type==(uint8_t)UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
-    else if(type==(uint8_t)UiNodeRole::Repeater){
+static void draw_node_role_icon(UiNodeRole role,int x,int y){
+    if(role==UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
+    else if(role==UiNodeRole::Repeater){
         // Radio tower: tapered mast plus two signal arcs on each side.
         meshink_display_fill_rect({x+12,y+5,5,6},0,fb);
         thick_line(x+14,y+8,x+8,y+30);thick_line(x+14,y+8,x+20,y+30);
@@ -1659,7 +1670,7 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
         thick_line(x+6,y+4,x+1,y+8);thick_line(x+1,y+8,x+1,y+18);thick_line(x+1,y+18,x+6,y+22);
         thick_line(x+22,y+4,x+27,y+8);thick_line(x+27,y+8,x+27,y+18);thick_line(x+27,y+18,x+22,y+22);
     }
-    else if(type==(uint8_t)UiNodeRole::Room){
+    else if(role==UiNodeRole::Room){
         // Simple house silhouette: peaked roof, square body, one window and door.
         thick_line(x+2,y+14,x+14,y+3);thick_line(x+14,y+3,x+26,y+14);
         thick_line(x+5,y+12,x+5,y+31);thick_line(x+23,y+12,x+23,y+31);
@@ -1667,16 +1678,16 @@ static void draw_node_role_icon(uint8_t type,int x,int y){
         meshink_display_fill_rect({x+9,y+16,5,5},0,fb);
         thick_rect(x+15,y+21,6,10);
     }
-    else if(type==(uint8_t)UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
+    else if(role==UiNodeRole::Sensor){thick_rect(x+2,y+5,25,23);meshink_display_fill_rect({x+12,y+10,6,6},0,fb);thick_line(x+14,y+15,x+7,y+23);thick_line(x+14,y+15,x+22,y+20);}
     else {thick_rect(x+2,y+3,25,27);ui_text("?",x+8,y+8,2,0,true);}
 }
 static void draw_list_entry(const UiListEntry& item,int y,int subtitle_scale=3) {
     const MeshInkUiLayout& layout=portrait_layout();
     rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,
                 max(ui_w(12),ui_h(12)));
-    const bool typed=item.node_type!=0;
+    const bool typed=item.role!=UiNodeRole::Unknown;
     const int title_x=typed?layout.content_text_x+ui_w(42):layout.content_text_x;
-    if(typed)draw_node_role_icon(item.node_type,layout.content_text_x,y+ui_h(15));
+    if(typed)draw_node_role_icon(item.role,layout.content_text_x,y+ui_h(15));
 
     const int time_width=ui_text_width(item.time,2);
     const int time_x=layout.content_right-layout.text_inset-time_width;
@@ -1813,7 +1824,7 @@ static void draw_map_nodes() {
         const double y=(1.0-log(tan(r)+1.0/cos(r))/PI)*world/2.0;
         const int sx=(int)lround(map_centre_x()+delta_x),sy=(int)lround(map_centre_y()+y-centre_y);
         if(sx<11||sx>layout.width-11||sy<map_top()+11||sy>map_bottom()-11)continue;
-        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.node_type};
+        map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.role};
     }
 
     struct Bounds {int16_t x,y,w,h;};
@@ -1829,7 +1840,7 @@ static void draw_map_nodes() {
         UiMapNode node{};if(!ui_data->map_node(marker.index,node))continue;
         int32_t score=0;
         if(node.gps_from_reply)score+=4000000;
-        if(node.node_type==(uint8_t)UiNodeRole::Repeater)score+=3000000;
+        if(node.role==UiNodeRole::Repeater)score+=3000000;
         if(node.advertised_at&&now>=node.advertised_at) {
             const uint32_t age=min((uint32_t)1000000,now-node.advertised_at);
             score+=(int32_t)(1000000-age);
@@ -1865,7 +1876,7 @@ static void draw_map_nodes() {
     for(size_t order=0;order<count;++order) {
         const auto& n=map_marker_hits[ranked[order].marker];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
-        const bool important=node.gps_from_reply||node.node_type==(uint8_t)UiNodeRole::Repeater;
+        const bool important=node.gps_from_reply||node.role==UiNodeRole::Repeater;
         if(labels_drawn>=label_budget&&!important)continue;
 
         char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
@@ -1914,7 +1925,7 @@ static void draw_map_nodes() {
             // Protect every true node position, not just labels already placed.
             for(size_t j=0;j<count&&!overlap;++j){
                 const auto& m=map_marker_hits[j];
-                const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?14:9;
+                const int radius=m.role==UiNodeRole::Repeater?14:9;
                 if(x<m.x+radius+3&&x+w>m.x-radius-3&&
                    y<m.y+radius+3&&y+h>m.y-radius-3)overlap=true;
             }
@@ -1953,7 +1964,7 @@ static void draw_map_nodes() {
     // radio-tower glyph so they stand out immediately when assessing coverage.
     for(size_t i=0;i<count;++i) {
         const auto& n=map_marker_hits[i];
-        if(n.node_type==(uint8_t)UiNodeRole::Repeater){
+        if(n.role==UiNodeRole::Repeater){
             draw_map_repeater_marker(n.x,n.y);
             continue;
         }
@@ -2354,18 +2365,18 @@ static void draw_message_entry_fast() {
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
-    const uint8_t pages=node_info_page_count(node.node_type);if(details_page>=pages)details_page=pages-1;
-    const NodeInfoPage page=node_info_page(node.node_type,details_page);
+    const uint8_t pages=node_info_page_count(node.capabilities);if(details_page>=pages)details_page=pages-1;
+    const NodeInfoPage page=node_info_page(node.capabilities,details_page);
     ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,true);
-    ui_centred(node_role_label(node.node_type),ui_y(174),2,0,true);
+    ui_centred(node_role_label(node.role),ui_y(174),2,0,true);
     auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
         ui_action_button(label,rect,selected);
     };
     auto request_label=[&](UiNodeInfoRequest request,const char* idle) {
         return node.request_active?(node.request_type==request?"REQUESTING...":"REQUEST BUSY"):idle;
     };
-    const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
-    const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
+    const bool repeater=node.role==UiNodeRole::Repeater;
+    const bool room_server=node.role==UiNodeRole::Room;
     const bool login_required=repeater||room_server;
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect map_action=meshink_node_map_rect(layout);
@@ -4009,9 +4020,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::ContactDetails:
             if(hit_header_back(x,y)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
-                const NodeInfoPage page=node_info_page(node.node_type,details_page);
-                const bool repeater=node.node_type==(uint8_t)UiNodeRole::Repeater;
-                const bool room_server=node.node_type==(uint8_t)UiNodeRole::Room;
+                const NodeInfoPage page=node_info_page(node.capabilities,details_page);
+                const bool repeater=node.role==UiNodeRole::Repeater;
+                const bool room_server=node.role==UiNodeRole::Room;
                 const bool login_required=repeater||room_server;
                 if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))){
                     if(!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;}
@@ -4048,7 +4059,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
-                const int hit_radius=marker.node_type==(uint8_t)UiNodeRole::Repeater?14:10;
+                const int hit_radius=marker.role==UiNodeRole::Repeater?14:10;
                 if(abs(x-marker.x)<=hit_radius&&abs(y-marker.y)<=hit_radius&&
                    ui_data&&ui_data->open_map_node(marker.index)) {
                     details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
@@ -5048,7 +5059,7 @@ void ui_loop() {
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if(screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
-            UiNodeDetails node{};const uint8_t pages=(ui_data&&ui_data->active_node_details(node))?node_info_page_count(node.node_type):1;
+            UiNodeDetails node{};const uint8_t pages=(ui_data&&ui_data->active_node_details(node))?node_info_page_count(node.capabilities):1;
             int next=(int)details_page+(tap.dy<0?1:-1);
             if(next<0)next=0;
             if(next>=pages)next=pages-1;
