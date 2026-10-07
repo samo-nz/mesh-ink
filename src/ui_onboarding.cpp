@@ -16,13 +16,11 @@
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
 #include "ui_data.h"
-#include "local_mesh_runtime.h"
-#include "companion_runtime.h"
+#include "protocol/mesh_protocol.h"
 #include "map_tiles.h"
 #include "map_gestures.h"
 #include "ui_layout.h"
 #include "t5_logging.h"
-#include "meshcore_version.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
 #include "message_store.h"
@@ -36,9 +34,6 @@
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.3.0"
 #endif
-
-void request_companion_mode() __attribute__((weak));
-void request_companion_mode() {}
 
 // UI milestone 0.1.0: standalone onboarding. Bluetooth, radio and GPS are not
 // started in this target. Saved values are device-owned and will be handed to
@@ -431,7 +426,7 @@ static bool map_device_position(long& latitude,long& longitude,bool& current_fix
         return true;
     }
     current_fix=false;
-    return local_mesh_my_location(latitude,longitude);
+    return mesh_protocol_my_location(latitude,longitude);
 }
 static bool centre_map_on_device(){
     long latitude=0,longitude=0;bool current_fix=false;
@@ -693,7 +688,7 @@ static constexpr uint8_t PRESET_COUNT = sizeof(PRESETS)/sizeof(PRESETS[0]);
 
 static const char* active_radio_label(){
     auto matches=[](const Preset& preset){
-        return preset.path_hash_bytes&&local_mesh_radio_matches(
+        return preset.path_hash_bytes&&mesh_protocol_radio_matches(
             preset.frequency_khz/1000.0f,preset.bandwidth_khz,
             preset.spreading_factor,preset.coding_rate,preset.path_hash_bytes);
     };
@@ -701,7 +696,7 @@ static const char* active_radio_label(){
         return PRESETS[selected_preset].title;
     for(uint8_t i=1;i<PRESET_COUNT;++i)
         if(matches(PRESETS[i]))return PRESETS[i].title;
-    return local_mesh_radio_summary();
+    return mesh_protocol_radio_summary();
 }
 
 static bool apply_selected_preset() {
@@ -710,14 +705,14 @@ static bool apply_selected_preset() {
     if(preset.path_hash_bytes==0)return true; // KEEP CURRENT never alters the radio
     // Apply the *same typed values* displayed by the preset selector.
     // The MeshCore property uses 0/1/2 for a 1/2/3-byte path hash.
-    const bool applied=local_mesh_apply_radio(preset.frequency_khz/1000.0f,
+    const bool applied=mesh_protocol_apply_radio(preset.frequency_khz/1000.0f,
         preset.bandwidth_khz,preset.spreading_factor,preset.coding_rate,
         preset.path_hash_bytes-1);
     if(!applied)Serial.printf("[T5-ERROR] radio preset '%s' could not be applied\n",preset.title);
     else T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset '%s' applied\n",preset.title);
     return applied;
 }
-static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BYTES","3 BYTES"};return labels[min((uint8_t)2,local_mesh_path_hash_mode())];}
+static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BYTES","3 BYTES"};return labels[min((uint8_t)2,mesh_protocol_path_hash_mode())];}
 
 static const uint8_t* glyph(char c) {
     for (const auto& g : FONT) if (g.c == c) return g.r;
@@ -1515,7 +1510,7 @@ static void draw_welcome() {
     const MeshInkUiRect name_rect=meshink_welcome_name_rect(layout);
     const MeshInkUiRect preset_rect=meshink_welcome_preset_rect(layout);
     const MeshInkUiRect companion_rect=meshink_welcome_companion_rect(layout);
-    ui_centred("MESHCORE",ui_y(62),6,0,true);
+    ui_centred(mesh_protocol_name(),ui_y(62),6,0,true);
     ui_centred("Set up your T5",ui_y(116),3,0,true);
     ui_text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
     ui_section_card(name_rect);
@@ -2524,7 +2519,7 @@ static void draw_more() {
     draw_app_header("MORE");
     settings_row("DISCOVERED ADVERTS","Recent nodes heard",130);settings_row("ADVERTISE","Zero hop or flood",260);
     settings_row("SETTINGS","Device and radio",390);settings_row("BLUETOOTH COMPANION","Restart in companion mode",520);
-    settings_row("DIAGNOSTICS","Live MeshCore radio stats",650);settings_row("HELP","Using MeshInk",780);
+    settings_row("DIAGNOSTICS","Live protocol and radio stats",650);settings_row("HELP","Using MeshInk",780);
     draw_bottom_nav(3);
 }
 
@@ -2536,16 +2531,16 @@ static void draw_diagnostics() {
     const MeshInkUiRect packets=meshink_outer_row_rect(layout,504,180);
     ui_section_card(core);ui_section_card(radio);ui_section_card(packets);
     ui_text("CORE",layout.content_text_x,core.y+ui_h(13),3,0,true);
-    ui_draw_wrapped(local_mesh_diagnostics_core(),layout.content_text_x,core.y+ui_h(52),
+    ui_draw_wrapped(mesh_protocol_diagnostics_core(),layout.content_text_x,core.y+ui_h(52),
                     core.width-ui_w(32),2,0,false,5);
     ui_text("RADIO",layout.content_text_x,radio.y+ui_h(13),3,0,true);
-    ui_draw_wrapped(local_mesh_diagnostics_radio(),layout.content_text_x,radio.y+ui_h(52),
+    ui_draw_wrapped(mesh_protocol_diagnostics_radio(),layout.content_text_x,radio.y+ui_h(52),
                     radio.width-ui_w(32),2,0,false,5);
     ui_text("PACKETS",layout.content_text_x,packets.y+ui_h(13),3,0,true);
-    ui_draw_wrapped(local_mesh_diagnostics_packets(),layout.content_text_x,packets.y+ui_h(52),
+    ui_draw_wrapped(mesh_protocol_diagnostics_packets(),layout.content_text_x,packets.y+ui_h(52),
                     packets.width-ui_w(32),2,0,false,5);
     const MeshInkUiRect action=meshink_node_action_rect(layout);
-    const char* label=local_mesh_diagnostics_busy()?"REFRESHING...":"REFRESH STATS";
+    const char* label=mesh_protocol_diagnostics_busy()?"REFRESHING...":"REFRESH STATS";
     ui_action_button(label,action,true);
 }
 
@@ -2555,7 +2550,7 @@ static void draw_advert_menu() {
     const MeshInkUiLayout& layout=portrait_layout();
     const MeshInkUiRect note=meshink_outer_row_rect(layout,490,180);
     ui_section_card(note);
-    ui_draw_wrapped("Advertising shares this node identity using MeshCore radio settings.",
+    ui_draw_wrapped("Advertising shares this node identity using the active protocol radio settings.",
                     layout.content_text_x,note.y+ui_h(22),note.width-ui_w(32),3,0,false,4);
 }
 
@@ -2614,7 +2609,7 @@ static void draw_radio_name_fast() {
 }
 
 static const char* gps_mode_label(){
-    switch(local_mesh_gps_constellation_mode()){
+    switch(mesh_protocol_gps_constellation_mode()){
         case MeshInkGpsConstellationMode::GpsOnly:return "GPS";
         case MeshInkGpsConstellationMode::BeiDouOnly:return "BEIDOU";
         case MeshInkGpsConstellationMode::GpsBeiDou:return "GPS + BEIDOU";
@@ -2630,7 +2625,7 @@ static void draw_gps_settings() {
     settings_row("GPS MODE",gps_mode_label(),120);
     char fix[40]{};
     const char* current_status="DISABLED";
-    if(local_mesh_gps_enabled()){
+    if(mesh_protocol_gps_enabled()){
         switch(status_gps_error){
             case MeshInkGpsError::ModuleNotIdentified:current_status="ERROR - MODULE NOT IDENTIFIED";break;
             case MeshInkGpsError::NmeaUnavailable:current_status="ERROR - NO VALID NMEA";break;
@@ -2643,14 +2638,14 @@ static void draw_gps_settings() {
     }
     settings_row("CURRENT STATUS",current_status,238);
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
-    char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
-    settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
-    settings_row("DEEP SLEEP POWER SAVE",local_mesh_gps_deep_sleep_power_save()?"ON":"OFF",710);
+    char interval[24];const uint32_t seconds=mesh_protocol_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
+    settings_row("POSITION ADVERT",mesh_protocol_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
+    settings_row("DEEP SLEEP POWER SAVE",mesh_protocol_gps_deep_sleep_power_save()?"ON":"OFF",710);
 }
 
 static const char* gps_constellation_state(MeshInkGpsConstellation constellation){
     return meshink_gps_constellation_enabled(
-        local_mesh_gps_constellation_mode(),constellation)?"ENABLED":"DISABLED";
+        mesh_protocol_gps_constellation_mode(),constellation)?"ENABLED":"DISABLED";
 }
 static void draw_gps_tuning(){
     draw_app_header("GPS MODE",true);
@@ -2680,7 +2675,7 @@ static void clamp_manual_time_day(){
     if(manual_time_day<1)manual_time_day=1;
 }
 static void load_manual_time_draft(){
-    time_t now=(time_t)local_mesh_current_time();
+    time_t now=(time_t)mesh_protocol_current_time();
     struct tm local{};
     if(now>=(time_t)946684800&&localtime_r(&now,&local)&&
        local.tm_year+1900>=2000&&local.tm_year+1900<=2099){
@@ -2697,22 +2692,22 @@ static void load_manual_time_draft(){
 }
 static void time_mode_label(char* out,size_t len){
     if(!out||!len)return;
-    if(local_mesh_time_mode()==MeshInkTimeMode::Manual){snprintf(out,len,"MANUAL");return;}
+    if(mesh_protocol_time_mode()==MeshInkTimeMode::Manual){snprintf(out,len,"MANUAL");return;}
     const char* source="VALID RTC";
-    switch(local_mesh_time_source()){
+    switch(mesh_protocol_time_source()){
         case MeshInkTimeSource::Gps:source="GPS FIX";break;
         case MeshInkTimeSource::Companion:source="COMPANION";break;
         case MeshInkTimeSource::MeshCore:source="MESHCORE";break;
         case MeshInkTimeSource::HardwareRtc:source="VALID RTC";break;
         case MeshInkTimeSource::Manual:source="VALID RTC";break;
-        default:source=local_mesh_time_valid()?"VALID RTC":"WAITING";break;
+        default:source=mesh_protocol_time_valid()?"VALID RTC":"WAITING";break;
     }
     snprintf(out,len,"AUTO (%s)",source);
 }
 static void current_datetime_label(char* out,size_t len){
     if(!out||!len)return;
-    if(!local_mesh_time_valid()){strncpy(out,"NOT SET",len-1);out[len-1]=0;return;}
-    const time_t now=(time_t)local_mesh_current_time();struct tm local{};
+    if(!mesh_protocol_time_valid()){strncpy(out,"NOT SET",len-1);out[len-1]=0;return;}
+    const time_t now=(time_t)mesh_protocol_current_time();struct tm local{};
     if(!localtime_r(&now,&local)){strncpy(out,"NOT SET",len-1);out[len-1]=0;return;}
     snprintf(out,len,"%02d %s %04d  %02d:%02d",local.tm_mday,MONTH_NAMES[min(11,max(0,local.tm_mon))],local.tm_year+1900,local.tm_hour,local.tm_min);
 }
@@ -2815,7 +2810,7 @@ static bool save_manual_time_draft(){
        verify.tm_hour!=manual_time_hour||
        verify.tm_min!=manual_time_minute)return false;
 
-    return local_mesh_set_manual_time((uint32_t)utc);
+    return mesh_protocol_set_manual_time((uint32_t)utc);
 }
 
 static MeshInkUiRect timezone_row_rect(uint8_t index){return meshink_outer_row_rect(portrait_layout(),108+index*82,74);}
@@ -2852,9 +2847,9 @@ static void draw_custom_timezone(){
 
 static void draw_privacy_settings() {
     draw_app_header("PRIVACY",true);
-    settings_row("AUTO ADD CONTACTS",local_mesh_privacy_value(0),130);settings_row("AUTO ADD MAX HOPS",local_mesh_privacy_value(1),248);
-    settings_row("ADVERTISE LOCATION",local_mesh_privacy_value(2),366);settings_row("BASE TELEMETRY",local_mesh_privacy_value(3),484);
-    settings_row("LOCATION TELEMETRY",local_mesh_privacy_value(4),602);settings_row("PACKET REPEATING",local_mesh_privacy_value(5),720);
+    settings_row("AUTO ADD CONTACTS",mesh_protocol_privacy_value(0),130);settings_row("AUTO ADD MAX HOPS",mesh_protocol_privacy_value(1),248);
+    settings_row("ADVERTISE LOCATION",mesh_protocol_privacy_value(2),366);settings_row("BASE TELEMETRY",mesh_protocol_privacy_value(3),484);
+    settings_row("LOCATION TELEMETRY",mesh_protocol_privacy_value(4),602);settings_row("PACKET REPEATING",mesh_protocol_privacy_value(5),720);
 }
 
 static void draw_display_settings() {
@@ -2920,7 +2915,7 @@ static void draw_help() {
                     layout.content_text_x,maps.y+ui_h(48),maps.width-ui_w(32),2,0,false,3);
 
     ui_text("BLUETOOTH COMPANION",layout.content_text_x,companion.y+ui_h(12),3,0,true);
-    ui_draw_wrapped("Reboots into companion mode for MeshCore apps. Reboot again to return to the local UI.",
+    ui_draw_wrapped("Reboots into the active protocol companion mode. Reboot again to return to the local UI.",
                     layout.content_text_x,companion.y+ui_h(48),companion.width-ui_w(32),2,0,false,5);
 }
 
@@ -3058,7 +3053,9 @@ static void draw_about() {
     ui_text("HARDWARE",layout.content_text_x,info.y+ui_h(18),2,0,true);
     ui_text("LILYGO T5 PRO",ui_x(170),info.y+ui_h(16),3,0,false);
     ui_text("CORE",layout.content_text_x,info.y+ui_h(78),2,0,true);
-    ui_text_fit("MESHCORE " MESHCORE_RELEASE " (" MESHCORE_REVISION ")",ui_x(170),
+    char core_info[80]{};
+    snprintf(core_info,sizeof(core_info),"%s %s",mesh_protocol_core_name(),mesh_protocol_core_version());
+    ui_text_fit(core_info,ui_x(170),
                 info.y+ui_h(74),info.x+info.width-ui_x(170)-ui_w(16),2,0,false);
 }
 
@@ -3196,7 +3193,7 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
     if(hit(x,y,meshink_quick_minus_rect(layout))) { quick_set_brightness((int)frontlight_brightness-1);return true; }
     if(hit(x,y,meshink_quick_plus_rect(layout))) { quick_set_brightness((int)frontlight_brightness+1);return true; }
     if(hit(x,y,meshink_quick_advert_rect(layout))) {
-        show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
+        show_toast(mesh_protocol_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
     }
     if(hit(x,y,meshink_quick_power_rect(layout))) {
@@ -3382,7 +3379,7 @@ static void request_hardware_shutdown() {
     refresh(MeshInkRefreshMode::FastGray16,false);
     frontlight_deadline=0;frontlight_drive(false);
     set_touch_power(false);
-    local_mesh_prepare_shutdown();
+    mesh_protocol_prepare_shutdown();
     SPIFFS.end();
     T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] message store closed; radio, GPS, touch and frontlight stopped");
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
@@ -3475,7 +3472,7 @@ static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,
 
     set_touch_power(false);
     if(mesh_is_ready) {
-        local_mesh_prepare_shutdown();
+        mesh_protocol_prepare_shutdown();
         SPIFFS.end();
         T5_DEBUGLN(T5_LOG_UI,"[T5-SHUTDOWN] low-battery mesh/storage stopped");
     }
@@ -3505,7 +3502,7 @@ static bool update_charge_state(bool* icon_changed=nullptr) {
 static bool update_status_hardware() {
     const int8_t old_hour=status_hour,old_minute=status_minute;
     const int16_t old_battery=status_battery;const MeshInkChargeState old_charge=status_charge_state;
-    if(mesh_is_ready&&local_mesh_time_valid()){time_t now=(time_t)local_mesh_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
+    if(mesh_is_ready&&mesh_protocol_time_valid()){time_t now=(time_t)mesh_protocol_current_time();struct tm local{};localtime_r(&now,&local);if(local.tm_hour>=0&&local.tm_hour<24){status_hour=local.tm_hour;status_minute=local.tm_min;}}
     else{status_hour=-1;status_minute=-1;}
     uint8_t battery_percent=0;
     if(meshink_power_read_battery_percent(battery_percent))
@@ -3807,7 +3804,7 @@ static void set_keyboard_orientation(bool landscape){
 static void save_node_name(){
     prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);
     prefs.putBool("complete",true);prefs.putBool("name_migrated",true);prefs.end();
-    if(mesh_is_ready)local_mesh_apply_name(node_name);
+    if(mesh_is_ready)mesh_protocol_apply_name(node_name);
     saved=true;setup_complete=true;
 }
 
@@ -3857,7 +3854,7 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
         }
         if(keyboard_message_mode){
             if(!compose_text[0])return true;
-            if(!local_mesh_send_active(compose_text))return true;
+            if(!mesh_protocol_send_active(compose_text))return true;
             compose_text[0]=0;text_refresh_pending=false;
             keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
             keyboard_visible=true;set_keyboard_orientation(false);
@@ -3915,7 +3912,7 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
         if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
         if(x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
         if(compose_text[0]){
-            const bool ok=local_mesh_send_active(compose_text);
+            const bool ok=mesh_protocol_send_active(compose_text);
             if(ok){
                 compose_text[0]=0;keyboard_visible=false;text_refresh_pending=false;
                 keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;
@@ -4083,16 +4080,16 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,260)){open_screen(Screen::AdvertMenu);return true;}
             if(hit_outer_row(x,y,390)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,520)){open_screen(Screen::CompanionConfirm);return true;}
-            if(hit_outer_row(x,y,650)){local_mesh_request_diagnostics();open_screen(Screen::Diagnostics);return true;}
+            if(hit_outer_row(x,y,650)){mesh_protocol_request_diagnostics();open_screen(Screen::Diagnostics);return true;}
             if(hit_outer_row(x,y,780)){open_screen(Screen::Help);return true;}break;
         case Screen::AdvertMenu:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
-            if(hit_outer_row(x,y,180)){show_toast(local_mesh_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,320)){show_toast(local_mesh_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
+            if(hit_outer_row(x,y,180)){show_toast(mesh_protocol_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit_outer_row(x,y,320)){show_toast(mesh_protocol_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
         case Screen::Diagnostics:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit(x,y,meshink_node_action_rect(portrait_layout()))){
-                show_toast(local_mesh_request_diagnostics()?"REFRESHING STATS":"DIAGNOSTICS BUSY");
+                show_toast(mesh_protocol_request_diagnostics()?"REFRESHING STATS":"DIAGNOSTICS BUSY");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }break;
         case Screen::Settings:
@@ -4115,7 +4112,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,120)){replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,250)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}
-            if(hit_outer_row(x,y,510)){local_mesh_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit_outer_row(x,y,510)){mesh_protocol_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             return true;
         case Screen::GpsSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
@@ -4125,11 +4122,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 else{show_toast("NO KNOWN GPS LOCATION");draw_screen();refresh(MeshInkRefreshMode::Direct);}
                 return true;
             }
-            if(hit_outer_row(x,y,474)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit_outer_row(x,y,474)){mesh_protocol_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit_outer_row(x,y,592)){mesh_protocol_toggle_gps_advert_location();show_toast(mesh_protocol_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,710)){
-                const bool enabled=!local_mesh_gps_deep_sleep_power_save();
-                if(local_mesh_gps_set_deep_sleep_power_save(enabled))
+                const bool enabled=!mesh_protocol_gps_deep_sleep_power_save();
+                if(mesh_protocol_gps_set_deep_sleep_power_save(enabled))
                     show_toast(enabled?"DEEP SLEEP POWER SAVE ON":"DEEP SLEEP POWER SAVE OFF");
                 else show_toast("SAVE FAILED");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
@@ -4144,14 +4141,14 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             const int constellation_rows[]={118,238,358};
             for(uint8_t i=0;i<3;++i){
                 if(!hit_outer_row(x,y,constellation_rows[i]))continue;
-                const auto current=local_mesh_gps_constellation_mode();
+                const auto current=mesh_protocol_gps_constellation_mode();
                 const bool enabled=meshink_gps_constellation_enabled(
                     current,constellations[i]);
                 MeshInkGpsConstellationMode next=current;
                 if(!meshink_gps_constellation_mode_set(
                         current,constellations[i],!enabled,next)){
                     show_toast("SAVE FAILED");
-                }else if(!local_mesh_gps_set_constellation_mode(next)){
+                }else if(!mesh_protocol_gps_set_constellation_mode(next)){
                     show_toast("SAVE FAILED");
                 }else if(current==MeshInkGpsConstellationMode::None&&
                          next!=MeshInkGpsConstellationMode::None){
@@ -4169,8 +4166,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::DateTime:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,238)){
-                const MeshInkTimeMode next=local_mesh_time_mode()==MeshInkTimeMode::Manual?MeshInkTimeMode::Auto:MeshInkTimeMode::Manual;
-                if(local_mesh_set_time_mode(next)){status_dirty=true;status_bar_dirty=true;show_toast(next==MeshInkTimeMode::Manual?"MANUAL TIME LOCKED":"AUTO TIME ENABLED");}
+                const MeshInkTimeMode next=mesh_protocol_time_mode()==MeshInkTimeMode::Manual?MeshInkTimeMode::Auto:MeshInkTimeMode::Manual;
+                if(mesh_protocol_set_time_mode(next)){status_dirty=true;status_bar_dirty=true;show_toast(next==MeshInkTimeMode::Manual?"MANUAL TIME LOCKED":"AUTO TIME ENABLED");}
                 else show_toast("TIME MODE SAVE FAILED");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }
@@ -4213,7 +4210,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             for(uint8_t i=0;i<6;++i){
                 if(!hit_outer_row(x,y,130+i*118))continue;
-                local_mesh_toggle_privacy(i);
+                mesh_protocol_toggle_privacy(i);
                 show_toast("SETTING SAVED");
                 draw_screen();
                 refresh(MeshInkRefreshMode::Direct);
@@ -4288,7 +4285,7 @@ static void handle_tap(int16_t x,int16_t y) {
     if(screen==Screen::CompanionConfirm){
         const MeshInkUiLayout& layout=portrait_layout();
         if(hit(x,y,meshink_confirm_left_rect(layout,500))){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
-        if(hit(x,y,meshink_confirm_right_rect(layout,500))){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");request_companion_mode();return;}
+        if(hit(x,y,meshink_confirm_right_rect(layout,500))){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");mesh_protocol_request_companion_mode();return;}
         return;
     }
     if(screen==Screen::ShutdownConfirm){
@@ -4446,7 +4443,7 @@ static void service_primary_button(){
                 // then rebuild the same viewport from the cached terrain so
                 // moved node/device markers land at their latest positions.
                 // Stay on the cache-only refresh path: no toast and no tile I/O.
-                local_mesh_refresh_ui_data();
+                mesh_protocol_refresh_ui_data();
                 meshink_display_fill_framebuffer(&display,0x00);
                 force_redraw(MeshInkRefreshMode::Direct,"SHORT_BUTTON_MAP_BLACK",false);
                 draw_screen();
@@ -4558,7 +4555,7 @@ bool ui_service_headless_message_alert() {
         // The final GC16 refresh is synchronous. Service MeshCore immediately
         // while keeping EPDiy initialized. A packet landing during that redraw
         // can therefore update unread counts and reuse the same session.
-        local_mesh_service_startup();
+        mesh_protocol_service_startup();
         if(headless_alert_requested){
             headless_alert_requested=false;
             message_alert_cooldown_until=0;
@@ -4582,7 +4579,7 @@ bool ui_promote_headless_to_interactive() {
     const bool reuse_display=headless_display_session&&display_session_active&&fb;
     headless_alert_requested=false;
     message_alert_active=false;
-    // local_mesh_promote_to_ui() has already acknowledged the accepted BOOT
+    // mesh_protocol_promote_to_ui() has already acknowledged the accepted BOOT
     // request at full brightness. Keep that acknowledgement lit through the
     // retained-to-interactive startup instead of extinguishing it here.
     meshink_power_frontlight_set(100);
@@ -4613,16 +4610,16 @@ bool ui_promote_headless_to_interactive() {
         return false;
     }
 
-    local_mesh_prepare_interactive_services();
-    ui_use_data_provider(local_mesh_provider());
+    mesh_protocol_prepare_interactive_services();
+    ui_use_data_provider(mesh_protocol_provider());
     ui_mesh_ready();
-    local_mesh_refresh_ui_data();
+    mesh_protocol_refresh_ui_data();
 
     // Cold boot hides this shallow SD/PMTiles inventory behind the splash.
     // Do the same before revealing retained BOOT promotion so first Maps open
     // does not pay the one-time mount/archive discovery cost.
     map_tiles_warm_storage();
-    local_mesh_service_startup();
+    mesh_protocol_service_startup();
 
     standby_active=false;
     deep_sleep_pending=false;
@@ -4767,7 +4764,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
         Serial.println("[T5-INIT] display=initialized");
     }
 
-    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+    if(plan.service_mesh_between_steps)mesh_protocol_service_startup();
 
     if(plan.recover_power_path)meshink_power_recover_boot_path();
 
@@ -4779,7 +4776,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
         touch_enabled=false;
     }
 
-    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+    if(plan.service_mesh_between_steps)mesh_protocol_service_startup();
 
     if(plan.display){
         display=meshink_display_state_init();
@@ -4795,7 +4792,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
             critical_battery_shutdown(boot_power,"ui-startup");
     }
 
-    if(plan.service_mesh_between_steps)local_mesh_service_startup();
+    if(plan.service_mesh_between_steps)mesh_protocol_service_startup();
 
     if(plan.splash&&plan.display){
         meshink_display_set_all_white(&display);
@@ -4885,7 +4882,7 @@ void ui_loop() {
     if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&!message_alert_active&&
        !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
         deep_sleep_retry_at=millis()+250;
-        if(local_mesh_enter_deep_sleep_standby())return;
+        if(mesh_protocol_enter_deep_sleep_standby())return;
     }
     if(map_taps.count&&
        (screen!=Screen::Maps||standby_active||
@@ -5345,7 +5342,7 @@ void ui_apply_initial_radio_preset(){
 }
 
 void ui_mesh_ready(){
-    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){local_mesh_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to MeshCore '%s'\n",node_name);}else{strncpy(node_name,local_mesh_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from MeshCore '%s'\n",node_name);}state.putString("name",node_name);state.end();}
+    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){mesh_protocol_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to MeshCore '%s'\n",node_name);}else{strncpy(node_name,mesh_protocol_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from MeshCore '%s'\n",node_name);}state.putString("name",node_name);state.end();}
     update_status_hardware();status_bar_dirty=true;
 }
 
