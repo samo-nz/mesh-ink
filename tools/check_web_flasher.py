@@ -98,8 +98,9 @@ require('id="copy-button"' in serial_html and "Copy all" in serial_html,
         "serial monitor exposes copy-all control")
 require('id="clear-button"' in serial_html and "Clear window" in serial_html,
         "serial monitor exposes clear-window control")
-require('id="serial-log"' in serial_html and 'id="autoscroll"' in serial_html,
-        "serial monitor has persistent log window and autoscroll control")
+require('id="serial-log"' in serial_html and 'id="autoscroll"' in serial_html and
+        'id="serial-stats"' in serial_html,
+        "serial monitor has persistent log window, autoscroll and receive statistics")
 require('import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";' in serial_js,
         "serial monitor reuses local Android WebUSB serial polyfill")
 require('if (isAndroidPlatform()) {' in serial_js and
@@ -115,26 +116,39 @@ require('async function reconnect()' in serial_js and
 require('await openPort(port, backend.name);' in serial_js and
         'const stream = port.readable;' in serial_js and 'localReader = stream.getReader();' in serial_js,
         "serial monitor opens and continuously reads the chosen serial port")
-require('const SERIAL_BUFFER_SIZE = 8192;' in serial_js and
+require('const SERIAL_BUFFER_SIZE = 65536;' in serial_js and
         'await port.open({ baudRate, bufferSize: SERIAL_BUFFER_SIZE });' in serial_js,
-        "serial console uses a larger receive buffer for bursty debug output")
+        "serial console uses a 64 KiB receive buffer for bursty debug output")
+require('const DISPLAY_FLUSH_MS = 50;' in serial_js and
+        'const VISIBLE_LOG_MAX_CHARS = 512 * 1024;' in serial_js and
+        'pendingDisplayChunks' in serial_js and 'window.setTimeout(flushDisplay, DISPLAY_FLUSH_MS)' in serial_js,
+        "serial capture is decoupled from DOM rendering with a bounded visible tail")
+require('capturedChunks' in serial_js and 'capturedLength' in serial_js and
+        'const text = capturedChunks.join("");' in serial_js,
+        "copy-all uses the complete in-memory capture rather than the bounded terminal DOM")
+require('receivedBytes' in serial_js and 'readChunks' in serial_js and
+        'streamRecoveries' in serial_js and 'updateReceiveStats()' in serial_js,
+        "serial console exposes receive counters without touching the DOM on every USB chunk")
 require('while (token === generation && !userDisconnecting)' in serial_js and
         'if (!port.readable) break;' in serial_js and
         'localReader.releaseLock()' in serial_js,
         "serial console reacquires readers after recoverable stream errors")
 require('Serial stream hiccup' in serial_js and 'recovering without closing the USB port' in serial_js,
         "recoverable serial read errors do not close the USB device")
-require('new TextDecoder()' in serial_js and 'appendDeviceText' in serial_js,
-        "serial monitor decodes device output as streaming text")
+require('new TextDecoder()' in serial_js and 'captureDeviceText' in serial_js and
+        'visibleTextNode.appendData(text)' in serial_js,
+        "serial monitor decodes into immediate capture while rendering batches into one text node")
 require('reconnectButton.addEventListener("click", reconnect)' in serial_js,
         "serial monitor reconnect button is wired to the no-picker reconnect path")
 require('await navigator.clipboard.writeText(text)' in serial_js and
         'document.execCommand("copy")' in serial_js,
         "copy-all supports secure clipboard plus fallback")
-require('logArea.textContent = "";' in serial_js,
-        "clear-window control clears only the visible device log")
+require('capturedChunks = [];' in serial_js and 'visibleTextNode.data = "";' in serial_js,
+        "clear-window control clears both complete capture state and the visible terminal")
 require('Keep requestPort() directly in the user-triggered Connect path' in serial_js,
         "serial Connect keeps Android WebUSB permission selection in the user gesture path")
+require('.serial-monitor-log{min-height:360px;max-height:62vh;white-space:pre;overflow-wrap:normal;overflow:auto}' in css,
+        "serial terminal avoids expensive line wrapping during long captures")
 
 
 parser = argparse.ArgumentParser()
