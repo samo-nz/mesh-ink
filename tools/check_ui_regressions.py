@@ -1045,7 +1045,7 @@ assert "status_slot!=status_bar_painted_slot" in source, "standby keeps five-min
 assert '[T5-INIT] psram=OK' in unified_source, "startup reports PSRAM readiness"
 assert '[T5-INIT] display=initialized' in source and '[T5-INIT] touch=initialized' in source, "startup reports display/touch initialization without overclaiming verification"
 assert '[T5-INIT] radio=SX1262 OK' in board_target_source, "startup reports radio readiness"
-assert '[T5-INIT] gps=%s baud=%lu OK' in board_target_source and '[T5-WARN] gps=NMEA not confirmed; background retry active' in board_target_source, "startup reports confirmed GPS or explicit fallback warning"
+assert '[T5-INIT] gps=%s baud=%lu OK' in board_target_source and '[T5-ERROR] gps module not identified: no valid NMEA at supported baud; background retry active' in board_target_source, "startup reports confirmed GPS or explicit user-visible identification failure"
 assert '[T5-INIT] rtc=PCF8563 OK' in board_target_source and '[T5-WARN] rtc=' in board_target_source, "startup reports RTC success or fallback warning"
 assert '[T5-INIT] battery-gauge=OK voltage=%umV' in board_target_source, "startup reports battery gauge readiness"
 assert '[T5-INIT] storage=SPIFFS OK' in companion_source, "startup reports filesystem readiness"
