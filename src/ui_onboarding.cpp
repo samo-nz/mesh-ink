@@ -473,11 +473,11 @@ static void resolve_gps_timezone(long latitude,long longitude,char* label,size_t
     auto set=[&](const char* name,const char* tz){snprintf(label,label_len,"%s",name);snprintf(rule,rule_len,"%s",tz);};
     if(timezone_box(lat,lon,-45.5,-43.0,-178.5,-175.0)){set("CHATHAM ISLANDS","CHAST-12:45CHADT,M9.5.0/2:45,M4.1.0/3:45");return;}
     if(timezone_box(lat,lon,-48.5,-33.0,165.0,180.0)){set("NEW ZEALAND","NZST-12NZDT,M9.5.0,M4.1.0/3");return;}
-    if(timezone_box(lat,lon,-44.5,-28.0,140.0,154.5)){set("AUSTRALIA EAST","AEST-10AEDT,M10.1.0,M4.1.0/3");return;}
     if(timezone_box(lat,lon,-29.5,-10.0,138.0,154.5)){set("QUEENSLAND","AEST-10");return;}
     if(timezone_box(lat,lon,-39.5,-25.0,129.0,141.0)){set("AUSTRALIA CENTRAL","ACST-9:30ACDT,M10.1.0,M4.1.0/3");return;}
     if(timezone_box(lat,lon,-26.0,-10.0,129.0,138.0)){set("NORTHERN TERRITORY","ACST-9:30");return;}
     if(timezone_box(lat,lon,-36.0,-13.0,112.0,129.0)){set("AUSTRALIA WEST","AWST-8");return;}
+    if(timezone_box(lat,lon,-44.5,-28.0,140.0,154.5)){set("AUSTRALIA EAST","AEST-10AEDT,M10.1.0,M4.1.0/3");return;}
     if(timezone_box(lat,lon,49.0,61.5,-11.0,3.0)){set("UNITED KINGDOM","GMT0BST,M3.5.0/1,M10.5.0");return;}
     if(timezone_box(lat,lon,34.0,72.0,22.0,40.0)){set("EASTERN EUROPE","EET-2EEST,M3.5.0/3,M10.5.0/4");return;}
     if(timezone_box(lat,lon,35.0,72.0,3.0,22.0)){set("CENTRAL EUROPE","CET-1CEST,M3.5.0,M10.5.0/3");return;}
@@ -493,18 +493,18 @@ static void resolve_gps_timezone(long latitude,long longitude,char* label,size_t
     if(timezone_box(lat,lon,33.0,43.0,124.0,131.5)){set("KOREA","KST-9");return;}
     if(timezone_box(lat,lon,30.0,46.0,129.0,146.0)){set("JAPAN","JST-9");return;}
     if(timezone_box(lat,lon,26.0,31.5,80.0,89.0)){set("NEPAL","NPT-5:45");return;}
+    if(timezone_box(lat,lon,23.0,38.0,60.0,78.0)){set("PAKISTAN","PKT-5");return;}
+    if(timezone_box(lat,lon,20.0,27.0,88.0,93.0)){set("BANGLADESH","BST-6");return;}
     if(timezone_box(lat,lon,6.0,36.0,68.0,98.0)){set("INDIA","IST-5:30");return;}
     if(timezone_box(lat,lon,18.0,54.0,73.0,135.0)){set("CHINA","CST-8");return;}
+    if(timezone_box(lat,lon,-1.5,8.0,99.0,120.0)){set("SINGAPORE / MALAYSIA","SGT-8");return;}
+    if(timezone_box(lat,lon,4.0,22.0,116.0,127.0)){set("PHILIPPINES","PST-8");return;}
+    if(timezone_box(lat,lon,9.0,29.0,92.0,102.0)){set("MYANMAR","MMT-6:30");return;}
+    if(timezone_box(lat,lon,5.0,24.0,97.0,109.0)){set("SE ASIA","ICT-7");return;}
     if(timezone_box(lat,lon,-12.0,7.5,95.0,106.0)){set("INDONESIA WEST","WIB-7");return;}
     if(timezone_box(lat,lon,-12.0,7.5,106.0,120.0)){set("INDONESIA CENTRAL","WITA-8");return;}
     if(timezone_box(lat,lon,-12.0,7.5,120.0,141.0)){set("INDONESIA EAST","WIT-9");return;}
-    if(timezone_box(lat,lon,9.0,29.0,92.0,102.0)){set("MYANMAR","MMT-6:30");return;}
-    if(timezone_box(lat,lon,5.0,24.0,97.0,109.0)){set("SE ASIA","ICT-7");return;}
-    if(timezone_box(lat,lon,-1.5,8.0,99.0,120.0)){set("SINGAPORE / MALAYSIA","SGT-8");return;}
-    if(timezone_box(lat,lon,4.0,22.0,116.0,127.0)){set("PHILIPPINES","PST-8");return;}
     if(timezone_box(lat,lon,-36.0,-22.0,16.0,33.0)){set("SOUTH AFRICA","SAST-2");return;}
-    if(timezone_box(lat,lon,23.0,38.0,60.0,78.0)){set("PAKISTAN","PKT-5");return;}
-    if(timezone_box(lat,lon,20.0,27.0,88.0,93.0)){set("BANGLADESH","BST-6");return;}
     if(timezone_box(lat,lon,22.0,27.0,51.0,57.0)){set("GULF","GST-4");return;}
     if(timezone_box(lat,lon,24.0,40.0,44.0,64.0)){set("IRAN","IRST-3:30");return;}
     if(timezone_box(lat,lon,-56.0,-21.0,-73.0,-53.0)){set("ARGENTINA / URUGUAY","ART3");return;}
