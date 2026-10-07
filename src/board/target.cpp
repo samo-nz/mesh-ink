@@ -462,6 +462,10 @@ static uint32_t gps_last_byte_at = 0;
 static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
 static bool gps_tuning_loaded=false;
 static bool gps_constellation_dirty=false;
+// Defensive T5/L76K boot recovery: the receiver can retain PCAS15 satellite
+// masks across an ESP reset while its shared rail remains powered. Restore the
+// full BeiDou masks once after each boot before applying the user's selection.
+static bool gps_satellite_masks_restore_pending=true;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 
 // T5/L76K-only retained marker. The application and generic GPS surface never
@@ -505,20 +509,17 @@ static void gps_send_pcas(const char* payload) {
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
 
-    if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
-        // Restore the BeiDou masks before applying the user's selected
-        // constellation set. This is intentionally the first GNSS action when
-        // interactive GPS runtime returns after deep sleep.
+    if(gps_satellite_masks_restore_pending||
+       gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
+        // Always recover the documented BeiDou masks once after boot. This
+        // covers both an expected deep-sleep wake and an unexpected ESP reset
+        // that occurred while the separately-powered L76K retained zero masks.
         gps_send_pcas("PCAS15,2,FFFFFFFF");
         gps_send_pcas("PCAS15,3,FFFFFFFF");
-        char restore[16];
-        snprintf(restore,sizeof(restore),"PCAS04,%u",
-                 (unsigned)static_cast<uint8_t>(gps_constellation_mode));
-        gps_send_pcas(restore);
+        gps_satellite_masks_restore_pending=false;
         gps_deep_sleep_low_work_magic=0;
-        gps_constellation_dirty=false;
-        Serial.printf("[T5-GPS] deep-sleep GNSS restored constellation-mask=%u\n",
-                      (unsigned)static_cast<uint8_t>(gps_constellation_mode));
+        gps_constellation_dirty=true;
+        Serial.println("[T5-GPS] startup GNSS satellite masks restored");
     }
 
     if(gps_constellation_dirty){
