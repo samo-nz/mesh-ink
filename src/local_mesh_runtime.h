@@ -31,6 +31,7 @@ const char* local_mesh_gps_tuning_note();
 bool local_mesh_gps_power_test_start(MeshInkGpsPowerExperiment experiment);
 bool local_mesh_gps_power_test_busy();
 bool local_mesh_gps_power_test_replay_last();
+bool local_mesh_gps_power_matrix_replay_last();
 bool local_mesh_gps_diagnostic_run(MeshInkGpsDiagnosticAction action);
 void local_mesh_gps_enter_standby_power_mode();
 void local_mesh_gps_leave_standby_power_mode();
