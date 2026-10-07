@@ -1171,7 +1171,7 @@ assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinat
 # Test50: one 250-message v3 journal spans standalone and Bluetooth Companion
 # modes. The one-off pre-release v1/v2 migration path has been retired.
 assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
-assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk exposes the full MeshCore direct-message text limit"
+assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk keeps the validated shared message editor/storage cap"
 assert "STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "current v3 fixed-record layout is pinned"
 assert "migrate_legacy" not in message_store_source and "migrate_legacy" not in message_store_header, "legacy message migration code is removed"
 assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "legacy v1/v2 record formats are removed"
