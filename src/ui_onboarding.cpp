@@ -254,6 +254,11 @@ static void reset_chat_paging(){
     chat_page_known=0;
 }
 static uint8_t timezone_index = 0;
+static uint16_t manual_time_year=2026;
+static uint8_t manual_time_month=1;
+static uint8_t manual_time_day=1;
+static uint8_t manual_time_hour=12;
+static uint8_t manual_time_minute=0;
 static bool mesh_is_ready = false;
 enum class FrontlightMode:uint8_t{On=0,NightTimer=1,Off=2};
 static FrontlightMode frontlight_mode=FrontlightMode::On;
@@ -294,7 +299,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu, Diagnostics,
-    Settings, RadioSettings, GpsSettings, GpsTuning, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
+    Settings, RadioSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static uint8_t retained_wake_tab=0;
@@ -2418,19 +2423,32 @@ static void settings_row(const char* title,const char* subtitle,int reference_y)
                 subtitle_width,subtitle_scale,0,false);
     ui_text(">",layout.settings_arrow_x,row.y+ui_h(39),3,0,true);
 }
+static void settings_info_row(const char* title,const char* subtitle,int reference_y) {
+    const MeshInkUiLayout& layout=portrait_layout();
+    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
+    ui_section_card(row);
+    ui_text_fit(title,layout.content_text_x,row.y+ui_h(13),
+                row.width-ui_w(32),3,0,true);
+    const int subtitle_width=row.width-ui_w(32);
+    const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;
+    ui_text_fit(subtitle,layout.content_text_x,row.y+ui_h(55),
+                subtitle_width,subtitle_scale,0,false);
+}
 
 static void draw_settings() {
     draw_app_header("SETTINGS",true);
     settings_row("ID & RADIO",local_mesh_radio_summary(),118);
     if(meshink_board_has_gps()){
         settings_row("LOCATION & GPS","Position, interval, advert",238);
+        settings_row("DATE & TIME","Clock, source, timezone",358);
+        settings_row("PRIVACY","Contacts and telemetry",478);
+        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",598);
+        settings_row("ABOUT","Firmware and device info",718);
+    }else{
+        settings_row("DATE & TIME","Clock, source, timezone",238);
         settings_row("PRIVACY","Contacts and telemetry",358);
         settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478);
         settings_row("ABOUT","Firmware and device info",598);
-    }else{
-        settings_row("PRIVACY","Contacts and telemetry",238);
-        settings_row("DISPLAY & POWER","Frontlight, refresh, standby",358);
-        settings_row("ABOUT","Firmware and device info",478);
     }
 }
 
