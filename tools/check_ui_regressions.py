@@ -891,17 +891,21 @@ assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
 for receiver_command in ("PCAS02","PCAS03","PCAS04","PCAS10","PCAS12"):
     assert receiver_command not in runtime_source and receiver_command not in source, "receiver command syntax must stay in the board GPS implementation"
-assert "MeshInkGpsPowerExperiment::CurrentState" in source and "MeshInkGpsPowerExperiment::GpsOnly" in source and "MeshInkGpsPowerExperiment::OnlineUpgradeWait" in source, "GPS power page keeps untouched capture plus explicit experiments"
-assert '"REPLAY LAST LOG"' in source and "gps_power_page" in source and '"PASSIVE UART SCAN"' in source and '"FULL RESCUE"' in source, "GPS power/forensics/recovery pages keep explicit choices with retained-log replay"
+assert "MeshInkGpsPowerExperiment::CurrentState" in source and "MeshInkGpsPowerExperiment::AutoMatrixSweep" in source and "MeshInkGpsPowerExperiment::VerifyMatrixWinner" in source and "MeshInkGpsPowerExperiment::GpsOnly" in source and "MeshInkGpsPowerExperiment::OnlineUpgradeWait" in source, "GPS power page keeps matrix, untouched capture and legacy experiments"
+assert '"REPLAY MATRIX SUMMARY"' in source and '"VERIFY MATRIX WINNER"' in source and '"REPLAY LAST LOG"' in source and "gps_power_page" in source and '"PASSIVE UART SCAN"' in source and '"FULL RESCUE"' in source, "GPS matrix/power/forensics/recovery pages keep explicit choices and replay paths"
 assert "local_mesh_gps_enter_standby_power_mode();" in source and "local_mesh_gps_leave_standby_power_mode();" in source, "both standby entry and normal wake route through GPS single-system power policy"
-assert "meshink_gps_power_test_start" in t5_gps_backend_source and "meshink_gps_enter_standby_power_mode" in t5_gps_backend_source, "T5 GPS backend exposes measured experiment and standby hooks"
+assert "meshink_gps_power_test_start" in t5_gps_backend_source and "meshink_gps_power_test_isolation_active" in t5_gps_backend_source and "meshink_gps_power_matrix_replay_last" in t5_gps_backend_source and "meshink_gps_enter_standby_power_mode" in t5_gps_backend_source, "T5 GPS backend exposes matrix measurement, replay, isolation and standby hooks"
 assert "gps_power_touch_suspended" in source and "set_touch_power(false);" in source, "GPS power test disables touch during its measured window"
-assert "gps_power_measurement_quiet" in source and "if(!gps_power_measurement_quiet)service_message_alert();" in source, "GPS power test suppresses display/message refresh activity while measuring"
+assert "gps_power_measurement_quiet" in source and "if(!gps_power_measurement_quiet)service_message_alert();" in source and "if(local_mesh_gps_power_test_isolation_active())return;" in source, "GPS tests suppress refreshes and matrix tests pause all UI-side services"
 assert "UI quiet mode ended: touch restored after measurement" in source, "GPS power measurement automatically restores interactive UI"
-assert "GPS_POWER_BASELINE_MS = 30000" in board_target_source and "GPS_POWER_POST_MS = 60000" in board_target_source, "GPS experiments retain 30-second baseline and 60-second post windows"
-assert "gps_power_prepare_baseline();" in board_target_source and '"PCAS04,3"' in board_target_source and "gps_power_test_preserves_receiver_state" in board_target_source, "normal GPS power experiments normalize while current-state capture remains explicit and untouched"
+assert "GPS_POWER_BASELINE_MS = 30000" in board_target_source and "GPS_POWER_POST_MS = 60000" in board_target_source and "GPS_MATRIX_MEASURE_MS=10000" in board_target_source, "legacy GPS windows remain while automatic matrix uses isolated settled samples"
+assert "gps_power_prepare_baseline();" in board_target_source and '"PCAS04,3"' in board_target_source and "gps_power_test_preserves_receiver_state" in board_target_source and "gps_matrix_probe_binary_satmask" in board_target_source and "0x06,0x21" in board_target_source, "normal experiments normalize while matrix adaptively probes experimental CASBIN satellite masks"
 assert "gps_power_print_summary(true);" in board_target_source and "detailed samples follow at fully throttled USB-safe rate" in board_target_source, "GPS replay emits paced summary before verbose samples"
 assert "GPS_SERIAL_REPLAY_DELAY_MS = 60" in board_target_source and "gps_power_print_summary(true);" in board_target_source and "gps_serial_replay_pause();" in board_target_source and "REPLAY COMPLETE" in board_target_source, "GPS replay throttles every header, summary and sample line for Android WebUSB reliability"
+assert "LOWEST TO HIGHEST" in board_target_source and "gps_matrix_power_mw" in board_target_source and "VERIFY WINNER" in board_target_source, "matrix summary ranks results and supports repeat winner verification"
+assert "if(meshink_gps_power_test_isolation_active()){" in runtime_source and "meshink_gps_power_test_tick();" in runtime_source, "matrix isolation reduces local runtime to the measurement state machine"
+assert "if(!local_mesh_gps_power_test_isolation_active())service_local_terminal();" in unified_source, "matrix isolation also suppresses USB terminal polling"
+assert "measurement.voltage_mv*(int32_t)measurement.average_current_ma" in power_backend_source and "gauge_word(0x24,raw)" not in power_backend_source, "battery power is derived from voltage and current instead of the misleading gauge AveragePower register"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
@@ -1612,4 +1616,4 @@ assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promoti
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.6\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.6\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
+assert "-DT5_FIRMWARE_VERSION='\"2.1.1-test.7\"'" in platformio_source and "-DT5_UI_VERSION='\"2.1.1-test.7\"'" in platformio_source, "gps-powersave firmware/UI identity stays aligned"
