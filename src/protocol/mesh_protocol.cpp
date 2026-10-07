@@ -8,10 +8,26 @@ namespace {
 using BackendSlot = const MeshInkProtocolBackend* (*)();
 
 static BackendSlot backend_slots[] = {
+#if defined(MESHINK_PROTOCOL_SLOT_1_ENABLED)
     meshink_protocol_backend_slot_1,
+#else
+    nullptr,
+#endif
+#if defined(MESHINK_PROTOCOL_SLOT_2_ENABLED)
     meshink_protocol_backend_slot_2,
+#else
+    nullptr,
+#endif
+#if defined(MESHINK_PROTOCOL_SLOT_3_ENABLED)
     meshink_protocol_backend_slot_3,
+#else
+    nullptr,
+#endif
+#if defined(MESHINK_PROTOCOL_SLOT_4_ENABLED)
     meshink_protocol_backend_slot_4,
+#else
+    nullptr,
+#endif
 };
 
 static const MeshInkProtocolBackend& fallback_backend() {
