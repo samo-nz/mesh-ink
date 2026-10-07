@@ -294,7 +294,7 @@ static bool headless_display_session=false;
 static bool display_session_active=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
-static volatile bool quick_slider_dragging=false;display_slider_dragging=false;
+static volatile bool quick_slider_dragging=false;
 static volatile bool display_slider_dragging=false;
 static volatile uint8_t quick_slider_preview=30;
 static uint8_t message_alert_phase=0;
