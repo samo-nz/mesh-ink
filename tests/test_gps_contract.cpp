@@ -9,24 +9,41 @@ int main(){
     assert(std::strcmp(meshink_gps_backend_name(),"mock")==0);
     assert(std::strcmp(meshink_gps_tuning_note(),"mock GPS tuning note")==0);
     assert(meshink_gps_constellation_mode()==
-           MeshInkGpsConstellationMode::Unchanged);
+           MeshInkGpsConstellationMode::GpsBeiDou);
 
-    auto mode=meshink_gps_next_constellation_mode(
-        MeshInkGpsConstellationMode::Unchanged);
-    assert(mode==MeshInkGpsConstellationMode::GpsOnly);
-    mode=meshink_gps_next_constellation_mode(mode);
-    assert(mode==MeshInkGpsConstellationMode::GpsGlonass);
-    mode=meshink_gps_next_constellation_mode(mode);
-    assert(mode==MeshInkGpsConstellationMode::GpsBeiDou);
-    mode=meshink_gps_next_constellation_mode(mode);
-    assert(mode==MeshInkGpsConstellationMode::GpsBeiDouGlonass);
-    mode=meshink_gps_next_constellation_mode(mode);
-    assert(mode==MeshInkGpsConstellationMode::GpsOnly);
-
-    assert(meshink_gps_set_constellation_mode(
+    assert(meshink_gps_constellation_mode_valid(
         MeshInkGpsConstellationMode::GpsOnly));
+    assert(meshink_gps_constellation_mode_valid(
+        MeshInkGpsConstellationMode::BeiDouOnly));
+    assert(meshink_gps_constellation_mode_valid(
+        MeshInkGpsConstellationMode::GlonassOnly));
+    assert(meshink_gps_constellation_mode_valid(
+        MeshInkGpsConstellationMode::BeiDouGlonass));
+    assert(!meshink_gps_constellation_mode_valid(
+        MeshInkGpsConstellationMode::None));
+
+    auto mode=MeshInkGpsConstellationMode::GpsBeiDou;
+    MeshInkGpsConstellationMode next=mode;
+    assert(meshink_gps_constellation_enabled(mode,MeshInkGpsConstellation::Gps));
+    assert(meshink_gps_constellation_enabled(mode,MeshInkGpsConstellation::BeiDou));
+    assert(!meshink_gps_constellation_enabled(mode,MeshInkGpsConstellation::Glonass));
+
+    assert(meshink_gps_constellation_mode_set(
+        mode,MeshInkGpsConstellation::Gps,false,next));
+    assert(next==MeshInkGpsConstellationMode::BeiDouOnly);
+
+    mode=next;
+    assert(!meshink_gps_constellation_mode_set(
+        mode,MeshInkGpsConstellation::BeiDou,false,next));
+    assert(mode==MeshInkGpsConstellationMode::BeiDouOnly);
+
+    assert(meshink_gps_constellation_mode_set(
+        mode,MeshInkGpsConstellation::Glonass,true,next));
+    assert(next==MeshInkGpsConstellationMode::BeiDouGlonass);
+
+    assert(meshink_gps_set_constellation_mode(next));
     assert(meshink_gps_constellation_mode()==
-           MeshInkGpsConstellationMode::GpsOnly);
+           MeshInkGpsConstellationMode::BeiDouGlonass);
 
     meshink_gps_service_begin();
     assert(meshink_gps_mock_started);
@@ -54,6 +71,6 @@ int main(){
     meshink_gps_shutdown();
     assert(meshink_gps_mock_shutdown);
 
-    std::cout << "PASS: generic GPS contract compiles and runs with a non-T5 backend.\n";
+    std::cout << "PASS: generic GPS contract supports all non-empty constellation masks.\n";
     return 0;
 }
