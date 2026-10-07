@@ -455,11 +455,11 @@ static uint32_t gps_last_byte_at = 0;
 // LoRa and GPS share VCC3V3. Constellation selection remains user-controlled;
 // compact GGA+RMC NMEA output is always configured on the inferred L76K.
 // Neither setting shuts down receiver power or changes the 1 Hz fix rate.
-// 0 leaves the receiver constellation unchanged; 1/3/5/7 are PCAS04 modes.
+// The generic 1..7 GPS/BDS/GLO bitmask maps directly to documented PCAS04.
 #ifndef T5_GPS_FULL_NMEA_DIAGNOSTIC
 #define T5_GPS_FULL_NMEA_DIAGNOSTIC 0
 #endif
-static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::Unchanged;
+static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
 static bool gps_tuning_loaded=false;
 static bool gps_constellation_dirty=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
@@ -468,16 +468,23 @@ static void gps_load_tuning(){
     if(gps_tuning_loaded)return;
     gps_tuning_loaded=true;
     Preferences pref;
-    if(pref.begin("t5-gnss",true)){
-        const auto mode=static_cast<MeshInkGpsConstellationMode>(
-            pref.getUChar("constellation",0));
-        gps_constellation_mode=meshink_gps_constellation_mode_valid(mode)
-            ? mode : MeshInkGpsConstellationMode::Unchanged;
+    if(pref.begin("t5-gnss",false)){
+        const auto stored=pref.getUChar(
+            "constellation",(uint8_t)MeshInkGpsConstellationMode::GpsBeiDou);
+        const auto mode=static_cast<MeshInkGpsConstellationMode>(stored);
+        if(meshink_gps_constellation_mode_valid(mode)){
+            gps_constellation_mode=mode;
+        }else{
+            // Legacy UNCHANGED/0 becomes the previous effective default:
+            // GPS + BeiDou. Persist the migration so future boots are explicit.
+            gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
+            pref.putUChar("constellation",(uint8_t)gps_constellation_mode);
+        }
         pref.end();
     }
     // Ignore the pre-1.5.0 "compact" preference: full output is now a
     // developer-only diagnostic build option, not an on-device toggle.
-    gps_constellation_dirty=gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged;
+    gps_constellation_dirty=true;
     gps_nmea_dirty=true;
 }
 static void gps_send_pcas(const char* payload) {
@@ -491,13 +498,10 @@ static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
     if(gps_constellation_dirty){
         gps_constellation_dirty=false;
-        if(gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged){
-            char payload[16];
-            snprintf(payload,sizeof(payload),"PCAS04,%u",
-                     (unsigned)static_cast<uint8_t>(gps_constellation_mode));
-            gps_send_pcas(payload);
-        }
-        // "UNCHANGED" does not restore factory configuration; it sends nothing.
+        char payload[16];
+        snprintf(payload,sizeof(payload),"PCAS04,%u",
+                 (unsigned)static_cast<uint8_t>(gps_constellation_mode));
+        gps_send_pcas(payload);
     }
     if(gps_nmea_dirty){
         gps_nmea_dirty=false;
@@ -510,7 +514,7 @@ static void gps_apply_tuning(){
 }
 const char* meshink_gps_backend_name(){return "T5 GNSS";}
 const char* meshink_gps_tuning_note(){
-    return "COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.";
+    return "COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION SELECTION IS APPLIED LIVE. GPS STAYS POWERED WHILE LORA IS ON.";
 }
 MeshInkGpsConstellationMode meshink_gps_constellation_mode(){
     gps_load_tuning();
@@ -527,10 +531,8 @@ bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     pref.end();
     if(!saved)return false;
     gps_constellation_mode=mode;
-    gps_constellation_dirty=mode!=MeshInkGpsConstellationMode::Unchanged;
-    if(mode==MeshInkGpsConstellationMode::Unchanged)
-        T5_GPS_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
-    else gps_apply_tuning();
+    gps_constellation_dirty=true;
+    gps_apply_tuning();
     return true;
 }
 
