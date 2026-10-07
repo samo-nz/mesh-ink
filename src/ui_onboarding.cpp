@@ -254,7 +254,10 @@ static void reset_chat_paging(){
     chat_page_snapshot_history_available=-1;
     chat_page_known=0;
 }
-static uint8_t timezone_index = 0;
+static uint8_t timezone_index = 1;
+static int16_t custom_timezone_minutes=0;
+static char auto_timezone_label[28]="UTC";
+static char auto_timezone_rule[80]="UTC0";
 static uint16_t manual_time_year=2026;
 static uint8_t manual_time_month=1;
 static uint8_t manual_time_day=1;
@@ -300,7 +303,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu, Diagnostics,
-    Settings, RadioSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
+    Settings, RadioSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static uint8_t retained_wake_tab=0;
@@ -439,7 +442,10 @@ static bool centre_map_on_device(){
 static constexpr uint8_t PRESETS_PER_PAGE = 5;
 
 struct TimezoneChoice { const char* label; const char* detail; const char* rule; };
+static constexpr uint8_t TIMEZONE_AUTO=0;
+static constexpr uint8_t TIMEZONE_CUSTOM=8;
 static constexpr TimezoneChoice TIMEZONES[] = {
+ {"AUTO (GPS-DERIVED)","USES LAST RESOLVED ZONE UNTIL NEXT FIX",nullptr},
  {"NEW ZEALAND","NZST / NZDT AUTOMATIC","NZST-12NZDT,M9.5.0,M4.1.0/3"},
  {"UTC","COORDINATED UNIVERSAL TIME","UTC0"},
  {"AUSTRALIA EAST","AEST / AEDT AUTOMATIC","AEST-10AEDT,M10.1.0,M4.1.0/3"},
@@ -447,10 +453,127 @@ static constexpr TimezoneChoice TIMEZONES[] = {
  {"CENTRAL EUROPE","CET / CEST AUTOMATIC","CET-1CEST,M3.5.0,M10.5.0/3"},
  {"US PACIFIC","PST / PDT AUTOMATIC","PST8PDT,M3.2.0,M11.1.0"},
  {"US EASTERN","EST / EDT AUTOMATIC","EST5EDT,M3.2.0,M11.1.0"},
+ {"CUSTOM UTC OFFSET","FIXED OFFSET - NO DST",nullptr},
 };
 static constexpr uint8_t TIMEZONE_COUNT=sizeof(TIMEZONES)/sizeof(TIMEZONES[0]);
 
-static void apply_timezone(){setenv("TZ",TIMEZONES[timezone_index].rule,1);tzset();T5_DEBUGF(T5_LOG_UI,"[T5-TIME] display timezone=%s\n",TIMEZONES[timezone_index].label);}
+static void fixed_timezone_text(int16_t east_minutes,char* label,size_t label_len,char* rule,size_t rule_len){
+    const int total=constrain((int)east_minutes,-12*60,14*60);
+    const char sign=total<0?'-':'+';
+    const int magnitude=abs(total);
+    snprintf(label,label_len,"UTC%c%02d:%02d",sign,magnitude/60,magnitude%60);
+    if(total==0)snprintf(rule,rule_len,"UTC0");
+    else snprintf(rule,rule_len,"UTC%c%d:%02d",total>0?'-':'+',magnitude/60,magnitude%60);
+}
+static bool timezone_box(double lat,double lon,double min_lat,double max_lat,double min_lon,double max_lon){
+    return lat>=min_lat&&lat<=max_lat&&lon>=min_lon&&lon<=max_lon;
+}
+static void resolve_gps_timezone(long latitude,long longitude,char* label,size_t label_len,char* rule,size_t rule_len){
+    const double lat=latitude/1000000.0,lon=longitude/1000000.0;
+    auto set=[&](const char* name,const char* tz){snprintf(label,label_len,"%s",name);snprintf(rule,rule_len,"%s",tz);};
+    if(timezone_box(lat,lon,-45.5,-43.0,-178.5,-175.0)){set("CHATHAM ISLANDS","CHAST-12:45CHADT,M9.5.0/2:45,M4.1.0/3:45");return;}
+    if(timezone_box(lat,lon,-48.5,-33.0,165.0,180.0)){set("NEW ZEALAND","NZST-12NZDT,M9.5.0,M4.1.0/3");return;}
+    if(timezone_box(lat,lon,-44.5,-28.0,140.0,154.5)){set("AUSTRALIA EAST","AEST-10AEDT,M10.1.0,M4.1.0/3");return;}
+    if(timezone_box(lat,lon,-29.5,-10.0,138.0,154.5)){set("QUEENSLAND","AEST-10");return;}
+    if(timezone_box(lat,lon,-39.5,-25.0,129.0,141.0)){set("AUSTRALIA CENTRAL","ACST-9:30ACDT,M10.1.0,M4.1.0/3");return;}
+    if(timezone_box(lat,lon,-26.0,-10.0,129.0,138.0)){set("NORTHERN TERRITORY","ACST-9:30");return;}
+    if(timezone_box(lat,lon,-36.0,-13.0,112.0,129.0)){set("AUSTRALIA WEST","AWST-8");return;}
+    if(timezone_box(lat,lon,49.0,61.5,-11.0,3.0)){set("UNITED KINGDOM","GMT0BST,M3.5.0/1,M10.5.0");return;}
+    if(timezone_box(lat,lon,34.0,72.0,22.0,40.0)){set("EASTERN EUROPE","EET-2EEST,M3.5.0/3,M10.5.0/4");return;}
+    if(timezone_box(lat,lon,35.0,72.0,3.0,22.0)){set("CENTRAL EUROPE","CET-1CEST,M3.5.0,M10.5.0/3");return;}
+    if(timezone_box(lat,lon,18.0,23.5,-161.5,-154.0)){set("HAWAII","HST10");return;}
+    if(timezone_box(lat,lon,50.0,72.0,-170.0,-130.0)){set("ALASKA","AKST9AKDT,M3.2.0,M11.1.0");return;}
+    if(timezone_box(lat,lon,24.0,50.5,-125.0,-66.0)){
+        if(timezone_box(lat,lon,31.0,37.5,-115.0,-109.0)){set("ARIZONA","MST7");return;}
+        if(lon<-114.0){set("US PACIFIC","PST8PDT,M3.2.0,M11.1.0");return;}
+        if(lon<-101.0){set("US MOUNTAIN","MST7MDT,M3.2.0,M11.1.0");return;}
+        if(lon<-85.0){set("US CENTRAL","CST6CDT,M3.2.0,M11.1.0");return;}
+        set("US EASTERN","EST5EDT,M3.2.0,M11.1.0");return;
+    }
+    if(timezone_box(lat,lon,33.0,43.0,124.0,131.5)){set("KOREA","KST-9");return;}
+    if(timezone_box(lat,lon,30.0,46.0,129.0,146.0)){set("JAPAN","JST-9");return;}
+    if(timezone_box(lat,lon,26.0,31.5,80.0,89.0)){set("NEPAL","NPT-5:45");return;}
+    if(timezone_box(lat,lon,6.0,36.0,68.0,98.0)){set("INDIA","IST-5:30");return;}
+    if(timezone_box(lat,lon,18.0,54.0,73.0,135.0)){set("CHINA","CST-8");return;}
+    if(timezone_box(lat,lon,-12.0,7.5,95.0,106.0)){set("INDONESIA WEST","WIB-7");return;}
+    if(timezone_box(lat,lon,-12.0,7.5,106.0,120.0)){set("INDONESIA CENTRAL","WITA-8");return;}
+    if(timezone_box(lat,lon,-12.0,7.5,120.0,141.0)){set("INDONESIA EAST","WIT-9");return;}
+    if(timezone_box(lat,lon,9.0,29.0,92.0,102.0)){set("MYANMAR","MMT-6:30");return;}
+    if(timezone_box(lat,lon,5.0,24.0,97.0,109.0)){set("SE ASIA","ICT-7");return;}
+    if(timezone_box(lat,lon,-1.5,8.0,99.0,120.0)){set("SINGAPORE / MALAYSIA","SGT-8");return;}
+    if(timezone_box(lat,lon,4.0,22.0,116.0,127.0)){set("PHILIPPINES","PST-8");return;}
+    if(timezone_box(lat,lon,-36.0,-22.0,16.0,33.0)){set("SOUTH AFRICA","SAST-2");return;}
+    if(timezone_box(lat,lon,23.0,38.0,60.0,78.0)){set("PAKISTAN","PKT-5");return;}
+    if(timezone_box(lat,lon,20.0,27.0,88.0,93.0)){set("BANGLADESH","BST-6");return;}
+    if(timezone_box(lat,lon,22.0,27.0,51.0,57.0)){set("GULF","GST-4");return;}
+    if(timezone_box(lat,lon,24.0,40.0,44.0,64.0)){set("IRAN","IRST-3:30");return;}
+    if(timezone_box(lat,lon,-56.0,-21.0,-73.0,-53.0)){set("ARGENTINA / URUGUAY","ART3");return;}
+    int minutes=(int)lround(lon*4.0/15.0)*15;
+    minutes=constrain(minutes,-12*60,14*60);
+    char fixed_label[24]{};
+    fixed_timezone_text((int16_t)minutes,fixed_label,sizeof(fixed_label),rule,rule_len);
+    snprintf(label,label_len,"GPS OFFSET %s",fixed_label);
+}
+static const char* active_timezone_rule(){
+    if(timezone_index==TIMEZONE_AUTO)return auto_timezone_rule;
+    static char custom_rule[32]{};
+    if(timezone_index==TIMEZONE_CUSTOM){
+        char ignored[24]{};
+        fixed_timezone_text(custom_timezone_minutes,ignored,sizeof(ignored),custom_rule,sizeof(custom_rule));
+        return custom_rule;
+    }
+    return TIMEZONES[timezone_index].rule;
+}
+static void apply_timezone(){
+    const char* rule=active_timezone_rule();
+    setenv("TZ",rule&&rule[0]?rule:"UTC0",1);tzset();
+    T5_DEBUGF(T5_LOG_UI,"[T5-TIME] display timezone index=%u rule=%s\n",(unsigned)timezone_index,rule?rule:"UTC0");
+}
+static void persist_timezone_selection(){
+    Preferences zone;if(zone.begin("t5-ui",false)){
+        zone.putUChar("timezone",timezone_index);zone.putBool("tz_v2",true);
+        zone.putInt("custom_tz_min",(int32_t)custom_timezone_minutes);zone.end();
+    }
+}
+static void persist_auto_timezone(){
+    Preferences zone;if(zone.begin("t5-ui",false)){
+        zone.putString("auto_tz_label",auto_timezone_label);
+        zone.putString("auto_tz_rule",auto_timezone_rule);zone.end();
+    }
+}
+static void update_auto_timezone_from_gps(long latitude,long longitude){
+    char label[sizeof(auto_timezone_label)]{},rule[sizeof(auto_timezone_rule)]{};
+    resolve_gps_timezone(latitude,longitude,label,sizeof(label),rule,sizeof(rule));
+    if(!strcmp(label,auto_timezone_label)&&!strcmp(rule,auto_timezone_rule))return;
+    snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",label);
+    snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"%s",rule);
+    persist_auto_timezone();
+    if(timezone_index==TIMEZONE_AUTO){
+        apply_timezone();status_dirty=true;status_bar_dirty=true;
+        T5_DEBUGF(T5_LOG_UI,"[T5-TIME] GPS timezone resolved %s\n",auto_timezone_label);
+    }
+}
+static void seed_auto_timezone_from_selection(uint8_t previous){
+    if(previous==TIMEZONE_AUTO)return;
+    if(previous==TIMEZONE_CUSTOM){
+        char label[24]{};
+        fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),auto_timezone_rule,sizeof(auto_timezone_rule));
+        snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",label);
+    }else if(previous<TIMEZONE_COUNT&&TIMEZONES[previous].rule){
+        snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",TIMEZONES[previous].label);
+        snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"%s",TIMEZONES[previous].rule);
+    }
+    persist_auto_timezone();
+}
+static void timezone_display_label(char* out,size_t len){
+    if(!out||!len)return;
+    if(timezone_index==TIMEZONE_AUTO)snprintf(out,len,"AUTO (%s)",auto_timezone_label);
+    else if(timezone_index==TIMEZONE_CUSTOM){
+        char label[24]{},rule[32]{};
+        fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),rule,sizeof(rule));
+        snprintf(out,len,"CUSTOM %s",label);
+    }else snprintf(out,len,"%s",TIMEZONES[timezone_index].label);
+}
 
 static constexpr uint32_t FRONTLIGHT_TIMEOUTS[]={5000,10000,15000,30000,0};
 static constexpr uint32_t STANDBY_TIMEOUTS[]={300000,600000,900000,0};
@@ -2561,80 +2684,74 @@ static void load_manual_time_draft(){
     }
     clamp_manual_time_day();
 }
-static const char* time_source_label(){
+static void time_mode_label(char* out,size_t len){
+    if(!out||!len)return;
+    if(local_mesh_time_mode()==MeshInkTimeMode::Manual){snprintf(out,len,"MANUAL");return;}
+    const char* source="VALID RTC";
     switch(local_mesh_time_source()){
-        case MeshInkTimeSource::Gps:
-            return local_mesh_gps_time_authoritative()?"GPS - AUTHORITATIVE":"GPS";
-        case MeshInkTimeSource::Companion:return "COMPANION";
-        case MeshInkTimeSource::Manual:return "MANUAL";
-        case MeshInkTimeSource::HardwareRtc:return "HARDWARE RTC";
-        case MeshInkTimeSource::MeshCore:return "MESHCORE";
-        default:return "UNKNOWN";
+        case MeshInkTimeSource::Gps:source="GPS FIX";break;
+        case MeshInkTimeSource::Companion:source="COMPANION";break;
+        case MeshInkTimeSource::MeshCore:source="MESHCORE FALLBACK";break;
+        case MeshInkTimeSource::HardwareRtc:source="VALID RTC";break;
+        case MeshInkTimeSource::Manual:source="VALID RTC";break;
+        default:source=local_mesh_time_valid()?"VALID RTC":"WAITING";break;
     }
+    snprintf(out,len,"AUTO (%s)",source);
 }
 static void current_datetime_label(char* out,size_t len){
     if(!out||!len)return;
-    if(!local_mesh_time_valid()){
-        strncpy(out,"NOT SET",len-1);out[len-1]=0;return;
-    }
-    const time_t now=(time_t)local_mesh_current_time();
-    struct tm local{};
-    if(!localtime_r(&now,&local)){
-        strncpy(out,"NOT SET",len-1);out[len-1]=0;return;
-    }
-    snprintf(out,len,"%02d %s %04d  %02d:%02d",
-             local.tm_mday,MONTH_NAMES[min(11,max(0,local.tm_mon))],
-             local.tm_year+1900,local.tm_hour,local.tm_min);
+    if(!local_mesh_time_valid()){strncpy(out,"NOT SET",len-1);out[len-1]=0;return;}
+    const time_t now=(time_t)local_mesh_current_time();struct tm local{};
+    if(!localtime_r(&now,&local)){strncpy(out,"NOT SET",len-1);out[len-1]=0;return;}
+    snprintf(out,len,"%02d %s %04d  %02d:%02d",local.tm_mday,MONTH_NAMES[min(11,max(0,local.tm_mon))],local.tm_year+1900,local.tm_hour,local.tm_min);
 }
 static void draw_date_time(){
     draw_app_header("DATE & TIME",true);
-    char current[32]{};
-    current_datetime_label(current,sizeof(current));
-    settings_info_row("CURRENT TIME",current,118);
-    settings_info_row("TIME SOURCE",time_source_label(),238);
-    settings_row("SET DATE & TIME","MANUAL",358);
-    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,478);
+    char current[32]{},mode[40]{},zone[48]{};
+    current_datetime_label(current,sizeof(current));time_mode_label(mode,sizeof(mode));timezone_display_label(zone,sizeof(zone));
+    settings_info_row("CURRENT TIME",current,118);settings_row("TIME MODE",mode,238);
+    settings_row("SET DATE & TIME","MANUAL ENTRY",358);settings_row("TIMEZONE",zone,478);
     const MeshInkUiLayout& layout=portrait_layout();
-    ui_draw_wrapped("A trusted GPS time remains authoritative for 24 hours. Manual changes are always allowed.",
+    ui_draw_wrapped("AUTO accepts trusted clock updates. MANUAL locks the RTC against GPS, companion and MeshCore time changes.",
                     layout.section_margin,ui_y(650),layout.section_width,2,0,false,5);
 }
-static MeshInkUiRect manual_time_adjust_button_rect(int reference_y,bool plus){
+static MeshInkUiRect manual_time_group_rect(bool time_group){
     const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
-    const int bw=ui_w(62),gap=ui_w(12),margin=ui_w(16);
-    const int plus_x=row.x+row.width-margin-bw;
-    const int x=plus?plus_x:plus_x-gap-bw;
-    return {x,row.y+ui_h(20),bw,ui_h(72)};
+    return {layout.section_margin,ui_y(time_group?438:116),layout.section_width,ui_h(time_group?262:292)};
 }
-static void draw_manual_time_adjust_row(const char* title,const char* value,int reference_y){
-    const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);
-    ui_section_card(row);
-    const MeshInkUiRect minus=manual_time_adjust_button_rect(reference_y,false);
-    ui_text_fit(title,layout.content_text_x,row.y+ui_h(13),
-                minus.x-layout.content_text_x-ui_w(12),3,0,true);
-    ui_text_fit(value,layout.content_text_x,row.y+ui_h(55),
-                minus.x-layout.content_text_x-ui_w(12),3,0,false);
-    ui_action_button("-",minus,false);
-    ui_action_button("+",manual_time_adjust_button_rect(reference_y,true),false);
+static MeshInkUiRect manual_time_adjust_button_rect(uint8_t field,bool plus){
+    const bool time_field=field>=3;const MeshInkUiRect group=manual_time_group_rect(time_field);
+    const uint8_t index=time_field?(uint8_t)(field-3):field,count=time_field?2:3;
+    const int gap=ui_w(time_field?30:10),side=ui_w(time_field?76:70);
+    const int content_width=side*count+gap*(count-1),x0=group.x+(group.width-content_width)/2;
+    return {x0+index*(side+gap),group.y+ui_h(72+(plus?0:130)),side,ui_h(54)};
 }
-static MeshInkUiRect manual_time_save_rect(){
-    return meshink_outer_row_rect(portrait_layout(),730,112);
+static int manual_time_field_center(uint8_t field){
+    const MeshInkUiRect plus=manual_time_adjust_button_rect(field,true);return plus.x+plus.width/2;
+}
+static void draw_manual_time_field(uint8_t field,const char* label,const char* value){
+    const bool time_field=field>=3;const MeshInkUiRect group=manual_time_group_rect(time_field);const int cx=manual_time_field_center(field);
+    ui_text(label,cx-ui_text_width(label,2)/2,group.y+ui_h(43),2,0,true);
+    ui_action_button("+",manual_time_adjust_button_rect(field,true),false);
+    ui_text(value,cx-ui_text_width(value,3)/2,group.y+ui_h(145),3,0,true);
+    ui_action_button("-",manual_time_adjust_button_rect(field,false),false);
+}
+static MeshInkUiRect manual_time_action_rect(bool save){
+    const MeshInkUiLayout& layout=portrait_layout();const int gap=ui_w(16),width=(layout.section_width-gap)/2;
+    return {layout.section_margin+(save?width+gap:0),ui_y(746),width,ui_h(86)};
 }
 static void draw_manual_time(){
     draw_app_header("SET DATE & TIME",true);
+    const MeshInkUiRect date=manual_time_group_rect(false),tm=manual_time_group_rect(true);
+    ui_section_card(date);ui_section_card(tm);
+    ui_text("DATE",date.x+ui_w(16),date.y+ui_h(12),3,0,true);ui_text("TIME",tm.x+ui_w(16),tm.y+ui_h(12),3,0,true);
     char value[16]{};
-    snprintf(value,sizeof(value),"%u",(unsigned)manual_time_year);
-    draw_manual_time_adjust_row("YEAR",value,118);
-    snprintf(value,sizeof(value),"%s",MONTH_NAMES[manual_time_month-1]);
-    draw_manual_time_adjust_row("MONTH",value,238);
-    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_day);
-    draw_manual_time_adjust_row("DAY",value,358);
-    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_hour);
-    draw_manual_time_adjust_row("HOUR (24H)",value,478);
-    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_minute);
-    draw_manual_time_adjust_row("MINUTE",value,598);
-    ui_action_button("SAVE DATE & TIME",manual_time_save_rect(),true);
+    snprintf(value,sizeof(value),"%u",(unsigned)manual_time_year);draw_manual_time_field(0,"YEAR",value);
+    snprintf(value,sizeof(value),"%s",MONTH_NAMES[manual_time_month-1]);draw_manual_time_field(1,"MONTH",value);
+    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_day);draw_manual_time_field(2,"DAY",value);
+    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_hour);draw_manual_time_field(3,"HOUR",value);
+    snprintf(value,sizeof(value),"%02u",(unsigned)manual_time_minute);draw_manual_time_field(4,"MINUTE",value);
+    ui_action_button("CANCEL",manual_time_action_rect(false),false);ui_action_button("SAVE",manual_time_action_rect(true),true);
 }
 
 static void adjust_manual_time_field(uint8_t field,int delta){
@@ -2690,18 +2807,36 @@ static bool save_manual_time_draft(){
     return local_mesh_set_manual_time((uint32_t)utc);
 }
 
+static MeshInkUiRect timezone_row_rect(uint8_t index){return meshink_outer_row_rect(portrait_layout(),108+index*82,74);}
+static void timezone_row_detail(uint8_t index,char* out,size_t len){
+    if(index==TIMEZONE_AUTO)snprintf(out,len,"CURRENT: %s",auto_timezone_label);
+    else if(index==TIMEZONE_CUSTOM){char label[24]{},rule[32]{};fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),rule,sizeof(rule));snprintf(out,len,"%s - FIXED, NO DST",label);}
+    else snprintf(out,len,"%s",TIMEZONES[index].detail);
+}
 static void draw_timezone(){
-    draw_app_header("TIMEZONE",true);
-    const MeshInkUiLayout& layout=portrait_layout();
+    draw_app_header("TIMEZONE",true);const MeshInkUiLayout& layout=portrait_layout();
     for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
-        const MeshInkUiRect row=meshink_outer_row_rect(layout,118+i*102,92);
-        rounded_box(row,max(ui_w(12),ui_h(12)),i==timezone_index);
-        const uint8_t c=i==timezone_index?0xFF:0;
-        ui_text_fit(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(9),
-                    row.width-ui_w(32),3,c,true);
-        ui_text_fit(TIMEZONES[i].detail,layout.content_text_x,row.y+ui_h(50),
-                    row.width-ui_w(32),3,c,false);
+        const MeshInkUiRect row=timezone_row_rect(i);rounded_box(row,max(ui_w(10),ui_h(10)),i==timezone_index);
+        const uint8_t c=i==timezone_index?0xFF:0;char detail[48]{};timezone_row_detail(i,detail,sizeof(detail));
+        ui_text_fit(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(8),row.width-ui_w(28),2,c,true);
+        ui_text_fit(detail,layout.content_text_x,row.y+ui_h(40),row.width-ui_w(28),2,c,false);
     }
+}
+static MeshInkUiRect custom_timezone_step_rect(bool plus){
+    const MeshInkUiLayout& layout=portrait_layout();const int gap=ui_w(18),width=(layout.section_width-gap)/2;
+    return {layout.section_margin+(plus?width+gap:0),ui_y(418),width,ui_h(88)};
+}
+static MeshInkUiRect custom_timezone_action_rect(bool save){
+    const MeshInkUiLayout& layout=portrait_layout();const int gap=ui_w(16),width=(layout.section_width-gap)/2;
+    return {layout.section_margin+(save?width+gap:0),ui_y(690),width,ui_h(88)};
+}
+static void draw_custom_timezone(){
+    draw_app_header("CUSTOM UTC OFFSET",true);const MeshInkUiLayout& layout=portrait_layout();
+    char label[24]{},rule[32]{};fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),rule,sizeof(rule));
+    ui_text("FIXED OFFSET",layout.section_margin,ui_y(150),3,0,true);ui_centred(label,ui_y(230),5,0,true);
+    ui_draw_wrapped("Custom offsets do not apply daylight-saving changes.",layout.section_margin,ui_y(320),layout.section_width,2,0,false,3);
+    ui_action_button("-15 MIN",custom_timezone_step_rect(false),false);ui_action_button("+15 MIN",custom_timezone_step_rect(true),false);
+    ui_action_button("CANCEL",custom_timezone_action_rect(false),false);ui_action_button("SAVE",custom_timezone_action_rect(true),true);
 }
 
 static void draw_privacy_settings() {
@@ -3077,10 +3212,10 @@ static void draw_screen() {
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
         case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
-        case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;
+        case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
@@ -3997,34 +4132,24 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         }
         case Screen::DateTime:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
-            if(hit_outer_row(x,y,358)){
-                load_manual_time_draft();
-                open_screen(Screen::ManualTime);
-                return true;
+            if(hit_outer_row(x,y,238)){
+                const MeshInkTimeMode next=local_mesh_time_mode()==MeshInkTimeMode::Manual?MeshInkTimeMode::Auto:MeshInkTimeMode::Manual;
+                if(local_mesh_set_time_mode(next)){status_dirty=true;status_bar_dirty=true;show_toast(next==MeshInkTimeMode::Manual?"MANUAL TIME LOCKED":"AUTO TIME ENABLED");}
+                else show_toast("TIME MODE SAVE FAILED");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }
+            if(hit_outer_row(x,y,358)){load_manual_time_draft();open_screen(Screen::ManualTime);return true;}
             if(hit_outer_row(x,y,478)){open_screen(Screen::Timezone);return true;}
             break;
         case Screen::ManualTime:{
-            if(hit_header_back(x,y)){open_screen(Screen::DateTime);return true;}
-            const int rows[]={118,238,358,478,598};
+            if(hit_header_back(x,y)||hit(x,y,manual_time_action_rect(false))){open_screen(Screen::DateTime);return true;}
             for(uint8_t i=0;i<5;++i){
-                if(hit(x,y,manual_time_adjust_button_rect(rows[i],false))){
-                    adjust_manual_time_field(i,-1);
-                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
-                }
-                if(hit(x,y,manual_time_adjust_button_rect(rows[i],true))){
-                    adjust_manual_time_field(i,1);
-                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
-                }
+                if(hit(x,y,manual_time_adjust_button_rect(i,false))){adjust_manual_time_field(i,-1);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+                if(hit(x,y,manual_time_adjust_button_rect(i,true))){adjust_manual_time_field(i,1);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             }
-            if(hit(x,y,manual_time_save_rect())){
-                if(save_manual_time_draft()){
-                    status_dirty=true;status_bar_dirty=true;
-                    screen=Screen::DateTime;
-                    show_toast("DATE & TIME SAVED");
-                }else{
-                    show_toast("INVALID DATE OR TIME");
-                }
+            if(hit(x,y,manual_time_action_rect(true))){
+                if(save_manual_time_draft()){status_dirty=true;status_bar_dirty=true;screen=Screen::DateTime;show_toast("MANUAL DATE & TIME SAVED");}
+                else show_toast("INVALID DATE OR TIME");
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
             }
             break;
@@ -4032,16 +4157,20 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         case Screen::Timezone:
             if(hit_header_back(x,y)){open_screen(Screen::DateTime);return true;}
             for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
-                if(!hit_outer_row(x,y,118+i*102,92))continue;
-                timezone_index=i;
-                apply_timezone();
-                prefs.begin("t5-ui",false);
-                prefs.putUChar("timezone",timezone_index);
-                prefs.end();
-                show_toast("TIMEZONE SAVED");
-                draw_screen();
-                refresh(MeshInkRefreshMode::FastGray16);
-                return true;
+                if(!hit(x,y,timezone_row_rect(i)))continue;
+                if(i==TIMEZONE_CUSTOM){open_screen(Screen::CustomTimezone);return true;}
+                const uint8_t previous=timezone_index;if(i==TIMEZONE_AUTO)seed_auto_timezone_from_selection(previous);
+                timezone_index=i;apply_timezone();persist_timezone_selection();status_dirty=true;status_bar_dirty=true;
+                show_toast(i==TIMEZONE_AUTO?"GPS TIMEZONE AUTO":"TIMEZONE SAVED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
+            }
+            break;
+        case Screen::CustomTimezone:
+            if(hit_header_back(x,y)||hit(x,y,custom_timezone_action_rect(false))){open_screen(Screen::Timezone);return true;}
+            if(hit(x,y,custom_timezone_step_rect(false))){custom_timezone_minutes=(int16_t)(custom_timezone_minutes<=-12*60?14*60:custom_timezone_minutes-15);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,custom_timezone_step_rect(true))){custom_timezone_minutes=(int16_t)(custom_timezone_minutes>=14*60?-12*60:custom_timezone_minutes+15);draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(hit(x,y,custom_timezone_action_rect(true))){
+                timezone_index=TIMEZONE_CUSTOM;apply_timezone();persist_timezone_selection();status_dirty=true;status_bar_dirty=true;
+                screen=Screen::DateTime;show_toast("CUSTOM TIMEZONE SAVED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
             }
             break;
         case Screen::PrivacySettings:
@@ -4501,7 +4630,14 @@ static void ui_load_persistent_state() {
     String saved_name=prefs.getString("name","");
     selected_preset=prefs.getUChar("preset_v2",17);
     setup_complete=prefs.getBool("complete",false);
+    const bool timezone_v2=prefs.getBool("tz_v2",false);
     timezone_index=prefs.getUChar("timezone",0);
+    if(!timezone_v2)timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);
+    custom_timezone_minutes=(int16_t)constrain((int)prefs.getInt("custom_tz_min",0),-12*60,14*60);
+    const String saved_auto_timezone_label=prefs.getString("auto_tz_label","UTC");
+    const String saved_auto_timezone_rule=prefs.getString("auto_tz_rule","UTC0");
+    snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",saved_auto_timezone_label.c_str());
+    snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"%s",saved_auto_timezone_rule.c_str());
     // Unread truth is reconstructed from the message journal. Do not touch
     // it while loading ordinary UI preferences: on the first retained-RX
     // alert this function runs after journal replay and must preserve the
@@ -4532,8 +4668,15 @@ static void ui_load_persistent_state() {
     if(night_start_minutes>=1440)night_start_minutes=20*60;
     if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=PRESET_COUNT)selected_preset=17;
-    if(timezone_index>=TIMEZONE_COUNT)timezone_index=0;
+    if(timezone_index>=TIMEZONE_COUNT)timezone_index=1;
+    if(!auto_timezone_rule[0])snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"UTC0");
+    if(!auto_timezone_label[0])snprintf(auto_timezone_label,sizeof(auto_timezone_label),"UTC");
     apply_timezone();
+    if(!timezone_v2){
+        Preferences zone_migration;if(zone_migration.begin("t5-ui",false)){
+            zone_migration.putUChar("timezone",timezone_index);zone_migration.putBool("tz_v2",true);zone_migration.end();
+        }
+    }
 
     if(saved_name.length()){
         size_t out=0;
@@ -5009,6 +5152,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
        longitude>=-180000000L&&longitude<=180000000L){
         map_has_last_gps_position=true;
         map_last_gps_latitude=latitude;map_last_gps_longitude=longitude;
+        update_auto_timezone_from_gps(latitude,longitude);
         const uint32_t gps_now=millis();
         // Limit NVS writes: store the first fix, then only changed positions
         // at most once every 30 minutes. Existing saved positions are kept

@@ -20,6 +20,7 @@ class T5RTCClock : public mesh::RTCClock {
     uint32_t expected_companion_until_ = 0;
     uint32_t last_gps_sync_utc_ = 0;
     MeshInkTimeSource time_source_ = MeshInkTimeSource::Unknown;
+    MeshInkTimeMode time_mode_ = MeshInkTimeMode::Auto;
     bool metadata_loaded_ = false;
 
     void loadMetadata();
@@ -33,6 +34,8 @@ public:
     void expectGpsTime(uint32_t time);
     void expectCompanionTime(uint32_t time);
     bool setManualTime(uint32_t time);
+    bool setTimeMode(MeshInkTimeMode mode);
+    MeshInkTimeMode timeMode();
     MeshInkTimeSource timeSource();
     bool gpsAuthoritative();
     bool isValid() const { return valid_; }

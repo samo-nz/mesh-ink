@@ -1371,6 +1371,8 @@ void local_mesh_toggle_gps_advert_location(){auto* p=meshink_meshcore().getNodeP
 uint32_t local_mesh_current_time(){return meshink_rtc_current_time();}
 bool local_mesh_time_valid(){return meshink_rtc_valid();}
 bool local_mesh_set_manual_time(uint32_t utc){return meshink_rtc_set_manual_time(utc);}
+bool local_mesh_set_time_mode(MeshInkTimeMode mode){return meshink_rtc_set_time_mode(mode);}
+MeshInkTimeMode local_mesh_time_mode(){return meshink_rtc_time_mode();}
 MeshInkTimeSource local_mesh_time_source(){return meshink_rtc_time_source();}
 bool local_mesh_gps_time_authoritative(){return meshink_rtc_gps_authoritative();}
 const char* local_mesh_node_name(){return meshink_meshcore().getNodeName();}

@@ -117,6 +117,11 @@ void T5RTCClock::loadMetadata(){
         const uint8_t raw_source=pref.getUChar("source",(uint8_t)MeshInkTimeSource::Unknown);
         time_source_=raw_source<=(uint8_t)MeshInkTimeSource::Manual
             ?(MeshInkTimeSource)raw_source:MeshInkTimeSource::Unknown;
+        const uint8_t default_mode=time_source_==MeshInkTimeSource::Manual
+            ?(uint8_t)MeshInkTimeMode::Manual:(uint8_t)MeshInkTimeMode::Auto;
+        const uint8_t raw_mode=pref.getUChar("mode",default_mode);
+        time_mode_=raw_mode<=(uint8_t)MeshInkTimeMode::Manual
+            ?(MeshInkTimeMode)raw_mode:MeshInkTimeMode::Auto;
         pref.end();
     }
 }
@@ -125,6 +130,7 @@ void T5RTCClock::saveMetadata(){
     if(pref.begin("t5-rtc",false)){
         pref.putULong("gps_sync",last_gps_sync_utc_);
         pref.putUChar("source",(uint8_t)time_source_);
+        pref.putUChar("mode",(uint8_t)time_mode_);
         pref.end();
     }
 }
@@ -230,6 +236,11 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
     trusted_gps_time_=0;trusted_gps_until_=0;
     expected_companion_time_=0;expected_companion_until_=0;
 
+    if(time_mode_==MeshInkTimeMode::Manual){
+        T5_TRACE("rtc: manual mode rejected external set UTC=%lu\n",(unsigned long)utc);
+        return;
+    }
+
     if(trusted_gps){
         writeAcceptedTime(utc,MeshInkTimeSource::Gps);
         return;
@@ -256,10 +267,14 @@ void T5RTCClock::setCurrentTime(uint32_t utc){
     writeAcceptedTime(utc,MeshInkTimeSource::MeshCore);
 }
 void T5RTCClock::expectGpsTime(uint32_t utc){
+    loadMetadata();
+    if(time_mode_==MeshInkTimeMode::Manual)return;
     trusted_gps_time_=utc;
     trusted_gps_until_=millis()+1500;
 }
 void T5RTCClock::expectCompanionTime(uint32_t utc){
+    loadMetadata();
+    if(time_mode_==MeshInkTimeMode::Manual)return;
     expected_companion_time_=utc;
     expected_companion_until_=millis()+1500;
 }
@@ -267,8 +282,25 @@ bool T5RTCClock::setManualTime(uint32_t utc){
     loadMetadata();
     trusted_gps_time_=0;trusted_gps_until_=0;
     expected_companion_time_=0;expected_companion_until_=0;
+    time_mode_=MeshInkTimeMode::Manual;
     return writeAcceptedTime(utc,MeshInkTimeSource::Manual);
 }
+bool T5RTCClock::setTimeMode(MeshInkTimeMode mode){
+    loadMetadata();
+    if(mode!=MeshInkTimeMode::Auto&&mode!=MeshInkTimeMode::Manual)return false;
+    trusted_gps_time_=0;trusted_gps_until_=0;
+    expected_companion_time_=0;expected_companion_until_=0;
+    time_mode_=mode;
+    if(mode==MeshInkTimeMode::Manual){
+        last_gps_sync_utc_=0;
+        time_source_=MeshInkTimeSource::Manual;
+    }else if(time_source_==MeshInkTimeSource::Manual){
+        time_source_=valid_?MeshInkTimeSource::HardwareRtc:MeshInkTimeSource::Unknown;
+    }
+    saveMetadata();
+    return true;
+}
+MeshInkTimeMode T5RTCClock::timeMode(){loadMetadata();return time_mode_;}
 MeshInkTimeSource T5RTCClock::timeSource(){
     loadMetadata();
     if(time_source_==MeshInkTimeSource::Unknown&&valid_)
@@ -277,7 +309,7 @@ MeshInkTimeSource T5RTCClock::timeSource(){
 }
 bool T5RTCClock::gpsAuthoritative(){
     loadMetadata();
-    if(!valid_)return false;
+    if(!valid_||time_mode_==MeshInkTimeMode::Manual)return false;
     return gpsAuthorityActive(getCurrentTime());
 }
 
@@ -597,6 +629,8 @@ void meshink_rtc_tick(){t5_rtc_clock().tick();}
 uint32_t meshink_rtc_current_time(){return t5_rtc_clock().getCurrentTime();}
 bool meshink_rtc_valid(){return t5_rtc_clock().isValid();}
 bool meshink_rtc_set_manual_time(uint32_t utc){return t5_rtc_clock().setManualTime(utc);}
+bool meshink_rtc_set_time_mode(MeshInkTimeMode mode){return t5_rtc_clock().setTimeMode(mode);}
+MeshInkTimeMode meshink_rtc_time_mode(){return t5_rtc_clock().timeMode();}
 void meshink_rtc_expect_companion_time(uint32_t utc){t5_rtc_clock().expectCompanionTime(utc);}
 MeshInkTimeSource meshink_rtc_time_source(){return t5_rtc_clock().timeSource();}
 bool meshink_rtc_gps_authoritative(){return t5_rtc_clock().gpsAuthoritative();}

@@ -7,6 +7,7 @@ inline uint32_t meshink_rtc_mock_time=0;
 inline bool meshink_rtc_mock_valid=false;
 inline uint32_t meshink_rtc_mock_expected_companion=0;
 inline MeshInkTimeSource meshink_rtc_mock_source=MeshInkTimeSource::Unknown;
+inline MeshInkTimeMode meshink_rtc_mock_mode=MeshInkTimeMode::Auto;
 inline bool meshink_rtc_mock_gps_authoritative=false;
 
 inline mesh::RTCClock& meshink_rtc_meshcore(){return meshink_rtc_mock_clock;}
@@ -18,9 +19,17 @@ inline bool meshink_rtc_set_manual_time(uint32_t utc){
     meshink_rtc_mock_time=utc;
     meshink_rtc_mock_valid=true;
     meshink_rtc_mock_source=MeshInkTimeSource::Manual;
+    meshink_rtc_mock_mode=MeshInkTimeMode::Manual;
     meshink_rtc_mock_gps_authoritative=false;
     return true;
 }
+inline bool meshink_rtc_set_time_mode(MeshInkTimeMode mode){
+    meshink_rtc_mock_mode=mode;
+    if(mode==MeshInkTimeMode::Manual)meshink_rtc_mock_source=MeshInkTimeSource::Manual;
+    else if(meshink_rtc_mock_source==MeshInkTimeSource::Manual)meshink_rtc_mock_source=MeshInkTimeSource::HardwareRtc;
+    return true;
+}
+inline MeshInkTimeMode meshink_rtc_time_mode(){return meshink_rtc_mock_mode;}
 inline void meshink_rtc_expect_companion_time(uint32_t utc){
     meshink_rtc_mock_expected_companion=utc;
 }

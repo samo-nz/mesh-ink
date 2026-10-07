@@ -24,9 +24,13 @@ int main(){
 
     assert(meshink_rtc_set_manual_time(333333333U));
     assert(meshink_rtc_current_time()==333333333U);
+    assert(meshink_rtc_time_mode()==MeshInkTimeMode::Manual);
     assert(meshink_rtc_time_source()==MeshInkTimeSource::Manual);
     assert(!meshink_rtc_gps_authoritative());
+    assert(meshink_rtc_set_time_mode(MeshInkTimeMode::Auto));
+    assert(meshink_rtc_time_mode()==MeshInkTimeMode::Auto);
+    assert(meshink_rtc_time_source()==MeshInkTimeSource::HardwareRtc);
 
-    std::cout << "PASS: generic RTC contract supports manual time and source metadata.\n";
+    std::cout << "PASS: generic RTC contract supports AUTO/MANUAL policy and source metadata.\n";
     return 0;
 }

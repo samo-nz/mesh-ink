@@ -9,3 +9,8 @@ enum class MeshInkTimeSource : uint8_t {
     Gps = 4,
     Manual = 5
 };
+
+enum class MeshInkTimeMode : uint8_t {
+    Auto = 0,
+    Manual = 1
+};

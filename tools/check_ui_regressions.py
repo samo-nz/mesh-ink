@@ -1659,6 +1659,20 @@ assert "if(serial_connected&&!terminal_serial_connected)" in unified_source and 
 assert 'strcmp(terminal_line,"wakelog")' in unified_source and "screenshot | shot | wakelog | help" in unified_source, "wake transcript can also be replayed manually without reconnecting"
 assert "SPIFFS" not in board_target_source[board_target_source.index("static constexpr uint32_t T5_WAKE_LOG_MAGIC"):board_target_source.index("static constexpr uint8_t PCA9535_ADDR")], "RTC wake transcript implementation performs no flash writes"
 
+
+# 2.1.1-test.5: explicit AUTO/MANUAL clock policy, compact date/time editor,
+# GPS-derived timezone mode and fixed custom UTC offsets.
+rtc_types_source = (root / "src" / "hardware" / "rtc_types.h").read_text(encoding="utf-8")
+assert "enum class MeshInkTimeMode" in rtc_types_source, "RTC contract exposes AUTO/MANUAL policy"
+assert 'if(time_mode_==MeshInkTimeMode::Manual)' in board_target_source and 'manual mode rejected external set' in board_target_source, "manual clock policy rejects GPS/companion/MeshCore writes in backend"
+assert 'time_mode_=MeshInkTimeMode::Manual;' in board_target_source and 'setTimeMode(MeshInkTimeMode mode)' in board_target_source, "manual save and explicit mode changes persist in RTC metadata"
+assert 'AUTO (%s)' in source and 'MESHCORE FALLBACK' in source and 'GPS FIX' in source and 'VALID RTC' in source, "AUTO mode reports the last accepted clock origin"
+assert 'ui_action_button("CANCEL",manual_time_action_rect(false),false);' in source and 'ui_action_button("SAVE",manual_time_action_rect(true),true);' in source, "manual date/time editor has cancel and save"
+assert 'manual_time_adjust_button_rect(uint8_t field,bool plus)' in source and 'draw_manual_time_field(0,"YEAR"' in source and 'draw_manual_time_field(3,"HOUR"' in source, "date/time fields use vertical plus/value/minus controls"
+assert 'AUTO (GPS-DERIVED)' in source and 'resolve_gps_timezone' in source and 'update_auto_timezone_from_gps(latitude,longitude);' in source, "timezone list supports offline GPS-derived resolution"
+assert 'CUSTOM UTC OFFSET' in source and 'custom_timezone_minutes' in source and 'FIXED OFFSET - NO DST' in source, "timezone list supports fixed custom UTC offset"
+assert 'timezone_v2' in source and 'timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);' in source, "legacy timezone indexes migrate without changing selected zone"
+
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"
