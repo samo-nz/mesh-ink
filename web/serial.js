@@ -34,6 +34,7 @@ let displayFlushTimer = null;
 let receivedBytes = 0;
 let readChunks = 0;
 let streamRecoveries = 0;
+let connectedStatusText = "";
 const visibleTextNode = document.createTextNode("");
 logArea.append(visibleTextNode);
 
@@ -71,7 +72,7 @@ function updateReceiveStats() {
   receiveStats.textContent =
     formatBytes(receivedBytes) + " received · " +
     readChunks + " chunks · " +
-    streamRecoveries + " recoveries" +
+    streamRecoveries + " read retries" +
     (hidden ? " · full capture retained; visible tail hides " + formatBytes(hidden) : "");
 }
 function flushDisplay() {
@@ -178,6 +179,9 @@ async function readFromPort(port, token) {
         if (done) break;
         if (value?.length) {
           captureDeviceText(decoder.decode(value, { stream: true }), value.byteLength);
+          if (recoverableErrors > 0 && connectedStatusText) {
+            setStatus(connectedStatusText + " · stream recovered", "ok");
+          }
           recoverableErrors = 0;
         }
       }
@@ -237,7 +241,8 @@ async function openPort(port, backendName) {
   everConnected = true;
   userDisconnecting = false;
   const token = ++generation;
-  setStatus("Connected at " + baudRate + " baud via " + backendName + portDescription(port), "ok");
+  connectedStatusText = "Connected at " + baudRate + " baud via " + backendName + portDescription(port);
+  setStatus(connectedStatusText, "ok");
   updateControls();
   readLoopPromise = readFromPort(port, token);
 }
@@ -323,6 +328,7 @@ async function disconnect() {
     readLoopPromise = null;
     activePort = null;
     connected = false;
+    connectedStatusText = "";
     everConnected = true;
     userDisconnecting = false;
     setStatus("Disconnected by user. Press Reconnect to reopen the previous device.");
