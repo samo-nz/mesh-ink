@@ -1,47 +1,50 @@
 #pragma once
 #include <stdint.h>
 
-// Board-independent GPS tuning vocabulary. Numeric values intentionally
-// preserve MeshInk's existing saved preference values; backends interpret
-// the semantic mode rather than exposing receiver command syntax to the app.
+// Board-independent GNSS constellation vocabulary. Values are a generic
+// three-bit mask; board backends translate the selected systems into their
+// receiver-specific configuration commands.
+enum class MeshInkGpsConstellation : uint8_t {
+    Gps = 0x01,
+    BeiDou = 0x02,
+    Glonass = 0x04
+};
+
 enum class MeshInkGpsConstellationMode : uint8_t {
-    Unchanged = 0,
+    None = 0,
     GpsOnly = 1,
+    BeiDouOnly = 2,
     GpsBeiDou = 3,
+    GlonassOnly = 4,
     GpsGlonass = 5,
+    BeiDouGlonass = 6,
     GpsBeiDouGlonass = 7
 };
 
 inline bool meshink_gps_constellation_mode_valid(MeshInkGpsConstellationMode mode) {
-    switch(mode) {
-        case MeshInkGpsConstellationMode::Unchanged:
-        case MeshInkGpsConstellationMode::GpsOnly:
-        case MeshInkGpsConstellationMode::GpsBeiDou:
-        case MeshInkGpsConstellationMode::GpsGlonass:
-        case MeshInkGpsConstellationMode::GpsBeiDouGlonass:
-            return true;
-        default:
-            return false;
-    }
+    const uint8_t bits=static_cast<uint8_t>(mode);
+    return bits>=1U&&bits<=7U;
 }
 
-// Preserve the field-tested on-device cycle order exactly.
-inline MeshInkGpsConstellationMode meshink_gps_next_constellation_mode(
-    MeshInkGpsConstellationMode mode) {
-    switch(mode) {
-        case MeshInkGpsConstellationMode::Unchanged:
-            return MeshInkGpsConstellationMode::GpsOnly;
-        case MeshInkGpsConstellationMode::GpsOnly:
-            return MeshInkGpsConstellationMode::GpsGlonass;
-        case MeshInkGpsConstellationMode::GpsGlonass:
-            return MeshInkGpsConstellationMode::GpsBeiDou;
-        case MeshInkGpsConstellationMode::GpsBeiDou:
-            return MeshInkGpsConstellationMode::GpsBeiDouGlonass;
-        default:
-            return MeshInkGpsConstellationMode::GpsOnly;
-    }
+inline bool meshink_gps_constellation_enabled(
+    MeshInkGpsConstellationMode mode,MeshInkGpsConstellation constellation) {
+    return (static_cast<uint8_t>(mode)&static_cast<uint8_t>(constellation))!=0;
 }
 
+// Build a new non-empty constellation mask. Returning false when the requested
+// change would clear the final enabled system lets every UI enforce the same
+// hardware-agnostic "at least one constellation" rule.
+inline bool meshink_gps_constellation_mode_set(
+    MeshInkGpsConstellationMode current,MeshInkGpsConstellation constellation,
+    bool enabled,MeshInkGpsConstellationMode& next) {
+    uint8_t bits=static_cast<uint8_t>(current);
+    const uint8_t bit=static_cast<uint8_t>(constellation);
+    if(enabled)bits|=bit;
+    else bits&=(uint8_t)~bit;
+    if(bits<1U||bits>7U)return false;
+    next=static_cast<MeshInkGpsConstellationMode>(bits);
+    return true;
+}
 
 struct MeshInkGpsStatus {
     bool available = false;
