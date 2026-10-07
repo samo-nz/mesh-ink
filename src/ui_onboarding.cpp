@@ -4788,7 +4788,7 @@ static void ui_load_persistent_state() {
         size_t out=0;
         for(size_t i=0;i<saved_name.length()&&out<20;++i){
             const char ch=saved_name[i];
-            if(legal_name_character(ch))node_name[out++]=ch;
+            if(mesh_protocol_name_character_allowed(ch))node_name[out++]=ch;
             else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)ch);
         }
         node_name[out]=0;
