@@ -2453,31 +2453,26 @@ static void draw_gps_settings() {
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     char interval[24];const uint32_t seconds=local_mesh_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
     settings_row("POSITION ADVERT",local_mesh_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
-    settings_row("GPS POWER SAVING","CONSTELLATIONS, TIMEZONE",710);
+    settings_row("GPS OPTIONS","CONSTELLATIONS, TIMEZONE",710);
 }
 
-static const char* gps_constellation_label(){
-    switch(local_mesh_gps_constellation_mode()){
-        case MeshInkGpsConstellationMode::GpsOnly:return "GPS ONLY (TEST LOWER POWER)";
-        case MeshInkGpsConstellationMode::GpsBeiDou:return "GPS + BEIDOU";
-        case MeshInkGpsConstellationMode::GpsGlonass:return "GPS + GLONASS";
-        case MeshInkGpsConstellationMode::GpsBeiDouGlonass:return "GPS + BEIDOU + GLONASS";
-        default:return "UNCHANGED (CURRENT MODE)";
-    }
+static const char* gps_constellation_state(MeshInkGpsConstellation constellation){
+    return meshink_gps_constellation_enabled(
+        local_mesh_gps_constellation_mode(),constellation)?"ENABLED":"DISABLED";
 }
 static void draw_gps_tuning(){
-    draw_app_header("GPS POWER SAVING",true);
-    settings_row("CONSTELLATIONS",gps_constellation_label(),120);
+    draw_app_header("GPS OPTIONS",true);
+    settings_row("GPS",gps_constellation_state(MeshInkGpsConstellation::Gps),118);
+    settings_row("BEIDOU",gps_constellation_state(MeshInkGpsConstellation::BeiDou),238);
+    settings_row("GLONASS",gps_constellation_state(MeshInkGpsConstellation::Glonass),358);
     const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect nmea=meshink_outer_row_rect(layout,238,112);
+    const MeshInkUiRect nmea=meshink_outer_row_rect(layout,478,112);
     ui_section_card(nmea);
     ui_text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(13),3,0,true);
-    ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,ui_y(292),3,0,false);
-    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,356);
-    ui_draw_wrapped("GPS only may lower receiver load, but can take longer to fix. Choose more satellite systems if reception is poor.",
-                    layout.section_margin,ui_y(515),layout.section_width,2,0,false,5);
-    ui_draw_wrapped(local_mesh_gps_tuning_note(),layout.section_margin,ui_y(700),
-                    layout.section_width,2,0,false,4);
+    ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,nmea.y+ui_h(55),3,0,false);
+    settings_row("TIMEZONE",TIMEZONES[timezone_index].label,598);
+    ui_draw_wrapped("Select any combination of satellite systems. At least one constellation must remain enabled.",
+                    layout.section_margin,ui_y(742),layout.section_width,2,0,false,4);
 }
 
 static void draw_timezone(){
@@ -3751,16 +3746,33 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             if(hit_outer_row(x,y,474)){local_mesh_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,592)){local_mesh_toggle_gps_advert_location();show_toast(local_mesh_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,710)){open_screen(Screen::GpsTuning);return true;}break;
-        case Screen::GpsTuning:
+        case Screen::GpsTuning:{
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
-            if(hit_outer_row(x,y,120)){
-                const auto mode=local_mesh_gps_constellation_mode();
-                const auto next=meshink_gps_next_constellation_mode(mode);
-                show_toast(local_mesh_gps_set_constellation_mode(next)?"MODE SAVED":"SAVE FAILED");
+            const MeshInkGpsConstellation constellations[]={
+                MeshInkGpsConstellation::Gps,
+                MeshInkGpsConstellation::BeiDou,
+                MeshInkGpsConstellation::Glonass
+            };
+            const int constellation_rows[]={118,238,358};
+            for(uint8_t i=0;i<3;++i){
+                if(!hit_outer_row(x,y,constellation_rows[i]))continue;
+                const auto current=local_mesh_gps_constellation_mode();
+                const bool enabled=meshink_gps_constellation_enabled(
+                    current,constellations[i]);
+                MeshInkGpsConstellationMode next=current;
+                if(!meshink_gps_constellation_mode_set(
+                        current,constellations[i],!enabled,next)){
+                    show_toast("KEEP ONE SYSTEM ON");
+                }else{
+                    show_toast(local_mesh_gps_set_constellation_mode(next)
+                        ?"CONSTELLATIONS SAVED":"SAVE FAILED");
+                }
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }
             // NMEA output is automatic; this informational row has no action.
-            if(hit_outer_row(x,y,356)){open_screen(Screen::Timezone);return true;}break;
+            if(hit_outer_row(x,y,598)){open_screen(Screen::Timezone);return true;}
+            break;
+        }
         case Screen::Timezone:
             if(hit_header_back(x,y)){open_screen(Screen::GpsTuning);return true;}
             for(uint8_t i=0;i<TIMEZONE_COUNT;++i){
