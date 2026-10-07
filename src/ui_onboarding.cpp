@@ -2539,11 +2539,32 @@ static void draw_discovery() {
     draw_list_page_footer(discovery_page,count);
 }
 
+enum class MoreAction:uint8_t{Discovery,Advertise,Settings,Companion,Diagnostics,Help};
+struct MoreMenuItem{const char* title;const char* subtitle;MoreAction action;};
+
+static size_t more_menu_items(MoreMenuItem out[6]){
+    size_t count=0;
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_DISCOVERY))
+        out[count++]={"DISCOVERED ADVERTS","Recent nodes heard",MoreAction::Discovery};
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE))
+        out[count++]={"ADVERTISE","Zero hop or flood",MoreAction::Advertise};
+    out[count++]={"SETTINGS","Device and radio",MoreAction::Settings};
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_COMPANION))
+        out[count++]={"BLUETOOTH COMPANION","Restart in companion mode",MoreAction::Companion};
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_DIAGNOSTICS))
+        out[count++]={"DIAGNOSTICS","Live protocol and radio stats",MoreAction::Diagnostics};
+    out[count++]={"HELP","Using MeshInk",MoreAction::Help};
+    return count;
+}
+
+static int more_row_y(size_t index){return 130+(int)index*130;}
+
 static void draw_more() {
     draw_app_header("MORE");
-    settings_row("DISCOVERED ADVERTS","Recent nodes heard",130);settings_row("ADVERTISE","Zero hop or flood",260);
-    settings_row("SETTINGS","Device and radio",390);settings_row("BLUETOOTH COMPANION","Restart in companion mode",520);
-    settings_row("DIAGNOSTICS","Live protocol and radio stats",650);settings_row("HELP","Using MeshInk",780);
+    MoreMenuItem items[6]{};
+    const size_t count=more_menu_items(items);
+    for(size_t i=0;i<count;++i)
+        settings_row(items[i].title,items[i].subtitle,more_row_y(i));
     draw_bottom_nav(3);
 }
 
@@ -4103,13 +4124,23 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 }
             }
             break;
-        case Screen::More:
-            if(hit_outer_row(x,y,130)){open_screen(Screen::Discovery);return true;}
-            if(hit_outer_row(x,y,260)){open_screen(Screen::AdvertMenu);return true;}
-            if(hit_outer_row(x,y,390)){open_screen(Screen::Settings);return true;}
-            if(hit_outer_row(x,y,520)){open_screen(Screen::CompanionConfirm);return true;}
-            if(hit_outer_row(x,y,650)){mesh_protocol_request_diagnostics();open_screen(Screen::Diagnostics);return true;}
-            if(hit_outer_row(x,y,780)){open_screen(Screen::Help);return true;}break;
+        case Screen::More:{
+            MoreMenuItem items[6]{};
+            const size_t count=more_menu_items(items);
+            for(size_t i=0;i<count;++i){
+                if(!hit_outer_row(x,y,more_row_y(i)))continue;
+                switch(items[i].action){
+                    case MoreAction::Discovery:open_screen(Screen::Discovery);break;
+                    case MoreAction::Advertise:open_screen(Screen::AdvertMenu);break;
+                    case MoreAction::Settings:open_screen(Screen::Settings);break;
+                    case MoreAction::Companion:open_screen(Screen::CompanionConfirm);break;
+                    case MoreAction::Diagnostics:mesh_protocol_request_diagnostics();open_screen(Screen::Diagnostics);break;
+                    case MoreAction::Help:open_screen(Screen::Help);break;
+                }
+                return true;
+            }
+            break;
+        }
         case Screen::AdvertMenu:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit_outer_row(x,y,180)){show_toast(mesh_protocol_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
