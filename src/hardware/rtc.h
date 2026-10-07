@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "rtc_types.h"
 
 namespace mesh { class RTCClock; }
 
