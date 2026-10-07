@@ -71,6 +71,30 @@ local=(SRC/"local_mesh_runtime.cpp").read_text(encoding="utf-8")
 assert '#include "meshcore_adapter.h"' in local, "local runtime must enter MeshCore through meshcore_adapter.h"
 assert "t5_mesh()" not in local, "legacy board-named MeshCore accessor must not return"
 
+# Shared product/boot code must depend only on the protocol facade. Upstream
+# protocol names, helpers and legacy local_mesh entry points stay behind it.
+for rel in ("src/ui_onboarding.cpp","src/unified_main.cpp","src/ui_data.h"):
+    text=(ROOT/rel).read_text(encoding="utf-8")
+    if rel!="src/ui_data.h" and '"protocol/mesh_protocol.h"' not in text:
+        errors.append(f"{rel}: shared code must include protocol/mesh_protocol.h")
+    for token in ("MeshCore","MESHCORE","local_mesh_","meshcore_adapter.h","companion_runtime.h"):
+        if token in text:
+            errors.append(f"{rel}: protocol-specific token {token!r} leaked into shared code")
+
+for rel in (
+    "src/protocol/mesh_protocol.h",
+    "src/protocol/mesh_protocol.cpp",
+    "src/protocol/mesh_protocol_backend.h",
+):
+    text=(ROOT/rel).read_text(encoding="utf-8")
+    for token in ("MeshCore","MESHCORE","local_mesh_","meshcore_adapter.h","companion_runtime.h"):
+        if token in text:
+            errors.append(f"{rel}: generic protocol layer contains backend-specific token {token!r}")
+
+meshcore_helper=(SRC/"protocol/meshcore_protocol.cpp").read_text(encoding="utf-8")
+if "meshink_protocol_backend_slot_1" not in meshcore_helper:
+    errors.append("src/protocol/meshcore_protocol.cpp: MeshCore helper is not registered in backend slot 1")
+
 for rel in (
     "src/ui_onboarding.cpp",
     "src/message_store.cpp",
