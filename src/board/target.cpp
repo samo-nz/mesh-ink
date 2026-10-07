@@ -464,6 +464,12 @@ static bool gps_tuning_loaded=false;
 static bool gps_constellation_dirty=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
 
+// T5/L76K-only retained marker. The application and generic GPS surface never
+// need to know that this board parks the receiver in a BeiDou zero-mask state
+// while the ESP32 is in true deep sleep.
+static constexpr uint32_t GPS_DEEP_SLEEP_LOW_WORK_MAGIC=0x47505A31; // "GPZ1"
+RTC_DATA_ATTR uint32_t gps_deep_sleep_low_work_magic=0;
+
 static void gps_load_tuning(){
     if(gps_tuning_loaded)return;
     gps_tuning_loaded=true;
@@ -496,6 +502,23 @@ static void gps_send_pcas(const char* payload) {
 }
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
+
+    if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC){
+        // Restore the BeiDou masks before applying the user's selected
+        // constellation set. This is intentionally the first GNSS action when
+        // interactive GPS runtime returns after deep sleep.
+        gps_send_pcas("PCAS15,2,FFFFFFFF");
+        gps_send_pcas("PCAS15,3,FFFFFFFF");
+        char restore[16];
+        snprintf(restore,sizeof(restore),"PCAS04,%u",
+                 (unsigned)static_cast<uint8_t>(gps_constellation_mode));
+        gps_send_pcas(restore);
+        gps_deep_sleep_low_work_magic=0;
+        gps_constellation_dirty=false;
+        Serial.printf("[T5-GPS] deep-sleep GNSS restored constellation-mask=%u\n",
+                      (unsigned)static_cast<uint8_t>(gps_constellation_mode));
+    }
+
     if(gps_constellation_dirty){
         gps_constellation_dirty=false;
         char payload[16];
@@ -534,6 +557,27 @@ bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     gps_constellation_dirty=true;
     gps_apply_tuning();
     return true;
+}
+
+static bool t5_gps_prepare_deep_sleep_low_work(){
+#if ENV_INCLUDE_GPS == 1
+    // The final handoff is allowed to be a no-op if this boot never identified
+    // an L76K. Never send L76K-specific commands to an unknown receiver.
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        gps_deep_sleep_low_work_magic=0;
+        Serial.printf("[T5-GPS] deep-sleep GNSS low-work skipped locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return false;
+    }
+    gps_send_pcas("PCAS04,2");
+    gps_send_pcas("PCAS15,2,00000000");
+    gps_send_pcas("PCAS15,3,00000000");
+    gps_deep_sleep_low_work_magic=GPS_DEEP_SLEEP_LOW_WORK_MAGIC;
+    Serial.println("[T5-GPS] deep-sleep GNSS low-work active: BeiDou zero mask");
+    return true;
+#else
+    return false;
+#endif
 }
 
 static uint32_t gps_sleep_requested_at = 0;
@@ -1027,6 +1071,11 @@ bool meshink_board_enter_deep_sleep_standby() {
                       boot_now,dio1_now);
         return false;
     }
+
+    // All sleep-deferral/race checks have passed. Only now alter the GNSS
+    // receiver, so a failed/deferred sleep attempt never changes the user's
+    // active constellation configuration.
+    t5_gps_prepare_deep_sleep_low_work();
 
     Serial.printf("[T5-DEEPSLEEP] entering: DIO1 EXT1 GPIO%d=LOW BOOT EXT0 GPIO%d=HIGH NSS/RESET=held-high\n",
                   P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
