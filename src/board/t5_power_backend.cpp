@@ -398,9 +398,16 @@ bool meshink_power_read_measurement(MeshInkPowerMeasurement& measurement) {
         measurement.average_current_valid=true;
         measurement.average_current_ma=(int16_t)raw;
     }
-    if(gauge_word(0x24,raw)){
+    // BQ27220 AveragePower (0x24) is specified in mW, but on the
+    // H752-01 gauge profile it reads about 10x lower than V*I while Voltage,
+    // Current and AverageCurrent agree with external behaviour. Derive power
+    // from independently measured voltage and average current instead of
+    // propagating the misleading gauge register.
+    if(measurement.voltage_valid&&measurement.average_current_valid){
+        const int32_t power_mw=
+            ((int32_t)measurement.voltage_mv*(int32_t)measurement.average_current_ma)/1000;
         measurement.average_power_valid=true;
-        measurement.average_power_mw=(int16_t)raw;
+        measurement.average_power_mw=(int16_t)constrain(power_mw,-32768,32767);
     }
     if(gauge_word(0x2C,raw)&&raw<=100){
         measurement.battery_percent_valid=true;
