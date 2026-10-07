@@ -311,7 +311,7 @@ assert "interactive promotion reusing initialized EPDiy session" in promotion_bo
 assert "local_mesh_prepare_interactive_services();" in promotion_body, "retained promotion starts skipped RTC/GPS services without restarting radio"
 assert promotion_body.index("local_mesh_prepare_interactive_services();") < promotion_body.index("ui_mesh_ready();"), "RTC/GPS are ready before first interactive status sample"
 assert "map_tiles_warm_storage();" in promotion_body and promotion_body.index("map_tiles_warm_storage();") < promotion_body.index("ui_finish_startup();"), "retained promotion warms map storage before revealing UI"
-assert "meshink_gps_prepare_runtime();" in companion_source and "retained UI promotion UART ready" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
+assert "meshink_gps_prepare_runtime();" in companion_source and "Serial1.begin(detected_gps_baud);" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
 assert "restarting into full UI boot" not in companion_source, "headless BOOT promotion must not restart the ESP32"
 assert "meshink_radio_resume_retained_wake" in companion_source, "button wake uses retained-radio recovery before UI startup"
 assert "meshink_board_restore_deep_sleep_wake_pads();" in unified_source, "deep-sleep wake restores EXT0/EXT1 RTC pads to normal digital GPIO"
