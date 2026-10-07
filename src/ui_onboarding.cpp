@@ -2613,6 +2613,59 @@ static void draw_manual_time(){
     ui_action_button("SAVE DATE & TIME",manual_time_save_rect(),true);
 }
 
+static void adjust_manual_time_field(uint8_t field,int delta){
+    switch(field){
+        case 0:
+            if(delta<0)manual_time_year=manual_time_year<=2000?2099:(uint16_t)(manual_time_year-1);
+            else manual_time_year=manual_time_year>=2099?2000:(uint16_t)(manual_time_year+1);
+            clamp_manual_time_day();
+            break;
+        case 1:
+            if(delta<0)manual_time_month=manual_time_month<=1?12:(uint8_t)(manual_time_month-1);
+            else manual_time_month=manual_time_month>=12?1:(uint8_t)(manual_time_month+1);
+            clamp_manual_time_day();
+            break;
+        case 2:{
+            const uint8_t last=manual_time_days_in_month(manual_time_year,manual_time_month);
+            if(delta<0)manual_time_day=manual_time_day<=1?last:(uint8_t)(manual_time_day-1);
+            else manual_time_day=manual_time_day>=last?1:(uint8_t)(manual_time_day+1);
+            break;
+        }
+        case 3:
+            if(delta<0)manual_time_hour=manual_time_hour==0?23:(uint8_t)(manual_time_hour-1);
+            else manual_time_hour=manual_time_hour>=23?0:(uint8_t)(manual_time_hour+1);
+            break;
+        default:
+            if(delta<0)manual_time_minute=manual_time_minute==0?59:(uint8_t)(manual_time_minute-1);
+            else manual_time_minute=manual_time_minute>=59?0:(uint8_t)(manual_time_minute+1);
+            break;
+    }
+}
+static bool save_manual_time_draft(){
+    struct tm requested{};
+    requested.tm_year=(int)manual_time_year-1900;
+    requested.tm_mon=(int)manual_time_month-1;
+    requested.tm_mday=manual_time_day;
+    requested.tm_hour=manual_time_hour;
+    requested.tm_min=manual_time_minute;
+    requested.tm_sec=0;
+    requested.tm_isdst=-1;
+    const time_t utc=mktime(&requested);
+    if(utc<=0)return false;
+
+    // Reject nonexistent/normalized local times (for example a skipped DST
+    // wall-clock time) rather than silently saving a different value.
+    struct tm verify{};
+    if(!localtime_r(&utc,&verify))return false;
+    if(verify.tm_year!=(int)manual_time_year-1900||
+       verify.tm_mon!=(int)manual_time_month-1||
+       verify.tm_mday!=manual_time_day||
+       verify.tm_hour!=manual_time_hour||
+       verify.tm_min!=manual_time_minute)return false;
+
+    return local_mesh_set_manual_time((uint32_t)utc);
+}
+
 static void draw_timezone(){
     draw_app_header("TIMEZONE",true);
     const MeshInkUiLayout& layout=portrait_layout();
