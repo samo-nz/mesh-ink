@@ -1456,6 +1456,241 @@ static int32_t gps_power_mean(int32_t sum,uint16_t count){
     return count?sum/(int32_t)count:0;
 }
 
+static int32_t gps_matrix_power_mw(const GpsMatrixResult& result) {
+    return ((int32_t)result.mean_voltage_mv*(int32_t)result.mean_current_ma)/1000;
+}
+
+static bool gps_matrix_persist_results() {
+    if(!gps_matrix_result_count||!gps_matrix_winner_code)return false;
+    Preferences pref;
+    if(!pref.begin("gps-matrix",false))return false;
+    const size_t bytes=gps_matrix_result_count*sizeof(GpsMatrixResult);
+    const bool ok=
+        pref.putUInt("magic",GPS_MATRIX_MAGIC)==sizeof(uint32_t)&&
+        pref.putUChar("count",(uint8_t)gps_matrix_result_count)==sizeof(uint8_t)&&
+        pref.putUChar("winner",gps_matrix_winner_code)==sizeof(uint8_t)&&
+        pref.putBool("binmask",gps_matrix_binary_satmask_supported)==sizeof(bool)&&
+        pref.putBytes("results",gps_matrix_results,bytes)==bytes;
+    pref.end();
+    return ok;
+}
+
+static bool gps_matrix_load_results() {
+    Preferences pref;
+    if(!pref.begin("gps-matrix",true))return false;
+    const uint32_t magic=pref.getUInt("magic",0);
+    const uint8_t count=pref.getUChar("count",0);
+    const uint8_t winner=pref.getUChar("winner",0);
+    const size_t bytes=pref.getBytesLength("results");
+    bool ok=magic==GPS_MATRIX_MAGIC&&count>0&&count<=GPS_MATRIX_MAX_RESULTS&&
+            winner>0&&winner<=26&&bytes==(size_t)count*sizeof(GpsMatrixResult);
+    if(ok){
+        ok=pref.getBytes("results",gps_matrix_results,bytes)==bytes;
+        if(ok){
+            gps_matrix_result_count=count;
+            gps_matrix_winner_code=winner;
+            gps_matrix_binary_satmask_supported=pref.getBool("binmask",false);
+            gps_matrix_log_valid=true;
+        }
+    }
+    pref.end();
+    return ok;
+}
+
+static void gps_matrix_print_summary(bool paced) {
+    if((!gps_matrix_log_valid||!gps_matrix_result_count)&&!gps_matrix_load_results()){
+        Serial.println("[T5-GPS-MATRIX] no completed matrix result is retained");
+        if(paced)gps_serial_replay_pause();
+        return;
+    }
+    Serial.printf("[T5-GPS-MATRIX] ===== SUMMARY %u CONFIGURATIONS binary-satmask=%s =====\n",
+                  (unsigned)gps_matrix_result_count,
+                  gps_matrix_binary_satmask_supported?"SUPPORTED/EXPERIMENTAL":"UNSUPPORTED/SKIPPED");
+    if(paced)gps_serial_replay_pause();
+    for(size_t i=0;i<gps_matrix_result_count;++i){
+        const auto& r=gps_matrix_results[i];
+        char label[64];
+        gps_matrix_format_label(r.code,label,sizeof(label));
+        Serial.printf("[T5-GPS-MATRIX] %02u %-34s mean=%dmA range=%d-%dmA voltage=%umV power=%ldmW samples=%u%s%s\n",
+                      (unsigned)(i+1),label,(int)r.mean_current_ma,(int)r.min_current_ma,
+                      (int)r.max_current_ma,(unsigned)r.mean_voltage_mv,
+                      (long)gps_matrix_power_mw(r),(unsigned)r.samples,
+                      (r.flags&0x01)?" EXTERNAL-POWER":"",
+                      (r.flags&0x02)?" EXPERIMENTAL-SATMASK":"");
+        if(paced)gps_serial_replay_pause();
+    }
+    char winner[64];
+    gps_matrix_format_label(gps_matrix_winner_code,winner,sizeof(winner));
+    const GpsMatrixResult* best=nullptr;
+    for(size_t i=0;i<gps_matrix_result_count;++i)
+        if(gps_matrix_results[i].code==gps_matrix_winner_code){best=&gps_matrix_results[i];break;}
+    if(best)
+        Serial.printf("[T5-GPS-MATRIX] WINNER code=%u %s mean=%dmA voltage=%umV power=%ldmW\n",
+                      (unsigned)gps_matrix_winner_code,winner,(int)best->mean_current_ma,
+                      (unsigned)best->mean_voltage_mv,(long)gps_matrix_power_mw(*best));
+    else
+        Serial.printf("[T5-GPS-MATRIX] WINNER code=%u %s\n",
+                      (unsigned)gps_matrix_winner_code,winner);
+    if(paced)gps_serial_replay_pause();
+    Serial.println("[T5-GPS-MATRIX] power is derived from measured battery voltage x measured current; positive values are battery draw");
+    if(paced)gps_serial_replay_pause();
+}
+
+static void gps_matrix_reset_accumulator() {
+    gps_matrix_current_sum=0;
+    gps_matrix_voltage_sum=0;
+    gps_matrix_current_min=32767;
+    gps_matrix_current_max=-32768;
+    gps_matrix_sample_count=0;
+    gps_matrix_voltage_count=0;
+    gps_matrix_external_seen=false;
+}
+
+static void gps_matrix_sample_quiet() {
+    MeshInkPowerMeasurement measurement{};
+    if(!meshink_power_read_measurement(measurement))return;
+    if(measurement.current_valid){
+        const int32_t load=gps_discharge_ma(measurement.current_ma);
+        gps_matrix_current_sum+=load;
+        gps_matrix_current_min=min(gps_matrix_current_min,(int16_t)load);
+        gps_matrix_current_max=max(gps_matrix_current_max,(int16_t)load);
+        ++gps_matrix_sample_count;
+    }
+    if(measurement.voltage_valid){
+        gps_matrix_voltage_sum+=measurement.voltage_mv;
+        ++gps_matrix_voltage_count;
+    }
+    gps_matrix_external_seen=gps_matrix_external_seen||measurement.external_power;
+}
+
+static GpsMatrixResult gps_matrix_make_result(uint8_t code) {
+    GpsMatrixResult result{};
+    result.code=code;
+    result.samples=(uint8_t)min((uint16_t)255,gps_matrix_sample_count);
+    result.mean_current_ma=gps_matrix_sample_count
+        ?(int16_t)(gps_matrix_current_sum/(int32_t)gps_matrix_sample_count):0;
+    result.min_current_ma=gps_matrix_sample_count?gps_matrix_current_min:0;
+    result.max_current_ma=gps_matrix_sample_count?gps_matrix_current_max:0;
+    result.mean_voltage_mv=gps_matrix_voltage_count
+        ?(uint16_t)(gps_matrix_voltage_sum/gps_matrix_voltage_count):0;
+    if(gps_matrix_external_seen)result.flags|=0x01;
+    if(gps_matrix_requires_binary_mask(code))result.flags|=0x02;
+    return result;
+}
+
+static void gps_matrix_restore_receiver_after_run() {
+    gps_matrix_restore_masks();
+    gps_matrix_send_pcas("PCAS02,1000");
+#if T5_GPS_FULL_NMEA_DIAGNOSTIC
+    gps_matrix_send_pcas("PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0");
+#else
+    gps_matrix_send_pcas("PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0");
+#endif
+    char constellation[16];
+    snprintf(constellation,sizeof(constellation),"PCAS04,%u",
+             (unsigned)gps_restore_constellation_value());
+    gps_matrix_send_pcas(constellation);
+    gps_stream.clearValidation();
+    gps_last_byte_at=millis();
+}
+
+static void gps_matrix_finish_sweep(bool cancelled) {
+    if(cancelled){
+        gps_matrix_restore_receiver_after_run();
+        gps_power_test_running=false;
+        Serial.println("[T5-GPS-MATRIX] sweep cancelled; receiver restore attempted");
+        return;
+    }
+    gps_matrix_log_valid=gps_matrix_result_count>0&&gps_matrix_winner_code>0;
+    const bool saved=gps_matrix_log_valid&&gps_matrix_persist_results();
+    gps_matrix_restore_receiver_after_run();
+    gps_power_test_running=false;
+    Serial.printf("[T5-GPS-MATRIX] sweep complete; retained=%u winner=%u NVS=%s\n",
+                  (unsigned)gps_matrix_result_count,(unsigned)gps_matrix_winner_code,
+                  saved?"OK":"FAILED");
+    gps_matrix_print_summary(false);
+}
+
+static void gps_matrix_finish_verify(const GpsMatrixResult& result,bool cancelled) {
+    gps_matrix_restore_receiver_after_run();
+    gps_power_test_running=false;
+    if(cancelled){
+        Serial.println("[T5-GPS-MATRIX] winner verification cancelled; receiver restore attempted");
+        return;
+    }
+    char label[64];
+    gps_matrix_format_label(result.code,label,sizeof(label));
+    Serial.printf("[T5-GPS-MATRIX] VERIFY WINNER %s mean=%dmA range=%d-%dmA voltage=%umV power=%ldmW samples=%u%s%s\n",
+                  label,(int)result.mean_current_ma,(int)result.min_current_ma,
+                  (int)result.max_current_ma,(unsigned)result.mean_voltage_mv,
+                  (long)gps_matrix_power_mw(result),(unsigned)result.samples,
+                  (result.flags&0x01)?" EXTERNAL-POWER":"",
+                  (result.flags&0x02)?" EXPERIMENTAL-SATMASK":"");
+}
+
+static void gps_matrix_tick() {
+    const uint32_t now=millis();
+    if(!gps_matrix_sampling){
+        if((int32_t)(now-gps_matrix_settle_until)<0)return;
+        gps_matrix_reset_accumulator();
+        gps_matrix_sampling=true;
+        gps_matrix_sample_started=now;
+        gps_matrix_next_sample=now+GPS_POWER_SAMPLE_MS;
+        return;
+    }
+    while((int32_t)(now-gps_matrix_next_sample)>=0){
+        gps_matrix_sample_quiet();
+        gps_matrix_next_sample+=GPS_POWER_SAMPLE_MS;
+        if(now-gps_matrix_sample_started>=
+           (gps_power_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner
+                ?GPS_POWER_POST_MS:GPS_MATRIX_MEASURE_MS))break;
+    }
+    const uint32_t duration=gps_power_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner
+        ?GPS_POWER_POST_MS:GPS_MATRIX_MEASURE_MS;
+    if(now-gps_matrix_sample_started<duration)return;
+
+    const GpsMatrixResult result=gps_matrix_make_result(gps_matrix_current_code);
+    gps_matrix_sampling=false;
+
+    if(gps_power_experiment==MeshInkGpsPowerExperiment::VerifyMatrixWinner){
+        gps_matrix_finish_verify(result,false);
+        return;
+    }
+
+    if(gps_matrix_result_count<GPS_MATRIX_MAX_RESULTS)
+        gps_matrix_results[gps_matrix_result_count++]=result;
+    if(result.samples&&(!gps_matrix_winner_code||
+       result.mean_current_ma<
+         [&](){
+             int16_t current=32767;
+             for(size_t i=0;i+1<gps_matrix_result_count;++i)
+                 if(gps_matrix_results[i].code==gps_matrix_winner_code)
+                     current=gps_matrix_results[i].mean_current_ma;
+             return current;
+         }()))
+        gps_matrix_winner_code=result.code;
+
+    char label[64];
+    gps_matrix_format_label(result.code,label,sizeof(label));
+    Serial.printf("[T5-GPS-MATRIX] DONE %02u/%02u %-34s mean=%dmA range=%d-%dmA voltage=%umV power=%ldmW%s%s\n",
+                  (unsigned)gps_matrix_result_count,
+                  (unsigned)(gps_matrix_binary_satmask_supported?26:11),
+                  label,(int)result.mean_current_ma,(int)result.min_current_ma,
+                  (int)result.max_current_ma,(unsigned)result.mean_voltage_mv,
+                  (long)gps_matrix_power_mw(result),
+                  (result.flags&0x01)?" EXTERNAL-POWER":"",
+                  (result.flags&0x02)?" EXPERIMENTAL-SATMASK":"");
+
+    const uint8_t next=gps_matrix_next_supported_code(gps_matrix_current_code);
+    if(!next){
+        gps_matrix_finish_sweep(false);
+        return;
+    }
+    gps_matrix_current_code=next;
+    gps_matrix_apply_config(gps_matrix_current_code);
+    gps_matrix_settle_until=millis()+GPS_MATRIX_SETTLE_MS;
+}
+
 static bool gps_power_persist_log() {
     if(!gps_power_log_count)return false;
     Preferences pref;
