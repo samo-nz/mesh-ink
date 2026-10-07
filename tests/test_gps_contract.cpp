@@ -12,6 +12,8 @@ int main(){
            MeshInkGpsConstellationMode::GpsBeiDou);
 
     assert(meshink_gps_constellation_mode_valid(
+        MeshInkGpsConstellationMode::None));
+    assert(meshink_gps_constellation_mode_valid(
         MeshInkGpsConstellationMode::GpsOnly));
     assert(meshink_gps_constellation_mode_valid(
         MeshInkGpsConstellationMode::BeiDouOnly));
@@ -19,8 +21,6 @@ int main(){
         MeshInkGpsConstellationMode::GlonassOnly));
     assert(meshink_gps_constellation_mode_valid(
         MeshInkGpsConstellationMode::BeiDouGlonass));
-    assert(!meshink_gps_constellation_mode_valid(
-        MeshInkGpsConstellationMode::None));
 
     auto mode=MeshInkGpsConstellationMode::GpsBeiDou;
     MeshInkGpsConstellationMode next=mode;
@@ -33,17 +33,19 @@ int main(){
     assert(next==MeshInkGpsConstellationMode::BeiDouOnly);
 
     mode=next;
-    assert(!meshink_gps_constellation_mode_set(
+    assert(meshink_gps_constellation_mode_set(
         mode,MeshInkGpsConstellation::BeiDou,false,next));
-    assert(mode==MeshInkGpsConstellationMode::BeiDouOnly);
+    assert(next==MeshInkGpsConstellationMode::None);
 
+    mode=next;
     assert(meshink_gps_constellation_mode_set(
         mode,MeshInkGpsConstellation::Glonass,true,next));
-    assert(next==MeshInkGpsConstellationMode::BeiDouGlonass);
+    assert(next==MeshInkGpsConstellationMode::GlonassOnly);
 
-    assert(meshink_gps_set_constellation_mode(next));
+    assert(meshink_gps_set_constellation_mode(
+        MeshInkGpsConstellationMode::None));
     assert(meshink_gps_constellation_mode()==
-           MeshInkGpsConstellationMode::BeiDouGlonass);
+           MeshInkGpsConstellationMode::None);
 
     meshink_gps_service_begin();
     assert(meshink_gps_mock_started);
@@ -71,6 +73,6 @@ int main(){
     meshink_gps_shutdown();
     assert(meshink_gps_mock_shutdown);
 
-    std::cout << "PASS: generic GPS contract supports all non-empty constellation masks.\n";
+    std::cout << "PASS: generic GPS contract supports disabled plus all constellation masks.\n";
     return 0;
 }
