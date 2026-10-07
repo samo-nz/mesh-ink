@@ -7,7 +7,7 @@ inline bool meshink_gps_mock_provider_enabled=false;
 inline bool meshink_gps_mock_shutdown=false;
 inline MeshInkGpsStatus meshink_gps_mock_status{};
 inline MeshInkGpsConstellationMode meshink_gps_mock_mode=
-    MeshInkGpsConstellationMode::Unchanged;
+    MeshInkGpsConstellationMode::GpsBeiDou;
 
 inline const char* meshink_gps_backend_name(){return "mock";}
 inline const char* meshink_gps_tuning_note(){return "mock GPS tuning note";}
