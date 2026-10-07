@@ -4531,6 +4531,11 @@ void ui_loop() {
 
         delay(100);return;
     }
+    // Matrix/verification measurements deliberately pause every UI-side
+    // service, including button and critical-battery polling, so the only
+    // periodic work during a measured window is the gauge sampler itself.
+    if(local_mesh_gps_power_test_isolation_active())return;
+
     service_critical_battery();
     service_primary_button();
 
