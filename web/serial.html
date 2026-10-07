@@ -38,12 +38,14 @@
         <button id="clear-button" type="button" class="secondary-button" disabled>Clear window</button>
         <label class="serial-autoscroll"><input id="autoscroll" type="checkbox" checked> Auto-scroll</label>
       </div>
+      <p id="serial-stats" class="serial-stats">0 B received · 0 chunks · 0 recoveries</p>
       <pre id="serial-log" class="serial-monitor-log" role="log" aria-live="off"></pre>
     </section>
 
     <section class="panel" aria-labelledby="console-help-heading">
       <h2 id="console-help-heading">Using the console</h2>
       <p><strong>Connect</strong> selects or opens a USB serial device. <strong>Disconnect</strong> closes it while keeping the captured log. <strong>Reconnect</strong> tries to reopen the previously authorized device without opening the device picker.</p>
+      <p>The console prioritizes USB capture over screen rendering: incoming chunks are retained immediately, while the visible terminal is updated in batches. For very long sessions only the recent visible tail is rendered; <strong>Copy all</strong> still uses the complete captured log.</p>
       <p>If a device resets, its USB port may disappear for several seconds. Wait for it to re-enumerate, then press <strong>Reconnect</strong>. If the browser no longer exposes the previous authorization, use Connect to select it again.</p>
     </section>
 
