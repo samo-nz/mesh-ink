@@ -51,7 +51,7 @@ struct UiNodeDetails {
     bool login_active;
     bool authenticated;
     const char* access_level;
-    UiNodeRole role = UiNodeRole::Unknown;
+    UiNodeRole role;
     uint32_t capabilities; // Optional node-detail pages/actions exposed by the active protocol helper.
     bool saved_contact;
     const char* advert_age;       // time since the last saved advertisement
