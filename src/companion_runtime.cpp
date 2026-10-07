@@ -567,6 +567,24 @@ void companion_prepare_exit() {
 
 }
 
+#if ENV_INCLUDE_GPS == 1
+static void reconcile_gps_mode_with_meshcore_enabled(){
+    auto* settings=the_mesh.getNodePrefs();
+    if(!settings)return;
+    const bool meshcore_enabled=settings->gps_enabled!=0;
+    const auto mode=meshink_gps_constellation_mode();
+    if(!meshcore_enabled&&mode!=MeshInkGpsConstellationMode::None){
+        // Migrate an old explicit MeshCore GPS-OFF preference into the new
+        // single-source GPS MODE model, and honor companion-side OFF changes.
+        meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode::None);
+    }else if(meshcore_enabled&&mode==MeshInkGpsConstellationMode::None){
+        // A companion-side ON request has no constellation detail; restore the
+        // conservative default and let the on-device GPS MODE refine it later.
+        meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode::GpsBeiDou);
+    }
+}
+#endif
+
 void local_mesh_setup() {
     companion_mode_active=false;
     local_rx_wake_runtime=false;
@@ -625,6 +643,7 @@ void local_mesh_setup() {
         }
         initial_gps.end();
     }
+    reconcile_gps_mode_with_meshcore_enabled();
     the_mesh.applyGpsPrefs();
 #endif
     local_interactive_services_ready=true;
@@ -725,6 +744,7 @@ void local_mesh_prepare_interactive_services() {
 #endif
     meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
+    reconcile_gps_mode_with_meshcore_enabled();
     the_mesh.applyGpsPrefs();
 #endif
     meshink_gps_service_loop();
