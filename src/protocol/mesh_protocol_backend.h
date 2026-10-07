@@ -58,6 +58,8 @@ struct MeshInkProtocolBackend {
     // Identity/radio settings.
     bool (*apply_radio)(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode) = nullptr;
     void (*apply_name)(const char* name) = nullptr;
+    bool (*name_character_allowed)(char c) = nullptr;
+    size_t (*node_name_max_length)() = nullptr;
     const char* (*node_name)() = nullptr;
     const char* (*radio_summary)() = nullptr;
     bool (*radio_matches)(float frequency_mhz, float bandwidth_khz, uint8_t spreading_factor,
