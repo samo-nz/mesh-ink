@@ -690,6 +690,19 @@ static constexpr Preset PRESETS[] = {
 };
 static constexpr uint8_t PRESET_COUNT = sizeof(PRESETS)/sizeof(PRESETS[0]);
 
+static const char* active_radio_label(){
+    auto matches=[](const Preset& preset){
+        return preset.path_hash_bytes&&local_mesh_radio_matches(
+            preset.frequency_khz/1000.0f,preset.bandwidth_khz,
+            preset.spreading_factor,preset.coding_rate,preset.path_hash_bytes);
+    };
+    if(selected_preset<PRESET_COUNT&&matches(PRESETS[selected_preset]))
+        return PRESETS[selected_preset].title;
+    for(uint8_t i=1;i<PRESET_COUNT;++i)
+        if(matches(PRESETS[i]))return PRESETS[i].title;
+    return local_mesh_radio_summary();
+}
+
 static bool apply_selected_preset() {
     if(selected_preset>=PRESET_COUNT)return false;
     const Preset& preset=PRESETS[selected_preset];
@@ -2571,7 +2584,7 @@ static void settings_info_row(const char* title,const char* subtitle,int referen
 
 static void draw_settings() {
     draw_app_header("SETTINGS",true);
-    settings_row("ID & RADIO",local_mesh_radio_summary(),118);
+    settings_row("ID & RADIO",active_radio_label(),118);
     if(meshink_board_has_gps()){
         settings_row("LOCATION & GPS","Position, interval, advert",238);
         settings_row("DATE & TIME","Clock, source, timezone",358);
@@ -2588,8 +2601,8 @@ static void draw_settings() {
 
 static void draw_radio_settings() {
     draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
-    settings_row("REGION PRESET",PRESETS[selected_preset].title,250);
-    settings_row("ACTIVE RADIO",local_mesh_radio_summary(),380);
+    settings_row("REGION PRESET",active_radio_label(),250);
+    settings_row("ACTIVE RADIO",active_radio_label(),380);
     if(!keyboard_visible)settings_row("PATH HASH MODE",path_hash_label(),510);
     if(keyboard_visible){draw_keyboard();}
 }
@@ -2643,12 +2656,8 @@ static void draw_gps_tuning(){
     settings_row("BEIDOU",gps_constellation_state(MeshInkGpsConstellation::BeiDou),238);
     settings_row("GLONASS",gps_constellation_state(MeshInkGpsConstellation::Glonass),358);
     const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect nmea=meshink_outer_row_rect(layout,478,112);
-    ui_section_card(nmea);
-    ui_text("NMEA OUTPUT",layout.content_text_x,nmea.y+ui_h(13),3,0,true);
-    ui_text("RMC + GGA (AUTOMATIC)",layout.content_text_x,nmea.y+ui_h(55),3,0,false);
     ui_draw_wrapped("GPS is disabled when no satellite systems are selected.",
-                    layout.section_margin,ui_y(650),layout.section_width,3,0,false,3);
+                    layout.section_margin,ui_y(510),layout.section_width,3,0,false,3);
 }
 
 static const char* const MONTH_NAMES[]={
@@ -2691,7 +2700,7 @@ static void time_mode_label(char* out,size_t len){
     switch(local_mesh_time_source()){
         case MeshInkTimeSource::Gps:source="GPS FIX";break;
         case MeshInkTimeSource::Companion:source="COMPANION";break;
-        case MeshInkTimeSource::MeshCore:source="MESHCORE FALLBACK";break;
+        case MeshInkTimeSource::MeshCore:source="MESHCORE";break;
         case MeshInkTimeSource::HardwareRtc:source="VALID RTC";break;
         case MeshInkTimeSource::Manual:source="VALID RTC";break;
         default:source=local_mesh_time_valid()?"VALID RTC":"WAITING";break;

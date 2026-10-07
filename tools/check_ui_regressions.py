@@ -1680,6 +1680,15 @@ assert 'const bool gps_time_stale = !t5_rtc_clock().gpsAuthoritative();' in boar
 assert 'if (rtc_needs_time || gps_time_stale || hourly_correction_due)' in board_target_source, "first valid GPS fix immediately refreshes stale or never-GPS RTC time"
 assert 'first fresh fix accepted because GPS clock authority was stale' in board_target_source, "stale GPS-authority refresh remains diagnosable"
 
+
+# 2.1.1-test.7: user-facing radio/GPS/time cleanup.
+assert 'static const char* active_radio_label()' in source and 'local_mesh_radio_matches(' in source, "radio menu resolves actual settings back to a known preset"
+assert 'settings_row("ID & RADIO",active_radio_label(),118);' in source, "top-level radio menu shows the preset name when the active configuration matches"
+assert 'return local_mesh_radio_summary();' in source and '"%.3f / SF%u / BW%.1f / CR%u"' in runtime_source, "unmatched radio settings use compact raw numbers without a CUSTOM prefix"
+assert 'NMEA OUTPUT' not in source and 'RMC + GGA (AUTOMATIC)' not in source, "non-actionable NMEA output row is removed"
+assert 'case MeshInkTimeSource::MeshCore:source="MESHCORE";break;' in source, "MeshCore source wording fits the normal time-mode text size"
+assert 'MESHCORE FALLBACK' not in source, "oversized MeshCore fallback wording is removed"
+
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"

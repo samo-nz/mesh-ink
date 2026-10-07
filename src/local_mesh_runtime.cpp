@@ -1376,7 +1376,15 @@ MeshInkTimeMode local_mesh_time_mode(){return meshink_rtc_time_mode();}
 MeshInkTimeSource local_mesh_time_source(){return meshink_rtc_time_source();}
 bool local_mesh_gps_time_authoritative(){return meshink_rtc_gps_authoritative();}
 const char* local_mesh_node_name(){return meshink_meshcore().getNodeName();}
-const char* local_mesh_radio_summary(){auto* p=meshink_meshcore().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f SF%u BW%.1f CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
+const char* local_mesh_radio_summary(){auto* p=meshink_meshcore().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f / SF%u / BW%.1f / CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
+bool local_mesh_radio_matches(float frequency_mhz,float bandwidth_khz,uint8_t spreading_factor,uint8_t coding_rate,uint8_t path_hash_bytes){
+    const auto* p=meshink_meshcore().getNodePrefs();
+    if(!p||!path_hash_bytes)return false;
+    return fabsf(p->freq-frequency_mhz)<0.0005f &&
+           fabsf(p->bw-bandwidth_khz)<0.05f &&
+           p->sf==spreading_factor && p->cr==coding_rate &&
+           (uint8_t)(min((uint8_t)2,p->path_hash_mode)+1)==path_hash_bytes;
+}
 const char* local_mesh_privacy_value(uint8_t item){auto* p=meshink_meshcore().getNodePrefs();switch(item){case 0:return p->autoadd_config?"ENABLED":"DISABLED";case 1:if(!p->autoadd_max_hops)return "NO LIMIT";if(p->autoadd_max_hops==1)return "DIRECT ONLY";snprintf(setting_value,sizeof(setting_value),"UP TO %u HOPS",p->autoadd_max_hops-1);return setting_value;case 2:return p->advert_loc_policy?"SHARE":"HIDDEN";case 3:return p->telemetry_mode_base==0?"DENY":p->telemetry_mode_base==1?"CONTACT FLAGS":"ALLOW ALL";case 4:return p->telemetry_mode_loc==0?"DENY":p->telemetry_mode_loc==1?"CONTACT FLAGS":"ALLOW ALL";default:return p->isRepeatEn()?"ENABLED":"DISABLED";}}
 void local_mesh_toggle_privacy(uint8_t item){auto* p=meshink_meshcore().getNodePrefs();switch(item){case 0:p->autoadd_config=p->autoadd_config?0:0x1E;break;case 1:p->autoadd_max_hops=(p->autoadd_max_hops+1)%6;break;case 2:p->advert_loc_policy=p->advert_loc_policy?0:1;break;case 3:p->telemetry_mode_base=(p->telemetry_mode_base+1)%3;break;case 4:p->telemetry_mode_loc=(p->telemetry_mode_loc+1)%3;break;default:p->setRepeatEn(!p->isRepeatEn());break;}meshink_meshcore().savePrefs();}
 void local_mesh_cycle_path_hash(){auto* p=meshink_meshcore().getNodePrefs();p->path_hash_mode=(p->path_hash_mode+1)%3;meshink_meshcore().savePrefs();}

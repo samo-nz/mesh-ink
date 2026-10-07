@@ -40,6 +40,7 @@ MeshInkTimeSource local_mesh_time_source();
 bool local_mesh_gps_time_authoritative();
 const char* local_mesh_node_name();
 const char* local_mesh_radio_summary();
+bool local_mesh_radio_matches(float frequency_mhz,float bandwidth_khz,uint8_t spreading_factor,uint8_t coding_rate,uint8_t path_hash_bytes);
 const char* local_mesh_privacy_value(uint8_t item);
 void local_mesh_toggle_privacy(uint8_t item);
 void local_mesh_cycle_path_hash();
