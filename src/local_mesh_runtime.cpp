@@ -1340,6 +1340,9 @@ bool local_mesh_my_location(long& latitude,long& longitude){
 void local_mesh_toggle_gps_advert_location(){auto* p=meshink_meshcore().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;meshink_meshcore().savePrefs();}
 uint32_t local_mesh_current_time(){return meshink_rtc_current_time();}
 bool local_mesh_time_valid(){return meshink_rtc_valid();}
+bool local_mesh_set_manual_time(uint32_t utc){return meshink_rtc_set_manual_time(utc);}
+MeshInkTimeSource local_mesh_time_source(){return meshink_rtc_time_source();}
+bool local_mesh_gps_time_authoritative(){return meshink_rtc_gps_authoritative();}
 const char* local_mesh_node_name(){return meshink_meshcore().getNodeName();}
 const char* local_mesh_radio_summary(){auto* p=meshink_meshcore().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f SF%u BW%.1f CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
 const char* local_mesh_privacy_value(uint8_t item){auto* p=meshink_meshcore().getNodePrefs();switch(item){case 0:return p->autoadd_config?"ENABLED":"DISABLED";case 1:if(!p->autoadd_max_hops)return "NO LIMIT";if(p->autoadd_max_hops==1)return "DIRECT ONLY";snprintf(setting_value,sizeof(setting_value),"UP TO %u HOPS",p->autoadd_max_hops-1);return setting_value;case 2:return p->advert_loc_policy?"SHARE":"HIDDEN";case 3:return p->telemetry_mode_base==0?"DENY":p->telemetry_mode_base==1?"CONTACT FLAGS":"ALLOW ALL";case 4:return p->telemetry_mode_loc==0?"DENY":p->telemetry_mode_loc==1?"CONTACT FLAGS":"ALLOW ALL";default:return p->isRepeatEn()?"ENABLED":"DISABLED";}}
