@@ -22,8 +22,7 @@ enum class MeshInkGpsConstellationMode : uint8_t {
 };
 
 inline bool meshink_gps_constellation_mode_valid(MeshInkGpsConstellationMode mode) {
-    const uint8_t bits=static_cast<uint8_t>(mode);
-    return bits>=1U&&bits<=7U;
+    return static_cast<uint8_t>(mode)<=7U;
 }
 
 inline bool meshink_gps_constellation_enabled(
@@ -31,9 +30,9 @@ inline bool meshink_gps_constellation_enabled(
     return (static_cast<uint8_t>(mode)&static_cast<uint8_t>(constellation))!=0;
 }
 
-// Build a new non-empty constellation mask. Returning false when the requested
-// change would clear the final enabled system lets every UI enforce the same
-// hardware-agnostic "at least one constellation" rule.
+// Build a new constellation mask. Zero is a valid, hardware-agnostic disabled
+// state; board backends decide how to park their receiver when no systems are
+// selected.
 inline bool meshink_gps_constellation_mode_set(
     MeshInkGpsConstellationMode current,MeshInkGpsConstellation constellation,
     bool enabled,MeshInkGpsConstellationMode& next) {
@@ -41,7 +40,7 @@ inline bool meshink_gps_constellation_mode_set(
     const uint8_t bit=static_cast<uint8_t>(constellation);
     if(enabled)bits|=bit;
     else bits&=(uint8_t)~bit;
-    if(bits<1U||bits>7U)return false;
+    if(bits>7U)return false;
     next=static_cast<MeshInkGpsConstellationMode>(bits);
     return true;
 }
