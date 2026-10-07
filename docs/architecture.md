@@ -1,5 +1,18 @@
 # Firmware boundaries
 
+## Protocol boundary
+
+MeshInk's product UI is protocol-neutral. Messages/conversations, contacts and maps consume only `UiDataProvider` data and the public `src/protocol/mesh_protocol.h` facade. The shared boot path also uses that facade for lifecycle, standby, GPS/time integration, identity and radio settings.
+
+Each radio protocol consists of two pieces:
+
+1. an upstream core that MeshInk does not fork or patch; and
+2. a small MeshInk protocol helper that translates that core into the generic `MeshInkProtocolBackend` contract.
+
+The dispatcher in `src/protocol/mesh_protocol.cpp` owns protocol selection. It persists only a protocol ID, resolves the matching registered helper at boot, and exposes `mesh_protocol_restart_into()` so changing protocols is a single reboot. Backend slots are weak/optional; adding another protocol means adding its upstream dependency and helper registration rather than changing the shared contacts/messages/maps code. The current branch registers MeshCore in slot 1 only. No Meshtastic source, dependency or protocol implementation is present yet.
+
+The More menu and protocol-sensitive Settings rows are capability-driven. A helper advertises discovery, advertising, companion mode, diagnostics, privacy and path-hash support. Node Info is also capability-driven per node: the common overview/identity/location shell stays shared, while status, telemetry, path, trace and login pages/actions appear only when the helper says that node supports them. Generic node roles are mapped by the helper so upstream protocol type values never leak into shared UI code.
+
 `lib/MeshCore` is upstream code and is never patched. `src/board` will own ESP32-S3 pins, SX1262, e-paper, GT911, power, RTC and GPS. `src/app` will adapt MeshCore contacts, channels and events to device-local state and serialized storage. `src/ui` will render e-paper screens and consume app snapshots/events without calling the radio or storage synchronously. `src/transport` will expose the upstream companion protocol over BLE only in Bluetooth mode. `src/power` will manage the BOOT-held standby and mode transitions.
 
 Persist the mode independently from BLE settings; choose it before allocating UI, BLE or refresh task stacks. The handheld mode's UI must not inherit the old PaperUI screen files. It follows the Android companion navigation: conversations and channels lead to message detail/compose; contacts lead to identity and node detail; settings provide radio presets, identity, GPS, display and standby. Keep touch input sampling independent of e-paper waveform refresh, retain complete GT911 point frames until consumed, and coalesce panel refreshes.
