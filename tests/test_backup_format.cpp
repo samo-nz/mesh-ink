@@ -22,7 +22,9 @@ int main() {
     auto edited=good;
     edited.magic^=1;assert(!supported(edited,1,60));
     edited=good;edited.version++;assert(!supported(edited,1,60));
-    edited=good;edited.categories=8;assert(!supported(edited,1,60));
+    edited=good;edited.categories=8;assert(supported(edited,1,60));
+    edited=good;edited.categories=15;assert(supported(edited,1,60));
+    edited=good;edited.categories=16;assert(!supported(edited,1,60));
     edited=good;edited.count=0;assert(!supported(edited,1,60));
     edited=good;edited.count=61;assert(!supported(edited,1,60));
 
