@@ -27,7 +27,7 @@ int main(){
     DeviceTelemetry t=decode_device_telemetry(packet,m);
     assert(t.valid&&t.battery==64&&std::fabs(t.voltage-3.81f)<0.001f);
     assert(!decode_device_telemetry(packet,m-1).valid);
-    assert(!encode_device_telemetry(packet,100,101,3.8f));
+    assert(encode_device_telemetry(packet,100,101,3.8f)==14);
     std::puts("PASS: Meshtastic standard position/telemetry wire encoding and bounds");
     return 0;
 }
