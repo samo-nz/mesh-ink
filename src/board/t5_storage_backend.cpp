@@ -34,6 +34,9 @@ bool meshink_storage_exists(const char* path) {
     return path && SD.exists(path);
 }
 
+bool meshink_storage_remove(const char* path){return path&&SD.remove(path);}
+bool meshink_storage_rename(const char* from,const char* to){return from&&to&&SD.rename(from,to);}
+
 uint32_t meshink_storage_bus_hz() {
     return T5_STORAGE_SPI_HZ;
 }
