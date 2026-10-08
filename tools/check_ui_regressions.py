@@ -1214,7 +1214,7 @@ assert "record-cache=%s header=%uB" in message_store_source, "boot transcript re
 assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps compact journal indices"
 assert "mutable MessageView active_message_view_{};" in runtime_source, "UI still formats only one scratch message at a time"
 assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "formatted history is never prebuilt"
-assert "store_.read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
+assert "store().read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
 assert "mesh_protocol_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "protocol startup remains after display initialization"
 
@@ -1222,7 +1222,7 @@ assert "mesh_protocol_setup();   // includes first-boot SPIFFS mount / format" i
 # Test52: page history stays on-demand. Only tiny anchors and lazy per-message
 # geometry metadata are retained; pages themselves are never materialized.
 assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
-assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
+assert "conversation_store_revision_!=store().revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
 assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
 assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews use one linear RAM-backed journal pass"
 assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
@@ -1505,7 +1505,7 @@ assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.tra
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
-assert "if(!sequence||!store_.update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
+assert "if(!sequence||!store().update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
 assert "return write_record(p,item);" in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
