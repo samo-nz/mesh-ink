@@ -4,7 +4,7 @@
 
 enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Failed, Retrying1, Retrying2, Retrying3, Retrying4, Retrying5 };
 enum class UiNodeInfoRequest : uint8_t { Status=0, Telemetry=1, Path=2, Trace=3, None=255 };
-enum class UiNodeRole : uint8_t { Unknown=0, Chat=1, Repeater=2, Room=3, Sensor=4 };
+enum class UiNodeRole : uint8_t { Unknown=0, Client=1, Relay=2, Service=3, Sensor=4 };
 
 enum UiNodeCapability : uint32_t {
     UI_NODE_CAP_STATUS    = 1u << 0,
