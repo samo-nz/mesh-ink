@@ -76,8 +76,6 @@ static bool runtime_ready=false;
 static uint8_t my_public_key[32]{};
 static uint8_t my_private_key[32]{};
 static char radio_summary[64]="ANZ / LongFast";
-static uint32_t pending_packet_id=0;
-static uint32_t pending_message_sequence=0;
 static bool protocol_settings_dirty=false;
 // Leaf currently implements just the standard public primary channel.
 // Secondary channel controls are present in the shared UI but intentionally
@@ -475,10 +473,10 @@ public:
     }
 
     void delivered(uint32_t request_id) {
-        if(!pending_packet_id||request_id!=pending_packet_id||!pending_message_sequence)return;
-        if(meshink_message_store().update_state(pending_message_sequence,UiMessageState::Delivered)){
-            pending_packet_id=0;
-            pending_message_sequence=0;
+        // The journal already stores each outgoing packet ID; a single global
+        // pending slot loses earlier ACKs when consecutive messages are sent.
+        if(request_id&&meshink_message_store().mark_delivered_by_ack(
+                request_id,MESHTASTIC_PROTOCOL_ID)){
             rebuild_active();
             ui_request_data_refresh("meshtastic-delivered");
         }
@@ -1037,10 +1035,6 @@ static bool send_active(const char* text) {
         UiMessageState::Sent,packet_id,MeshInkMessageOrigin::LocalUi,
         false,0,MESHINK_MESSAGE_PATH_UNKNOWN,false,MESHTASTIC_PROTOCOL_ID);
     if(!sequence)return false;
-    if(kind==MeshInkMessageKind::Direct){
-        pending_packet_id=packet_id;
-        pending_message_sequence=sequence;
-    }
     provider.refresh(true);
     // Re-open current conversation index cache without changing selection.
     if(provider.active_is_channel())provider.open_channel(0);
