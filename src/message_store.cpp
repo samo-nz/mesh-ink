@@ -14,7 +14,15 @@ constexpr char LEGACY_STORE_PATH[]="/ui_messages.bin";
 constexpr char CORE_STORE_PATH[]="/meshcore_messages.bin";
 constexpr char CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak";
 constexpr char LEAF_STORE_PATH[]="/meshtastic_messages.bin";
-constexpr char LEAF_INVALID_PATH[]="/meshtastic_messages.invalid.bak";
+// SPIFFS_OBJ_NAME_LEN is 32 bytes INCLUDING NUL. The former
+// "/meshtastic_messages.invalid.bak" is 32 visible bytes and cannot be
+// created, leaving a first-use partial journal stuck in recovery forever.
+constexpr char LEAF_INVALID_PATH[]="/meshtastic_messages.bad";
+constexpr size_t SPIFFS_PATH_CAPACITY=32;
+static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
+              "MeshCore recovery filename exceeds SPIFFS name limit");
+static_assert(sizeof(LEAF_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
+              "Meshtastic recovery filename exceeds SPIFFS name limit");
 
 static_assert(sizeof(MeshInkMessageStoreHeader)==16,
               "journal header layout changed; bump store version explicitly");
@@ -265,15 +273,37 @@ bool MeshInkMessageStore::begin(){
 
     Serial.printf("[T5-STORE] journal unsupported magic=%08lx version=%u capacity=%u; preserving before recreate\n",
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
-    SPIFFS.remove(invalid_path_);
-    if(!SPIFFS.rename(path_,invalid_path_)){
-        Serial.println("[T5-STORE] ERROR preserving unsupported message journal");
+    // Never delete a previous recovery copy; it may be the user's only
+    // copy of older messages. Use numbered short paths for subsequent faults.
+    char archived[SPIFFS_PATH_CAPACITY]{};
+    bool archive_available=false;
+    const bool leaf=strcmp(path_,LEAF_STORE_PATH)==0;
+    for(unsigned attempt=0;attempt<=16;++attempt){
+        if(attempt==0){
+            snprintf(archived,sizeof(archived),"%s",invalid_path_);
+        }else{
+            snprintf(archived,sizeof(archived),
+                     leaf?"/mt_journal_bad.%u":"/mc_journal_bad.%u",attempt);
+        }
+        if(!SPIFFS.exists(archived)){archive_available=true;break;}
+    }
+    if(!archive_available){
+        Serial.println("[T5-STORE] ERROR no unused recovery filename; original retained");
         return false;
     }
+    if(!SPIFFS.rename(path_,archived)){
+        Serial.printf("[T5-STORE] ERROR preserving unsupported message journal as %s; original retained\n",
+                      archived);
+        return false;
+    }
+    Serial.printf("[T5-STORE] unsupported journal preserved at %s; initializing fresh v3 journal\n",
+                  archived);
     const bool ok=create_empty();
     if(!ok){
-        SPIFFS.remove(path_);
-        SPIFFS.rename(invalid_path_,path_);
+        SPIFFS.remove(path_); // only an incomplete newly created file
+        if(!SPIFFS.rename(archived,path_))
+            Serial.printf("[T5-STORE] ERROR restoring preserved journal %s; archive retained\n",
+                          archived);
         return false;
     }
     initialized_=true;
