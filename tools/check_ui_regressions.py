@@ -1804,3 +1804,12 @@ assert '{"BACKUP / RESTORE","Save or restore data on SD card",MoreAction::Backup
 assert 'MoreAction::Advertise' not in source and 'Screen::AdvertMenu' not in source, "obsolete Advertise page has been removed"
 assert 'ProtocolSettingsRowKind::AdvertZero' in source and 'ProtocolSettingsRowKind::AdvertFlood' in source, "MeshCore Protocol Settings contains two advert actions"
 assert 'mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)?2:0' in source, "advert rows appear only with protocol advertising capability"
+
+# 2.1.1-test.16: Meshtastic first-use skips radio init, but SD/PMTiles warmup
+# still runs. Shared SPI must explicitly use H752 board pins rather than the
+# Arduino SPI defaults, and do so before SD.begin triggers card init/cleanup.
+storage_mount=storage_backend_source.split("bool meshink_storage_begin()",1)[1].split("bool meshink_storage_media_ready()",1)[0]
+assert "SPIClass& shared_spi=t5_shared_spi();" in storage_mount, "SD and LoRa use the same board-owned SPI peripheral"
+assert "shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);" in storage_mount, "SD can initialize SPI without LoRa or a completed Meshtastic wizard"
+assert storage_mount.index("shared_spi.begin(")<storage_mount.index("return SD.begin("), "T5 pin mapping must be installed before SD init"
+assert "SD.end();" in storage_mount, "SD remount retains existing explicit unmount lifecycle"
