@@ -4485,9 +4485,6 @@ static bool handle_setup_tap(int16_t x,int16_t y){
     if((screen==Screen::SetupName||screen==Screen::SetupRadio)&&keyboard_visible){
         // Keep all editable values above the existing portrait keyboard.
         if(screen==Screen::SetupName||screen==Screen::SetupRadio){
-            const int input=screen==Screen::SetupName?0:
-                (hit(x,y,ui_rect(24,317,492,88))?1:0);
-            if(screen==Screen::SetupRadio&&y<ui_y(415))setup_edit_field=(uint8_t)input;
             return handle_name_keyboard(x,y);
         }
     }
@@ -4917,6 +4914,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     show_toast("PROTOCOL ALREADY ACTIVE");
                     draw_screen();refresh(MeshInkRefreshMode::Direct);
                     return true;
+                }
+                // A first-time switch must remain cancellable after reboot.
+                Preferences setup_switch;
+                if(setup_switch.begin("t5-ui",false)){
+                    setup_switch.putUChar("setup_return",
+                        setup_protocol_done(protocol->id)?0:mesh_protocol_descriptor().id);
+                    setup_switch.end();
                 }
                 if(!mesh_protocol_select_for_next_boot(protocol->id)){
                     show_toast("PROTOCOL SWITCH FAILED");
@@ -5481,8 +5485,8 @@ bool ui_promote_headless_to_interactive() {
     message_alert_active=false;
     // ui_startup() already restored the retained top-level tab. Do not
     // overwrite it when promoting a deep-sleep/headless runtime to interactive.
-    if(!setup_complete)screen=Screen::Welcome;
-    keyboard_visible=!setup_complete;
+    if(!setup_complete)screen=setup_any_done?Screen::SetupName:Screen::Welcome;
+    keyboard_visible=false;
     ui_finish_startup();
     Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing protocol runtime");
     return true;
@@ -5512,7 +5516,12 @@ static void ui_load_persistent_state() {
     prefs.begin("t5-ui",true);
     String saved_name=prefs.getString("name","");
     selected_preset=prefs.getUChar("preset_v2",17);
-    setup_complete=prefs.getBool("complete",false);
+    const bool legacy_setup_complete=prefs.getBool("complete",false);
+    setup_meshcore_done=prefs.getBool("setup_mc",legacy_setup_complete);
+    setup_meshtastic_done=prefs.getBool("setup_mst",false);
+    setup_any_done=setup_meshcore_done||setup_meshtastic_done;
+    setup_complete=setup_protocol_done(mesh_protocol_descriptor().id);
+    setup_return_protocol=prefs.getUChar("setup_return",0);
     const bool timezone_v2=prefs.getBool("tz_v2",false);
     timezone_index=prefs.getUChar("timezone",0);
     if(!timezone_v2)timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);
@@ -5587,13 +5596,17 @@ static void ui_load_persistent_state() {
         retained_wake_tab=retained_tab;
         retained_wake_tab_valid=true;
     }
+    if(!setup_complete&&setup_any_done&&
+       (!setup_return_protocol||!setup_protocol_done(setup_return_protocol)))
+        setup_return_protocol=setup_meshcore_done?1:2;
+    setup_initialize_draft();
     screen=setup_complete
         ?(retained_wake_tab_valid?screen_for_retained_tab(retained_wake_tab):Screen::Contacts)
-        :Screen::Welcome;
+        :(setup_any_done?Screen::SetupName:Screen::Welcome);
     if(setup_complete&&retained_wake_tab_valid)
         T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] restored top tab=%u screen=%u\n",
                   (unsigned)retained_wake_tab,(unsigned)screen);
-    keyboard_visible=!setup_complete;
+    keyboard_visible=false;
 }
 
 void ui_startup(const MeshInkUiStartupPlan& plan) {
@@ -5691,7 +5704,7 @@ void ui_finish_startup() {
         frontlight_event();
     }else{
         draw_screen();
-        if(screen==Screen::Welcome)
+        if(setup_is_screen(screen))
             fast_full_redraw("FIRST_SETUP_SCREEN",false);
         else if(screen==Screen::Contacts||retained_deep_wake) {
             // Contacts already used the correct transition: prepare the entire
@@ -5784,13 +5797,13 @@ void ui_loop() {
                 set_ui_orientation(MeshInkOrientation::Portrait);
             }
             details_page=0;details_from_discovery=false;reset_chat_paging();
-            open_screen(setup_complete?Screen::Contacts:Screen::Welcome);
+            open_screen(setup_complete?Screen::Contacts:(setup_any_done?Screen::SetupName:Screen::Welcome));
             continue;
         }
         // A deliberate downward pull beginning at the top edge opens the
         // CrossPoint-style quick panel before page-specific swipe handling.
         const int first_y=tap.y-tap.dy;
-        if(!quick_panel_active&&first_y<=80&&tap.dy>=90&&abs(tap.dy)>abs(tap.dx)) {
+        if(setup_complete&&!quick_panel_active&&first_y<=80&&tap.dy>=90&&abs(tap.dy)>abs(tap.dx)) {
             open_quick_panel();
             continue;
         }
@@ -6193,21 +6206,8 @@ void ui_request_data_refresh(const char* reason){
 }
 
 void ui_apply_initial_radio_preset(){
-    // On a clean install the UI defaults to NZ NARROW, while the active protocol's
-    // compiled defaults use SF8. Apply the displayed selection immediately
-    // after the protocol helper has loaded its settings, before the UI becomes interactive.
-    // Do not override a completed installation's stored radio configuration,
-    // and honour KEEP CURRENT as a deliberate no-change selection.
-    if(setup_complete||selected_preset==0||!mesh_protocol_supports_radio_presets())return;
-    if(apply_selected_preset()){
-        const Preset& preset=PRESETS[selected_preset];
-        T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] initial radio preset %s: %lu.%03lu MHz SF%u BW%.1f CR%u %uB\n",
-            preset.title,(unsigned long)(preset.frequency_khz/1000),
-            (unsigned long)(preset.frequency_khz%1000),preset.spreading_factor,
-            (double)preset.bandwidth_khz,preset.coding_rate,preset.path_hash_bytes);
-    }else{
-        Serial.println("[T5-ERROR] first-time radio preset failed; select a radio preset in setup");
-    }
+    // First-use radio changes are staged in the wizard and applied only when
+    // the user confirms. Never apply the former NZ preset implicitly at boot.
 }
 
 void ui_mesh_ready(){
