@@ -5,6 +5,14 @@ mesh::Radio& meshink_radio_meshcore() {
     return radio_driver;
 }
 
+PhysicalLayer* meshink_radio_radiolib() {
+    return t5_radio_physical_layer();
+}
+
+bool meshink_radio_set_lora_crc(uint8_t bytes) {
+    return t5_radio_set_lora_crc(bytes);
+}
+
 bool meshink_radio_initialize() {
     return radio_init();
 }
