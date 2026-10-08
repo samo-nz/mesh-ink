@@ -43,11 +43,13 @@ MeshInkMessageStore meshtastic_journal(LEAF_STORE_PATH,LEAF_INVALID_PATH);
 // Old single-protocol installations wrote only the MeshCore journal here.
 static bool copy_legacy_meshcore_journal(){
     if(SPIFFS.exists(CORE_STORE_PATH)||!SPIFFS.exists(LEGACY_STORE_PATH))return true;
+    constexpr char STAGING[]="/mc_migrate.tmp";
+    SPIFFS.remove(STAGING);
     File source=SPIFFS.open(LEGACY_STORE_PATH,"r");
-    File target=SPIFFS.open(CORE_STORE_PATH,"w");
+    File target=SPIFFS.open(STAGING,"w");
     if(!source||!target){
         if(source)source.close();if(target)target.close();
-        SPIFFS.remove(CORE_STORE_PATH);return false;
+        SPIFFS.remove(STAGING);return false;
     }
     const size_t expected=source.size();
     uint8_t block[512];size_t copied=0;bool ok=true;
@@ -58,21 +60,23 @@ static bool copy_legacy_meshcore_journal(){
         copied+=got;
     }
     target.flush();source.close();target.close();
-    if(!ok||copied!=expected){SPIFFS.remove(CORE_STORE_PATH);return false;}
-    File a=SPIFFS.open(LEGACY_STORE_PATH,"r");
-    File b=SPIFFS.open(CORE_STORE_PATH,"r");
-    ok=a&&b&&a.size()==expected&&b.size()==expected;
-    uint8_t left[512],right[512];
-    size_t verified=0;
+    if(!ok||copied!=expected){SPIFFS.remove(STAGING);return false;}
+    File from=SPIFFS.open(LEGACY_STORE_PATH,"r");
+    File to=SPIFFS.open(STAGING,"r");
+    ok=from&&to&&from.size()==expected&&to.size()==expected;
+    uint8_t left[512],right[512];size_t verified=0;
     while(ok&&verified<expected){
         const size_t wanted=min(sizeof(left),expected-verified);
-        ok=a.read(left,wanted)==wanted&&b.read(right,wanted)==wanted&&
+        ok=from.read(left,wanted)==wanted&&to.read(right,wanted)==wanted&&
            memcmp(left,right,wanted)==0;
         verified+=wanted;
     }
-    if(a)a.close();if(b)b.close();
-    if(!ok){SPIFFS.remove(CORE_STORE_PATH);return false;}
-    Serial.printf("[T5-STORE] legacy MeshCore journal migrated and byte-verified %u bytes; original retained\\n",(unsigned)expected);
+    if(from)from.close();if(to)to.close();
+    if(!ok){SPIFFS.remove(STAGING);return false;}
+    if(!SPIFFS.rename(STAGING,CORE_STORE_PATH)){
+        SPIFFS.remove(STAGING);return false;
+    }
+    Serial.printf("[T5-STORE] legacy journal migrated and verified %u bytes; original retained\n",(unsigned)expected);
     return true;
 }
 
