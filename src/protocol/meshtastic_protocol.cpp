@@ -845,8 +845,10 @@ static bool load_identity() {
 
 static void update_radio_summary() {
     const char* preset_name=MeshRegion::getPresetName(mesh_config.radio.preset);
-    const float frequency=MeshRegion::getFrequency(
-        mesh_config.radio.region,mesh_config.radio.preset,preset_name);
+    const float frequency=mesh_config.radio.channelNum?
+        MeshRegion::getFrequencyForSlot(mesh_config.radio.region,
+                                       mesh_config.radio.preset,mesh_config.radio.channelNum):
+        MeshRegion::getFrequency(mesh_config.radio.region,mesh_config.radio.preset,preset_name);
     snprintf(radio_summary,sizeof(radio_summary),"%s / %s / %.3f MHz",
         MeshRegion::getRegionName(mesh_config.radio.region),preset_name,(double)frequency);
 }
@@ -959,82 +961,175 @@ static bool wizard_commit_radio(size_t region,size_t preset,uint8_t hops) {
     return true;
 }
 
+
 enum : uint16_t {
-    MESHTASTIC_SETTING_REGION = 1,
-    MESHTASTIC_SETTING_MODEM_PRESET = 2,
-    MESHTASTIC_SETTING_HOP_LIMIT = 3,
-    MESHTASTIC_SETTING_APPLY_RESTART = 4,
+ MT_REGION=1, MT_PRESET, MT_HOPS, MT_APPLY, MT_POWER, MT_SLOT,
+ MT_POS_INTERVAL, MT_POS_PRECISION, MT_POS_NOW, MT_TEL_INTERVAL, MT_TEL_NOW,
+ MT_INFO_INTERVAL, MT_INFO_NOW, MT_CARRIER, MT_AIRTIME, MT_NODE_ID
 };
-
-static size_t protocol_settings_count() {
-    return 4;
+static uint8_t cycle_interval(uint8_t n){return n==0?15:n==15?30:n==30?60:0;}
+static bool send_position_now(){
+ if(!runtime_ready)return false;
+ const auto gps=meshink_gps_read_status();
+ if(!gps.valid)return false; // no last-known position transmissions
+ int32_t lat=(int32_t)gps.latitude,lon=(int32_t)gps.longitude;
+ if(position_precision){
+  const int32_t q=position_precision==1?1000:10000;
+  lat=((lat>=0?lat+q/2:lat-q/2)/q)*q;
+  lon=((lon>=0?lon+q/2:lon-q/2)/q)*q;
+ }
+ uint8_t bytes[16]{};
+ size_t length=meshink_mt_wire::encode_position(bytes,lat,lon);
+ if(!length)return false;
+ const uint32_t packet=leaf.sendData(meshtastic_PortNum_POSITION_APP,bytes,length,
+                                     BROADCAST_ADDR,false);
+ if(!packet){++send_refused;return false;}
+ last_position_send_ms=millis();
+ Serial.printf("[T5-MESHTASTIC] position queued id=%lu\n",(unsigned long)packet);
+ return true;
 }
-
-static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& item) {
-    static char hop_value[16];
-    item = MeshInkProtocolSettingItem{};
-    switch(index){
-        case 0:
-            item={MESHTASTIC_SETTING_REGION,"REGION",
-                  MeshRegion::getRegionName(mesh_config.radio.region),true};
-            return true;
-        case 1:
-            item={MESHTASTIC_SETTING_MODEM_PRESET,"MODEM PRESET",
-                  MeshRegion::getPresetName(mesh_config.radio.preset,true),true};
-            return true;
-        case 2:
-            snprintf(hop_value,sizeof(hop_value),"%u HOPS",(unsigned)mesh_config.hopLimit);
-            item={MESHTASTIC_SETTING_HOP_LIMIT,"HOP LIMIT",hop_value,true};
-            return true;
-        case 3:
-            item={MESHTASTIC_SETTING_APPLY_RESTART,"APPLY RADIO CHANGES",
-                  protocol_settings_dirty?"RESTART REQUIRED":"CURRENT SETTINGS ACTIVE",
-                  protocol_settings_dirty};
-            return true;
-        default:
-            return false;
-    }
+static bool send_telemetry_now(){
+ if(!runtime_ready)return false;
+ uint8_t percent=0;uint16_t mv=0;
+ if(!meshink_power_read_battery_percent(percent)||
+    !meshink_power_read_battery_mv(mv))return false;
+ uint8_t bytes[32]{};
+ const size_t length=meshink_mt_wire::encode_device_telemetry(
+     bytes,now_utc(),percent,(float)mv/1000.0f);
+ if(!length)return false;
+ const uint32_t packet=leaf.sendData(meshtastic_PortNum_TELEMETRY_APP,bytes,length,
+                                     BROADCAST_ADDR,false);
+ if(!packet){++send_refused;return false;}
+ last_telemetry_send_ms=millis();
+ Serial.printf("[T5-MESHTASTIC] telemetry queued id=%lu\n",(unsigned long)packet);
+ return true;
 }
-
-static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id) {
-    switch(id){
-        case MESHTASTIC_SETTING_REGION:{
-            size_t count=0;
-            const auto* regions=MeshRegion::getAllRegions(count);
-            if(!regions||!count)return MeshInkProtocolSettingResult::Failed;
-            size_t current=0;
-            while(current<count&&regions[current].code!=mesh_config.radio.region)++current;
-            for(size_t step=1;step<=count;++step){
-                const RegionCode next=regions[(current+step)%count].code;
-                if(!supported_region(next))continue;
-                mesh_config.radio.region=next;
-                save_config();
-                protocol_settings_dirty=true;
-                update_radio_summary();
-                return MeshInkProtocolSettingResult::RestartRequired;
-            }
-            return MeshInkProtocolSettingResult::Failed;
-        }
-        case MESHTASTIC_SETTING_MODEM_PRESET:
-            mesh_config.radio.preset=(ModemPreset)(
-                ((uint8_t)mesh_config.radio.preset+1)%
-                ((uint8_t)libmeshtastic_leaf::PRESET_MEDIUM_TURBO+1));
-            save_config();
-            protocol_settings_dirty=true;
-            update_radio_summary();
-            return MeshInkProtocolSettingResult::RestartRequired;
-        case MESHTASTIC_SETTING_HOP_LIMIT:
-            mesh_config.hopLimit=(uint8_t)(mesh_config.hopLimit>=7?1:mesh_config.hopLimit+1);
-            save_config();
-            protocol_settings_dirty=true;
-            return MeshInkProtocolSettingResult::RestartRequired;
-        case MESHTASTIC_SETTING_APPLY_RESTART:
-            return protocol_settings_dirty
-                ?MeshInkProtocolSettingResult::RestartNow
-                :MeshInkProtocolSettingResult::Unchanged;
-        default:
-            return MeshInkProtocolSettingResult::Failed;
-    }
+static size_t protocol_settings_count(){return 16;}
+static bool protocol_settings_item(size_t n,MeshInkProtocolSettingItem& item){
+ static char text[48],other[48];
+ item={};
+ switch(n){
+ case 0:item={MT_REGION,"REGION",MeshRegion::getRegionName(mesh_config.radio.region),true};return true;
+ case 1:item={MT_PRESET,"MODEM PRESET",MeshRegion::getPresetName(mesh_config.radio.preset,true),true};return true;
+ case 2:snprintf(text,sizeof(text),"%u HOPS",(unsigned)mesh_config.hopLimit);
+        item={MT_HOPS,"HOP LIMIT",text,true};return true;
+ case 3:if(mesh_config.radio.txPower)
+         snprintf(text,sizeof(text),"%d dBm",(int)mesh_config.radio.txPower);
+        else strcpy(text,"AUTO / REGION");
+        item={MT_POWER,"TX POWER",text,true};return true;
+ case 4:if(mesh_config.radio.channelNum)
+         snprintf(text,sizeof(text),"SLOT %lu",(unsigned long)mesh_config.radio.channelNum);
+        else strcpy(text,"AUTOMATIC");
+        item={MT_SLOT,"FREQUENCY SLOT",text,true};return true;
+ case 5:if(position_interval_min)
+         snprintf(text,sizeof(text),"EVERY %u MIN",(unsigned)position_interval_min);
+        else strcpy(text,"OFF");
+        item={MT_POS_INTERVAL,"SHARE GPS POSITION",text,true};return true;
+ case 6:item={MT_POS_PRECISION,"GPS PRECISION",
+        position_precision==0?"EXACT":position_precision==1?"ABOUT 100 METRES":"ABOUT 1 KM",true};return true;
+ case 7:item={MT_POS_NOW,"SEND POSITION NOW",
+        meshink_gps_read_status().valid?"GPS FIX AVAILABLE":"NO GPS FIX",true};return true;
+ case 8:if(telemetry_interval_min)
+         snprintf(text,sizeof(text),"EVERY %u MIN",(unsigned)telemetry_interval_min);
+        else strcpy(text,"OFF");
+        item={MT_TEL_INTERVAL,"BATTERY TELEMETRY",text,true};return true;
+ case 9:item={MT_TEL_NOW,"SEND BATTERY NOW","DEVICE METRICS",true};return true;
+ case 10:if(nodeinfo_interval_hours)
+          snprintf(other,sizeof(other),"EVERY %u HOURS",(unsigned)nodeinfo_interval_hours);
+         else strcpy(other,"OFF");
+         item={MT_INFO_INTERVAL,"NODEINFO INTERVAL",other,true};return true;
+ case 11:item={MT_INFO_NOW,"ANNOUNCE NODE NOW","PUBLIC NAME / KEY",true};return true;
+ case 12:item={MT_CARRIER,"CARRIER SENSE",carrier_sense_enabled?"ON":"OFF",true};return true;
+ case 13:{const auto air=leaf.getAirtime();
+          snprintf(text,sizeof(text),"TX %.1f%% / CH %.1f%%",
+                   (double)air.txUtilizationPercent,(double)air.channelUtilizationPercent);
+          item={MT_AIRTIME,"AIRTIME / CHANNEL",text,false};return true;}
+ case 14:snprintf(text,sizeof(text),"!%08lx",(unsigned long)leaf.getNodeNum());
+         item={MT_NODE_ID,"MY NODE ID",text,false};return true;
+ case 15:item={MT_APPLY,"APPLY RADIO CHANGES",
+         protocol_settings_dirty?"RESTART REQUIRED":"CURRENT SETTINGS ACTIVE",
+         protocol_settings_dirty};return true;
+ default:return false;
+ }
+}
+static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id){
+ switch(id){
+ case MT_REGION:{
+  size_t count=0;const auto* list=MeshRegion::getAllRegions(count);
+  if(!list||!count)return MeshInkProtocolSettingResult::Failed;
+  size_t current=0;
+  while(current<count&&list[current].code!=mesh_config.radio.region)++current;
+  for(size_t step=1;step<=count;++step){
+   const auto next=list[(current+step)%count].code;
+   if(!supported_region(next))continue;
+   mesh_config.radio.region=next;mesh_config.radio.channelNum=0;
+   save_config();protocol_settings_dirty=true;update_radio_summary();
+   return MeshInkProtocolSettingResult::RestartRequired;
+  }
+  return MeshInkProtocolSettingResult::Failed;
+ }
+ case MT_PRESET:
+  mesh_config.radio.preset=(ModemPreset)(((uint8_t)mesh_config.radio.preset+1)%
+                     ((uint8_t)libmeshtastic_leaf::PRESET_MEDIUM_TURBO+1));
+  mesh_config.radio.channelNum=0;
+  save_config();protocol_settings_dirty=true;update_radio_summary();
+  return MeshInkProtocolSettingResult::RestartRequired;
+ case MT_HOPS:
+  mesh_config.hopLimit=(uint8_t)(mesh_config.hopLimit>=7?1:mesh_config.hopLimit+1);
+  save_config();protocol_settings_dirty=true;
+  return MeshInkProtocolSettingResult::RestartRequired;
+ case MT_POWER:{
+  const int8_t options[]={0,10,14,17,20,22};
+  size_t i=0;while(i<6&&options[i]!=mesh_config.radio.txPower)++i;
+  mesh_config.radio.txPower=options[(i+1)%6];
+  save_config();protocol_settings_dirty=true;
+  return MeshInkProtocolSettingResult::RestartRequired;
+ }
+ case MT_SLOT:{
+  const auto* region=MeshRegion::getRegion(mesh_config.radio.region);
+  if(!region)return MeshInkProtocolSettingResult::Failed;
+  const auto params=MeshRegion::getModemParams(mesh_config.radio.preset);
+  const uint32_t count=region->numSlots(params.bw);
+  mesh_config.radio.channelNum=mesh_config.radio.channelNum>=count?
+                               0:mesh_config.radio.channelNum+1;
+  save_config();protocol_settings_dirty=true;update_radio_summary();
+  return MeshInkProtocolSettingResult::RestartRequired;
+ }
+ case MT_POS_INTERVAL:
+  position_interval_min=cycle_interval(position_interval_min);
+  last_position_send_ms=millis();save_config();
+  return MeshInkProtocolSettingResult::Saved;
+ case MT_POS_PRECISION:
+  position_precision=(uint8_t)((position_precision+1)%3);save_config();
+  return MeshInkProtocolSettingResult::Saved;
+ case MT_POS_NOW:
+  return send_position_now()?MeshInkProtocolSettingResult::Saved:
+                             MeshInkProtocolSettingResult::Failed;
+ case MT_TEL_INTERVAL:
+  telemetry_interval_min=cycle_interval(telemetry_interval_min);
+  last_telemetry_send_ms=millis();save_config();
+  return MeshInkProtocolSettingResult::Saved;
+ case MT_TEL_NOW:
+  return send_telemetry_now()?MeshInkProtocolSettingResult::Saved:
+                              MeshInkProtocolSettingResult::Failed;
+ case MT_INFO_INTERVAL:
+  nodeinfo_interval_hours=nodeinfo_interval_hours==0?1:
+                          nodeinfo_interval_hours==1?3:
+                          nodeinfo_interval_hours==3?6:0;
+  leaf.setNodeInfoInterval((uint32_t)nodeinfo_interval_hours*3600U);
+  save_config();return MeshInkProtocolSettingResult::Saved;
+ case MT_INFO_NOW:
+  return runtime_ready&&leaf.sendNodeInfo()?
+         MeshInkProtocolSettingResult::Saved:MeshInkProtocolSettingResult::Failed;
+ case MT_CARRIER:
+  carrier_sense_enabled=!carrier_sense_enabled;
+  leaf.setCarrierSense(carrier_sense_enabled);
+  save_config();return MeshInkProtocolSettingResult::Saved;
+ case MT_APPLY:
+  return protocol_settings_dirty?MeshInkProtocolSettingResult::RestartNow:
+                                  MeshInkProtocolSettingResult::Unchanged;
+ default:return MeshInkProtocolSettingResult::Failed;
+ }
 }
 
 static void apply_owner(const char* name) {
@@ -1147,6 +1242,8 @@ static void setup() {
     leaf.setDefaultChannel(); // exactly one standard public primary channel
     leaf.setCarrierSense(carrier_sense_enabled);
     leaf.setNodeInfoInterval((uint32_t)nodeinfo_interval_hours*3600U);
+    last_position_send_ms=millis();
+    last_telemetry_send_ms=millis();
     provider->begin();
     ui_use_data_provider(provider);
     runtime_ready=true;
