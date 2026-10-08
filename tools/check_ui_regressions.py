@@ -1431,7 +1431,7 @@ assert "const int compose_y=chat_compose_top();" in source, "message composer dr
 assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
 assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;" in source, "long settings subtitles shrink before clipping"
-assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
+assert "const int detail_scale=ui_text_width(mesh_protocol_radio_preset_at(index).detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
 assert '"PATH HASH MODE"' not in source, "shared UI must not hard-code MeshCore path-hash settings"
 assert '"PATH HASH MODE"' in meshcore_protocol_source and "MESHCORE_SETTING_PATH_HASH" in meshcore_protocol_source, "MeshCore helper owns path-hash settings"
 assert "mesh_protocol_setting_item(" in source and "mesh_protocol_activate_setting(" in source, "Protocol Settings renders and activates helper-owned rows"
