@@ -158,6 +158,12 @@ if "${meshink-crypto.lib_deps}" not in unified_env:
     errors.append("platformio.ini: unified firmware must consume Crypto only through [meshink-crypto]")
 if meshtastic_crypto_pin in unified_env or "rweather/Crypto" in unified_env:
     errors.append("platformio.ini: protocol build hard-codes a Crypto provider instead of the shared selector")
+if "pre:tools/select_crypto_provider.py" not in unified_env:
+    errors.append("platformio.ini: unified firmware must resolve duplicate transitive Crypto providers before LDF")
+crypto_selector=(ROOT/"tools/select_crypto_provider.py").read_text(encoding="utf-8")
+for token in ("XEdDSA.h", "rweather/Crypto", "meshtastic/Crypto", "shutil.rmtree"):
+    if token not in crypto_selector:
+        errors.append(f"tools/select_crypto_provider.py: Crypto provider selector missing {token!r}")
 
 if errors:
     raise AssertionError("\n".join(errors))
