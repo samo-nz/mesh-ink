@@ -689,6 +689,42 @@ static void load_config() {
     update_radio_summary();
 }
 
+// The first-use wizard commits its selected region/preset only on confirmation.
+static RegionCode wizard_region(size_t index) {
+    size_t count=0,valid=0;
+    const auto* regions=MeshRegion::getAllRegions(count);
+    for(size_t i=0;regions&&i<count;++i){
+        if(!supported_region(regions[i].code))continue;
+        if(valid++==index)return regions[i].code;
+    }
+    return libmeshtastic_leaf::REGION_UNSET;
+}
+static size_t wizard_region_count() {
+    size_t count=0,valid=0;
+    const auto* regions=MeshRegion::getAllRegions(count);
+    for(size_t i=0;regions&&i<count;++i)if(supported_region(regions[i].code))++valid;
+    return valid;
+}
+static const char* wizard_region_name(size_t index) {
+    const auto region=wizard_region(index);
+    return supported_region(region)?MeshRegion::getRegionName(region):"";
+}
+static size_t wizard_preset_count() {
+    return (size_t)libmeshtastic_leaf::PRESET_MEDIUM_TURBO+1;
+}
+static const char* wizard_preset_name(size_t index) {
+    return index<wizard_preset_count()?MeshRegion::getPresetName((ModemPreset)index,true):"";
+}
+static bool wizard_commit_radio(size_t region,size_t preset,uint8_t hops) {
+    const auto selected=wizard_region(region);
+    if(!supported_region(selected)||preset>=wizard_preset_count()||hops<1||hops>7)return false;
+    mesh_config.radio.region=selected;
+    mesh_config.radio.preset=(ModemPreset)preset;
+    mesh_config.hopLimit=hops;
+    save_config();update_radio_summary();protocol_settings_dirty=true;
+    return true;
+}
+
 enum : uint16_t {
     MESHTASTIC_SETTING_REGION = 1,
     MESHTASTIC_SETTING_MODEM_PRESET = 2,
@@ -807,6 +843,18 @@ static void setup() {
     }
     if(!storage_mounted){
         Serial.println("[T5-MESHTASTIC] SPIFFS unavailable");
+        return;
+    }
+
+    // No Meshtastic RF transmissions before the region is confirmed in setup.
+    Preferences wizard_gate;
+    bool configured=false;
+    if(wizard_gate.begin("t5-ui",true)){
+        configured=wizard_gate.getBool("setup_mst",false);
+        wizard_gate.end();
+    }
+    if(!configured){
+        Serial.println("[T5-MESHTASTIC] first-use setup pending; LoRa startup deferred");
         return;
     }
 
@@ -980,6 +1028,12 @@ static const MeshInkProtocolBackend& backend() {
         b.provider=data_provider;
         b.refresh_ui_data=refresh_ui_data;
         b.send_active=send_active;
+
+        b.setup_region_count=wizard_region_count;
+        b.setup_region_name=wizard_region_name;
+        b.setup_preset_count=wizard_preset_count;
+        b.setup_preset_name=wizard_preset_name;
+        b.setup_commit_radio=wizard_commit_radio;
 
         b.settings_count=protocol_settings_count;
         b.settings_item=protocol_settings_item;
