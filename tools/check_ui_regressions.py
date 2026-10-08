@@ -1193,7 +1193,7 @@ assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not
 assert 'CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak"' in message_store_source and 'LEAF_INVALID_PATH[]="/meshtastic_messages.bad"' in message_store_source, "each protocol journal has an SPIFFS-compatible recovery backup"
 assert 'copy_legacy_meshcore_journal()' in message_store_source and 'memcmp(left,right,wanted)==0' in message_store_source, "original MeshCore journal is byte-verified and retained"
 assert 'mesh_protocol_descriptor().id==2?meshtastic_journal:meshcore_journal' in message_store_source, "each protocol uses a separate message journal"
-assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
+assert "existing journal invalid" in message_store_source and "preserving before recreate" in message_store_source, "existing invalid journal handling remains explicit and non-destructive"
 assert "static bool incomplete_direct_state(uint8_t state)" in message_store_source, "boot recovery identifies stale in-flight direct states"
 assert "item.kind!=(uint8_t)MeshInkMessageKind::Direct" in message_store_source, "boot recovery never rewrites channel sends"
 assert "write_record(physical,item)" in message_store_source, "stale in-flight direct sends are durably failed before history loads"
@@ -1823,3 +1823,18 @@ assert 'if(!SPIFFS.exists(archived)){archive_available=true;break;}' in message_
 assert 'SPIFFS.remove(invalid_path_);' not in message_store_source, "existing recovery archive is never removed"
 assert 'if(!SPIFFS.rename(path_,archived))' in message_store_source, "unsupported journal is preserved before replacement"
 assert 'if(!SPIFFS.rename(archived,path_))' in message_store_source, "failed initialization attempts to roll back the original"
+
+# 2.1.1-test.18: First-use Meshtastic journal must be created when missing,
+# not routed into invalid-file preservation. An inaccessible existing journal
+# must not be overwritten, and incomplete fresh creations are not retained.
+journal_begin=message_store_source.split("bool MeshInkMessageStore::begin()",1)[1].split("bool MeshInkMessageStore::read(",1)[0]
+assert 'if(!SPIFFS.exists(path_)){' in journal_begin, "explicit missing-file check before attempting journal open"
+assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index('File f=SPIFFS.open(path_,"r");'), "check existence before opening existing journal"
+absent_branch=journal_begin.split("if(!SPIFFS.exists(path_)){",1)[1].split('File f=SPIFFS.open(path_,"r");',1)[0]
+assert "const bool ok=create_empty();" in absent_branch and "return ok;" in absent_branch, "missing journal is initialized without archival"
+assert "SPIFFS.rename" not in absent_branch and "SPIFFS.remove" not in absent_branch, "missing journal must never be archived or removed"
+assert "ERROR existing journal cannot be opened" in journal_begin and "return false;" in journal_begin, "inaccessible existing journal is preserved"
+assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index("existing journal invalid"), "invalid-file recovery is only reachable for an existing file"
+new_journal=message_store_source.split("bool MeshInkMessageStore::create_empty()",1)[1].split("void MeshInkMessageStore::write_header()",1)[0]
+assert "const bool verified=verify&&verify.size()==expected_bytes" in new_journal, "newly created journal size and header checked"
+assert "removing incomplete new file" in new_journal, "partial first-use initialization is cleaned up so it can retry"
