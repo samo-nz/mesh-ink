@@ -310,7 +310,11 @@ class MeshtasticUiProvider final:public UiDataProvider {
                p.latitude < -90000000||p.latitude > 90000000||
                p.longitude < -180000000||p.longitude > 180000000)continue;
             PositionRecord* slot=writable_position(p.node);
-            if(slot){*slot=p;ensure(p.node);}
+            if(slot){
+                *slot=p;
+                if(NodeRecord* node=ensure(p.node))
+                    node->last_seen=max(node->last_seen,p.received_utc);
+            }
         }
         f.close();
         if(!valid)Serial.println("[T5-MESHTASTIC] WARN position snapshot invalid; no replacement");
@@ -344,8 +348,6 @@ public:
         PositionRecord* pos=writable_position(packet.header.from);
         if(!node||!pos)return;
         const bool first=pos->received_utc==0;
-        const bool changed=pos->latitude!=decoded.lat_e6||
-                           pos->longitude!=decoded.lon_e6;
         pos->latitude=decoded.lat_e6;pos->longitude=decoded.lon_e6;
         pos->received_utc=now_utc();
         node->last_seen=pos->received_utc;
@@ -354,7 +356,7 @@ public:
         const uint8_t left=packet.header.getHopLimit();
         node->last_hops=start>=left?(uint8_t)(start-left):0;
         // Throttle flash even if another node publishes every few seconds.
-        if((first||changed)&&(first||millis()-position_saved_at_>=300000UL))
+        if(first||millis()-position_saved_at_>=300000UL)
             if(!save_positions())Serial.println("[T5-MESHTASTIC] WARN position save failed");
         refresh(true);
         ui_request_data_refresh("meshtastic-position");
@@ -1016,7 +1018,9 @@ static uint8_t cycle_interval(uint8_t n){return n==0?15:n==15?30:n==30?60:0;}
 static bool send_position_now(){
  if(!runtime_ready)return false;
  const auto gps=meshink_gps_read_status();
- if(!gps.valid)return false; // no last-known position transmissions
+ if(!gps.valid||
+    meshink_gps_constellation_mode()==MeshInkGpsConstellationMode::None)
+    return false; // Disabled GPS and stale/no-fix positions must not transmit.
  int32_t lat=(int32_t)gps.latitude,lon=(int32_t)gps.longitude;
  if(position_precision){
   const int32_t q=position_precision==1?1000:10000;
