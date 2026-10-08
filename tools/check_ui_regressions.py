@@ -74,12 +74,19 @@ contains('}else if(!setup_complete){', "existing completed identity is preserved
 assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved line below setup keyboard"
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
 contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
-contains('fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);', "full e-paper redraw on first Contacts")
+assert "static void draw_welcome()" not in source, "legacy single-page onboarding has been removed"
+assert 'setup_meshcore_done=prefs.getBool("setup_mc",legacy_setup_complete);' in source, "legacy MeshCore installs retain completed setup"
+assert 'setup_meshtastic_done=prefs.getBool("setup_mst",false);' in source, "Meshtastic setup is tracked independently"
+assert 'if(screen==Screen::SetupName||screen==Screen::SetupRadio){' in source, "standard keyboard ENTER is reused in the wizard"
+assert 'setup_return_protocol' in source and 'Screen::SetupCancel' in source, "second protocol setup can be cancelled"
+assert 'setup_load_core_preset(-1)' in source, "MeshCore custom radio starts without inherited preset values"
+assert 'mesh_protocol_setup_commit_radio' in source, "Meshtastic wizard explicitly saves its region and modem preset"
+assert "static void draw_setup_protocol()" in source and "static void draw_setup_review()" in source, "shared setup has protocol selection and final review"
 contains('landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),metrics.action_key);', "landscape keyboard preserves DONE for name entry and LOGIN for repeater auth")
 assert 'if(was_setup)show_contacts_after_setup();' not in source, "landscape keyboard must not complete setup"
 assert source.count('save_node_name();')==1, "only the portrait SAVE may persist setup"
 contains('keyboard_visible=true;set_keyboard_orientation(false);\n        return true;', "landscape DONE returns to portrait without saving")
-contains('if(was_setup){\n            show_contacts_after_setup();', "portrait setup SAVE opens Contacts")
+assert "if(wizard_entry){" in source and "keyboard_visible=false;" in source[source.index("static bool handle_name_keyboard"):], "wizard keyboard ENTER only collapses input"
 
 contains("frontlight_brightness=30;", "new-device frontlight default")
 contains('prefs.getUChar("light_level",30)', "first-install brightness load")
@@ -419,7 +426,7 @@ assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in companion_notice_s
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
-contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
+contains("open_screen(setup_complete?Screen::Contacts:(setup_any_done?Screen::SetupName:Screen::Welcome));", "home retains unfinished wizard navigation")
 contains("static constexpr size_t LIST_ITEMS_PER_PAGE = 5;", "contacts/channels use paged list rows")
 contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering address later pages")
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
@@ -1388,7 +1395,7 @@ assert "const MessageBubbleGeometry geometry=chat_message_geometry(i);" in sourc
 
 # Test55: the chat/contact visual language extends across the rest of the UI
 # without changing touch geometry or adding heavyweight rendering state.
-render_body = source[source.index("static void draw_welcome()"):]
+render_body = source[source.index("static void draw_setup_protocol()"):]
 assert "ui_section_card(row);" in source[source.index("static void settings_row"):], "settings use shared rounded cards"
 assert "ui_action_button(" in source, "screens share one rounded action-button treatment"
 assert "rounded_box(rect.x,rect.y,rect.width,rect.height" in source[source.index("static void key("):source.index("static void draw_keyboard")], "portrait keyboard keys are rounded without changing key rectangles"
@@ -1638,7 +1645,7 @@ assert "esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED" in power_backe
 assert "retained_tab_for_screen" in source and "screen_for_retained_tab" in source, "UI maps nested screens to stable top-level tabs"
 assert "meshink_power_retain_ui_tab(retained_tab);" in source, "deep-sleep entry stores the current top-level tab"
 assert "if(meshink_power_get_retained_ui_tab(retained_tab)){" in source, "wake reads the retained top-level tab"
-assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promotion preserves a restored existing-user tab"
+assert "if(!setup_complete)screen=setup_any_done?Screen::SetupName:Screen::Welcome;" in source, "headless promotion restores the correct first-use protocol setup"
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
