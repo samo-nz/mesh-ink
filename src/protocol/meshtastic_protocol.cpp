@@ -297,18 +297,66 @@ class MeshtasticUiProvider final:public UiDataProvider {
         return true;
     }
     void load_positions(){
-        File f=SPIFFS.open(POSITIONS_PATH,"r");if(!f)return;
+        // A first-use Meshtastic node has no received positions yet. Missing
+        // storage is normal and must never be treated as a corrupt snapshot.
+        if(!SPIFFS.exists(POSITIONS_PATH))return;
+        File f=SPIFFS.open(POSITIONS_PATH,"r");
+        if(!f||f.isDirectory()){
+            Serial.printf("[T5-MESHTASTIC] WARN existing position snapshot cannot be opened path=%s; preserving\n",
+                          POSITIONS_PATH);
+            if(f)f.close();
+            return;
+        }
+        const size_t size=f.size();
         uint32_t header[2]{};
-        bool valid=f.read((uint8_t*)header,sizeof(header))==sizeof(header)&&
-                   header[0]==POSITION_MAGIC&&header[1]<=MAX_NODES&&
-                   f.size()==sizeof(header)+header[1]*sizeof(PositionRecord);
+        const size_t bytes_read=f.read((uint8_t*)header,sizeof(header));
+        bool valid=bytes_read==sizeof(header)&&header[0]==POSITION_MAGIC&&
+                   header[1]<=MAX_NODES&&
+                   size==sizeof(header)+(size_t)header[1]*sizeof(PositionRecord);
+        // Parse into a temporary collection. Never publish a partially loaded
+        // set of markers if the snapshot is truncated or malformed.
+        PositionRecord parsed[MAX_NODES]{};
         for(size_t i=0;valid&&i<header[1];++i){
-            PositionRecord p{};
-            valid=f.read((uint8_t*)&p,sizeof(p))==sizeof(p);
+            valid=f.read((uint8_t*)&parsed[i],sizeof(PositionRecord))==
+                  sizeof(PositionRecord);
             if(!valid)break;
+            const auto& p=parsed[i];
             if(!p.node||p.node==BROADCAST_ADDR||
                p.latitude < -90000000||p.latitude > 90000000||
-               p.longitude < -180000000||p.longitude > 180000000)continue;
+               p.longitude < -180000000||p.longitude > 180000000){
+                valid=false;
+                break;
+            }
+            for(size_t previous=0;previous<i;++previous)
+                if(parsed[previous].node==p.node){valid=false;break;}
+        }
+        f.close();
+        if(!valid){
+            Serial.printf("[T5-MESHTASTIC] WARN invalid position snapshot path=%s size=%u header_bytes=%u magic=%08lx count=%lu expected_record=%u; preserving\n",
+                          POSITIONS_PATH,(unsigned)size,(unsigned)bytes_read,
+                          (unsigned long)header[0],(unsigned long)header[1],
+                          (unsigned)sizeof(PositionRecord));
+            // Do not erase or replace potentially recoverable coordinates.
+            // Move them aside with a short, unused SPIFFS-compatible filename.
+            char archive[32]{};
+            for(unsigned attempt=0;attempt<=16;++attempt){
+                if(attempt==0)
+                    snprintf(archive,sizeof(archive),"/mt_positions.bad");
+                else
+                    snprintf(archive,sizeof(archive),"/mt_positions.bad.%u",attempt);
+                if(SPIFFS.exists(archive))continue;
+                if(SPIFFS.rename(POSITIONS_PATH,archive))
+                    Serial.printf("[T5-MESHTASTIC] invalid position snapshot archived as %s\n",archive);
+                else
+                    Serial.printf("[T5-MESHTASTIC] WARN could not archive position snapshot as %s; original retained\n",
+                                  archive);
+                return;
+            }
+            Serial.println("[T5-MESHTASTIC] WARN position recovery filenames exhausted; original retained");
+            return;
+        }
+        for(size_t i=0;i<header[1];++i){
+            const PositionRecord& p=parsed[i];
             PositionRecord* slot=writable_position(p.node);
             if(slot){
                 *slot=p;
@@ -316,8 +364,9 @@ class MeshtasticUiProvider final:public UiDataProvider {
                     node->last_seen=max(node->last_seen,p.received_utc);
             }
         }
-        f.close();
-        if(!valid)Serial.println("[T5-MESHTASTIC] WARN position snapshot invalid; no replacement");
+        if(header[1])
+            Serial.printf("[T5-MESHTASTIC] loaded %lu received-node positions\n",
+                          (unsigned long)header[1]);
     }
 public:
     void receive_telemetry(const MeshPacket& packet){
