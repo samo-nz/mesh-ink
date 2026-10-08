@@ -384,7 +384,9 @@ static void rollback_files(size_t count){
 const char* meshink_backup_error(){return last_error;}
 
 size_t meshink_backup_list(uint8_t protocol,MeshInkBackupInfo* out,size_t capacity){
-    if(!out||!capacity||!sd_ready())return 0;
+    last_error[0]=0;
+    if(!out||!capacity)return 0;
+    if(!sd_ready()){fail("INSERT SD CARD OR CHECK CONNECTION");return 0;}
     File root=meshink_storage_open("/");
     if(!root||!root.isDirectory())return 0;
     size_t count=0;
@@ -414,7 +416,7 @@ size_t meshink_backup_list(uint8_t protocol,MeshInkBackupInfo* out,size_t capaci
     last_error[0]=0;return count;
 }
 uint8_t meshink_backup_categories(uint8_t protocol,const char* filename){
-    if(!sd_ready())return 0;
+    if(!sd_ready()){fail("INSERT SD CARD OR CHECK CONNECTION");return 0;}
     Header header{};Part parts[MAX_ENTRIES]{};
     return inspect(filename,protocol,header,parts,true)?header.categories:0;
 }
