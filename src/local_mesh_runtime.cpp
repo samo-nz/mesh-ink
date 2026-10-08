@@ -186,6 +186,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
     char detail_identity_[24]{},detail_seen_[72]{},detail_advert_age_[72]{};
     char detail_position_source_[72]{},detail_route_[40]{},detail_position_[64]{};
     char detail_access_[20]="NOT LOGGED IN";
+    char detail_role_[20]="UNKNOWN";
     char detail_status_[320]="NOT REQUESTED",detail_telemetry_[120]="NOT REQUESTED",detail_path_[64]="NOT REQUESTED",detail_trace_[240]="NOT REQUESTED";
     bool detail_request_active_=false,detail_login_active_=false,detail_authenticated_=false,request_gps_received_=false;
     UiNodeInfoRequest detail_request_type_=UiNodeInfoRequest::None;int32_t detail_lat_=0,detail_lon_=0;
@@ -713,6 +714,7 @@ public:
             strcpy(self->detail_position_,"NO SAVED POSITION");
             strcpy(self->detail_position_source_,"NO GPS REPORTED");
         }
+        format_node_role(detail_contact_.type,self->detail_role_,sizeof(self->detail_role_));
         uint32_t capabilities=UI_NODE_CAP_TELEMETRY|UI_NODE_CAP_PATH|UI_NODE_CAP_TRACE;
         if(detail_contact_.type==ADV_TYPE_REPEATER||detail_contact_.type==ADV_TYPE_ROOM)
             capabilities|=UI_NODE_CAP_STATUS|UI_NODE_CAP_LOGIN;
@@ -720,7 +722,7 @@ public:
              self->detail_route_,self->detail_position_,self->detail_status_,
              self->detail_telemetry_,self->detail_path_,self->detail_trace_,self->detail_lat_,
              self->detail_lon_,detail_request_active_,detail_request_type_,
-             detail_login_active_,detail_authenticated_,self->detail_access_,
+             detail_login_active_,detail_authenticated_,self->detail_access_,self->detail_role_,
              meshcore_ui_role(detail_contact_.type),capabilities,detail_saved_,
              self->detail_advert_age_,self->detail_position_source_};
         return true;
