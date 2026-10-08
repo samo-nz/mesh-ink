@@ -3033,9 +3033,18 @@ static void draw_help() {
     ui_draw_wrapped("Pan or pinch, double tap to zoom in, triple tap to zoom out.",
                     layout.content_text_x,maps.y+ui_h(48),maps.width-ui_w(32),2,0,false,3);
 
-    ui_text("BLUETOOTH COMPANION",layout.content_text_x,companion.y+ui_h(12),3,0,true);
-    ui_draw_wrapped("Reboots into the active protocol companion mode. Reboot again to return to the local UI.",
-                    layout.content_text_x,companion.y+ui_h(48),companion.width-ui_w(32),2,0,false,5);
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_COMPANION)){
+        ui_text("BLUETOOTH COMPANION",layout.content_text_x,companion.y+ui_h(12),3,0,true);
+        ui_draw_wrapped("Reboots into the active protocol companion mode. Reboot again to return to the local UI.",
+                        layout.content_text_x,companion.y+ui_h(48),companion.width-ui_w(32),2,0,false,5);
+    }else{
+        ui_text("ACTIVE PROTOCOL",layout.content_text_x,companion.y+ui_h(12),3,0,true);
+        char protocol_help[160]{};
+        snprintf(protocol_help,sizeof(protocol_help),"%s is active. Change protocols or protocol-specific options under More > Settings.",
+                 mesh_protocol_name());
+        ui_draw_wrapped(protocol_help,layout.content_text_x,companion.y+ui_h(48),
+                        companion.width-ui_w(32),2,0,false,5);
+    }
 }
 
 static void draw_meshink_logo(int top,bool compact=false);
@@ -4051,7 +4060,7 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
     const auto metrics=keyboard_metrics(false);
-    // In Radio Settings, tapping above the keyboard dismisses name editing.
+    // In Protocol Settings, tapping above the keyboard dismisses name editing.
     // First-time setup keeps its explicit setup controls and save flow.
     if(screen==Screen::ProtocolSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
     if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
@@ -4238,10 +4247,10 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             for(size_t i=0;i<count;++i){
                 if(!hit_outer_row(x,y,settings_menu_y(i)))continue;
                 switch(items[i].action){
-                    case SettingsAction::IdentityRadio:open_screen(Screen::ProtocolSettings);break;
+                    case SettingsAction::Protocol:open_screen(Screen::ProtocolSelect);break;
+                    case SettingsAction::ProtocolSettings:protocol_settings_page=0;open_screen(Screen::ProtocolSettings);break;
                     case SettingsAction::Gps:open_screen(Screen::GpsSettings);break;
                     case SettingsAction::DateTime:open_screen(Screen::DateTime);break;
-                    case SettingsAction::Privacy:open_screen(Screen::PrivacySettings);break;
                     case SettingsAction::DisplayPower:open_screen(Screen::DisplaySettings);break;
                     case SettingsAction::About:open_screen(Screen::About);break;
                 }
@@ -4249,12 +4258,79 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         }
-        case Screen::ProtocolSettings:
+        case Screen::ProtocolSelect:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
-            if(hit_outer_row(x,y,120)){replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,250)){preset_return_screen=Screen::ProtocolSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}
-            if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_PATH_HASH)&&hit_outer_row(x,y,510)){mesh_protocol_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            for(size_t i=0;i<mesh_protocol_available_count()&&i<4;++i){
+                if(!hit_outer_row(x,y,protocol_select_row_y(i)))continue;
+                const auto* protocol=mesh_protocol_available(i);
+                if(!protocol)return true;
+                if(protocol->id==mesh_protocol_descriptor().id){
+                    show_toast("PROTOCOL ALREADY ACTIVE");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                    return true;
+                }
+                if(!mesh_protocol_select_for_next_boot(protocol->id)){
+                    show_toast("PROTOCOL SWITCH FAILED");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                    return true;
+                }
+                char switching[48]{};
+                snprintf(switching,sizeof(switching),"RESTARTING INTO %s",protocol->name);
+                show_toast(switching);
+                draw_screen();refresh(MeshInkRefreshMode::FastGray16);
+                mesh_protocol_restart_into(protocol->id);
+                return true;
+            }
             return true;
+        case Screen::ProtocolSettings:{
+            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
+            const size_t count=protocol_settings_total_count();
+            clamp_list_page(protocol_settings_page,count);
+            const size_t first=protocol_settings_page*LIST_ITEMS_PER_PAGE;
+            for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                if(!hit_outer_row(x,y,protocol_settings_row_y(row)))continue;
+                ProtocolSettingsRowKind kind{};
+                const char* title="";const char* value="";
+                uint16_t backend_id=0;bool editable=true;
+                if(!protocol_settings_row(first+row,kind,title,value,backend_id,editable))return true;
+                if(!editable){
+                    show_toast(value&&value[0]?value:"READ ONLY");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                    return true;
+                }
+                if(kind==ProtocolSettingsRowKind::NodeName){
+                    replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;
+                    text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
+                    return true;
+                }
+                if(kind==ProtocolSettingsRowKind::RadioPreset){
+                    preset_return_screen=Screen::ProtocolSettings;
+                    screen=Screen::Presets;
+                    preset_page=selected_preset/PRESETS_PER_PAGE;
+                    draw_screen();refresh(MeshInkRefreshMode::FastGray16);
+                    return true;
+                }
+                const auto result=mesh_protocol_activate_setting(backend_id);
+                switch(result){
+                    case MeshInkProtocolSettingResult::Saved:
+                        show_toast("SETTING SAVED");break;
+                    case MeshInkProtocolSettingResult::RestartRequired:
+                        show_toast("SAVED - RESTART TO APPLY");break;
+                    case MeshInkProtocolSettingResult::RestartNow:
+                        show_toast("RESTARTING...");
+                        draw_screen();refresh(MeshInkRefreshMode::FastGray16);
+                        mesh_protocol_restart_into(mesh_protocol_descriptor().id);
+                        return true;
+                    case MeshInkProtocolSettingResult::Unchanged:
+                        show_toast("NO CHANGE");break;
+                    default:
+                        show_toast("SETTING FAILED");break;
+                }
+                draw_screen();refresh(MeshInkRefreshMode::Direct);
+                return true;
+            }
+            return true;
+        }
         case Screen::GpsSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,120)){open_screen(Screen::GpsTuning);return true;}
@@ -4348,7 +4424,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::PrivacySettings:
-            if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
+            if(hit_header_back(x,y)){open_screen(Screen::ProtocolSettings);return true;}
             for(uint8_t i=0;i<6;++i){
                 if(!hit_outer_row(x,y,130+i*118))continue;
                 mesh_protocol_toggle_privacy(i);
@@ -5150,7 +5226,21 @@ void ui_loop() {
             open_screen(Screen::Maps);
             continue;
         }
-        if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&
+        if(screen==Screen::ProtocolSettings&&!keyboard_visible&&
+           abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
+            const size_t count=protocol_settings_total_count();
+            clamp_list_page(protocol_settings_page,count);
+            const size_t pages=list_page_count(count);
+            int next=(int)protocol_settings_page+(tap.dy<0?1:-1);
+            if(next<0)next=0;
+            if(next>=(int)pages)next=(int)pages-1;
+            if((size_t)next!=protocol_settings_page){
+                protocol_settings_page=(size_t)next;
+                T5_DEBUGF(T5_LOG_UI,"[T5-UI] protocol-settings page=%u/%u\n",
+                          (unsigned)(protocol_settings_page+1),(unsigned)pages);
+                draw_screen();refresh(MeshInkRefreshMode::FastGray16);
+            }
+        }else if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&
            abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=!ui_data?0:
                 (screen==Screen::Contacts?ui_data->contact_count():
