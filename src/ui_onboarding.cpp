@@ -235,6 +235,7 @@ static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
 static size_t contacts_page = 0;
 static size_t channels_page = 0;
 static size_t discovery_page = 0;
+static size_t protocol_settings_page = 0;
 static uint8_t chat_page = 0;
 static constexpr size_t CHAT_PAGE_ANCHORS=250;
 static uint16_t chat_page_starts[CHAT_PAGE_ANCHORS]{};
@@ -299,7 +300,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu, Diagnostics,
-    Settings, RadioSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
+    Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static uint8_t retained_wake_tab=0;
@@ -2540,18 +2541,18 @@ static void draw_discovery() {
     draw_list_page_footer(discovery_page,count);
 }
 
-enum class MoreAction:uint8_t{Discovery,Advertise,Settings,Companion,Diagnostics,Help};
+enum class MoreAction:uint8_t{Settings,Discovery,Advertise,Companion,Diagnostics,Help};
 struct MoreMenuItem{const char* title;const char* subtitle;MoreAction action;};
 
 static size_t more_menu_items(MoreMenuItem out[6]){
     size_t count=0;
+    out[count++]={"SETTINGS","Device and protocol configuration",MoreAction::Settings};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_DISCOVERY))
         out[count++]={"DISCOVERED ADVERTS","Recent nodes heard",MoreAction::Discovery};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE))
-        out[count++]={"ADVERTISE","Zero hop or flood",MoreAction::Advertise};
-    out[count++]={"SETTINGS","Device and radio",MoreAction::Settings};
+        out[count++]={"ADVERTISE","Share this node on the mesh",MoreAction::Advertise};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_COMPANION))
-        out[count++]={"BLUETOOTH COMPANION","Restart in companion mode",MoreAction::Companion};
+        out[count++]={"BLUETOOTH COMPANION","Restart in protocol companion mode",MoreAction::Companion};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_DIAGNOSTICS))
         out[count++]={"DIAGNOSTICS","Live protocol and radio stats",MoreAction::Diagnostics};
     out[count++]={"HELP","Using MeshInk",MoreAction::Help};
@@ -2624,19 +2625,18 @@ static void settings_info_row(const char* title,const char* subtitle,int referen
                 subtitle_width,subtitle_scale,0,false);
 }
 
-enum class SettingsAction:uint8_t{IdentityRadio,Gps,DateTime,Privacy,DisplayPower,About};
+enum class SettingsAction:uint8_t{Protocol,ProtocolSettings,Gps,DateTime,DisplayPower,About};
 struct SettingsMenuItem{const char* title;const char* subtitle;SettingsAction action;};
 
 static size_t settings_menu_items(SettingsMenuItem out[6]){
     size_t count=0;
-    out[count++]={"ID & RADIO",active_radio_label(),SettingsAction::IdentityRadio};
+    out[count++]={"PROTOCOL",mesh_protocol_name(),SettingsAction::Protocol};
+    out[count++]={"PROTOCOL SETTINGS","Identity, radio and protocol features",SettingsAction::ProtocolSettings};
     if(meshink_board_has_gps())
-        out[count++]={"LOCATION & GPS","Position, interval, advert",SettingsAction::Gps};
-    out[count++]={"DATE & TIME","Clock, source, timezone",SettingsAction::DateTime};
-    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_PRIVACY))
-        out[count++]={"PRIVACY","Contacts and telemetry",SettingsAction::Privacy};
-    out[count++]={"DISPLAY & POWER","Frontlight, refresh, standby",SettingsAction::DisplayPower};
-    out[count++]={"ABOUT","Firmware and device info",SettingsAction::About};
+        out[count++]={"LOCATION & GPS","Position, receiver and sharing",SettingsAction::Gps};
+    out[count++]={"DATE & TIME","Clock, source and timezone",SettingsAction::DateTime};
+    out[count++]={"DISPLAY & POWER","Frontlight, refresh and standby",SettingsAction::DisplayPower};
+    out[count++]={"ABOUT","Firmware, device and protocol info",SettingsAction::About};
     return count;
 }
 
@@ -2650,17 +2650,81 @@ static void draw_settings() {
         settings_row(items[i].title,items[i].subtitle,settings_menu_y(i));
 }
 
-static void draw_radio_settings() {
-    draw_app_header("ID & RADIO",true);settings_row("NODE NAME",node_name,120);
-    settings_row("REGION PRESET",active_radio_label(),250);
-    settings_row("ACTIVE RADIO",active_radio_label(),380);
-    if(!keyboard_visible&&mesh_protocol_has(MESHINK_PROTOCOL_CAP_PATH_HASH))settings_row("PATH HASH MODE",path_hash_label(),510);
-    if(keyboard_visible){draw_keyboard();}
+static int protocol_select_row_y(size_t index){return 150+(int)index*150;}
+
+static void draw_protocol_select() {
+    draw_app_header("SELECT PROTOCOL",true);
+    const size_t count=mesh_protocol_available_count();
+    for(size_t i=0;i<count&&i<4;++i){
+        const auto* protocol=mesh_protocol_available(i);
+        if(!protocol)continue;
+        char subtitle[72]{};
+        if(protocol->id==mesh_protocol_descriptor().id)
+            snprintf(subtitle,sizeof(subtitle),"ACTIVE / %s",protocol->core_name);
+        else
+            snprintf(subtitle,sizeof(subtitle),"%s / TAP TO SWITCH",protocol->core_name);
+        settings_row(protocol->name,subtitle,protocol_select_row_y(i));
+    }
+    const MeshInkUiLayout& layout=portrait_layout();
+    ui_draw_wrapped("Changing protocol restarts MeshInk. Messages and protocol settings are kept for switching back.",
+                    layout.section_margin,ui_y(760),layout.section_width,2,0,false,4);
 }
 
-static void draw_radio_name_fast() {
-    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");
-    settings_row("NODE NAME",node_name,120);
+enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,Backend};
+
+static size_t protocol_settings_total_count(){
+    return 1+(mesh_protocol_supports_radio_presets()?1:0)+mesh_protocol_setting_count();
+}
+
+static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
+                                  const char*& title,const char*& value,
+                                  uint16_t& backend_id,bool& editable){
+    backend_id=0;editable=true;
+    if(index==0){
+        kind=ProtocolSettingsRowKind::NodeName;
+        title="NODE NAME";value=node_name;
+        return true;
+    }
+    size_t cursor=1;
+    if(mesh_protocol_supports_radio_presets()){
+        if(index==cursor){
+            kind=ProtocolSettingsRowKind::RadioPreset;
+            title="RADIO PRESET";value=active_radio_label();
+            return true;
+        }
+        ++cursor;
+    }
+    MeshInkProtocolSettingItem item{};
+    if(!mesh_protocol_setting_item(index-cursor,item))return false;
+    kind=ProtocolSettingsRowKind::Backend;
+    title=item.title;value=item.value;backend_id=item.id;editable=item.editable;
+    return true;
+}
+
+static int protocol_settings_row_y(size_t row){return 118+(int)row*136;}
+
+static void draw_protocol_settings() {
+    char header[36]{};
+    snprintf(header,sizeof(header),"%s SETTINGS",mesh_protocol_name());
+    draw_app_header(header,true);
+    const size_t count=protocol_settings_total_count();
+    clamp_list_page(protocol_settings_page,count);
+    const size_t first=protocol_settings_page*LIST_ITEMS_PER_PAGE;
+    for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+        ProtocolSettingsRowKind kind{};
+        const char* title="";const char* value="";
+        uint16_t id=0;bool editable=true;
+        if(!protocol_settings_row(first+row,kind,title,value,id,editable))continue;
+        if(editable)settings_row(title,value,protocol_settings_row_y(row));
+        else settings_info_row(title,value,protocol_settings_row_y(row));
+    }
+    draw_page_indicator(protocol_settings_page,list_page_count(count),ui_y(820));
+    if(keyboard_visible)draw_keyboard();
+}
+
+static void draw_protocol_name_fast() {
+    MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-protocol-name-draw");
+    settings_row("NODE NAME",node_name,protocol_settings_row_y(0));
 }
 
 static const char* gps_mode_label(){
@@ -3283,17 +3347,17 @@ static void draw_screen() {
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
-        case Screen::Settings:draw_settings();break;case Screen::RadioSettings:draw_radio_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
+        case Screen::Settings:draw_settings();break;case Screen::ProtocolSelect:draw_protocol_select();break;case Screen::ProtocolSettings:draw_protocol_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
         case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
         case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::RadioSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
         draw_bottom_nav(screen==Screen::ContactChat?0:1);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||screen==Screen::Diagnostics||
-            (settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible)))
+            (settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
 }
@@ -3989,7 +4053,7 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     const auto metrics=keyboard_metrics(false);
     // In Radio Settings, tapping above the keyboard dismisses name editing.
     // First-time setup keeps its explicit setup controls and save flow.
-    if(screen==Screen::RadioSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+    if(screen==Screen::ProtocolSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
     if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
         if(x>=meshink_keyboard::delete_split(metrics)){
@@ -4025,7 +4089,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
-    if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
+    if(screen==Screen::ProtocolSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                               !keyboard_visible&&chat_page==0;
     if(((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
@@ -4174,7 +4238,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             for(size_t i=0;i<count;++i){
                 if(!hit_outer_row(x,y,settings_menu_y(i)))continue;
                 switch(items[i].action){
-                    case SettingsAction::IdentityRadio:open_screen(Screen::RadioSettings);break;
+                    case SettingsAction::IdentityRadio:open_screen(Screen::ProtocolSettings);break;
                     case SettingsAction::Gps:open_screen(Screen::GpsSettings);break;
                     case SettingsAction::DateTime:open_screen(Screen::DateTime);break;
                     case SettingsAction::Privacy:open_screen(Screen::PrivacySettings);break;
@@ -4185,10 +4249,10 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         }
-        case Screen::RadioSettings:
+        case Screen::ProtocolSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(hit_outer_row(x,y,120)){replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,250)){preset_return_screen=Screen::RadioSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}
+            if(hit_outer_row(x,y,250)){preset_return_screen=Screen::ProtocolSettings;screen=Screen::Presets;preset_page=selected_preset/PRESETS_PER_PAGE;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;}
             if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_PATH_HASH)&&hit_outer_row(x,y,510)){mesh_protocol_cycle_path_hash();show_toast("PATH MODE SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             return true;
         case Screen::GpsSettings:
@@ -5193,8 +5257,8 @@ void ui_loop() {
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
            keyboard_visible&&keyboard_message_mode&&!keyboard_landscape)
             draw_message_entry_fast();
-        else if(screen==Screen::RadioSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)
-            draw_radio_name_fast();
+        else if(screen==Screen::ProtocolSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)
+            draw_protocol_name_fast();
         else
             draw_screen();
         refresh(MeshInkRefreshMode::Direct);
@@ -5406,7 +5470,7 @@ void ui_apply_initial_radio_preset(){
     // after the protocol helper has loaded its settings, before the UI becomes interactive.
     // Do not override a completed installation's stored radio configuration,
     // and honour KEEP CURRENT as a deliberate no-change selection.
-    if(setup_complete||selected_preset==0)return;
+    if(setup_complete||selected_preset==0||!mesh_protocol_supports_radio_presets())return;
     if(apply_selected_preset()){
         const Preset& preset=PRESETS[selected_preset];
         T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] initial radio preset %s: %lu.%03lu MHz SF%u BW%.1f CR%u %uB\n",
