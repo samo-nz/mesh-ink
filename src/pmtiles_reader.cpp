@@ -65,6 +65,10 @@ struct LeafSlot {
 LeafSlot leaves[LEAF_CACHE_SLOTS]{};
 uint32_t leaf_age = 0;
 char cached_path[160]{};
+// Archive-wide failures are not retried for each tile/zoom. A remount resets.
+constexpr size_t MAX_FAILED_ARCHIVES=8;
+char failed_archives[MAX_FAILED_ARCHIVES][160]{};
+size_t failed_count=0;
 bool prepared = false;
 // A map render keeps one archive file open for its repeated tile lookups.
 bool frame_active = false, io_failed = false;
@@ -189,28 +193,29 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     constexpr size_t OUTPUT_GUARD = 32;
     constexpr size_t INTERNAL_DECODE_LIMIT = 16 * 1024;
     if (output_size > SIZE_MAX - OUTPUT_GUARD) return false;
-    const bool internal_output = output_size <= INTERNAL_DECODE_LIMIT;
-    output = (uint8_t*)(internal_output
-        ? heap_caps_malloc(output_size + OUTPUT_GUARD,
-                           MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
-        : map_alloc(output_size + OUTPUT_GUARD));
-    if (!output) {
-        Serial.printf("[T5-PMT] gzip output allocation failed (%u bytes)\n",
-                      (unsigned)output_size);
-        return false;
-    }
-    memset(output + output_size, 0xa5, OUTPUT_GUARD);
-    // tinfl_decompress_mem_to_mem() puts this large struct on loopTask's
-    // stack. The low-level API lets us keep it on the internal heap.
+    // Reserve mandatory ROM-compatible scratch FIRST; output allocation must
+    // leave internal heap headroom for the decoder and other UI services.
     tinfl_decompressor* decoder = (tinfl_decompressor*)heap_caps_malloc(
         sizeof(tinfl_decompressor), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!decoder) {
         Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes)\n",
                       (unsigned)sizeof(tinfl_decompressor));
-        free(output);
-        output = nullptr;
         return false;
     }
+    constexpr size_t INTERNAL_HEADROOM=16*1024;
+    const size_t wanted=output_size+OUTPUT_GUARD;
+    if (output_size<=INTERNAL_DECODE_LIMIT &&
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)>=wanted &&
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)>=wanted+INTERNAL_HEADROOM)
+        output=(uint8_t*)heap_caps_malloc(wanted,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    if (!output)output=(uint8_t*)map_alloc(wanted);
+    if (!output) {
+        Serial.printf("[T5-PMT] gzip output allocation failed (%u bytes)\n",
+                      (unsigned)output_size);
+        free(decoder);
+        return false;
+    }
+    memset(output + output_size, 0xa5, OUTPUT_GUARD);
     tinfl_init(decoder);
     size_t input_length = in_size - 8 - pos;
     size_t actual = output_size;
@@ -377,6 +382,32 @@ const Entry* select_entry(const Directory& d, uint64_t id) {
 }
 } // namespace
 
+bool pmtiles_archive_failed(const char* path) {
+    if(!path)return false;
+    for(size_t i=0;i<failed_count;++i)
+        if(!strcmp(failed_archives[i],path))return true;
+    return false;
+}
+
+void pmtiles_disable_archive(const char* path) {
+    if(!path||!*path||pmtiles_archive_failed(path))return;
+    if(failed_count<MAX_FAILED_ARCHIVES){
+        strncpy(failed_archives[failed_count],path,sizeof(failed_archives[0])-1);
+        failed_archives[failed_count][sizeof(failed_archives[0])-1]=0;
+        ++failed_count;
+    }
+    Serial.printf("[T5-PMT] disabled archive until SD remount: %s\n",path);
+    if(!strcmp(cached_path,path)){
+        clear_directory(root);
+        clear_leaves();
+        archive=Archive{};
+        cached_path[0]=0;
+        prepared=false;
+    }
+    if(!strcmp(frame_path,path))close_frame_file();
+    io_failed=false; // Archive-local failure must not abort unrelated loose PNGs.
+}
+
 void pmtiles_begin_frame() {
     // Keep the active archive handle open across map renders. With FATFS
     // fast-seek, opening a large archive also builds its cluster-link map and
@@ -394,7 +425,7 @@ void pmtiles_end_frame() {
 }
 
 bool pmtiles_warm_archive(const char* path) {
-    if(!path||!*path)return false;
+    if(!path||!*path||pmtiles_archive_failed(path))return false;
     perf=PmtilesPerfStats{};
     io_failed=false;
     if(!frame_file||strcmp(frame_path,path)) {
@@ -402,24 +433,14 @@ bool pmtiles_warm_archive(const char* path) {
         const uint32_t open_started=perf_now_us();
         frame_file=meshink_storage_open(path);
         perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
-        if(!frame_file){io_failed=true;return false;}
+        if(!frame_file){pmtiles_disable_archive(path);return false;}
         strncpy(frame_path,path,sizeof(frame_path)-1);
         frame_path[sizeof(frame_path)-1]=0;
     }
     const uint32_t prepare_started=perf_now_us();
     const bool ok=prepare(frame_file,path);
     perf.prepare_us+=(uint32_t)(perf_now_us()-prepare_started);
-    if(!ok&&io_failed) {
-        // A transient warmup read must not cache this archive permanently as
-        // unsupported. Leave later Maps access free to reopen and retry it.
-        close_frame_file();
-        clear_directory(root);
-        clear_leaves();
-        archive=Archive{};
-        cached_path[0]=0;
-        prepared=false;
-        io_failed=false;
-    }
+    if(!ok)pmtiles_disable_archive(path);
     return ok;
 }
 
@@ -443,12 +464,14 @@ void pmtiles_reset() {
     prepared = false;
     io_failed = false;
     perf = PmtilesPerfStats{};
+    memset(failed_archives,0,sizeof(failed_archives));
+    failed_count=0;
 }
 
 bool pmtiles_find_png(const char* path, int zoom, int x, int y,
                       PmtilesPngRange& range) {
     range = {};
-    if (!path || zoom < 0 || zoom > 24 ||
+    if (!path || pmtiles_archive_failed(path) || zoom < 0 || zoom > 24 ||
         x < 0 || y < 0 || (uint32_t)x >= (1U << zoom) ||
         (uint32_t)y >= (1U << zoom)) return false;
     MeshInkStorageFile local_file;
@@ -459,19 +482,20 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             const uint32_t open_started=perf_now_us();
             frame_file = meshink_storage_open(path);
             perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
-            if (!frame_file) { io_failed = true; return false; }
+            if (!frame_file) { pmtiles_disable_archive(path); return false; }
             strncpy(frame_path, path, sizeof(frame_path) - 1);
             frame_path[sizeof(frame_path) - 1] = 0;
         }
         file = &frame_file;
     } else {
         local_file = meshink_storage_open(path);
-        if (!local_file) { io_failed = true; return false; }
+        if (!local_file) { pmtiles_disable_archive(path); return false; }
         file = &local_file;
     }
     const uint32_t prepare_started=perf_now_us();
     const bool prepared_ok=prepare(*file, path);
     perf.prepare_us+=(uint32_t)(perf_now_us()-prepare_started);
+    if(!prepared_ok)pmtiles_disable_archive(path);
     const bool ready = prepared_ok &&
         zoom >= archive.min_zoom && zoom <= archive.max_zoom;
     if (!ready) {
@@ -529,14 +553,17 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             slot->length = 0;
             ++perf.leaf_loads;
             if (!parse_directory(*file, archive.leaf_offset + entry->offset,
-                                 entry->length, slot->directory))
+                                 entry->length, slot->directory)) {
+                pmtiles_disable_archive(path);
                 break;
+            }
             slot->offset = entry->offset;
             slot->length = entry->length;
         }
         slot->age = ++leaf_age;
         directory = &slot->directory;
     }
+    if(io_failed)pmtiles_disable_archive(path);
     if (local_file) local_file.close();
     return false;
 }

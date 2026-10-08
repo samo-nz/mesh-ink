@@ -9,6 +9,7 @@
 #include <SPIFFS.h>
 #include <Preferences.h>
 #include <string.h>
+#include <esp_heap_caps.h>
 
 namespace {
 using meshink_backup_format::Header;
@@ -55,13 +56,36 @@ struct SetupSnapshot {
 static char last_error[84]="";
 static bool restore_quiesced=false;
 static uint8_t io[512];
-static uint8_t nvs_data[4096];
-static uint8_t previous_nvs[4096];
+constexpr size_t BACKUP_NVS_BYTES=4096;
+static uint8_t* nvs_data=nullptr;
+static uint8_t* previous_nvs=nullptr;
 static size_t previous_nvs_size=0;
 static LeafSettings leaf_data{},old_leaf_data{};
 static meshink_device_settings::Snapshot device_data{};
-static Plan plans[MAX_ENTRIES];
-static Stage stages[MAX_ENTRIES];
+// Transient PSRAM workspace. Never reserve large backup buffers while idle.
+static Plan* plans=nullptr;
+static Stage* stages=nullptr;
+struct BackupWorkspace {
+    bool ready=false;
+    BackupWorkspace(bool need_plans,bool need_stages) {
+        if(plans||stages||nvs_data||previous_nvs)return; // no nested operations
+        nvs_data=(uint8_t*)heap_caps_calloc(BACKUP_NVS_BYTES,1,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        previous_nvs=(uint8_t*)heap_caps_calloc(BACKUP_NVS_BYTES,1,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(need_plans)plans=(Plan*)heap_caps_calloc(MAX_ENTRIES,sizeof(Plan),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(need_stages)stages=(Stage*)heap_caps_calloc(MAX_ENTRIES,sizeof(Stage),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        ready=nvs_data&&previous_nvs&&(!need_plans||plans)&&(!need_stages||stages);
+    }
+    ~BackupWorkspace(){
+        free(plans);plans=nullptr;
+        free(stages);stages=nullptr;
+        free(nvs_data);nvs_data=nullptr;
+        free(previous_nvs);previous_nvs=nullptr;
+    }
+};
+struct BackupParts {
+    Part* entries=(Part*)heap_caps_calloc(MAX_ENTRIES,sizeof(Part),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    ~BackupParts(){free(entries);}
+};
 constexpr char RESTORE_TXN[]="/restore.txn";
 constexpr char RESTORE_TXN_TEMP[]="/restore.txn.tmp";
 constexpr uint32_t RESTORE_MAGIC=0x31585452U; // RTX1
@@ -203,7 +227,7 @@ static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     Preferences p;
     if(!p.begin("mesh-auth",true))return false;
     const size_t n=p.getBytesLength("credentials");
-    bool ok=n>0&&n<=sizeof(nvs_data)&&p.getBytes("credentials",nvs_data,n)==n;
+    bool ok=n>0&&n<=BACKUP_NVS_BYTES&&p.getBytes("credentials",nvs_data,n)==n;
     p.end();if(ok)length=n;return ok;
 }
 static bool has_plan(size_t count,uint8_t category,const char* path=nullptr){
@@ -333,13 +357,13 @@ static bool inspect(const char* filename,uint8_t protocol,
 }
 static bool update_core_auth_from_stage(const Stage& stage){
     File f=SPIFFS.open(stage.staged,"r");
-    if(!f||f.size()>sizeof(nvs_data)){if(f)f.close();return false;}
+    if(!f||f.size()>BACKUP_NVS_BYTES){if(f)f.close();return false;}
     const size_t n=f.size();
     if(f.read(nvs_data,n)!=n){f.close();return false;}f.close();
     Preferences p;
     if(!p.begin("mesh-auth",false))return false;
     previous_nvs_size=p.getBytesLength("credentials");
-    if(previous_nvs_size>sizeof(previous_nvs)){p.end();return false;}
+    if(previous_nvs_size>BACKUP_NVS_BYTES){p.end();return false;}
     if(previous_nvs_size&&p.getBytes("credentials",previous_nvs,previous_nvs_size)!=previous_nvs_size){
         p.end();return false;
     }
@@ -410,7 +434,7 @@ static bool snapshot_previous_nvs(Stage& stage){
     if(!strcmp(stage.path,CORE_NVS)){
         if(p.begin("mesh-auth",true)){
             size=p.getBytesLength("credentials");
-            exists=size>0&&size<=sizeof(nvs_data)&&
+            exists=size>0&&size<=BACKUP_NVS_BYTES&&
                    p.getBytes("credentials",data,size)==size;
             p.end();
             if(size&&!exists)return false;
@@ -521,7 +545,7 @@ static bool restore_previous_nvs(const Stage& stage){
     if(!stage.old_exists)restored=!p.isKey(key)||p.remove(key);
     else{
         File f=SPIFFS.open(stage.previous,"r");
-        if(f&&f.size()<=sizeof(nvs_data)&&f.size()){
+        if(f&&f.size()<=BACKUP_NVS_BYTES&&f.size()){
             const size_t length=f.size();
             if(f.read(nvs_data,length)==length){
                 if(!strcmp(stage.path,CORE_NVS))
@@ -573,6 +597,8 @@ static bool rollback_transaction(size_t count){
 
 bool meshink_backup_recover_pending(){
     if(!SPIFFS.exists(RESTORE_TXN))return true;
+    BackupWorkspace workspace(false,true);
+    if(!workspace.ready)return fail("Insufficient PSRAM for restore recovery");
     File f=SPIFFS.open(RESTORE_TXN,"r");
     RestoreHeader head{};
     if(!f||f.read((uint8_t*)&head,sizeof(head))!=sizeof(head)||
@@ -614,14 +640,16 @@ size_t meshink_backup_list(uint8_t protocol,MeshInkBackupInfo* out,size_t capaci
     if(!sd_ready()){fail("INSERT SD CARD OR CHECK CONNECTION");return 0;}
     File root=meshink_storage_open("/");
     if(!root||!root.isDirectory())return 0;
+    BackupParts parts;
+    if(!parts.entries){root.close();fail("Insufficient PSRAM for backup listing");return 0;}
     size_t count=0;
     File item=root.openNextFile();
     while(item){
         String path=item.name();int separator=path.lastIndexOf('/');
         const char* name=path.c_str()+separator+1;
         if(!item.isDirectory()&&allowed_filename(name,protocol)){
-            Header hdr{};Part parts[MAX_ENTRIES]{};
-            if(inspect(name,protocol,hdr,parts,false)&&count<capacity){
+            Header hdr{};
+            if(inspect(name,protocol,hdr,parts.entries,false)&&count<capacity){
                 MeshInkBackupInfo& info=out[count++];
                 memset(&info,0,sizeof(info));
                 strncpy(info.filename,name,sizeof(info.filename)-1);
@@ -642,8 +670,10 @@ size_t meshink_backup_list(uint8_t protocol,MeshInkBackupInfo* out,size_t capaci
 }
 uint8_t meshink_backup_categories(uint8_t protocol,const char* filename){
     if(!sd_ready()){fail("INSERT SD CARD OR CHECK CONNECTION");return 0;}
-    Header header{};Part parts[MAX_ENTRIES]{};
-    return inspect(filename,protocol,header,parts,true)?header.categories:0;
+    BackupParts parts;
+    if(!parts.entries){fail("Insufficient PSRAM for backup inspection");return 0;}
+    Header header{};
+    return inspect(filename,protocol,header,parts.entries,true)?header.categories:0;
 }
 bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,size_t path_len){
     last_error[0]=0;
@@ -651,6 +681,8 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     if((protocol!=1&&protocol!=2)||!categories||(categories&~15U))
         return fail("Choose backup categories");
     if(!sd_writable())return false;
+    BackupWorkspace workspace(true,false);
+    if(!workspace.ready)return fail("Insufficient PSRAM for backup workspace");
     mesh_protocol_flush_now();
     uint32_t sequence=0;size_t count=0;
     if(categories&MESHINK_BACKUP_MESSAGES){
@@ -671,10 +703,12 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
             if(dir&&dir.isDirectory()){
                 File file=dir.openNextFile();
                 while(file){
-                    String path=file.name();
+                    const char* path=file.path(); // name() is basename only on Arduino FS
                     if(!file.isDirectory()&&
-                       !add_plan(parts,protocol,2,path.c_str())){
-                        file.close();dir.close();return fail("Node blob backup too large");
+                       !add_plan(parts,protocol,2,path)){
+                         Serial.printf("[T5-BACKUP] rejected node blob path=%s entries=%u size-limit=%u\n",
+                                       path?path:"(null)",(unsigned)parts,(unsigned)MAX_PART_BYTES);
+                         file.close();dir.close();return fail("Node blob path, size or entry limit invalid");
                     }
                     file.close();file=dir.openNextFile();
                 }
@@ -745,8 +779,10 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     if(!meshink_storage_rename(temp,path)){
         meshink_storage_remove(temp);return fail("Cannot finalize SD backup");
     }
-    Header check{};Part items[MAX_ENTRIES]{};
-    if(!inspect(name,protocol,check,items,true)){
+    BackupParts items;
+    if(!items.entries){meshink_storage_remove(path);return fail("Insufficient PSRAM for backup verification");}
+    Header check{};
+    if(!inspect(name,protocol,check,items.entries,true)){
         meshink_storage_remove(path);return false;
     }
     if(saved_path&&path_len)snprintf(saved_path,path_len,"%s",name);
@@ -758,8 +794,12 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     if((protocol!=1&&protocol!=2)||!categories||(categories&~15U))
         return fail("Choose restore categories");
     if(!sd_ready())return fail("SD card unavailable");
-    Header hdr{};Part parts[MAX_ENTRIES]{};
-    if(!inspect(filename,protocol,hdr,parts,true))return false;
+    BackupWorkspace workspace(false,true);
+    if(!workspace.ready)return fail("Insufficient PSRAM for restore workspace");
+    BackupParts parts;
+    if(!parts.entries)return fail("Insufficient PSRAM for restore manifest");
+    Header hdr{};
+    if(!inspect(filename,protocol,hdr,parts.entries,true))return false;
     if((categories&hdr.categories)!=categories)return fail("Category not present in backup");
     char backup_path[36]="/";strncat(backup_path,filename,sizeof(backup_path)-2);
     File input=meshink_storage_open(backup_path);
@@ -810,7 +850,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         if(folder&&folder.isDirectory()){
             File item=folder.openNextFile();
             while(item){
-                const String name=item.name();
+                const String name=item.path();
                 if(!item.isDirectory()&&is_real_path(name.c_str(),protocol,2)){
                     bool included=false;
                     for(size_t i=0;i<count;++i)

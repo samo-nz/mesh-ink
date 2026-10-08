@@ -1214,7 +1214,7 @@ assert "record-cache=%s header=%uB" in message_store_source, "boot transcript re
 assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps compact journal indices"
 assert "mutable MessageView active_message_view_{};" in runtime_source, "UI still formats only one scratch message at a time"
 assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "formatted history is never prebuilt"
-assert "store_.read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
+assert "store().read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
 assert "mesh_protocol_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "protocol startup remains after display initialization"
 
@@ -1222,7 +1222,7 @@ assert "mesh_protocol_setup();   // includes first-boot SPIFFS mount / format" i
 # Test52: page history stays on-demand. Only tiny anchors and lazy per-message
 # geometry metadata are retained; pages themselves are never materialized.
 assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
-assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
+assert "conversation_store_revision_!=store().revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
 assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
 assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews use one linear RAM-backed journal pass"
 assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
@@ -1505,7 +1505,7 @@ assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.tra
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
-assert "if(!sequence||!store_.update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
+assert "if(!sequence||!store().update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
 assert "return write_record(p,item);" in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
@@ -1601,7 +1601,7 @@ assert "layout.height-ui_h(38)" in history_branch, "older history pages retain o
 # Test65: native-size typography layout audit.
 assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key labels use native font height for vertical centring"
 assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
-assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
+assert 'title=action==0?"ZERO-HOP ADVERT":"FLOOD ADVERT";' in source and 'protocol_settings_row_y(row)' in source, "MeshCore advertising uses paginated Protocol Settings rows rather than a separate card"
 assert "next_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic capability-driven extent"
 
 
@@ -1710,7 +1710,7 @@ assert 'first fresh fix accepted because GPS clock authority was stale' in board
 # 2.1.1-test.7: user-facing radio/GPS/time cleanup.
 assert 'static const char* active_radio_label()' in source and 'mesh_protocol_radio_matches(' in source, "radio menu resolves actual settings back to a known preset"
 assert 'draw_app_header("SELECT PROTOCOL",true);' in source and "mesh_protocol_available_count()" in source, "protocol selection lists compiled backends"
-assert "mesh_protocol_restart_into(protocol->id);" in source, "choosing a different protocol persists and restarts through the generic facade"
+assert "if(!mesh_protocol_restart_into(protocol->id)){" in source, "choosing a different protocol performs one verified persist-and-restart transaction"
 assert "mesh_protocol_supports_radio_presets()" in source, "legacy MeshInk radio preset picker appears only for helpers that support it"
 assert '"REGION"' in meshtastic_protocol_source and '"MODEM PRESET"' in meshtastic_protocol_source and '"HOP LIMIT"' in meshtastic_protocol_source, "Leaf helper contributes its own radio settings"
 assert '"AUTO ADD CONTACTS"' in meshcore_protocol_source and '"PACKET REPEATING"' in meshcore_protocol_source, "MeshCore helper contributes its privacy/repeating settings"
@@ -1768,7 +1768,7 @@ assert 'meshink_backup_list(' in source and 'meshink_backup_restore(' in source,
 assert 'static void draw_backup_options()' in source and 'static void draw_backup_files()' in source, "shared backup list and category UI present"
 assert 'if(!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
 assert 'if(!meshink_storage_rename(temp,path))' in backup_source, "SD backup is committed after temporary write"
-assert 'if(!inspect(filename,protocol,hdr,parts,true))' in backup_source, "restore validates every selected source before replacement"
+assert 'if(!inspect(filename,protocol,hdr,parts.entries,true))' in backup_source, "restore validates every selected source before replacement"
 assert 'rollback_transaction(count)' in backup_source and 'meshink_backup_recover_pending()' in backup_source, "restore failure and interrupted boot roll back selected protocol files and NVS"
 assert 'mesh_protocol_flush_now();' in backup_source, "MeshCore contacts are flushed before backup"
 
@@ -1787,3 +1787,20 @@ assert 'constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","PROTOCOL S
 assert 'MESHCORE' not in device_settings_source and 'MESHTASTIC' not in device_settings_source, "device preference snapshot has no protocol dependency"
 assert 'deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();' in source, "unsupported Leaf deep sleep falls back without retry"
 assert 'active_backend().enter_deep_sleep_standby != nullptr' in (root/"src"/"protocol"/"mesh_protocol.cpp").read_text(), "deep sleep ability is a backend capability"
+
+# 2.1.1-test.15: backup paths, deferred NVS, failed PMTiles and menu moves.
+assert 'const char* path=file.path();' in backup_source, "MeshCore node blobs use full SPIFFS paths, not basenames"
+assert 'const String name=item.path();' in backup_source, "node restore enumerates full SPIFFS paths"
+assert 'BackupWorkspace workspace(true,false);' in backup_source and 'MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT' in backup_source, "backup working data is transient PSRAM"
+assert 'MeshInkMessageStore& store() const {return meshink_message_store();}' in runtime_source, "global MeshCore provider defers NVS-dependent journal selection"
+assert 'if (!selected_protocol_id(selected)) return *first_backend();' in protocol_source, "an NVS-open failure does not cache the wrong protocol"
+assert 'verify.getUChar("active",0)==protocol_id' in protocol_source, "protocol switch verifies committed NVS readback"
+assert 'mesh_protocol_select_for_next_boot(protocol->id)' not in source, "protocol selector avoids duplicate NVS writes"
+assert 'pmtiles_archive_failed(archive_paths[i])' in map_source and 'if(!archive_unavailable)mark_absent(z,x,y);' in map_source, "failed archives do not repeatedly decompress or poison missing-tile cache"
+assert 'if(!ok)pmtiles_disable_archive(path);' in pmtiles_source, "failed startup PMTiles archive stays disabled"
+assert 'failed_count=0;' in pmtiles_source, "SD remount resets failed PMTiles archives"
+assert 'heap_caps_get_largest_free_block' in pmtiles_source and 'if (!output)output=(uint8_t*)map_alloc(wanted);' in pmtiles_source, "PMTiles checks contiguous internal RAM and falls back to PSRAM"
+assert '{"BACKUP / RESTORE","Save or restore data on SD card",MoreAction::Backup}' in source, "More menu replaces Advertise with Backup / Restore"
+assert 'MoreAction::Advertise' not in source and 'Screen::AdvertMenu' not in source, "obsolete Advertise page has been removed"
+assert 'ProtocolSettingsRowKind::AdvertZero' in source and 'ProtocolSettingsRowKind::AdvertFlood' in source, "MeshCore Protocol Settings contains two advert actions"
+assert 'mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)?2:0' in source, "advert rows appear only with protocol advertising capability"

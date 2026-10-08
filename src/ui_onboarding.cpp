@@ -309,13 +309,13 @@ enum class Screen : uint8_t {
     Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
-    Maps, Discovery, More, AdvertMenu, Diagnostics,
+    Maps, Discovery, More, Diagnostics,
     Settings, ProtocolSelect, ProtocolSettings, BackupOptions, BackupFiles, BackupConfirm, BackupResult,
     GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static Screen setup_cancel_from=Screen::SetupName;
-static Screen backup_return_screen=Screen::ProtocolSettings;
+static Screen backup_return_screen=Screen::More;
 static bool backup_restore_mode=false,backup_from_setup=false,backup_restore_pending=false;
 static uint8_t backup_flags=15,backup_available=15;
 static MeshInkBackupInfo backup_entries[24]{};
@@ -2663,7 +2663,7 @@ static void draw_discovery() {
     draw_list_page_footer(discovery_page,count);
 }
 
-enum class MoreAction:uint8_t{Settings,Discovery,Advertise,Companion,Diagnostics,Help};
+enum class MoreAction:uint8_t{Settings,Discovery,Backup,Companion,Diagnostics,Help};
 struct MoreMenuItem{const char* title;const char* subtitle;MoreAction action;};
 
 static size_t more_menu_items(MoreMenuItem out[6]){
@@ -2671,8 +2671,7 @@ static size_t more_menu_items(MoreMenuItem out[6]){
     out[count++]={"SETTINGS","Device and protocol configuration",MoreAction::Settings};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_DISCOVERY))
         out[count++]={"DISCOVERED ADVERTS","Recent nodes heard",MoreAction::Discovery};
-    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE))
-        out[count++]={"ADVERTISE","Share this node on the mesh",MoreAction::Advertise};
+    out[count++]={"BACKUP / RESTORE","Save or restore data on SD card",MoreAction::Backup};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_COMPANION))
         out[count++]={"BLUETOOTH COMPANION","Restart in protocol companion mode",MoreAction::Companion};
     if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_DIAGNOSTICS))
@@ -2711,16 +2710,6 @@ static void draw_diagnostics() {
     const MeshInkUiRect action=meshink_node_action_rect(layout);
     const char* label=mesh_protocol_diagnostics_busy()?"REFRESHING...":"REFRESH STATS";
     ui_action_button(label,action,true);
-}
-
-static void draw_advert_menu() {
-    draw_app_header("ADVERTISE",true);
-    settings_row("ZERO HOP ADVERT","NEARBY NODES ONLY",180);settings_row("FLOOD ADVERT","SEND ACROSS THE MESH",320);
-    const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect note=meshink_outer_row_rect(layout,490,180);
-    ui_section_card(note);
-    ui_draw_wrapped("Advertising shares this node identity using the active protocol radio settings.",
-                    layout.content_text_x,note.y+ui_h(22),note.width-ui_w(32),3,0,false,4);
 }
 
 static void settings_row(const char* title,const char* subtitle,int reference_y) {
@@ -3034,10 +3023,11 @@ static void draw_protocol_select() {
                     layout.section_margin,ui_y(760),layout.section_width,2,0,false,4);
 }
 
-enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,Backend,Backup};
+enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,Backend,AdvertZero,AdvertFlood};
 
 static size_t protocol_settings_total_count(){
-    return 2+(mesh_protocol_supports_radio_presets()?1:0)+mesh_protocol_setting_count();
+    return 1+(mesh_protocol_supports_radio_presets()?1:0)+mesh_protocol_setting_count()+
+           (mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)?2:0);
 }
 
 static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
@@ -3058,9 +3048,14 @@ static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
         }
         ++cursor;
     }
-    if(index-cursor==mesh_protocol_setting_count()){
-        kind=ProtocolSettingsRowKind::Backup;
-        title="BACKUP / RESTORE";value="SD CARD / PROTOCOL DATA";
+    const size_t backend_count=mesh_protocol_setting_count();
+    if(index>=cursor+backend_count){
+        if(!mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE))return false;
+        const size_t action=index-cursor-backend_count;
+        if(action>1)return false;
+        kind=action==0?ProtocolSettingsRowKind::AdvertZero:ProtocolSettingsRowKind::AdvertFlood;
+        title=action==0?"ZERO-HOP ADVERT":"FLOOD ADVERT";
+        value=action==0?"SEND TO NEARBY NODES":"SEND ACROSS THE MESH";
         return true;
     }
     MeshInkProtocolSettingItem item{};
@@ -3609,7 +3604,8 @@ static void draw_quick_panel() {
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
     ui_centred(level,ui_y(273),4,0,true);
 
-    ui_action_button("ADVERT FLOOD",advert_button,true);
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE))
+        ui_action_button("ADVERT FLOOD",advert_button,true);
     ui_action_button("POWER OFF",power_button,false);
 
     ui_centred("Tap below or swipe up to close",ui_y(560),2,0,false);
@@ -3681,7 +3677,8 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 
     if(hit(x,y,meshink_quick_minus_rect(layout))) { quick_set_brightness((int)frontlight_brightness-1);return true; }
     if(hit(x,y,meshink_quick_plus_rect(layout))) { quick_set_brightness((int)frontlight_brightness+1);return true; }
-    if(hit(x,y,meshink_quick_advert_rect(layout))) {
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)&&
+       hit(x,y,meshink_quick_advert_rect(layout))) {
         show_toast(mesh_protocol_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
         draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
     }
@@ -3725,7 +3722,7 @@ static void draw_screen() {
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;
         case Screen::ChannelManage:draw_channel_manage();break;case Screen::ChannelCreate:draw_channel_create();break;case Screen::ChannelDelete:draw_channel_delete();break;
-        case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
+        case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::Diagnostics:draw_diagnostics();break;
         case Screen::Settings:draw_settings();break;case Screen::ProtocolSelect:draw_protocol_select();break;case Screen::ProtocolSettings:draw_protocol_settings();break;
         case Screen::BackupOptions:draw_backup_options();break;
         case Screen::BackupFiles:draw_backup_files();break;
@@ -3741,7 +3738,7 @@ static void draw_screen() {
             !keyboard_visible&&chat_page==0)
         draw_bottom_nav(screen==Screen::ContactChat?0:1);
     else if(screen==Screen::ChannelManage)draw_bottom_nav(1);
-    else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||screen==Screen::Diagnostics||
+    else if(screen==Screen::Discovery||screen==Screen::Diagnostics||
             (settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
@@ -4543,7 +4540,7 @@ static bool handle_backup_tap(int16_t x,int16_t y){
     if(screen==Screen::BackupOptions){
         if(hit_header_back(x,y)){
             if(backup_restore_mode)backup_open_files(backup_return_screen);
-            else open_screen(Screen::ProtocolSettings);
+            else open_screen(backup_return_screen);
             return true;
         }
         constexpr uint8_t flags[]={1,2,4,8};
@@ -4584,7 +4581,7 @@ static bool handle_backup_tap(int16_t x,int16_t y){
     }
     if(screen==Screen::BackupResult){
         if(hit_header_back(x,y)||hit(x,y,ui_rect(85,780,370,80))){
-            open_screen(backup_from_setup?backup_return_screen:Screen::ProtocolSettings);
+            open_screen(backup_return_screen);
         }
         return true;
     }
@@ -5003,7 +5000,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(!hit_outer_row(x,y,more_row_y(i)))continue;
                 switch(items[i].action){
                     case MoreAction::Discovery:open_screen(Screen::Discovery);break;
-                    case MoreAction::Advertise:open_screen(Screen::AdvertMenu);break;
+                    case MoreAction::Backup:
+                        backup_return_screen=Screen::More;
+                        backup_restore_mode=false;backup_from_setup=false;
+                        backup_available=15;backup_flags=15;
+                        open_screen(Screen::BackupOptions);break;
                     case MoreAction::Settings:open_screen(Screen::Settings);break;
                     case MoreAction::Companion:open_screen(Screen::CompanionConfirm);break;
                     case MoreAction::Diagnostics:mesh_protocol_request_diagnostics();open_screen(Screen::Diagnostics);break;
@@ -5013,10 +5014,6 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         }
-        case Screen::AdvertMenu:
-            if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
-            if(hit_outer_row(x,y,180)){show_toast(mesh_protocol_send_advert(false)?"SENDING ZERO HOP ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,320)){show_toast(mesh_protocol_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}break;
         case Screen::Diagnostics:
             if(hit_header_back(x,y)){open_screen(Screen::More);return true;}
             if(hit(x,y,meshink_node_action_rect(portrait_layout()))){
@@ -5059,16 +5056,14 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                         setup_protocol_done(protocol->id)?0:mesh_protocol_descriptor().id);
                     setup_switch.end();
                 }
-                if(!mesh_protocol_select_for_next_boot(protocol->id)){
-                    show_toast("PROTOCOL SWITCH FAILED");
-                    draw_screen();refresh(MeshInkRefreshMode::Direct);
-                    return true;
-                }
                 char switching[48]{};
                 snprintf(switching,sizeof(switching),"RESTARTING INTO %s",protocol->name);
                 show_toast(switching);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
-                mesh_protocol_restart_into(protocol->id);
+                if(!mesh_protocol_restart_into(protocol->id)){
+                    show_toast("PROTOCOL SWITCH FAILED");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                }
                 return true;
             }
             return true;
@@ -5088,11 +5083,12 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     draw_screen();refresh(MeshInkRefreshMode::Direct);
                     return true;
                 }
-                if(kind==ProtocolSettingsRowKind::Backup){
-                    backup_return_screen=Screen::ProtocolSettings;
-                    backup_restore_mode=false;backup_from_setup=false;
-                    backup_available=15;backup_flags=15;
-                    open_screen(Screen::BackupOptions);return true;
+                if(kind==ProtocolSettingsRowKind::AdvertZero||
+                   kind==ProtocolSettingsRowKind::AdvertFlood){
+                    const bool flood=kind==ProtocolSettingsRowKind::AdvertFlood;
+                    show_toast(mesh_protocol_send_advert(flood)?
+                        (flood?"SENDING FLOOD ADVERT":"SENDING ZERO HOP ADVERT"):"ADVERT BUSY");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
                 if(kind==ProtocolSettingsRowKind::NodeName){
                     replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;

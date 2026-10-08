@@ -37,7 +37,10 @@ bool pmtiles_warm_archive(const char* path);
 // Borrow the archive file already opened for this render. Valid only until
 // pmtiles_end_frame()/pmtiles_reset(); the caller must NOT close this handle.
 MeshInkStorageFile* pmtiles_frame_file(const char* path);
-// SD seek/read/open failures must not be treated as permanently missing tiles.
+// Archives that fail to open/index are disabled for the current SD mount.
+// A missing individual tile does not disable its containing archive.
+bool pmtiles_archive_failed(const char* path);
+void pmtiles_disable_archive(const char* path);
 bool pmtiles_had_io_error();
 // Per-frame cold-path instrumentation. Categories may be nested; callers use
 // these to separate archive metadata costs from tile PNG range I/O.

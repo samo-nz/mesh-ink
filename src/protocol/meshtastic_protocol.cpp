@@ -3,6 +3,8 @@
 #include <SPIFFS.h>
 #include <pb_decode.h>
 #include <time.h>
+#include <esp_heap_caps.h>
+#include <new>
 
 #include <libmeshtastic_leaf.h>
 #include <MeshCryptoPKI.h>
@@ -664,10 +666,12 @@ public:
     uint32_t active_message_revision()const override{return active_revision_;}
 };
 
-static MeshtasticUiProvider provider;
+// Construct Meshtastic-only UI collections after protocol selection, in PSRAM.
+// Keeping this object in .bss used internal RAM even on MeshCore boots.
+static MeshtasticUiProvider* provider=nullptr;
 
 static bool pki_key_lookup(NodeNum node,uint8_t pub_key[32]) {
-    return provider.lookup_key(node,pub_key);
+    return provider&&provider->lookup_key(node,pub_key);
 }
 
 static bool load_identity() {
@@ -917,6 +921,15 @@ static void setup() {
         Serial.println("[T5-MESHTASTIC] first-use setup pending; LoRa startup deferred");
         return;
     }
+    if(!provider){
+        void* memory=heap_caps_malloc(sizeof(MeshtasticUiProvider),
+                                      MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!memory){
+            Serial.println("[T5-MESHTASTIC] PSRAM unavailable for protocol UI provider");
+            return;
+        }
+        provider=new (memory) MeshtasticUiProvider();
+    }
 
     if(!meshink_radio_initialize()){
         ui_show_radio_failure(meshink_radio_classify_failure());
@@ -958,8 +971,8 @@ static void setup() {
         return;
     }
     leaf.setDefaultChannel();
-    provider.begin();
-    ui_use_data_provider(&provider);
+    provider->begin();
+    ui_use_data_provider(provider);
     runtime_ready=true;
     ui_mesh_ready();
 
@@ -969,16 +982,16 @@ static void setup() {
 
 static void handle_packet(const MeshPacket& packet) {
     if(packet.portNum==meshtastic_PortNum_NODEINFO_APP){
-        provider.learn_node_info(packet);
+        provider->learn_node_info(packet);
         return;
     }
     if(packet.portNum==meshtastic_PortNum_TEXT_MESSAGE_APP){
-        provider.receive_text(packet);
+        provider->receive_text(packet);
         return;
     }
     if(packet.portNum==meshtastic_PortNum_ROUTING_APP&&packet.requestId&&
        MeshPayloadCodec::isRoutingAck(packet.payload,packet.payloadLen)){
-        provider.delivered(packet.requestId);
+        provider->delivered(packet.requestId);
     }
 }
 
@@ -997,11 +1010,11 @@ static void loop() {
 }
 
 static UiDataProvider* data_provider() {
-    return &provider;
+    return provider;
 }
 
 static void refresh_ui_data() {
-    provider.refresh(true);
+    if(provider)provider->refresh(true);
 }
 
 static bool send_active(const char* text) {
@@ -1010,19 +1023,19 @@ static bool send_active(const char* text) {
     uint32_t packet_id=0;
     uint8_t key[7]{};
     MeshInkMessageKind kind=MeshInkMessageKind::Channel;
-    if(provider.active_is_channel()){
+    if(provider->active_is_channel()){
         key[0]=0;
         packet_id=leaf.sendData(meshtastic_PortNum_TEXT_MESSAGE_APP,
             (const uint8_t*)text,len,BROADCAST_ADDR,false);
     }else{
         // active_title is presentation; derive destination from the provider's active detail identity.
         UiNodeDetails details{};
-        if(!provider.active_node_details(details)||!details.identity||details.identity[0]!='!')return false;
+        if(!provider->active_node_details(details)||!details.identity||details.identity[0]!='!')return false;
         const NodeNum node=(NodeNum)strtoul(details.identity+1,nullptr,16);
         node_key(node,key);
         kind=MeshInkMessageKind::Direct;
         uint8_t remote_key[32]{};
-        if(provider.lookup_key(node,remote_key))
+        if(provider->lookup_key(node,remote_key))
             packet_id=leaf.sendDataPKI(meshtastic_PortNum_TEXT_MESSAGE_APP,
                 (const uint8_t*)text,len,node,remote_key,true);
         else
@@ -1038,16 +1051,16 @@ static bool send_active(const char* text) {
         UiMessageState::Sent,packet_id,MeshInkMessageOrigin::LocalUi,
         false,0,MESHINK_MESSAGE_PATH_UNKNOWN,false,MESHTASTIC_PROTOCOL_ID);
     if(!sequence)return false;
-    provider.refresh(true);
+    provider->refresh(true);
     // Re-open current conversation index cache without changing selection.
-    if(provider.active_is_channel())provider.open_channel(0);
+    if(provider->active_is_channel())provider->open_channel(0);
     else {
         UiNodeDetails details{};
-        if(provider.active_node_details(details)){
-            for(size_t i=0;i<provider.contact_count();++i){
-                const UiListEntry& entry=provider.contact(i);
+        if(provider->active_node_details(details)){
+            for(size_t i=0;i<provider->contact_count();++i){
+                const UiListEntry& entry=provider->contact(i);
                 if(entry.title&&details.name&&!strcmp(entry.title,details.name)){
-                    provider.open_contact(i);break;
+                    provider->open_contact(i);break;
                 }
             }
         }
