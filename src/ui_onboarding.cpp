@@ -4277,9 +4277,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(!meshink_channel_key::valid_name(channel_form_name,ui_data->channel_name_limit())){
                     show_toast("INVALID CHANNEL NAME");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
-                if(channel_form_key_hex[0]&&strlen(channel_form_key_hex)!=32&&
-                   strlen(channel_form_key_hex)!=64){
-                    show_toast("KEY MUST BE 32/64 HEX");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                if(channel_form_key_hex[0]&&strlen(channel_form_key_hex)!=32){
+                    show_toast("KEY MUST BE 32 HEX");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
                 if(!ui_data->create_channel(channel_form_name,channel_form_key_hex)){
                     show_toast("CHANNEL SAVE FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
