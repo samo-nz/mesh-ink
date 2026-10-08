@@ -81,6 +81,12 @@ struct PositionRecord {
     uint32_t received_utc=0;
 };
 
+struct TelemetryRecord {
+    NodeNum node=0;
+    uint8_t battery=0;
+    float volts=0;
+    uint32_t received=0;
+};
 struct MessageView {
     UiMessage entry{};
     char text[MESHINK_MESSAGE_TEXT_BYTES]{};
@@ -214,6 +220,7 @@ static void make_short_name(const char* name,char out[5]) {
 class MeshtasticUiProvider final:public UiDataProvider {
     NodeRecord nodes_[MAX_NODES]{};
     PositionRecord positions_[MAX_NODES]{};
+    TelemetryRecord telemetry_[MAX_NODES]{};
     uint32_t position_saved_at_=0;
     ListStorage contacts_[MAX_NODES]{};
     uint8_t contact_node_index_[MAX_NODES]{};
@@ -309,10 +316,30 @@ class MeshtasticUiProvider final:public UiDataProvider {
         if(!valid)Serial.println("[T5-MESHTASTIC] WARN position snapshot invalid; no replacement");
     }
 public:
+    void receive_telemetry(const MeshPacket& packet){
+        if(packet.header.from==leaf.getNodeNum())return;
+        const auto data=meshink_mt_wire::decode_device_telemetry(packet.payload,
+                                                               packet.payloadLen);
+        if(!data.valid)return;
+        NodeRecord* node=ensure(packet.header.from);
+        if(!node)return;
+        TelemetryRecord* record=nullptr;
+        for(auto& t:telemetry_)if(t.node==packet.header.from){record=&t;break;}
+        if(!record)for(auto& t:telemetry_)if(!t.node){record=&t;break;}
+        if(!record)return;
+        record->node=packet.header.from;
+        record->battery=data.battery;record->volts=data.voltage;
+        record->received=now_utc();
+        node->last_seen=record->received;
+        node->last_rssi=packet.rxRssi;node->last_snr=packet.rxSnr;
+        refresh(true);ui_request_data_refresh("meshtastic-telemetry");
+    }
+    void message_state_changed(){rebuild_active();}
     void receive_position(const MeshPacket& packet){
         if(packet.header.from==leaf.getNodeNum())return;
         const auto decoded=meshink_mt_wire::decode_position(packet.payload,packet.payloadLen);
         if(!decoded.valid)return;
+        ++position_received_count;
         NodeRecord* node=ensure(packet.header.from);
         PositionRecord* pos=writable_position(packet.header.from);
         if(!node||!pos)return;
@@ -571,6 +598,7 @@ public:
             Serial.println("[T5-MESHTASTIC] failed to journal received text");
             return;
         }
+        ++received_count;
         if(message_matches_active_from(kind,key))rebuild_active();
         refresh(true);
         sync_unread();
@@ -583,6 +611,10 @@ public:
     }
 
     void delivered(uint32_t request_id) {
+        if(last_message_packet_id==request_id){
+            last_message_sequence=0;
+            last_message_packet_id=0; // A genuine ACK always wins over local TX status.
+        }
         // The journal already stores each outgoing packet ID; a single global
         // pending slot loses earlier ACKs when consecutive messages are sent.
         if(request_id&&meshink_message_store().mark_delivered_by_ack(
@@ -737,6 +769,7 @@ public:
         const NodeRecord* node=find(active_node_);
         if(!node)return false;
         static char seen[32],advert[32],route[32],position[48];
+        static char telemetry_note[64],status_note[48];
         format_age(node->last_seen,seen,sizeof(seen));
         format_age(node->last_node_info,advert,sizeof(advert));
         if(node->last_hops)snprintf(route,sizeof(route),"%u HOP%s",
@@ -753,8 +786,17 @@ public:
         out.last_seen=seen;
         out.route=route;
         out.position=position;
-        out.status="NOT AVAILABLE";
-        out.telemetry="NOT AVAILABLE";
+        snprintf(status_note,sizeof(status_note),"RSSI %d dBm / SNR %.1f dB",
+                 (int)node->last_rssi,(double)node->last_snr);
+        out.status=status_note;
+        const TelemetryRecord* latest=nullptr;
+        for(const auto& t:telemetry_)if(t.node==node->node){latest=&t;break;}
+        if(latest)
+            snprintf(telemetry_note,sizeof(telemetry_note),
+                     "BATTERY %u%% / %.2fV",(unsigned)latest->battery,
+                     (double)latest->volts);
+        else strcpy(telemetry_note,"NOT RECEIVED");
+        out.telemetry=telemetry_note;
         out.path="NOT AVAILABLE";
         out.trace="NOT AVAILABLE";
         out.access_level="";
@@ -1254,6 +1296,9 @@ static void setup() {
 }
 
 static void handle_packet(const MeshPacket& packet) {
+    if(packet.portNum==meshtastic_PortNum_TELEMETRY_APP){
+        provider->receive_telemetry(packet);return;
+    }
     if(packet.portNum==meshtastic_PortNum_POSITION_APP){
         provider->receive_position(packet);
         return;
@@ -1319,15 +1364,26 @@ static bool send_active(const char* text) {
             packet_id=leaf.sendData(meshtastic_PortNum_TEXT_MESSAGE_APP,
                 (const uint8_t*)text,len,node,true);
     }
-    if(!packet_id)return false;
+    if(!packet_id){
+        ++send_refused;
+        Serial.printf("[T5-MESHTASTIC] text rejected reason=%u\\n",
+                      (unsigned)leaf.getLastSendResult());
+        return false;
+    }
 
     char stored[MESHINK_MESSAGE_TEXT_BYTES]{};
     memcpy(stored,text,len);stored[len]=0;
     const uint32_t sequence=meshink_message_store().append(
         kind,key,kind==MeshInkMessageKind::Channel?1:4,stored,now_utc(),
-        UiMessageState::Sent,packet_id,MeshInkMessageOrigin::LocalUi,
+        UiMessageState::Sending,packet_id,MeshInkMessageOrigin::LocalUi,
         false,0,MESHINK_MESSAGE_PATH_UNKNOWN,false,MESHTASTIC_PROTOCOL_ID);
-    if(!sequence)return false;
+    if(!sequence){
+        Serial.println("[T5-MESHTASTIC] send accepted but flash journal failed");
+        return false;
+    }
+    last_message_sequence=sequence;
+    last_message_packet_id=packet_id;
+    ++sent_count;
     provider->refresh(true);
     // Re-open current conversation index cache without changing selection.
     if(provider->active_is_channel())provider->open_channel(0);
