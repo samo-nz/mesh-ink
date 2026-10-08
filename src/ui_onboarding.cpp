@@ -767,18 +767,18 @@ static bool apply_selected_preset() {
 
 // The same setup screens serve both protocols. Protocol one maps its existing
 // radio presets into short regional lists; Leaf enumerates its native regions.
-static constexpr const char* SETUP_MESHCORE_REGIONS[] = {
+static constexpr const char* SETUP_PROTO1_REGIONS[] = {
     "NEW ZEALAND","AUSTRALIA","EUROPE / UK","NORTH AMERICA",
     "BRAZIL / ASIA","CUSTOM / OTHER"
 };
 static size_t setup_region_count(){
     return setup_is_meshcore()
-        ?sizeof(SETUP_MESHCORE_REGIONS)/sizeof(SETUP_MESHCORE_REGIONS[0])
+        ?sizeof(SETUP_PROTO1_REGIONS)/sizeof(SETUP_PROTO1_REGIONS[0])
         :mesh_protocol_setup_region_count();
 }
 static const char* setup_region_label(size_t index){
     if(setup_is_meshcore())
-        return index<setup_region_count()?SETUP_MESHCORE_REGIONS[index]:"";
+        return index<setup_region_count()?SETUP_PROTO1_REGIONS[index]:"";
     return mesh_protocol_setup_region_name(index);
 }
 static bool setup_preset_in_region(size_t index,size_t region){
