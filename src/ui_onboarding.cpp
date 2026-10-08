@@ -25,6 +25,7 @@
 #include "keyboard_geometry.h"
 #include "message_limits.h"
 #include "message_store.h"
+#include "backup_restore.h"
 #include "fonts/inter_15_regular.h"
 #include "fonts/inter_20_regular.h"
 #include "fonts/inter_25_regular.h"
@@ -309,10 +310,17 @@ enum class Screen : uint8_t {
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
     Maps, Discovery, More, AdvertMenu, Diagnostics,
-    Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
+    Settings, ProtocolSelect, ProtocolSettings, BackupOptions, BackupFiles, BackupConfirm, BackupResult,
+    GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static Screen setup_cancel_from=Screen::SetupName;
+static Screen backup_return_screen=Screen::ProtocolSettings;
+static bool backup_restore_mode=false,backup_from_setup=false,backup_restore_pending=false;
+static uint8_t backup_flags=7,backup_available=7;
+static MeshInkBackupInfo backup_entries[24]{};
+static size_t backup_count=0,backup_page=0;
+static char backup_filename[32]{},backup_result_message[84]{};
 // Separate protocol completion flags; a legacy completed installation is preserved.
 static bool setup_meshcore_done=false, setup_meshtastic_done=false, setup_any_done=false;
 static uint8_t setup_return_protocol=0;
@@ -2848,6 +2856,7 @@ static void draw_setup_protocol(){
             280+(int)i*145);
     }
     ui_centred("You can switch protocols later in Settings.",ui_y(720),2,0,false);
+    ui_action_button("RESTORE FROM SD",ui_rect(60,760,420,62),false);
     setup_footer();
 }
 static void draw_setup_name(){
@@ -2862,6 +2871,7 @@ static void draw_setup_name(){
     else {
         ui_action_button("EDIT NAME",ui_rect(60,450,420,74),false);
         ui_centred("ENTER on keyboard closes it.",ui_y(610),2,0,false);
+        ui_action_button("RESTORE FROM SD",ui_rect(60,720,420,70),false);
         setup_footer();
     }
 }
@@ -3012,10 +3022,10 @@ static void draw_protocol_select() {
                     layout.section_margin,ui_y(760),layout.section_width,2,0,false,4);
 }
 
-enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,Backend};
+enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,Backend,Backup};
 
 static size_t protocol_settings_total_count(){
-    return 1+(mesh_protocol_supports_radio_presets()?1:0)+mesh_protocol_setting_count();
+    return 2+(mesh_protocol_supports_radio_presets()?1:0)+mesh_protocol_setting_count();
 }
 
 static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
@@ -3035,6 +3045,11 @@ static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
             return true;
         }
         ++cursor;
+    }
+    if(index-cursor==mesh_protocol_setting_count()){
+        kind=ProtocolSettingsRowKind::Backup;
+        title="BACKUP / RESTORE";value="SD CARD / PROTOCOL DATA";
+        return true;
     }
     MeshInkProtocolSettingItem item{};
     if(!mesh_protocol_setting_item(index-cursor,item))return false;
@@ -3698,11 +3713,16 @@ static void draw_screen() {
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;
         case Screen::ChannelManage:draw_channel_manage();break;case Screen::ChannelCreate:draw_channel_create();break;case Screen::ChannelDelete:draw_channel_delete();break;
         case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
-        case Screen::Settings:draw_settings();break;case Screen::ProtocolSelect:draw_protocol_select();break;case Screen::ProtocolSettings:draw_protocol_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
+        case Screen::Settings:draw_settings();break;case Screen::ProtocolSelect:draw_protocol_select();break;case Screen::ProtocolSettings:draw_protocol_settings();break;
+        case Screen::BackupOptions:draw_backup_options();break;
+        case Screen::BackupFiles:draw_backup_files();break;
+        case Screen::BackupConfirm:draw_backup_confirm();break;
+        case Screen::BackupResult:draw_backup_result();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
         case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
         case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::BackupOptions||
+        screen==Screen::BackupFiles||screen==Screen::BackupConfirm||screen==Screen::BackupResult||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
