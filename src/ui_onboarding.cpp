@@ -1669,34 +1669,8 @@ static void show_toast(const char* message) {
     toast_visible=true;toast_until=millis()+1500;
 }
 
-static void draw_welcome() {
-    meshink_display_set_all_white(&display);
-    draw_status_bar();
-    const MeshInkUiLayout& layout=portrait_layout();
-    const MeshInkUiRect name_rect=meshink_welcome_name_rect(layout);
-    const MeshInkUiRect preset_rect=meshink_welcome_preset_rect(layout);
-    const MeshInkUiRect companion_rect=meshink_welcome_companion_rect(layout);
-    ui_centred(mesh_protocol_name(),ui_y(62),6,0,true);
-    ui_centred("Set up your T5",ui_y(116),3,0,true);
-    ui_text("YOUR NAME",layout.form_margin,ui_y(154),2,0,true);
-    ui_section_card(name_rect);
-    ui_text_fit(node_name,layout.form_text_x,name_rect.y+ui_h(18),
-                name_rect.width-ui_w(36),3,0,false);
-    ui_text("RADIO PRESET",layout.form_margin,ui_y(268),2,0,true);
-    ui_section_card(preset_rect);
-    ui_text_fit(PRESETS[selected_preset].title,preset_rect.x+ui_w(14),preset_rect.y+ui_h(10),
-                preset_rect.width-ui_w(58),3,0,true);
-    ui_text_fit(PRESETS[selected_preset].detail,preset_rect.x+ui_w(14),preset_rect.y+ui_h(51),
-                preset_rect.width-ui_w(58),2,0,false);
-    ui_text(">",preset_rect.x+preset_rect.width-ui_w(30),preset_rect.y+ui_h(27),3,0,true);
-    ui_section_card(companion_rect);
-    ui_centred("Bluetooth companion mode",companion_rect.y+ui_h(15),2,0,true);
-    if(keyboard_visible){ui_centred("Enter a name",ui_y(586),2,0,true);draw_keyboard();}
-    else {
-        const MeshInkUiRect show_rect=meshink_welcome_show_keyboard_rect(layout);
-        ui_action_button("SHOW KEYBOARD",show_rect,true);
-    }
-}
+// First-run setup now uses the same step-by-step screens for both protocols.
+// The former single-page welcome form has been removed.
 
 static void draw_presets() {
     meshink_display_set_all_white(&display);
@@ -2834,6 +2808,162 @@ static void settings_info_row(const char* title,const char* subtitle,int referen
                 subtitle_width,subtitle_scale,0,false);
 }
 
+
+static void setup_footer(const char* action="NEXT"){
+    if(keyboard_visible)return;
+    const MeshInkUiRect left=ui_rect(24,850,232,74);
+    const MeshInkUiRect right=ui_rect(284,850,232,74);
+    ui_action_button("BACK",left,false);
+    ui_action_button(action,right,true);
+}
+static void setup_progress(const char* title,uint8_t number){
+    char header[48]{};
+    snprintf(header,sizeof(header),"%s",title);
+    draw_app_header(header,false,setup_any_done?"CANCEL":nullptr);
+    char progress[32]{};
+    snprintf(progress,sizeof(progress),"STEP %u OF 6  /  %s",
+             (unsigned)number,mesh_protocol_name());
+    ui_centred(progress,ui_y(94),2,0,true);
+}
+static void setup_list_pager(size_t current,size_t count){
+    if(count<=5)return;
+    const MeshInkUiRect left=ui_rect(24,744,232,65);
+    const MeshInkUiRect right=ui_rect(284,744,232,65);
+    ui_action_button("PREV",left,current==0);
+    ui_action_button("MORE",right,(current+1)*5>=count);
+}
+static void draw_setup_protocol(){
+    draw_app_header("WELCOME TO MESHINK",false);
+    ui_centred("SELECT YOUR MESH PROTOCOL",ui_y(130),3,0,true);
+    ui_centred("One protocol runs at a time.",ui_y(190),2,0,false);
+    const size_t count=mesh_protocol_available_count();
+    for(size_t i=0;i<count&&i<4;++i){
+        const auto* descriptor=mesh_protocol_available(i);
+        if(!descriptor)continue;
+        settings_row(descriptor->name,
+            descriptor->id==setup_protocol_choice?"SELECTED":"TAP TO SELECT",
+            280+(int)i*145);
+    }
+    ui_centred("You can switch protocols later in Settings.",ui_y(720),2,0,false);
+    setup_footer();
+}
+static void draw_setup_name(){
+    setup_progress("NAME YOUR NODE",2);
+    ui_text("NODE NAME",ui_x(28),ui_y(152),2,0,true);
+    const MeshInkUiRect field=ui_rect(24,185,492,96);
+    ui_section_card(field);
+    ui_text_fit(node_name,field.x+ui_w(17),field.y+ui_h(24),
+                field.width-ui_w(34),3,0,true);
+    ui_centred("Letters, numbers and symbols. No spaces.",ui_y(330),2,0,false);
+    if(keyboard_visible)draw_keyboard();
+    else {
+        ui_action_button("EDIT NAME",ui_rect(60,450,420,74),false);
+        ui_centred("ENTER on keyboard closes it.",ui_y(610),2,0,false);
+        setup_footer();
+    }
+}
+static void draw_setup_region(){
+    setup_progress("SELECT REGION",3);
+    const size_t count=setup_region_count();
+    const size_t offset=(size_t)setup_region_page*5;
+    for(size_t i=offset;i<count&&i<offset+5;++i){
+        const char* name=setup_region_label(i);
+        settings_row(name,i==setup_region?"SELECTED":"TAP TO SELECT",
+                     142+(int)(i-offset)*116);
+    }
+    setup_list_pager(setup_region_page,count);
+    setup_footer();
+}
+static void draw_setup_preset(){
+    setup_progress(setup_is_meshcore()?"RADIO PRESET":"MODEM PRESET",4);
+    const size_t count=setup_preset_count();
+    const size_t offset=(size_t)setup_preset_page*5;
+    for(size_t i=offset;i<count&&i<offset+5;++i){
+        const bool selected=setup_is_meshcore()
+            ?setup_core_preset_at(i)==setup_radio_preset
+            :(int)i==setup_radio_preset;
+        settings_row(setup_preset_label(i),selected?"SELECTED":"TAP TO SELECT",
+                     142+(int)(i-offset)*116);
+    }
+    setup_list_pager(setup_preset_page,count);
+    setup_footer();
+}
+static void setup_compact_row(const char* title,const char* value,int y){
+    const MeshInkUiRect rect=ui_rect(24,y,492,70);
+    ui_section_card(rect);
+    ui_text(title,rect.x+ui_w(13),rect.y+ui_h(13),2,0,true);
+    ui_text_fit(value,rect.x+ui_w(248),rect.y+ui_h(15),
+                rect.width-ui_w(272),2,0,true);
+}
+static void draw_setup_radio(){
+    setup_progress("RADIO CONFIGURATION",5);
+    if(!setup_is_meshcore()){
+        settings_info_row("REGION",setup_region_label(setup_region),160);
+        settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),298);
+        char hops[24]{};
+        snprintf(hops,sizeof(hops),"%u HOPS  /  TAP TO CHANGE",(unsigned)setup_hops);
+        settings_row("HOP LIMIT",hops,436);
+        ui_draw_wrapped("Meshtastic custom modem values require Leaf support; use a supported preset for this build.",
+            ui_x(34),ui_y(620),ui_w(470),2,0,false,4);
+        setup_footer();
+        return;
+    }
+    ui_text("FREQUENCY (MHz)",ui_x(28),ui_y(145),2,0,true);
+    const MeshInkUiRect freq=ui_rect(24,174,492,88);
+    ui_section_card(freq);
+    ui_text_fit(setup_freq[0]?setup_freq:"Tap to enter MHz",
+                freq.x+ui_w(16),freq.y+ui_h(22),freq.width-ui_w(32),3,0,true);
+    ui_text("TRANSMIT POWER (dBm)",ui_x(28),ui_y(288),2,0,true);
+    const MeshInkUiRect power=ui_rect(24,317,492,88);
+    ui_section_card(power);
+    ui_text_fit(setup_power[0]?setup_power:"Tap to enter dBm",
+                power.x+ui_w(16),power.y+ui_h(22),power.width-ui_w(32),3,0,true);
+    if(keyboard_visible){draw_keyboard();return;}
+    char bandwidth[24]{},spreading[20]{},coding[16]{},hash[16]{};
+    if(setup_bw)snprintf(bandwidth,sizeof(bandwidth),"%.1f kHz",(double)setup_bw);
+    else strcpy(bandwidth,"SELECT");
+    if(setup_sf)snprintf(spreading,sizeof(spreading),"SF%u",(unsigned)setup_sf);
+    else strcpy(spreading,"SELECT");
+    if(setup_cr)snprintf(coding,sizeof(coding),"4/%u",(unsigned)setup_cr);
+    else strcpy(coding,"SELECT");
+    if(setup_hash)snprintf(hash,sizeof(hash),"%u BYTES",(unsigned)setup_hash);
+    else strcpy(hash,"SELECT");
+    setup_compact_row("BANDWIDTH",bandwidth,443);
+    setup_compact_row("SPREADING FACTOR",spreading,524);
+    setup_compact_row("CODING RATE",coding,605);
+    setup_compact_row("PATH HASH",hash,686);
+    setup_footer();
+}
+static void draw_setup_review(){
+    setup_progress("REVIEW AND START",6);
+    settings_info_row("PROTOCOL",mesh_protocol_name(),138);
+    settings_info_row("NODE NAME",node_name,268);
+    settings_info_row("REGION",setup_region_label(setup_region),398);
+    if(setup_is_meshcore()){
+        settings_info_row("RADIO",setup_radio_preset<0?"CUSTOM":
+            PRESETS[setup_radio_preset].title,528);
+        char summary[90]{};
+        snprintf(summary,sizeof(summary),"%s MHz  /  SF%u  /  BW%.1f  /  CR4/%u  /  %sdBm",
+            setup_freq,(unsigned)setup_sf,(double)setup_bw,
+            (unsigned)setup_cr,setup_power);
+        ui_text_fit(summary,ui_x(28),ui_y(699),ui_w(486),2,0,false);
+    }else{
+        settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),528);
+        char details[40]{};
+        snprintf(details,sizeof(details),"HOP LIMIT: %u",(unsigned)setup_hops);
+        ui_centred(details,ui_y(710),2,0,false);
+    }
+    setup_footer("START MESHINK");
+}
+static void draw_setup_cancel(){
+    draw_app_header("CANCEL SETUP",true);
+    ui_centred("RETURN TO YOUR PREVIOUS PROTOCOL?",ui_y(225),3,0,true);
+    ui_draw_wrapped("This protocol will remain unconfigured. Your previous protocol and its settings will be retained.",
+        ui_x(40),ui_y(355),ui_w(460),3,0,false,5);
+    ui_action_button("CONTINUE SETUP",ui_rect(24,660,232,75),false);
+    ui_action_button("YES, RETURN",ui_rect(284,660,232,75),true);
+}
+
 enum class SettingsAction:uint8_t{Protocol,ProtocolSettings,Gps,DateTime,DisplayPower,About};
 struct SettingsMenuItem{const char* title;const char* subtitle;SettingsAction action;};
 
@@ -3553,7 +3683,14 @@ static void draw_screen() {
         return;
     }
     switch(screen){
-        case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
+        case Screen::Welcome:draw_setup_protocol();break;
+        case Screen::SetupName:draw_setup_name();break;
+        case Screen::SetupRegion:draw_setup_region();break;
+        case Screen::SetupPreset:draw_setup_preset();break;
+        case Screen::SetupRadio:draw_setup_radio();break;
+        case Screen::SetupReview:draw_setup_review();break;
+        case Screen::SetupCancel:draw_setup_cancel();break;
+        case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;
         case Screen::ChannelManage:draw_channel_manage();break;case Screen::ChannelCreate:draw_channel_create();break;case Screen::ChannelDelete:draw_channel_delete();break;
