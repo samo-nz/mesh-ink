@@ -147,11 +147,11 @@ if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
 leaf_pin="https://github.com/Meshtastic-Solutions/libmeshtastic-leaf.git#bd542d6e77aa7b9507dcc8d153f6dad0c35a8c17"
 if leaf_pin not in unified_env:
     errors.append("platformio.ini: libmeshtastic-leaf must stay pinned to reviewed 1.0.0 commit")
-crypto_pin="MeshtasticCrypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
+crypto_pin="Crypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
 if crypto_pin not in unified_env:
-    errors.append("platformio.ini: shared Meshtastic Crypto fork must stay pinned to Leaf's reviewed commit")
-if "lib_ignore =\n    Crypto" not in unified_env:
-    errors.append("platformio.ini: duplicate transitive Crypto packages must remain ignored in favor of MeshtasticCrypto")
+    errors.append("platformio.ini: Meshtastic Crypto fork must remain the pinned shared Crypto provider")
+if "lib_ignore =\n    Crypto" in unified_env:
+    errors.append("platformio.ini: shared Crypto provider must not be hidden by lib_ignore")
 
 if errors:
     raise AssertionError("\n".join(errors))
