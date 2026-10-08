@@ -23,6 +23,7 @@
 #include "local_mesh_runtime.h"
 #include "message_store.h"
 #include "backup_restore.h"
+#include "hardware/storage.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
 #include "hardware/board.h"
@@ -487,7 +488,7 @@ void companion_setup() {
         while (true) delay(1000);
     }
     fast_rng.begin(meshink_radio_rng_seed());
-    const bool storage_mounted=SPIFFS.begin(true);
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
     if(storage_mounted&&!meshink_backup_recover_pending()){
@@ -604,12 +605,8 @@ void local_mesh_setup() {
     // so this independent flash work consumes the otherwise idle remainder of
     // LilyGO's required 1500 ms rail delay. Keep MeshCore datastore/core
     // lifecycle ordering unchanged.
-    bool storage_mounted=SPIFFS.begin(false);
-    if(!storage_mounted){
-        T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
-        ui_show_storage_initializing();
-        storage_mounted=SPIFFS.begin(true);
-    }
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
+    if(!storage_mounted)ui_show_storage_initializing();
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
     if(!storage_mounted||!meshink_backup_recover_pending()){
