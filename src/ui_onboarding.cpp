@@ -3353,7 +3353,8 @@ static void draw_display_settings() {
     ui_text("-",layout.content_text_x,ui_y(452),3,0,true);
     ui_text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
     settings_row("STANDBY",standby_timeout_name(),538);
-    ui_action_button(deep_sleep_standby?"DEEP SLEEP":"NORMAL",
+    ui_action_button(deep_sleep_standby?(mesh_protocol_supports_deep_sleep_standby()?
+                     "DEEP SLEEP":"NORMAL ONLY"):"NORMAL",
                      meshink_settings_inline_action_rect(layout,538),true);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
