@@ -1347,7 +1347,7 @@ assert local_setup_body.index("meshink_storage_mount_internal_safe()") < local_s
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
 assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
-assert local_setup_body.count("SPIFFS.begin(false)") == 1, "local startup mounts existing SPIFFS exactly once"
+assert local_setup_body.count("meshink_storage_mount_internal_safe()") == 1, "local startup mounts SPIFFS through the data-preserving board service exactly once"
 assert "delay(200)" not in ui_setup_boot, "local UI no longer burns a fixed 200 ms serial delay before useful startup work"
 assert "Serial.begin(115200);" in ui_setup_boot, "standalone UI target still initializes Serial without the fixed wait"
 
