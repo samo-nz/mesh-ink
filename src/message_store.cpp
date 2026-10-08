@@ -257,7 +257,7 @@ uint32_t MeshInkMessageStore::append(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
         const char* text,uint32_t timestamp,UiMessageState state,
         uint32_t ack,MeshInkMessageOrigin origin,
-        bool has_rx,int8_t snr_q4,uint8_t path_len,bool unread){
+        bool has_rx,int8_t snr_q4,uint8_t path_len,bool unread,uint8_t protocol_id){
     if(!initialized_&&!begin())return 0;
 
     uint16_t physical;
@@ -279,7 +279,9 @@ uint32_t MeshInkMessageStore::append(
     if(key&&key_len)memcpy(item.key,key,min(key_len,sizeof(item.key)));
     if(text)strncpy(item.text,text,sizeof(item.text)-1);
     item.path_len=has_rx?path_len:MESHINK_MESSAGE_PATH_UNKNOWN;
-    item.origin=(uint8_t)origin;
+    item.origin=(uint8_t)(
+        ((protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)<<MESHINK_MESSAGE_PROTOCOL_SHIFT) |
+        ((uint8_t)origin&MESHINK_MESSAGE_ORIGIN_MASK));
     if(has_rx){
         item.snr_q4=snr_q4;
         item.flags|=MESHINK_MESSAGE_HAS_RX;
@@ -324,7 +326,7 @@ bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
 }
 
 bool MeshInkMessageStore::mark_read_through(
-        MeshInkMessageKind kind,const uint8_t* key,size_t key_len){
+        MeshInkMessageKind kind,const uint8_t* key,size_t key_len,uint8_t protocol_id){
     if(!initialized_&&!begin())return false;
     MeshInkStoredMessage item{};
     if(!file_||!key||!key_len||key_len>sizeof(item.key))return false;
@@ -336,7 +338,9 @@ bool MeshInkMessageStore::mark_read_through(
         const uint16_t p=(header_.head+(uint16_t)n-1)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
         else if(!read_record(file_,p,item))return false;
-        if(item.kind!=(uint8_t)kind||memcmp(item.key,key,key_len))continue;
+        if(item.kind!=(uint8_t)kind||
+           meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
+           memcmp(item.key,key,key_len))continue;
 
         const uint8_t next_flags=(uint8_t)(
             (item.flags|MESHINK_MESSAGE_READ_THROUGH)&
