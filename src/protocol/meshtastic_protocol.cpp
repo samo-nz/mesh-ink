@@ -222,6 +222,9 @@ class MeshtasticUiProvider final:public UiDataProvider {
     PositionRecord positions_[MAX_NODES]{};
     TelemetryRecord telemetry_[MAX_NODES]{};
     uint32_t position_saved_at_=0;
+    // Prevent later radio receptions from replacing a damaged snapshot if
+    // its original file could not first be archived safely.
+    bool position_snapshot_write_blocked_=false;
     ListStorage contacts_[MAX_NODES]{};
     uint8_t contact_node_index_[MAX_NODES]{};
     size_t contact_count_=0;
@@ -274,6 +277,7 @@ class MeshtasticUiProvider final:public UiDataProvider {
         return nullptr;
     }
     bool save_positions(){
+        if(position_snapshot_write_blocked_)return false;
         File f=SPIFFS.open(POSITIONS_STAGE,"w");if(!f)return false;
         uint32_t header[2]={POSITION_MAGIC,0};
         for(const auto& p:positions_)if(p.node)++header[1];
@@ -302,7 +306,8 @@ class MeshtasticUiProvider final:public UiDataProvider {
         if(!SPIFFS.exists(POSITIONS_PATH))return;
         File f=SPIFFS.open(POSITIONS_PATH,"r");
         if(!f||f.isDirectory()){
-            Serial.printf("[T5-MESHTASTIC] WARN existing position snapshot cannot be opened path=%s; preserving\n",
+            position_snapshot_write_blocked_=true;
+            Serial.printf("[T5-MESHTASTIC] WARN existing position snapshot cannot be opened path=%s; preservation unavailable, writes blocked\n",
                           POSITIONS_PATH);
             if(f)f.close();
             return;
@@ -347,12 +352,15 @@ class MeshtasticUiProvider final:public UiDataProvider {
                 if(SPIFFS.exists(archive))continue;
                 if(SPIFFS.rename(POSITIONS_PATH,archive))
                     Serial.printf("[T5-MESHTASTIC] invalid position snapshot archived as %s\n",archive);
-                else
-                    Serial.printf("[T5-MESHTASTIC] WARN could not archive position snapshot as %s; original retained\n",
+                else{
+                    position_snapshot_write_blocked_=true;
+                    Serial.printf("[T5-MESHTASTIC] WARN could not archive position snapshot as %s; original retained, writes blocked\n",
                                   archive);
+                }
                 return;
             }
-            Serial.println("[T5-MESHTASTIC] WARN position recovery filenames exhausted; original retained");
+            position_snapshot_write_blocked_=true;
+            Serial.println("[T5-MESHTASTIC] WARN position recovery filenames exhausted; original retained, writes blocked");
             return;
         }
         for(size_t i=0;i<header[1];++i){
