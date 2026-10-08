@@ -2968,6 +2968,70 @@ static void draw_setup_review(){
     }
     setup_footer("START MESHINK");
 }
+
+static void draw_backup_options(){
+    draw_app_header(backup_restore_mode?"RESTORE FROM SD":"BACKUP TO SD",true);
+    char label[40]{};
+    snprintf(label,sizeof(label),"%s DATA ONLY",mesh_protocol_name());
+    ui_centred(label,ui_y(122),3,0,true);
+    if(backup_restore_mode)
+        ui_text_fit(backup_filename,ui_x(24),ui_y(182),ui_w(492),2,0,false);
+    else ui_centred("SELECT BACKUP CATEGORIES",ui_y(182),2,0,false);
+    constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","SETTINGS & IDENTITY"};
+    constexpr uint8_t flags[]={1,2,4};
+    for(int i=0;i<3;++i){
+        ui_section_card(ui_rect(24,245+i*124,492,100));
+        const bool on=(backup_flags&flags[i])!=0;
+        const bool available=(backup_available&flags[i])!=0;
+        rounded_box(ui_rect(42,263+i*124,53,53),ui_w(8),on);
+        if(on)ui_text("X",ui_x(57),ui_y(275+i*124),3,0xFF,true);
+        ui_text(names[i],ui_x(120),ui_y(277+i*124),3,available?0:0x88,true);
+    }
+    ui_draw_wrapped("WARNING: SD IS REMOVABLE. BACKUPS MAY CONTAIN PRIVATE IDENTITY KEYS, CHANNEL KEYS AND MESSAGES. KEEP YOUR CARD SECURE.",
+        ui_x(30),ui_y(636),ui_w(475),2,0,false,5);
+    if(backup_restore_mode){
+        ui_action_button("CHOOSE FILE",ui_rect(24,811,232,80),false);
+        ui_action_button("RESTORE",ui_rect(284,811,232,80),true);
+    }else{
+        ui_action_button("RESTORE SD",ui_rect(24,811,232,80),false);
+        ui_action_button("BACKUP NOW",ui_rect(284,811,232,80),true);
+    }
+}
+static void draw_backup_files(){
+    draw_app_header("CHOOSE SD BACKUP",true);
+    char subtitle[46]{};
+    snprintf(subtitle,sizeof(subtitle),"%s / %u BACKUPS",
+             mesh_protocol_name(),(unsigned)backup_count);
+    ui_centred(subtitle,ui_y(112),2,0,true);
+    if(!backup_count)ui_centred("NO COMPATIBLE SD BACKUPS",ui_y(340),3,0,true);
+    const size_t start=backup_page*5;
+    for(size_t i=start;i<backup_count&&i<start+5;++i){
+        const MeshInkBackupInfo& entry=backup_entries[i];
+        char details[72]{};
+        snprintf(details,sizeof(details),"%s%s%s %lu BYTES",
+            entry.categories&1?"MSG ":"",entry.categories&2?"NODES ":"",
+            entry.categories&4?"SETTINGS ":"",(unsigned long)entry.bytes);
+        settings_row(entry.filename,details,170+(int)(i-start)*119);
+    }
+    if(backup_count>5){
+        ui_action_button("PREV",ui_rect(24,800,232,74),backup_page==0);
+        ui_action_button("NEXT",ui_rect(284,800,232,74),(backup_page+1)*5>=backup_count);
+    }
+}
+static void draw_backup_confirm(){
+    draw_app_header("CONFIRM RESTORE",true);
+    ui_centred("REPLACE SELECTED DATA?",ui_y(195),3,0,true);
+    ui_draw_wrapped("Only the chosen categories for this protocol will be replaced. The SD backup and all other protocol data will be retained.",
+        ui_x(36),ui_y(350),ui_w(470),3,0,false,6);
+    ui_action_button("CANCEL",ui_rect(24,735,232,85),false);
+    ui_action_button("RESTORE",ui_rect(284,735,232,85),true);
+}
+static void draw_backup_result(){
+    draw_app_header("BACKUP / RESTORE",true);
+    ui_draw_wrapped(backup_result_message,ui_x(32),ui_y(315),ui_w(476),3,0,true,8);
+    ui_action_button("BACK",ui_rect(85,780,370,80),false);
+}
+
 static void draw_setup_cancel(){
     draw_app_header("CANCEL SETUP",true);
     ui_centred("RETURN TO YOUR PREVIOUS PROTOCOL?",ui_y(225),3,0,true);
