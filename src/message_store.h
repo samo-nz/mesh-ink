@@ -92,16 +92,16 @@ public:
     bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                            uint8_t protocol_id=0);
     bool mark_matching_received_read(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-                                     uint32_t timestamp,const char* text);
+                                     uint32_t timestamp,const char* text,uint8_t protocol_id=0);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
     void update_route(uint32_t sequence,bool flood);
     void update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4);
     void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);
-    bool mark_delivered_by_ack(uint32_t ack);
+    bool mark_delivered_by_ack(uint32_t ack,uint8_t protocol_id=0);
     bool sync_and_verify_for_deep_sleep(uint32_t& disk_sequence,size_t& disk_count);
     uint32_t find_matching_outgoing(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-                                    uint32_t timestamp,const char* text) const;
+                                    uint32_t timestamp,const char* text,uint8_t protocol_id=0) const;
 };
 
 MeshInkMessageStore& meshink_message_store();
