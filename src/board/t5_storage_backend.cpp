@@ -4,11 +4,35 @@
 
 #include <Arduino.h>
 #include <SD.h>
+#include <SPIFFS.h>
+#include <esp_partition.h>
 
 namespace {
 // Preserve the field-tested map/PMTiles access rate. Keeping this in the
 // backend prevents application code from knowing board electrical tuning.
 constexpr uint32_t T5_STORAGE_SPI_HZ=25000000;
+}
+
+bool meshink_storage_mount_internal_safe() {
+    if(SPIFFS.begin(false))return true;
+    // A failed mount of a populated partition must never become a silent wipe.
+    // Only a fully erased, first-install SPIFFS partition may be formatted.
+    const auto* part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                             ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
+                                             "spiffs");
+    if(!part)return false;
+    uint8_t bytes[256]{};
+    for(size_t offset=0;offset<part->size;offset+=sizeof(bytes)){
+        const size_t length=min(sizeof(bytes),(size_t)(part->size-offset));
+        if(esp_partition_read(part,offset,bytes,length)!=ESP_OK)return false;
+        for(size_t i=0;i<length;++i)
+            if(bytes[i]!=0xFF){
+                Serial.println("[T5-STORAGE] mount failed on populated flash; autoformat refused");
+                return false;
+            }
+    }
+    Serial.println("[T5-STORAGE] partition fully erased; initializing SPIFFS once");
+    return SPIFFS.begin(true);
 }
 
 bool meshink_storage_begin() {
