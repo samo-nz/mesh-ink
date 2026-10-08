@@ -921,7 +921,7 @@ assert "meshink_rtc_expect_companion_time" in companion_source and "CMD_SET_DEVI
 assert "T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL" in board_target_source, "trusted GPS time owns a 24-hour authority window"
 assert "trusted_companion" in board_target_source and "gpsAuthorityActive(current)" in board_target_source, "companion time is gated only by fresh GPS authority after upstream command validation"
 assert "setManualTime" in board_target_source and "MeshInkTimeSource::Manual" in board_target_source, "manual time bypass exists and records its source"
-assert '{"DATE & TIME","Clock, source, timezone",SettingsAction::DateTime}' in source, "Date and Time is available from Settings independently of GPS"
+assert '{"DATE & TIME","Clock, source and timezone",SettingsAction::DateTime}' in source, "Date and Time is available from Settings independently of GPS"
 assert 'draw_app_header("DATE & TIME",true);' in source and 'draw_app_header("SET DATE & TIME",true);' in source, "standalone clock pages are present"
 assert 'settings_row("TIMEZONE",zone,478);' in source and 'timezone_display_label(zone,sizeof(zone));' in source, "timezone belongs to Date and Time and supports dynamic AUTO/CUSTOM labels"
 assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explanatory text remains visible"
