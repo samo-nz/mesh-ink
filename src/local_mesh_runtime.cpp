@@ -238,7 +238,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
                          (unsigned)hops,hops==1?"":"S");
         }
     }
-    bool matches(const StoredMessage& m)const{return m.kind==(uint8_t)(active_channel_?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,active_key_,active_channel_?1:6)==0;}
+    bool matches(const StoredMessage& m)const{return meshink_message_protocol(m)==0&&m.kind==(uint8_t)(active_channel_?MessageKind::Channel:MessageKind::Direct)&&memcmp(m.key,active_key_,active_channel_?1:6)==0;}
     bool has_recent_info(const uint8_t* full_key)const {
         return recent_info_.heard&&memcmp(recent_info_.key,full_key,PUB_KEY_SIZE)==0;
     }
@@ -282,6 +282,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         // visible contact. This replaces the old N-contacts x N-messages scan.
         for(size_t logical=0;logical<store_.count();++logical){
             if(!store_.read(logical,item)||
+               meshink_message_protocol(item)!=0||
                item.kind!=(uint8_t)MessageKind::Direct||item.sequence==0)continue;
             for(size_t contact=0;contact<contact_count_;++contact){
                 if(!memcmp(item.key,contacts_[contact].key,6)){
@@ -351,7 +352,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         memset(channel_unread_,0,sizeof(channel_unread_));
         StoredMessage item{};
         for(size_t i=0;i<store_.count();++i){
-            if(!store_.read(i,item)||item.sequence==0)continue;
+            if(!store_.read(i,item)||item.sequence==0||meshink_message_protocol(item)!=0)continue;
             const bool read_through=(item.flags&MESHINK_MESSAGE_READ_THROUGH)!=0;
             const bool unread=(item.flags&MESHINK_MESSAGE_UNREAD)!=0;
             if(item.kind==(uint8_t)MessageKind::Direct){
