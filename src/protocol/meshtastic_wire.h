@@ -77,7 +77,7 @@ inline DeviceTelemetry decode_device_telemetry(const uint8_t* b,size_t len){
                 uint64_t nested_tag=0;
                 if(!varint(b,end,off,nested_tag)||!nested_tag)return out;
                 if((nested_tag>>3)==1&&(nested_tag&7)==0){
-                    uint64_t value=0;if(!varint(b,end,off,value)||value>100)return out;
+                    uint64_t value=0;if(!varint(b,end,off,value)||value>255)return out;
                     battery=(uint32_t)value;battery_ok=true;
                 }else if((nested_tag>>3)==2&&(nested_tag&7)==5){
                     if(end-off<4)return out;
