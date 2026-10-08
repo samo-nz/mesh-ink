@@ -1771,3 +1771,7 @@ assert 'if(!meshink_storage_rename(temp,path))' in backup_source, "SD backup is 
 assert 'if(!inspect(filename,protocol,hdr,parts,true))' in backup_source, "restore validates every selected source before replacement"
 assert 'rollback_files(count);' in backup_source, "restore failure rolls back replaced protocol files"
 assert 'mesh_protocol_flush_now();' in backup_source, "MeshCore contacts are flushed before backup"
+
+assert 'static bool sd_writable()' in backup_source and 'memcmp(sample,actual,sizeof(sample))==0' in backup_source, "backup tests SD write/read readiness without overwriting user files"
+assert 'if(!sd_writable())return false;' in backup_source, "backup refuses unverified or write-protected SD"
+assert 'ui_action_button("RETRY SD"' in source, "empty or absent SD restore list can retry without reboot"
