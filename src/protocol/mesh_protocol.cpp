@@ -90,7 +90,7 @@ static const MeshInkProtocolBackend& active_backend() {
         if (!selected_protocol_id(selected)) return *first_backend();
         cached=find_backend(selected);
         if (!cached) cached=first_backend();
-        Serial.printf("[T5-PROTOCOL] persisted=%u selected=%u\\n",
+        Serial.printf("[T5-PROTOCOL] persisted=%u selected=%u\n",
                       (unsigned)selected,(unsigned)cached->descriptor.id);
     }
     return *cached;
@@ -184,7 +184,7 @@ bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
     if(!verify.begin("mesh-protocol",true))return false;
     const bool ok=verify.isKey("active")&&verify.getUChar("active",0)==protocol_id;
     verify.end();
-    if(!ok)Serial.printf("[T5-PROTOCOL] NVS readback failed target=%u\\n",(unsigned)protocol_id);
+    if(!ok)Serial.printf("[T5-PROTOCOL] NVS readback failed target=%u\n",(unsigned)protocol_id);
     return ok;
 }
 
