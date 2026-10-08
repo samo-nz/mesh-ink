@@ -321,7 +321,6 @@ static int setup_radio_preset=-1;
 static uint8_t setup_hops=3,setup_sf=0,setup_cr=0,setup_hash=0,setup_edit_field=0;
 static float setup_bw=0;
 static char setup_freq[18]{},setup_power[8]{};
-static bool setup_name_explicit=false;
 static bool setup_is_screen(Screen value){
     return value==Screen::Welcome||value==Screen::SetupName||value==Screen::SetupRegion||
            value==Screen::SetupPreset||value==Screen::SetupRadio||
@@ -842,7 +841,7 @@ static void setup_initialize_draft(){
     setup_hops=3;setup_radio_preset=-1;
     setup_freq[0]=0;setup_power[0]=0;
     setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
-    setup_edit_field=0;setup_name_explicit=false;
+    setup_edit_field=0;
     // Leaf's ANZ value is not assumed to be index zero in its region listing.
     if(!setup_is_meshcore())
         for(size_t i=0;i<setup_region_count();++i)
@@ -1364,7 +1363,9 @@ static void draw_keyboard() {
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),metrics.mode_key);
     key("DEL",metrics.delete_key);
     key(screen==Screen::ChannelCreate?"HIDE":"LAND",metrics.orientation_key);
-    if(screen==Screen::ChannelCreate){
+    if(screen==Screen::SetupName||screen==Screen::SetupRadio){
+        key("ENTER",metrics.wide_action_key);
+    }else if(screen==Screen::ChannelCreate){
         key("DONE",metrics.wide_action_key);
     }else if(keyboard_message_mode||keyboard_password_mode){
         // Space is valid for message/password entry. Match familiar phone
@@ -4177,6 +4178,15 @@ static void cycle_keyboard_mode(){
     else keyboard_symbols=true;
 }
 static void append(char c) {
+    if(screen==Screen::SetupRadio){
+        char* value=setup_edit_field?setup_power:setup_freq;
+        const size_t limit=setup_edit_field?sizeof(setup_power)-1:sizeof(setup_freq)-1;
+        if(!((c>='0'&&c<='9')||(!setup_edit_field&&c=='.')))return;
+        const size_t length=strlen(value);
+        if(c=='.'&&strchr(value,'.'))return;
+        if(length<limit){value[length]=c;value[length+1]=0;}
+        return;
+    }
     if(screen==Screen::ChannelCreate){
         char* value=channel_form_key_field?channel_form_key_hex:channel_form_name;
         const size_t limit=channel_form_key_field?32:
@@ -4205,7 +4215,7 @@ static void append(char c) {
         }
         return;
     }
-    if(!mesh_protocol_name_character_allowed(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded protocol-invalid name character 0x%02X\n",(unsigned char)c);return;}
+    if(c==' '||!mesh_protocol_name_character_allowed(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded protocol-invalid name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
     const size_t limit=min(sizeof(node_name)-1,mesh_protocol_node_name_max_length());
     size_t n=strlen(node_name); if (n<limit) { node_name[n]=c; node_name[n+1]=0; saved=false; }
@@ -4289,9 +4299,9 @@ static void set_keyboard_orientation(bool landscape){
 }
 static void save_node_name(){
     prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);
-    prefs.putBool("complete",true);prefs.putBool("name_migrated",true);prefs.end();
+    prefs.putBool("name_migrated",true);prefs.end();
     if(mesh_is_ready)mesh_protocol_apply_name(node_name);
-    saved=true;setup_complete=true;
+    saved=true;
 }
 
 // A full redraw of the first Contacts screen removes the initial setup
@@ -4351,9 +4361,12 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
             keyboard_visible=true;set_keyboard_orientation(false);
             return true;
         }
-        // DONE in landscape is only an orientation switch for name entry.
-        // Return to portrait setup with radio preset still available; only
-        // the portrait SAVE button can persist the name and complete setup.
+        // Wizard ENTER dismisses editing; only NEXT advances the setup.
+        if(screen==Screen::SetupName||screen==Screen::SetupRadio){
+            keyboard_visible=false;
+            set_keyboard_orientation(false);
+            return true;
+        }
         keyboard_visible=true;set_keyboard_orientation(false);
         return true;
     }
@@ -4418,14 +4431,21 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
 static bool handle_name_keyboard(int16_t x,int16_t y){
     if(!keyboard_visible||keyboard_message_mode)return false;
     const auto metrics=keyboard_metrics(false);
+    const bool wizard_entry=screen==Screen::SetupName||screen==Screen::SetupRadio;
+    if(wizard_entry&&y<metrics.dismiss_above){
+        text_refresh_pending=false;keyboard_visible=false;
+        draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+    }
     // In Protocol Settings, tapping above the keyboard dismisses name editing.
     // First-time setup keeps its explicit setup controls and save flow.
     if(screen==Screen::ProtocolSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
     if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
         if(x>=meshink_keyboard::delete_split(metrics)){
-            const size_t n=strlen(node_name);
-            if(n)node_name[n-1]=0;
+            char* value=screen==Screen::SetupRadio
+                ?(setup_edit_field?setup_power:setup_freq):node_name;
+            const size_t n=strlen(value);
+            if(n)value[n-1]=0;
             saved=false;queue_text_refresh();return true;
         }
     }
@@ -4435,15 +4455,181 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
         if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
-        if(mesh_protocol_name_character_allowed(' ')&&x<meshink_keyboard::action_split(metrics)){append(' ');queue_text_refresh();return true;}
-        const bool was_setup=screen==Screen::Welcome;
-        save_node_name();
-        if(was_setup){
-            show_contacts_after_setup();
-        }else{
+        if(!wizard_entry&&mesh_protocol_name_character_allowed(' ')&&x<meshink_keyboard::action_split(metrics)){
+            append(' ');queue_text_refresh();return true;
+        }
+        if(wizard_entry){
             keyboard_visible=false;
-            show_toast("IDENTITY SAVED");
+            text_refresh_pending=false;
             draw_screen();refresh(MeshInkRefreshMode::Direct);
+            return true;
+        }
+        if(!node_name[0]){show_toast("NAME REQUIRED");return true;}
+        save_node_name();
+        keyboard_visible=false;
+        show_toast("IDENTITY SAVED");
+        draw_screen();refresh(MeshInkRefreshMode::Direct);
+        return true;
+    }
+    return true;
+}
+
+
+static void setup_enter(Screen next){
+    keyboard_visible=false;
+    keyboard_landscape=false;
+    open_screen(next);
+}
+static bool handle_setup_tap(int16_t x,int16_t y){
+    if(!setup_is_screen(screen))return false;
+    if((screen==Screen::SetupName||screen==Screen::SetupRadio)&&keyboard_visible){
+        // Keep all editable values above the existing portrait keyboard.
+        if(screen==Screen::SetupName||screen==Screen::SetupRadio){
+            const int input=screen==Screen::SetupName?0:
+                (hit(x,y,ui_rect(24,317,492,88))?1:0);
+            if(screen==Screen::SetupRadio&&y<ui_y(415))setup_edit_field=(uint8_t)input;
+            return handle_name_keyboard(x,y);
+        }
+    }
+    if(screen!=Screen::Welcome&&screen!=Screen::SetupCancel&&
+       setup_any_done&&hit_header_action(x,y)){
+        setup_enter(Screen::SetupCancel);
+        return true;
+    }
+    if(screen==Screen::SetupCancel){
+        if(hit(x,y,ui_rect(24,660,232,75))){
+            setup_enter(Screen::SetupName);return true;
+        }
+        if(hit(x,y,ui_rect(284,660,232,75))){
+            if(setup_return_protocol&&setup_protocol_done(setup_return_protocol))
+                mesh_protocol_restart_into(setup_return_protocol);
+            else show_toast("RETURN NOT AVAILABLE");
+            return true;
+        }
+        return true;
+    }
+    if(screen==Screen::Welcome){
+        for(size_t i=0;i<mesh_protocol_available_count()&&i<4;++i){
+            const auto* choice=mesh_protocol_available(i);
+            if(choice&&hit_outer_row(x,y,280+(int)i*145)){
+                setup_protocol_choice=choice->id;
+                draw_screen();refresh(MeshInkRefreshMode::Direct);
+                return true;
+            }
+        }
+        if(hit(x,y,ui_rect(284,850,232,74))){
+            if(!setup_protocol_choice){show_toast("CHOOSE A PROTOCOL");return true;}
+            if(setup_protocol_choice!=mesh_protocol_descriptor().id){
+                Preferences p;
+                if(p.begin("t5-ui",false)){p.putUChar("setup_return",0);p.end();}
+                mesh_protocol_restart_into(setup_protocol_choice);
+            }else{
+                setup_initialize_draft();
+                setup_enter(Screen::SetupName);
+            }
+        }
+        return true;
+    }
+    if(screen==Screen::SetupName){
+        if(hit(x,y,ui_rect(24,185,492,96))||
+           hit(x,y,ui_rect(60,450,420,74))){
+            keyboard_visible=true;
+            replace_name_on_type=false;
+            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(hit(x,y,ui_rect(24,850,232,74))){
+            setup_enter(setup_any_done?Screen::SetupCancel:Screen::Welcome);return true;
+        }
+        if(hit(x,y,ui_rect(284,850,232,74))){
+            if(!node_name[0]||strlen(node_name)>20||strchr(node_name,' ')){
+                show_toast("INVALID NODE NAME");return true;
+            }
+            setup_enter(Screen::SetupRegion);return true;
+        }
+        return true;
+    }
+    if(screen==Screen::SetupRegion||screen==Screen::SetupPreset){
+        const bool is_region=screen==Screen::SetupRegion;
+        const size_t count=is_region?setup_region_count():setup_preset_count();
+        uint8_t& page=is_region?setup_region_page:setup_preset_page;
+        const size_t first=(size_t)page*5;
+        for(size_t i=first;i<count&&i<first+5;++i){
+            if(!hit_outer_row(x,y,142+(int)(i-first)*116))continue;
+            if(is_region)setup_region=(uint8_t)i;
+            else if(setup_is_meshcore())setup_load_core_preset(setup_core_preset_at(i));
+            else setup_radio_preset=(int)i;
+            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(count>5&&hit(x,y,ui_rect(24,744,232,65))){
+            if(page)page--;
+            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(count>5&&hit(x,y,ui_rect(284,744,232,65))){
+            if(((size_t)page+1)*5<count)page++;
+            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(hit(x,y,ui_rect(24,850,232,74))){
+            setup_enter(is_region?Screen::SetupName:Screen::SetupRegion);return true;
+        }
+        if(hit(x,y,ui_rect(284,850,232,74))){
+            if(is_region){
+                setup_preset_page=0;
+                if(setup_is_meshcore()){
+                    if(setup_region==0)setup_load_core_preset(17); // NZ NARROW default
+                    else setup_load_core_preset(-1);
+                }else setup_radio_preset=0; // LongFast
+                setup_enter(Screen::SetupPreset);
+            }else{
+                if(setup_radio_preset<-1){show_toast("CHOOSE A PRESET");return true;}
+                setup_enter(Screen::SetupRadio);
+            }
+            return true;
+        }
+        return true;
+    }
+    if(screen==Screen::SetupRadio){
+        if(setup_is_meshcore()){
+            if(hit(x,y,ui_rect(24,174,492,88))||
+               hit(x,y,ui_rect(24,317,492,88))){
+                setup_edit_field=hit(x,y,ui_rect(24,317,492,88))?1:0;
+                keyboard_visible=true;
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            if(hit(x,y,ui_rect(24,443,492,70))){
+                constexpr float values[]={62.5f,125.0f,250.0f,500.0f};
+                size_t current=0;
+                for(size_t i=0;i<4;++i)if(setup_bw==values[i])current=i+1;
+                setup_bw=values[current%4];
+            }else if(hit(x,y,ui_rect(24,524,492,70))){
+                setup_sf=setup_sf>=12?5:setup_sf?setup_sf+1:7;
+            }else if(hit(x,y,ui_rect(24,605,492,70))){
+                setup_cr=setup_cr>=8?5:setup_cr?setup_cr+1:5;
+            }else if(hit(x,y,ui_rect(24,686,492,70))){
+                setup_hash=setup_hash>=3?1:setup_hash+1;
+            }else if(hit(x,y,ui_rect(24,850,232,74))){
+                setup_enter(Screen::SetupPreset);return true;
+            }else if(hit(x,y,ui_rect(284,850,232,74))){
+                if(!setup_radio_valid()){show_toast("CHECK RADIO VALUES");return true;}
+                setup_enter(Screen::SetupReview);return true;
+            }else return true;
+        }else{
+            if(hit_outer_row(x,y,436))setup_hops=(uint8_t)(setup_hops>=7?1:setup_hops+1);
+            else if(hit(x,y,ui_rect(24,850,232,74))){setup_enter(Screen::SetupPreset);return true;}
+            else if(hit(x,y,ui_rect(284,850,232,74))){setup_enter(Screen::SetupReview);return true;}
+            else return true;
+        }
+        draw_screen();refresh(MeshInkRefreshMode::Direct);
+        return true;
+    }
+    if(screen==Screen::SetupReview){
+        if(hit(x,y,ui_rect(24,850,232,74))){
+            setup_enter(Screen::SetupRadio);return true;
+        }
+        if(hit(x,y,ui_rect(284,850,232,74))){
+            if(!setup_finish()){
+                show_toast("COULD NOT SAVE SETUP");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);
+            }
         }
         return true;
     }
@@ -4919,6 +5105,7 @@ static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
     if(handle_quick_panel_tap(x,y))return;
     if(handle_landscape_keyboard(x,y))return;
+    if(handle_setup_tap(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
         const MeshInkUiLayout& layout=portrait_layout();
