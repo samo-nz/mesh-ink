@@ -1397,6 +1397,15 @@ bool local_mesh_send_active(const char* text){
 bool local_mesh_send_direct(size_t index,const char* text){if(!provider.open_contact(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_channel(size_t index,const char* text){if(!provider.open_channel(index))return false;return local_mesh_send_active(text);}
 bool local_mesh_send_advert(bool flood){if(pending_advert>=0)return false;const uint8_t command[2]={7,(uint8_t)(flood?1:0)};if(!local_mesh_enqueue_command(command,sizeof(command)))return false;pending_advert=flood?1:0;return true;}
+uint8_t local_mesh_tx_power(){return meshink_meshcore().getNodePrefs()->tx_power_dbm;}
+bool local_mesh_save_tx_power(uint8_t dbm){
+    if(dbm<2||dbm>22)return false;
+    auto* prefs=meshink_meshcore().getNodePrefs();
+    prefs->tx_power_dbm=dbm;
+    meshink_meshcore().savePrefs();
+    // The setup wizard reboots after saving, so the radio driver picks this up at startup.
+    return true;
+}
 bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=meshink_meshcore().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);meshink_meshcore().savePrefs();meshink_radio_apply_params(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=meshink_meshcore().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;meshink_meshcore().savePrefs();}
 void local_mesh_sync_gps_mode(MeshInkGpsConstellationMode mode){
