@@ -1848,8 +1848,8 @@ static void draw_channel_delete() {
     ui_draw_wrapped("This removes the channel and its key from this device.",
                     portrait_layout().section_margin,ui_y(405),portrait_layout().section_width,
                     3,0,false,3);
-    if(ui_data&&!ui_data->channel_management_available())
-        ui_centred("MESHTASTIC PUBLIC CHANNEL IS LOCKED",ui_y(548),2,0,true);
+    if(ui_data&&!ui_data->channel_removable(channel_delete_index))
+        ui_centred("DEFAULT CHANNEL IS LOCKED",ui_y(548),2,0,true);
     ui_action_button("CANCEL",meshink_confirm_left_rect(portrait_layout(),650),false);
     ui_action_button("DELETE",meshink_confirm_right_rect(portrait_layout(),650),true);
 }
@@ -4303,8 +4303,8 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 open_screen(Screen::ChannelManage);return true;
             }
             if(hit(x,y,meshink_confirm_right_rect(portrait_layout(),650))){
-                if(!ui_data||!ui_data->channel_management_available()){
-                    show_toast("PUBLIC CHANNEL LOCKED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                if(!ui_data||!ui_data->channel_removable(channel_delete_index)){
+                    show_toast("CHANNEL CANNOT BE DELETED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
                 if(channel_delete_index>=ui_data->channel_count()||
                    strcmp(ui_data->channel(channel_delete_index).title,channel_delete_title)!=0){
