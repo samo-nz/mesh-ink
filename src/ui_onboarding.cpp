@@ -338,7 +338,7 @@ static bool setup_is_screen(Screen value){
 static bool setup_protocol_done(uint8_t id){
     return id==2?setup_meshtastic_done:(id==1&&setup_meshcore_done);
 }
-static bool setup_is_meshcore(){return mesh_protocol_descriptor().id==1;}
+static bool setup_is_meshcore(){return mesh_protocol_supports_radio_presets();}
 
 static uint8_t retained_wake_tab=0;
 static bool retained_wake_tab_valid=false;
@@ -705,63 +705,22 @@ struct MeshInkCpuBoostScope {
     }
 };
 
-struct Preset {
-    const char* title;
-    const char* detail;
-    uint32_t frequency_khz;  // integer kHz avoids parsing and rounding displayed MHz
-    float bandwidth_khz;
-    uint8_t spreading_factor;
-    uint8_t coding_rate;
-    uint8_t path_hash_bytes;  // 0 only for KEEP CURRENT, otherwise 1..3
-};
-static constexpr Preset PRESETS[] = {
-    {"KEEP CURRENT","NO RADIO CHANGES",0,0.0f,0,0,0},
-    {"AUSTRALIA","915.800 / SF10 / BW250 / CR5",915800,250.0f,10,5,1},
-    {"AUSTRALIA NARROW","916.575 / SF7 / BW62.5 / CR8",916575,62.5f,7,8,1},
-    {"AUSTRALIA MID","915.075 / SF9 / BW125 / CR5",915075,125.0f,9,5,1},
-    {"AUSTRALIA SA WA","923.125 / SF8 / BW62.5 / CR8",923125,62.5f,8,8,1},
-    {"AUSTRALIA QLD","923.125 / SF8 / BW62.5 / CR5",923125,62.5f,8,5,1},
-    {"BRAZIL","923.125 / SF8 / BW62.5 / CR8",923125,62.5f,8,8,1},
-    {"CANADA","910.525 / SF7 / BW62.5 / CR5 / 3B",910525,62.5f,7,5,3},
-    {"COSTA RICA","910.525 / SF11 / BW125 / CR5",910525,125.0f,11,5,1},
-    {"EU UK NARROW","869.618 / SF8 / BW62.5 / CR8",869618,62.5f,8,8,1},
-    {"EU UK DEPRECATED","869.525 / SF11 / BW250 / CR5",869525,250.0f,11,5,1},
-    {"CZECH NARROW","869.432 / SF7 / BW62.5 / CR5",869432,62.5f,7,5,1},
-    {"EU 433 LONG RANGE","433.650 / SF11 / BW250 / CR5",433650,250.0f,11,5,1},
-    {"EU 433 NARROW","433.650 / SF8 / BW62.5 / CR8",433650,62.5f,8,8,1},
-    {"HUNGARY","869.618 / SF7 / BW62.5 / CR5 / 2B",869618,62.5f,7,5,2},
-    {"NETHERLANDS","869.618 / SF7 / BW62.5 / CR5",869618,62.5f,7,5,1},
-    {"NL LIMBURG","869.618 / SF8 / BW62.5 / CR8 / 2B",869618,62.5f,8,8,2},
-    {"NZ NARROW","917.375 / SF7 / BW62.5 / CR5 / 2B",917375,62.5f,7,5,2},
-    {"NZ GISBORNE","917.375 / SF11 / BW250 / CR5 / 1B",917375,250.0f,11,5,1},
-    {"PORTUGAL 433","433.375 / SF9 / BW62.5 / CR6",433375,62.5f,9,6,1},
-    {"PORTUGAL 868","869.618 / SF7 / BW62.5 / CR6",869618,62.5f,7,6,1},
-    {"SLOVAKIA","869.618 / SF7 / BW62.5 / CR5 / 2B",869618,62.5f,7,5,2},
-    {"SWITZERLAND","869.618 / SF8 / BW62.5 / CR8",869618,62.5f,8,8,1},
-    {"USA","910.525 / SF7 / BW62.5 / CR5",910525,62.5f,7,5,1},
-    {"USA PHILLYMESH","902.250 / SF11 / BW500 / CR5 / 2B",902250,500.0f,11,5,2},
-    {"USA SOCAL","927.875 / SF7 / BW62.5 / CR5 / 3B",927875,62.5f,7,5,3},
-    {"VIETNAM NARROW","920.250 / SF8 / BW62.5 / CR5",920250,62.5f,8,5,1},
-    {"VIETNAM DEPRECATED","920.250 / SF11 / BW250 / CR5",920250,250.0f,11,5,1},
-};
-static constexpr uint8_t PRESET_COUNT = sizeof(PRESETS)/sizeof(PRESETS[0]);
-
 static const char* active_radio_label(){
-    auto matches=[](const Preset& preset){
+    auto matches=[](const MeshInkRadioPreset& preset){
         return preset.path_hash_bytes&&mesh_protocol_radio_matches(
             preset.frequency_khz/1000.0f,preset.bandwidth_khz,
             preset.spreading_factor,preset.coding_rate,preset.path_hash_bytes);
     };
-    if(selected_preset<PRESET_COUNT&&matches(PRESETS[selected_preset]))
-        return PRESETS[selected_preset].title;
-    for(uint8_t i=1;i<PRESET_COUNT;++i)
-        if(matches(PRESETS[i]))return PRESETS[i].title;
+    if(selected_preset<mesh_protocol_radio_preset_count()&&matches(mesh_protocol_radio_preset_at(selected_preset)))
+        return mesh_protocol_radio_preset_at(selected_preset).title;
+    for(uint8_t i=1;i<mesh_protocol_radio_preset_count();++i)
+        if(matches(mesh_protocol_radio_preset_at(i)))return mesh_protocol_radio_preset_at(i).title;
     return mesh_protocol_radio_summary();
 }
 
 static bool apply_selected_preset() {
-    if(selected_preset>=PRESET_COUNT)return false;
-    const Preset& preset=PRESETS[selected_preset];
+    if(selected_preset>=mesh_protocol_radio_preset_count())return false;
+    const MeshInkRadioPreset& preset=mesh_protocol_radio_preset_at(selected_preset);
     if(preset.path_hash_bytes==0)return true; // KEEP CURRENT never alters the radio
     // Apply the *same typed values* displayed by the preset selector.
     // Protocol helpers expose path-hash mode as 0/1/2 for a 1/2/3-byte hash.
@@ -776,57 +735,26 @@ static bool apply_selected_preset() {
 
 // The same setup screens serve both protocols. Protocol one maps its existing
 // radio presets into short regional lists; Leaf enumerates its native regions.
-static constexpr const char* SETUP_PROTO1_REGIONS[] = {
-    "NEW ZEALAND","AUSTRALIA","EUROPE / UK","NORTH AMERICA",
-    "BRAZIL / ASIA","CUSTOM / OTHER"
-};
-static size_t setup_region_count(){
-    return setup_is_meshcore()
-        ?sizeof(SETUP_PROTO1_REGIONS)/sizeof(SETUP_PROTO1_REGIONS[0])
-        :mesh_protocol_setup_region_count();
-}
+// Region and preset filtering are supplied by the selected protocol helper.
+static size_t setup_region_count(){return mesh_protocol_setup_region_count();}
 static const char* setup_region_label(size_t index){
-    if(setup_is_meshcore())
-        return index<setup_region_count()?SETUP_PROTO1_REGIONS[index]:"";
     return mesh_protocol_setup_region_name(index);
 }
-static bool setup_preset_in_region(size_t index,size_t region){
-    if(index==0||index>=PRESET_COUNT)return false;
-    switch(region){
-        case 0:return index==17||index==18;
-        case 1:return index>=1&&index<=5;
-        case 2:return (index>=9&&index<=16)||(index>=19&&index<=22);
-        case 3:return index==7||index==8||(index>=23&&index<=25);
-        case 4:return index==6||index==26||index==27;
-        default:return false; // Custom region is deliberately preset-free.
-    }
-}
-static int setup_core_preset_at(size_t visible_index){
-    if(visible_index==0)return -1; // Custom from scratch, not a cloned preset.
-    size_t seen=1;
-    for(size_t i=1;i<PRESET_COUNT;++i){
-        if(!setup_preset_in_region(i,setup_region))continue;
-        if(seen++==visible_index)return (int)i;
-    }
-    return -2;
+static int setup_core_preset_at(size_t index){
+    return mesh_protocol_setup_preset_index(setup_region,index);
 }
 static size_t setup_preset_count(){
-    if(!setup_is_meshcore())return mesh_protocol_setup_preset_count();
-    size_t count=1; // Custom always present.
-    for(size_t i=1;i<PRESET_COUNT;++i)if(setup_preset_in_region(i,setup_region))++count;
-    return count;
+    return mesh_protocol_setup_preset_count(setup_region);
 }
 static const char* setup_preset_label(size_t index){
-    if(!setup_is_meshcore())return mesh_protocol_setup_preset_name(index);
-    const int preset=setup_core_preset_at(index);
-    return preset==-1?"CUSTOM / MANUAL":preset>=0?PRESETS[preset].title:"";
+    return mesh_protocol_setup_preset_name(setup_region,index);
 }
 static void setup_load_core_preset(int index){
     setup_radio_preset=index;
     setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
     setup_freq[0]=0;setup_power[0]=0;setup_edit_field=0;
-    if(index<=0||index>=PRESET_COUNT)return;
-    const Preset& preset=PRESETS[index];
+    if(index<=0||index>=mesh_protocol_radio_preset_count())return;
+    const MeshInkRadioPreset& preset=mesh_protocol_radio_preset_at(index);
     snprintf(setup_freq,sizeof(setup_freq),"%.3f",(double)preset.frequency_khz/1000.0);
     setup_bw=preset.bandwidth_khz;
     setup_sf=preset.spreading_factor;
@@ -1692,21 +1620,21 @@ static void draw_presets() {
     ui_centred("RADIO PRESETS",ui_y(92),4,0,true);
     const int first=preset_page*PRESETS_PER_PAGE;
     for (int row=0; row<PRESETS_PER_PAGE; ++row) {
-        const int index=first+row; if(index>=PRESET_COUNT) break;
+        const int index=first+row; if(index>=mesh_protocol_radio_preset_count()) break;
         const MeshInkUiRect row_rect=meshink_preset_row_rect(layout,row);
         rounded_box(row_rect,max(ui_w(13),ui_h(13)),index==selected_preset);
         const uint8_t color=index==selected_preset?0xFF:0;
-        ui_text_fit(PRESETS[index].title,layout.content_text_x,row_rect.y+ui_h(11),
+        ui_text_fit(mesh_protocol_radio_preset_at(index).title,layout.content_text_x,row_rect.y+ui_h(11),
                     row_rect.width-ui_w(32),3,color,true);
         const int detail_width=row_rect.width-ui_w(32);
-        const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;
-        ui_text_fit(PRESETS[index].detail,layout.content_text_x,row_rect.y+ui_h(57),
+        const int detail_scale=ui_text_width(mesh_protocol_radio_preset_at(index).detail,3)<=detail_width?3:2;
+        ui_text_fit(mesh_protocol_radio_preset_at(index).detail,layout.content_text_x,row_rect.y+ui_h(57),
                     detail_width,detail_scale,color,false);
     }
     const MeshInkUiRect prev_rect=meshink_preset_prev_rect(layout);
     const MeshInkUiRect next_rect=meshink_preset_next_rect(layout);
     ui_action_button("PREV",prev_rect,preset_page==0);
-    const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
+    const uint8_t page_count=(mesh_protocol_radio_preset_count()+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
     ui_action_button("NEXT",next_rect,preset_page+1>=page_count);
     char page_text[20];snprintf(page_text,sizeof(page_text),"PAGE %u OF %u",preset_page+1,page_count);
     ui_centred(page_text,ui_y(890),2,0,true);
@@ -2954,7 +2882,7 @@ static void draw_setup_review(){
     settings_info_row("REGION",setup_region_label(setup_region),398);
     if(setup_is_meshcore()){
         settings_info_row("RADIO",setup_radio_preset<0?"CUSTOM":
-            PRESETS[setup_radio_preset].title,528);
+            mesh_protocol_radio_preset_at(setup_radio_preset).title,528);
         char summary[90]{};
         snprintf(summary,sizeof(summary),"%s MHz  /  SF%u  /  BW%.1f  /  CR4/%u  /  %sdBm",
             setup_freq,(unsigned)setup_sf,(double)setup_bw,
@@ -3819,7 +3747,7 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     meshink_display_poweroff();
     set_cpu_target(ui_post_render_cpu_target(),"display-complete");
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
-        err,(int)mode,(int)requested_mode,(int)screen,node_name,PRESETS[selected_preset].title,(unsigned long)meshink_performance_cpu_mhz());
+        err,(int)mode,(int)requested_mode,(int)screen,node_name,mesh_protocol_radio_preset_at(selected_preset).title,(unsigned long)meshink_performance_cpu_mhz());
 }
 
 static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_light=true) {
@@ -5313,7 +5241,7 @@ static void handle_tap(int16_t x,int16_t y) {
         if(hit(x,y,meshink_preset_back_rect(layout))){screen=preset_return_screen;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
         for(int row=0;row<PRESETS_PER_PAGE;++row) if(hit(x,y,meshink_preset_row_rect(layout,row))){
             const int index=preset_page*PRESETS_PER_PAGE+row;
-            if(index<PRESET_COUNT){
+            if(index<mesh_protocol_radio_preset_count()){
                 const uint8_t previous=selected_preset;
                 selected_preset=index;
                 const bool applied=!mesh_is_ready||apply_selected_preset();
@@ -5332,7 +5260,7 @@ static void handle_tap(int16_t x,int16_t y) {
             }
             return;
         }
-        const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
+        const uint8_t page_count=(mesh_protocol_radio_preset_count()+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
         if(hit(x,y,meshink_preset_prev_rect(layout))&&preset_page>0){preset_page--;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
         if(hit(x,y,meshink_preset_next_rect(layout))&&preset_page+1<page_count){preset_page++;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return;}
         return;
@@ -5768,7 +5696,7 @@ static void ui_load_persistent_state() {
     if(standby_timeout_index>3)standby_timeout_index=1;
     if(night_start_minutes>=1440)night_start_minutes=20*60;
     if(night_end_minutes>=1440)night_end_minutes=7*60;
-    if(selected_preset>=PRESET_COUNT)selected_preset=17;
+    if(selected_preset>=mesh_protocol_radio_preset_count())selected_preset=17;
     if(timezone_index>=TIMEZONE_COUNT)timezone_index=1;
     if(!auto_timezone_rule[0])snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"UTC0");
     if(!auto_timezone_label[0])snprintf(auto_timezone_label,sizeof(auto_timezone_label),"UTC");
@@ -6164,7 +6092,7 @@ void ui_loop() {
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
         }else if(screen==Screen::Presets&&abs(tap.dy)>60){
-            const uint8_t page_count=(PRESET_COUNT+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
+            const uint8_t page_count=(mesh_protocol_radio_preset_count()+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MeshInkRefreshMode::FastGray16);
         }else handle_tap(tap.x,tap.y);
