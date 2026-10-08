@@ -103,6 +103,7 @@ static bool runtime_ready=false;
 // explicitly enable the shared location provider and publish GPS status to
 // the common e-paper UI.
 static uint32_t gps_next_ui_update=0;
+static bool gps_provider_active=false;
 static uint32_t gps_candidate_since=0;
 static bool gps_candidate_fix=false;
 static bool gps_stable_fix=false;
@@ -110,7 +111,15 @@ static bool gps_stable_fix=false;
 static void meshtastic_gps_mode_changed(MeshInkGpsConstellationMode mode){
     if(!runtime_ready)return;
     const bool enabled=mode!=MeshInkGpsConstellationMode::None;
+    // Switching between enabled constellations reconfigures the receiver
+    // directly in the shared board backend. Do not restart the NMEA parser
+    // or discard its hot fix unless the provider ON/OFF state truly changes.
+    if(enabled==gps_provider_active){
+        gps_next_ui_update=0;
+        return;
+    }
     meshink_gps_set_provider_enabled(enabled);
+    gps_provider_active=enabled;
     gps_next_ui_update=0;
     gps_candidate_since=millis();
     gps_candidate_fix=false;
@@ -1389,7 +1398,8 @@ static void setup() {
     // activate the GNSS parser. Apply the persisted shared constellation
     // selection explicitly after the sensor manager is initialized.
     const auto gps_mode=meshink_gps_constellation_mode();
-    meshink_gps_set_provider_enabled(gps_mode!=MeshInkGpsConstellationMode::None);
+    gps_provider_active=gps_mode!=MeshInkGpsConstellationMode::None;
+    meshink_gps_set_provider_enabled(gps_provider_active);
     Serial.printf("[T5-MESHTASTIC] GPS provider %s at startup (mode=%u)\n",
                   gps_mode!=MeshInkGpsConstellationMode::None?"ENABLED":"DISABLED",
                   (unsigned)gps_mode);
