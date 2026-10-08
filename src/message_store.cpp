@@ -159,7 +159,10 @@ bool MeshInkMessageStore::create_empty(){
     StoreCpuBoostScope cpu_boost;
     header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
     File f=SPIFFS.open(path_,"w");
-    if(!f)return false;
+    if(!f){
+        Serial.printf("[T5-STORE] ERROR cannot create new journal path=%s\n",path_);
+        return false;
+    }
     const size_t hw=f.write((const uint8_t*)&header_,sizeof(header_));
     MeshInkStoredMessage blank{};
     bool ok=hw==sizeof(header_);
@@ -167,12 +170,31 @@ bool MeshInkMessageStore::create_empty(){
         ok=f.write((const uint8_t*)&blank,sizeof(blank))==sizeof(blank);
     f.close();
     if(!ok){
-        Serial.println("[T5-STORE] ERROR creating v3 message journal");
+        Serial.printf("[T5-STORE] ERROR creating v3 journal path=%s; removing incomplete new file\n",
+                      path_);
+        SPIFFS.remove(path_); // Only reached after opening this path for a NEW journal.
+        return false;
+    }
+    // Check the newly created file after closing it, not just the write counts.
+    // Incomplete first-use creation must never look like a previous journal.
+    const size_t expected_bytes=sizeof(header_)+
+                                MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+    File verify=SPIFFS.open(path_,"r");
+    MeshInkMessageStoreHeader written{};
+    const bool verified=verify&&verify.size()==expected_bytes&&
+        verify.read((uint8_t*)&written,sizeof(written))==sizeof(written)&&
+        memcmp(&written,&header_,sizeof(written))==0;
+    if(verify)verify.close();
+    if(!verified){
+        Serial.printf("[T5-STORE] ERROR verifying newly created journal path=%s; removing incomplete new file\n",
+                      path_);
+        SPIFFS.remove(path_);
         return false;
     }
     file_=SPIFFS.open(path_,"r+");
     if(!file_){
-        Serial.println("[T5-STORE] ERROR reopening new message journal");
+        Serial.printf("[T5-STORE] ERROR reopening newly created journal path=%s; will retry on next start\n",
+                      path_);
         return false;
     }
     if(ensure_cache())
@@ -228,8 +250,24 @@ bool MeshInkMessageStore::begin(){
         return false;
     }
 
+
+    // A missing journal is normal the FIRST time a protocol is selected.
+    // Do not treat an absent Meshtastic journal as a corrupt legacy file.
+    // An open failure is NOT evidence the file does not exist: never
+    // overwrite a journal that the filesystem reports as present.
+    if(!SPIFFS.exists(path_)){
+        Serial.printf("[T5-STORE] journal absent path=%s; creating fresh v3 journal\n",
+                      path_);
+        const bool ok=create_empty();
+        initialized_=ok;
+        return ok;
+    }
     File f=SPIFFS.open(path_,"r");
-    if(!f){const bool ok=create_empty();initialized_=ok;return ok;}
+    if(!f){
+        Serial.printf("[T5-STORE] ERROR existing journal cannot be opened path=%s; original retained\n",
+                      path_);
+        return false;
+    }
 
     MeshInkMessageStoreHeader disk{};
     const bool header_ok=f.read((uint8_t*)&disk,sizeof(disk))==sizeof(disk);
@@ -271,7 +309,8 @@ bool MeshInkMessageStore::begin(){
         return true;
     }
 
-    Serial.printf("[T5-STORE] journal unsupported magic=%08lx version=%u capacity=%u; preserving before recreate\n",
+    Serial.printf("[T5-STORE] existing journal invalid path=%s size=%u expected=%u header=%u magic=%08lx version=%u capacity=%u; preserving before recreate\n",
+                  path_,(unsigned)file_size,(unsigned)expected_v3,header_ok?1U:0U,
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
     // Never delete a previous recovery copy; it may be the user's only
     // copy of older messages. Use numbered short paths for subsequent faults.
