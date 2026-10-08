@@ -4549,6 +4549,91 @@ static void setup_enter(Screen next){
     keyboard_landscape=false;
     open_screen(next);
 }
+
+static void backup_show_result(const char* value){
+    snprintf(backup_result_message,sizeof(backup_result_message),"%s",
+             value&&value[0]?value:"BACKUP OR RESTORE FAILED");
+    open_screen(Screen::BackupResult);
+}
+static void backup_open_files(Screen source){
+    backup_return_screen=source;
+    backup_from_setup=!setup_complete;
+    backup_restore_mode=true;
+    backup_page=0;
+    backup_count=meshink_backup_list(mesh_protocol_descriptor().id,backup_entries,
+                    sizeof(backup_entries)/sizeof(backup_entries[0]));
+    open_screen(Screen::BackupFiles);
+}
+static bool handle_backup_tap(int16_t x,int16_t y){
+    if(screen==Screen::BackupFiles){
+        if(hit_header_back(x,y)){open_screen(backup_return_screen);return true;}
+        const size_t first=backup_page*5;
+        for(size_t i=first;i<backup_count&&i<first+5;++i){
+            if(!hit_outer_row(x,y,170+(int)(i-first)*119))continue;
+            snprintf(backup_filename,sizeof(backup_filename),"%s",backup_entries[i].filename);
+            backup_available=meshink_backup_categories(mesh_protocol_descriptor().id,backup_filename);
+            if(!backup_available){backup_show_result(meshink_backup_error());return true;}
+            backup_flags=backup_available;
+            backup_restore_mode=true;
+            open_screen(Screen::BackupOptions);return true;
+        }
+        if(hit(x,y,ui_rect(24,800,232,74))&&backup_page>0){
+            --backup_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(hit(x,y,ui_rect(284,800,232,74))&&(backup_page+1)*5<backup_count){
+            ++backup_page;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        return true;
+    }
+    if(screen==Screen::BackupOptions){
+        if(hit_header_back(x,y)){
+            if(backup_restore_mode)backup_open_files(backup_return_screen);
+            else open_screen(Screen::ProtocolSettings);
+            return true;
+        }
+        constexpr uint8_t flags[]={1,2,4};
+        for(int i=0;i<3;++i)if(hit(x,y,ui_rect(24,245+i*124,492,100))){
+            if(backup_available&flags[i])backup_flags^=flags[i];
+            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(hit(x,y,ui_rect(24,811,232,80))){
+            backup_open_files(backup_return_screen);return true;
+        }
+        if(hit(x,y,ui_rect(284,811,232,80))){
+            if(!backup_flags){show_toast("SELECT A CATEGORY");return true;}
+            if(backup_restore_mode){open_screen(Screen::BackupConfirm);return true;}
+            char saved[32]{};
+            if(meshink_backup_create(mesh_protocol_descriptor().id,backup_flags,
+                                     saved,sizeof(saved))){
+                char result[84]{};
+                snprintf(result,sizeof(result),"BACKUP VERIFIED: %s",saved);
+                backup_show_result(result);
+            }else backup_show_result(meshink_backup_error());
+            return true;
+        }
+        return true;
+    }
+    if(screen==Screen::BackupConfirm){
+        if(hit_header_back(x,y)||hit(x,y,ui_rect(24,735,232,85))){
+            open_screen(Screen::BackupOptions);return true;
+        }
+        if(hit(x,y,ui_rect(284,735,232,85))){
+            if(meshink_backup_restore(mesh_protocol_descriptor().id,
+                                       backup_filename,backup_flags))
+                mesh_protocol_restart_into(mesh_protocol_descriptor().id);
+            else backup_show_result(meshink_backup_error());
+        }
+        return true;
+    }
+    if(screen==Screen::BackupResult){
+        if(hit_header_back(x,y)||hit(x,y,ui_rect(85,780,370,80))){
+            open_screen(backup_from_setup?backup_return_screen:Screen::ProtocolSettings);
+        }
+        return true;
+    }
+    return false;
+}
+
 static bool handle_setup_tap(int16_t x,int16_t y){
     if(!setup_is_screen(screen))return false;
     if((screen==Screen::SetupName||screen==Screen::SetupRadio)&&keyboard_visible){
@@ -4576,6 +4661,19 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::Welcome){
+        if(hit(x,y,ui_rect(60,760,420,62))){
+            if(!setup_protocol_choice){show_toast("CHOOSE A PROTOCOL");return true;}
+            if(setup_protocol_choice!=mesh_protocol_descriptor().id){
+                Preferences p;
+                if(p.begin("t5-ui",false)){
+                    p.putUChar("setup_choice",setup_protocol_choice);
+                    p.putBool("restore_pending",true);
+                    p.end();
+                }
+                mesh_protocol_restart_into(setup_protocol_choice);
+            }else backup_open_files(Screen::Welcome);
+            return true;
+        }
         for(size_t i=0;i<mesh_protocol_available_count()&&i<4;++i){
             const auto* choice=mesh_protocol_available(i);
             if(choice&&hit_outer_row(x,y,280+(int)i*145)){
@@ -4607,6 +4705,9 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::SetupName){
+        if(!keyboard_visible&&hit(x,y,ui_rect(60,720,420,70))){
+            backup_open_files(Screen::SetupName);return true;
+        }
         if(hit(x,y,ui_rect(24,185,492,96))||
            hit(x,y,ui_rect(60,450,420,74))){
             keyboard_visible=true;
@@ -5030,6 +5131,12 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     draw_screen();refresh(MeshInkRefreshMode::Direct);
                     return true;
                 }
+                if(kind==ProtocolSettingsRowKind::Backup){
+                    backup_return_screen=Screen::ProtocolSettings;
+                    backup_restore_mode=false;backup_from_setup=false;
+                    backup_available=7;backup_flags=7;
+                    open_screen(Screen::BackupOptions);return true;
+                }
                 if(kind==ProtocolSettingsRowKind::NodeName){
                     replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;
                     text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
@@ -5188,6 +5295,7 @@ static void handle_tap(int16_t x,int16_t y) {
     last_user_activity=millis();
     if(handle_quick_panel_tap(x,y))return;
     if(handle_landscape_keyboard(x,y))return;
+    if(handle_backup_tap(x,y))return;
     if(handle_setup_tap(x,y))return;
     if(handle_app_tap(x,y))return;
     if(screen==Screen::Presets) {
@@ -5608,6 +5716,7 @@ static void ui_load_persistent_state() {
     setup_complete=setup_protocol_done(mesh_protocol_descriptor().id);
     setup_return_protocol=prefs.getUChar("setup_return",0);
     setup_protocol_choice=prefs.getUChar("setup_choice",0);
+    backup_restore_pending=prefs.getBool("restore_pending",false);
     const bool timezone_v2=prefs.getBool("tz_v2",false);
     timezone_index=prefs.getUChar("timezone",0);
     if(!timezone_v2)timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);
@@ -5778,6 +5887,12 @@ void ui_show_storage_initializing() {
 
 void ui_finish_startup() {
     if(hardware_failure)return;
+    if(!setup_complete&&backup_restore_pending){
+        Preferences p;
+        if(p.begin("t5-ui",false)){p.putBool("restore_pending",false);p.end();}
+        backup_restore_pending=false;
+        backup_open_files(Screen::SetupName);
+    }
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
     meshink_touch_clear();
