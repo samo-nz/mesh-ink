@@ -3898,6 +3898,18 @@ static void cycle_keyboard_mode(){
     else keyboard_symbols=true;
 }
 static void append(char c) {
+    if(screen==Screen::ChannelCreate){
+        char* value=channel_form_key_field?channel_form_key_hex:channel_form_name;
+        const size_t limit=channel_form_key_field?64:
+            min(sizeof(channel_form_name)-1,ui_data?ui_data->channel_name_limit():(size_t)12);
+        if(channel_form_key_field){
+            if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return;
+            if(c>='a'&&c<='f')c=(char)(c-'a'+'A');
+        }else if((unsigned char)c<33||(unsigned char)c>126)return;
+        const size_t n=strlen(value);
+        if(n<limit){value[n]=c;value[n+1]=0;}
+        return;
+    }
     if(keyboard_password_mode){size_t n=strlen(remote_password);if(n<15){remote_password[n]=c;remote_password[n+1]=0;}return;}
     if(keyboard_message_mode){
         const size_t n=strlen(compose_text);
@@ -3941,7 +3953,13 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     const bool already_on_map=screen==Screen::Maps;
     map_taps={}; // prevent a pending map double tap from firing on another UI
     text_refresh_pending=false;
-    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;save_remote_password=false;remote_password[0]=0;screen=next;
+    if(screen==Screen::ChannelCreate&&next!=Screen::ChannelCreate){
+        memset(channel_form_key_hex,0,sizeof(channel_form_key_hex));
+        memset(channel_form_name,0,sizeof(channel_form_name));
+    }
+    keyboard_visible=next==Screen::ChannelCreate;
+    keyboard_message_mode=false;keyboard_password_mode=false;
+    save_remote_password=false;remote_password[0]=0;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
         return;
@@ -4153,6 +4171,33 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     return true;
 }
 
+static bool handle_channel_form_keyboard(int16_t x,int16_t y){
+    if(screen!=Screen::ChannelCreate||!keyboard_visible)return false;
+    const auto metrics=keyboard_metrics(false);
+    if(y<metrics.dismiss_above)return false;
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){
+            cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(x>=meshink_keyboard::delete_split(metrics)){
+            char* value=channel_form_key_field?channel_form_key_hex:channel_form_name;
+            const size_t n=strlen(value);if(n)value[n-1]=0;
+            queue_text_refresh();return true;
+        }
+    }
+    char c=0;
+    if(keyboard_character_at(x,y,false,c)){
+        append(c);queue_text_refresh();return true;
+    }
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        if(x>=meshink_keyboard::orientation_split(metrics)){
+            keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
+        }
+        return true;
+    }
+    return true;
+}
+
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;reset_chat_paging();open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
@@ -4160,9 +4205,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::ProtocolSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
+    if(screen==Screen::ChannelCreate&&handle_channel_form_keyboard(x,y))return true;
     const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                               !keyboard_visible&&chat_page==0;
-    if(((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
+    if(screen!=Screen::ChannelCreate&&screen!=Screen::ChannelDelete&&
+       ((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
        y>=portrait_layout().bottom_nav_top){
         const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
