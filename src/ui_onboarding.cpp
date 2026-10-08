@@ -237,7 +237,7 @@ static size_t contacts_page = 0;
 static size_t channels_page = 0;
 static size_t channel_manage_page = 0;
 static char channel_form_name[32]{};
-static char channel_form_key_hex[65]{};
+static char channel_form_key_hex[33]{};
 static bool channel_form_key_field=false;
 static char channel_delete_title[42]{};
 static size_t channel_delete_index=0;
@@ -1826,7 +1826,7 @@ static void draw_channel_create() {
     ui_text_fit(channel_form_name[0]?channel_form_name:"Tap to enter name",
                 name_rect.x+ui_w(15),name_rect.y+ui_h(20),name_rect.width-ui_w(30),3,
                 !channel_form_key_field&&keyboard_visible?0xFF:0,true);
-    ui_text("PRIVATE KEY (32/64 HEX DIGITS)",ui_x(26),ui_y(268),2,0,true);
+    ui_text("PRIVATE KEY (32 HEX DIGITS)",ui_x(26),ui_y(268),2,0,true);
     rounded_box(key_rect,max(ui_w(12),ui_h(12)),channel_form_key_field&&keyboard_visible);
     char private_label[36]{};
     if(channel_form_key_hex[0])
@@ -3903,7 +3903,7 @@ static void cycle_keyboard_mode(){
 static void append(char c) {
     if(screen==Screen::ChannelCreate){
         char* value=channel_form_key_field?channel_form_key_hex:channel_form_name;
-        const size_t limit=channel_form_key_field?64:
+        const size_t limit=channel_form_key_field?32:
             min(sizeof(channel_form_name)-1,ui_data?ui_data->channel_name_limit():(size_t)12);
         if(channel_form_key_field){
             if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return;
