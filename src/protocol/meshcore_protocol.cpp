@@ -171,6 +171,8 @@ static const MeshInkProtocolBackend& backend() {
         b.send_advert = local_mesh_send_advert;
 
         b.apply_radio = local_mesh_apply_radio;
+        b.setup_save_tx_power = local_mesh_save_tx_power;
+        b.setup_current_tx_power = local_mesh_tx_power;
         b.apply_name = local_mesh_apply_name;
         b.name_character_allowed = name_character_allowed;
         b.node_name_max_length = node_name_max_length;
