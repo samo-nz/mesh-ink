@@ -4630,7 +4630,7 @@ static bool handle_backup_tap(int16_t x,int16_t y){
         if(hit(x,y,ui_rect(284,735,232,85))){
             if(meshink_backup_restore(mesh_protocol_descriptor().id,
                                        backup_filename,backup_flags))
-                mesh_protocol_restart_into(mesh_protocol_descriptor().id);
+                mesh_protocol_restart_after_restore();
             else backup_show_result(meshink_backup_error());
         }
         return true;
