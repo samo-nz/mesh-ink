@@ -118,6 +118,9 @@ struct MeshInkProtocolBackend {
     size_t (*setup_preset_count_for_region)(size_t region) = nullptr;
     const char* (*setup_preset_name_for_region)(size_t region,size_t index) = nullptr;
     int (*setup_preset_index_for_region)(size_t region,size_t index) = nullptr;
+    bool (*setup_validate_radio)(size_t region,float frequency_mhz,float bandwidth_khz,
+                                 uint8_t spreading_factor,uint8_t coding_rate,
+                                 uint8_t path_hash_bytes,uint8_t power_dbm) = nullptr;
     bool (*setup_commit_radio)(size_t region, size_t preset, uint8_t hops) = nullptr;
     bool (*setup_save_tx_power)(uint8_t dbm) = nullptr;
     uint8_t (*setup_current_tx_power)() = nullptr;
