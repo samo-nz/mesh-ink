@@ -29,6 +29,7 @@ bool mesh_protocol_rx_wake_promoted();
 void mesh_protocol_prepare_interactive_services();
 bool mesh_protocol_promote_to_ui(const char* source);
 bool mesh_protocol_enter_deep_sleep_standby();
+bool mesh_protocol_supports_deep_sleep_standby();
 bool mesh_protocol_is_running();
 void mesh_protocol_flush_now();
 void mesh_protocol_prepare_shutdown();
