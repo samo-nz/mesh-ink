@@ -223,6 +223,10 @@ bool mesh_protocol_promote_to_ui(const char* source) {
     return active_backend().promote_to_ui ? active_backend().promote_to_ui(source) : false;
 }
 
+bool mesh_protocol_supports_deep_sleep_standby(){
+    return active_backend().enter_deep_sleep_standby != nullptr;
+}
+
 bool mesh_protocol_enter_deep_sleep_standby() {
     return active_backend().enter_deep_sleep_standby
         ? active_backend().enter_deep_sleep_standby()
