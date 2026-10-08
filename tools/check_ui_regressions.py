@@ -1775,3 +1775,15 @@ assert 'mesh_protocol_flush_now();' in backup_source, "MeshCore contacts are flu
 assert 'static bool sd_writable()' in backup_source and 'memcmp(sample,actual,sizeof(sample))==0' in backup_source, "backup tests SD write/read readiness without overwriting user files"
 assert 'if(!sd_writable())return false;' in backup_source, "backup refuses unverified or write-protected SD"
 assert 'ui_action_button("RETRY SD"' in source, "empty or absent SD restore list can retry without reboot"
+
+# Device Settings are independent of protocol identity and radio settings.
+device_settings_source=(root/"src"/"device_settings_snapshot.cpp").read_text(encoding="utf-8")
+assert 'MESHINK_BACKUP_DEVICE_SETTINGS = 8' in (root/"src"/"backup_restore.h").read_text(), "Device Settings is a fourth selectable category"
+assert 'if(cat==MESHINK_BACKUP_DEVICE_SETTINGS)return !strcmp(path,DEVICE_NVS);' in backup_source, "device settings have their own snapshot entry"
+assert 'meshink_device_settings::apply(snapshot)' in backup_source, "device snapshot uses versioned validated restore"
+assert 'device_settings_snapshot.cpp' in component_cmake_source, "unified firmware builds device snapshot"
+assert '+<device_settings_snapshot.cpp>' in platformio_source, "PlatformIO builds device snapshot"
+assert 'constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","PROTOCOL SETTINGS","DEVICE SETTINGS"};' in source, "four category checkboxes are rendered"
+assert 'MESHCORE' not in device_settings_source and 'MESHTASTIC' not in device_settings_source, "device preference snapshot has no protocol dependency"
+assert 'deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();' in source, "unsupported Leaf deep sleep falls back without retry"
+assert 'active_backend().enter_deep_sleep_standby != nullptr' in (root/"src"/"protocol"/"mesh_protocol.cpp").read_text(), "deep sleep ability is a backend capability"
