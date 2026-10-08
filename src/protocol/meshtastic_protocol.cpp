@@ -896,15 +896,6 @@ static const char* radio_summary_value() {
 
 static void setup() {
     runtime_ready=false;
-    if(!provider){
-        void* memory=heap_caps_malloc(sizeof(MeshtasticUiProvider),
-                                      MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-        if(!memory){
-            Serial.println("[T5-MESHTASTIC] PSRAM unavailable for protocol UI provider");
-            return;
-        }
-        provider=new (memory) MeshtasticUiProvider();
-    }
     const bool storage_mounted=meshink_storage_mount_internal_safe();
     if(!storage_mounted)ui_show_storage_initializing();
     if(!storage_mounted){
@@ -929,6 +920,15 @@ static void setup() {
     if(!configured){
         Serial.println("[T5-MESHTASTIC] first-use setup pending; LoRa startup deferred");
         return;
+    }
+    if(!provider){
+        void* memory=heap_caps_malloc(sizeof(MeshtasticUiProvider),
+                                      MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!memory){
+            Serial.println("[T5-MESHTASTIC] PSRAM unavailable for protocol UI provider");
+            return;
+        }
+        provider=new (memory) MeshtasticUiProvider();
     }
 
     if(!meshink_radio_initialize()){
