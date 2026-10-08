@@ -51,6 +51,7 @@ struct UiNodeDetails {
     bool login_active;
     bool authenticated;
     const char* access_level;
+    const char* role_label; // Protocol-provided user-facing role name; shared role drives icons/behavior.
     UiNodeRole role;
     uint32_t capabilities; // Optional node-detail pages/actions exposed by the active protocol helper.
     bool saved_contact;
