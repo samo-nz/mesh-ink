@@ -2814,7 +2814,7 @@ static void setup_footer(const char* action="NEXT"){
     if(keyboard_visible)return;
     const MeshInkUiRect left=ui_rect(24,850,232,74);
     const MeshInkUiRect right=ui_rect(284,850,232,74);
-    ui_action_button("BACK",left,false);
+    if(screen!=Screen::Welcome)ui_action_button("BACK",left,false);
     ui_action_button(action,right,true);
 }
 static void setup_progress(const char* title,uint8_t number){
@@ -4304,23 +4304,6 @@ static void save_node_name(){
     saved=true;
 }
 
-// A full redraw of the first Contacts screen removes the initial setup
-// frame cleanly; do not briefly show a saved toast on the old keyboard.
-static void show_contacts_after_setup(){
-    if(keyboard_landscape){
-        keyboard_landscape=false;
-        set_ui_orientation(MeshInkOrientation::Portrait);
-    }
-    keyboard_visible=false;keyboard_message_mode=false;
-    replace_name_on_type=false;
-    text_refresh_pending=false;toast_visible=false;toast_opens_main=false;
-    status_dirty=false;status_bar_dirty=false;status_wake_light=false;
-    if(touch_queue)xQueueReset(touch_queue);
-    meshink_touch_clear();
-    screen=Screen::Contacts;
-    draw_screen();
-    fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);
-}
 static bool handle_landscape_keyboard(int16_t x,int16_t y){
     if(!keyboard_landscape)return false;
     const auto metrics=keyboard_metrics(true);
