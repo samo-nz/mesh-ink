@@ -91,6 +91,7 @@ public:
     virtual size_t channel_capacity() const { return 0; }
     // False means channel controls are visible previews only, with no writes.
     virtual bool channel_management_available() const { return false; }
+    virtual bool channel_removable(size_t index) const { (void)index; return false; }
     virtual bool create_channel(const char* name, const char* key_hex) { (void)name; (void)key_hex; return false; }
     virtual bool delete_channel(size_t index) { (void)index; return false; }
     virtual size_t advert_count() const = 0;
