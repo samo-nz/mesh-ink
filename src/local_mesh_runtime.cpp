@@ -14,6 +14,8 @@
 #include "t5_logging.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "meshcore_adapter.h"
+#include "channel_key.h"
+#include <esp_system.h>
 
 
 namespace {
@@ -628,7 +630,57 @@ public:
     size_t conversation_count()const override{return conversation_count_;}const UiListEntry& conversation(size_t i)const override{return conversations_[i].entry;}
     bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;mark_read(MessageKind::Direct,conversations_[i].key,6);return activate(conversations_[i],false);}
     size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;mark_read(MessageKind::Direct,contacts_[i].key,6);return activate(contacts_[i],false);}
-    size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;mark_read(MessageKind::Channel,&channels_[i].channel_index,1);return activate(channels_[i],true);}
+    size_t channel_count()const override{return channel_count_;}
+    const UiListEntry& channel(size_t i)const override{
+        static UiListEntry empty{};
+        return i<channel_count_?channels_[i].entry:empty;
+    }
+    bool open_channel(size_t i)override{
+        if(i>=channel_count_)return false;
+        mark_read(MessageKind::Channel,&channels_[i].channel_index,1);
+        return activate(channels_[i],true);
+    }
+    size_t channel_name_limit()const override{return sizeof(ChannelDetails::name)-1;}
+    size_t channel_capacity()const override{return MAX_GROUP_CHANNELS;}
+    bool create_channel(const char* name,const char* key_hex)override{
+        if(!meshink_channel_key::valid_name(name,channel_name_limit())||!key_hex)return false;
+        int free_slot=-1;
+        for(int i=0;i<MAX_GROUP_CHANNELS;++i){
+            ChannelDetails existing{};
+            if(!meshink_meshcore().getChannel(i,existing))return false;
+            if(existing.name[0]&&!strcmp(existing.name,name))return false;
+            if(free_slot<0&&!existing.name[0])free_slot=i;
+        }
+        if(free_slot<0)return false;
+        ChannelDetails created{};
+        strncpy(created.name,name,sizeof(created.name)-1);
+        size_t key_len=0;
+        if(!key_hex[0]){
+            // Generate a fresh 256-bit group secret with the ESP32 CSPRNG.
+            esp_fill_random(created.channel.secret,32);
+        }else{
+            if(!meshink_channel_key::parse_hex(key_hex,created.channel.secret,key_len))
+                return false;
+        }
+        if(!meshink_meshcore().setChannel(free_slot,created))return false;
+        meshink_meshcore().saveChannels();
+        refresh(true);
+        return true;
+    }
+    bool delete_channel(size_t index)override{
+        if(index>=channel_count_)return false;
+        const uint8_t slot=channels_[index].channel_index;
+        ChannelDetails erased{};
+        if(!meshink_meshcore().setChannel(slot,erased))return false;
+        meshink_meshcore().saveChannels();
+        if(active_channel_&&active_key_[0]==slot){
+            active_channel_=false;
+            active_count_=0;
+            ++active_revision_;
+        }
+        refresh(true);
+        return true;
+    }
     size_t advert_count()const override{return advert_count_;}const UiListEntry& advert(size_t i)const override{return adverts_[i].entry;}
     bool cache_discovered(const uint8_t* frame,size_t len){
         if(!frame||len<DISCOVERED_CONTACT_BASE_LEN||len>sizeof(discovered_[0].frame)){
