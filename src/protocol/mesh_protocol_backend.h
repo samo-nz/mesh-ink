@@ -32,10 +32,10 @@ enum class MeshInkProtocolSettingResult : uint8_t {
 };
 
 struct MeshInkProtocolSettingItem {
-    uint16_t id = 0;
-    const char* title = "";
-    const char* value = "";
-    bool editable = true;
+    uint16_t id;
+    const char* title;
+    const char* value;
+    bool editable;
 };
 
 struct MeshInkProtocolBackend {
