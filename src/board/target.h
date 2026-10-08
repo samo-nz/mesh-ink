@@ -8,6 +8,8 @@
 #include "../hardware/radio_types.h"
 #include "../hardware/rtc_types.h"
 
+class PhysicalLayer;
+
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
     // begin() is called only after the shared display/I2C lifecycle is active.
@@ -91,3 +93,5 @@ bool radio_resume_rx_wake();
 bool radio_resume_retained_wake();
 MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();
+PhysicalLayer* t5_radio_physical_layer();
+bool t5_radio_set_lora_crc(uint8_t bytes);
