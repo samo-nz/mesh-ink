@@ -604,7 +604,7 @@ assert "T5_LOG_TOUCH" not in source and "T5_LOG_TOUCH" not in platformio_source,
 # cruise clock, restoring the previous clock immediately afterwards.
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
-contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-protocol-name-draw");', "name-entry redraw temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
@@ -1421,6 +1421,9 @@ assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_wi
 assert '"PATH HASH MODE"' not in source, "shared UI must not hard-code MeshCore path-hash settings"
 assert '"PATH HASH MODE"' in meshcore_protocol_source and "MESHCORE_SETTING_PATH_HASH" in meshcore_protocol_source, "MeshCore helper owns path-hash settings"
 assert "mesh_protocol_setting_item(" in source and "mesh_protocol_activate_setting(" in source, "Protocol Settings renders and activates helper-owned rows"
+assert "draw_list_page_footer(protocol_settings_page,count);" in source, "Protocol Settings uses the same PAGE X OF Y arrow footer as Contacts"
+assert "screen==Screen::ProtocolSettings&&!keyboard_visible" in source and "clamp_list_page(protocol_settings_page,count);" in source, "Protocol Settings uses the shared vertical swipe paging model"
+assert "const size_t first=protocol_settings_page*LIST_ITEMS_PER_PAGE;" in source, "Protocol Settings keeps the shared five-row page size"
 assert 'if(value>99)strcpy(out,"99+");' in source, "status unread counters are visually bounded"
 assert source.count("text(count,left,ui_y(13),3,0,true);")>=2, "direct and channel status counters use the same primary numeric face/size as clock and battery"
 assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in source, "GPS satellite count uses the same primary numeric face/size"
