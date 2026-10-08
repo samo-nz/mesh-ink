@@ -84,6 +84,29 @@ static const char* core_setup_preset_label(size_t region,size_t visible){
            index>=0?CORE_RADIO_PRESETS[index].title:"";
 }
 
+// These are frequency consistency checks, not a legal certification. Local
+// regulatory restrictions (EIRP/duty cycle/licensing) remain the user's choice
+// and are stated on the setup confirmation page.
+static bool core_validate_radio(size_t region,float freq,float bw,
+                                uint8_t sf,uint8_t cr,uint8_t hash,uint8_t power){
+    if(region>=core_region_count()||freq<150.0f||freq>960.0f||
+       bw<7.0f||bw>500.0f||sf<5||sf>12||cr<5||cr>8||
+       hash<1||hash>3||power<2||power>22)return false;
+    switch(region){
+        case 0: // New Zealand
+        case 1: // Australia
+            return freq>=915.0f&&freq<=928.0f;
+        case 2: // Europe and UK: permit both existing 433/869 presets
+            return (freq>=433.05f&&freq<=434.79f)||
+                   (freq>=863.0f&&freq<=870.0f);
+        case 3: // North America
+            return freq>=902.0f&&freq<=928.0f;
+        case 4: // Brazil/Asia grouping includes current 902/923 profiles
+            return freq>=902.0f&&freq<=928.0f;
+        default: // CUSTOM / OTHER: intentionally unrestricted regional choice
+            return true;
+    }
+}
 static bool name_character_allowed(char c) {
     return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_';
 }
@@ -253,6 +276,7 @@ static const MeshInkProtocolBackend& backend() {
         b.setup_preset_count_for_region=core_setup_preset_count;
         b.setup_preset_name_for_region=core_setup_preset_label;
         b.setup_preset_index_for_region=core_setup_preset_at;
+        b.setup_validate_radio=core_validate_radio;
 
         b.apply_radio = local_mesh_apply_radio;
         b.setup_save_tx_power = local_mesh_save_tx_power;
