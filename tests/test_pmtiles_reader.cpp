@@ -5,6 +5,10 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <cstddef>
+size_t mock_internal_largest_free=1U*1024U*1024U;
+size_t mock_internal_total_free=1U*1024U*1024U;
+size_t mock_spiram_allocations=0;
 
 std::map<std::string, std::vector<uint8_t>> mock_sd;
 using Bytes = std::vector<uint8_t>;
@@ -116,6 +120,24 @@ int main() {
     pmtiles_end_frame();
     pmtiles_reset();
     assert_range("/maps/gzip.pmtiles",1,1,0); // directory rebuilt after remount
+    // Simulated internal pressure still decodes gzip via PSRAM output.
+    pmtiles_reset();
+    mock_internal_total_free=16000; // less than the 16 KiB safety reserve
+    const size_t before=mock_spiram_allocations;
+    assert_range("/maps/gzip.pmtiles",1,1,0);
+    assert(mock_spiram_allocations>before);
+    mock_internal_total_free=1U*1024U*1024U;
+    // Invalid/corrupt gzip directory is disabled once, not retried at zoom.
+    Bytes broken=make_archive(true,true);
+    broken[127]=0x00; // root gzip header
+    mock_sd["/maps/broken.pmtiles"]=broken;
+    assert(!pmtiles_warm_archive("/maps/broken.pmtiles"));
+    assert(pmtiles_archive_failed("/maps/broken.pmtiles"));
+    assert(!pmtiles_find_png("/maps/broken.pmtiles",1,1,0,disconnected));
+    assert(!pmtiles_find_png("/maps/broken.pmtiles",2,1,0,disconnected));
+    pmtiles_reset();
+    assert(!pmtiles_archive_failed("/maps/broken.pmtiles"));
+    assert_range("/maps/plain.pmtiles",1,0,0);
     std::cout << "PMTiles plain/gzip root+leaf, run ranges, omissions,"
                  " unsupported/oversized formats and archive switching: PASS\n";
 }
