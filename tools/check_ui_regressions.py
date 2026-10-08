@@ -1889,3 +1889,18 @@ assert 'gps_stable_fix=raw_fix;' in mt_status and 'now-gps_candidate_since>=3000
 assert 'ui_is_standby()?10000UL:1000UL' in mt_status, "e-paper GPS update cadence is slower in standby"
 assert 'if(enabled==gps_provider_active){' in mt_mode, "constellation changes preserve active GPS parser and hot fix"
 assert 'gps_provider_active=enabled;' in mt_mode, "Meshtastic remembers GPS provider state after actual ON/OFF transitions"
+
+# 2.1.1-test.22: Outgoing Meshtastic bubbles must display delivery status
+# rather than the protocol name. Incoming RF metadata remains available.
+mt_message=meshtastic_protocol_source.split("const UiMessage& active_message(size_t index)const override{",1)[1].split("uint16_t direct_unread_total()",1)[0]
+assert 'active_message_view_.entry.state=(UiMessageState)message.state;' in mt_message, "Meshtastic delivery state is loaded from the journal"
+assert 'if(!active_message_view_.entry.outgoing){' in mt_message, "only incoming messages get Meshtastic network metadata"
+incoming_branch=mt_message.split('if(!active_message_view_.entry.outgoing){',1)[1]
+assert 'else strcpy(active_message_view_.network,"MESHTASTIC");' in incoming_branch, "incoming Meshtastic label is retained"
+assert 'active_message_view_=MessageView{};' in mt_message, "outgoing metadata resets to empty before rendering"
+footer=source.split("static void message_footer_text(",1)[1].split("struct MessageBubbleGeometry",1)[0]
+assert 'if(!state[0]&&message.outgoing)' in footer, "shared chat UI uses delivery status when outgoing metadata is empty"
+assert 'case UiMessageState::Sending:state="SENDING";' in footer, "pending messages show SENDING"
+assert 'case UiMessageState::Sent:state="SENT";' in footer, "RF-complete messages show SENT"
+assert 'case UiMessageState::Delivered:state="DELIVERED";' in footer, "acknowledged direct messages show DELIVERED"
+assert 'case UiMessageState::Failed:state="FAILED";' in footer, "failed messages show FAILED"
