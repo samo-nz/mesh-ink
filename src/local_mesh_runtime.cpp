@@ -649,7 +649,8 @@ public:
     bool create_channel(const char* name,const char* key_hex)override{
         if(!meshink_channel_key::valid_name(name,channel_name_limit())||!key_hex)return false;
         int free_slot=-1;
-        for(int i=0;i<MAX_GROUP_CHANNELS;++i){
+        // Slot 0 is reserved for the public channel, even if not initialized.
+        for(int i=1;i<MAX_GROUP_CHANNELS;++i){
             ChannelDetails existing{};
             if(!meshink_meshcore().getChannel(i,existing))return false;
             if(existing.name[0]&&!strcmp(existing.name,name))return false;
@@ -668,7 +669,7 @@ public:
                 return false;
         }
         if(!meshink_meshcore().setChannel(free_slot,created))return false;
-        meshink_meshcore().saveChannels();
+        local_mesh_save_channels_now();
         refresh(true);
         return true;
     }
@@ -678,7 +679,7 @@ public:
         if(slot==0)return false; // Never remove the default public channel.
         ChannelDetails erased{};
         if(!meshink_meshcore().setChannel(slot,erased))return false;
-        meshink_meshcore().saveChannels();
+        local_mesh_save_channels_now();
         if(active_channel_&&active_key_[0]==slot){
             active_channel_=false;
             active_count_=0;
