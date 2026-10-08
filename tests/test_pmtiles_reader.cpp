@@ -116,7 +116,8 @@ int main() {
     PmtilesPngRange disconnected{};
     pmtiles_begin_frame();
     assert(!pmtiles_find_png("/maps/disconnected.pmtiles",1,0,0,disconnected));
-    assert(pmtiles_had_io_error());
+    assert(pmtiles_archive_failed("/maps/disconnected.pmtiles"));
+    assert(!pmtiles_had_io_error()); // failure is quarantined to this archive
     pmtiles_end_frame();
     pmtiles_reset();
     assert_range("/maps/gzip.pmtiles",1,1,0); // directory rebuilt after remount
