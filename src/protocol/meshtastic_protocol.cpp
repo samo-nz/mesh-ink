@@ -11,6 +11,8 @@
 #include <meshtastic/leafdata.pb.h>
 
 #include "mesh_protocol_backend.h"
+#include "../channel_key.h"
+#include <esp_system.h>
 #include "../hardware/board.h"
 #include "../hardware/gps.h"
 #include "../hardware/radio.h"
@@ -76,6 +78,75 @@ static char radio_summary[64]="ANZ / LongFast";
 static uint32_t pending_packet_id=0;
 static uint32_t pending_message_sequence=0;
 static bool protocol_settings_dirty=false;
+static bool direct_pki_only=true;
+
+// Leaf has ONE receiver channel. These are stored profiles, not simultaneous
+// Meshtastic secondary channels: selecting a profile retunes the sole receiver.
+constexpr size_t MAX_CHANNEL_PROFILES=8;
+constexpr uint32_t CHANNEL_PROFILE_MAGIC=0x3248434d; // MCH2
+struct ChannelProfile {
+    bool used=false;
+    uint8_t psk_len=0;
+    char name[13]{}; // Leaf channel names are at most 12 bytes
+    uint8_t psk[32]{};
+};
+struct ChannelProfiles {
+    uint32_t magic=CHANNEL_PROFILE_MAGIC;
+    uint8_t selected=0;
+    ChannelProfile entries[MAX_CHANNEL_PROFILES]{};
+};
+static ChannelProfiles channel_profiles{};
+
+static void default_channel_profiles() {
+    channel_profiles=ChannelProfiles{};
+    channel_profiles.entries[0].used=true;
+    channel_profiles.entries[0].psk_len=1;
+    channel_profiles.entries[0].psk[0]=1; // Meshtastic public default PSK index
+}
+static bool save_channel_profiles() {
+    Preferences prefs;
+    if(!prefs.begin("mesht-channels",false))return false;
+    const bool saved=prefs.putBytes("profiles",&channel_profiles,sizeof(channel_profiles))
+        ==sizeof(channel_profiles);
+    prefs.end();
+    return saved;
+}
+static void load_channel_profiles() {
+    default_channel_profiles();
+    Preferences prefs;
+    if(!prefs.begin("mesht-channels",true))return;
+    ChannelProfiles stored{};
+    const bool read=prefs.getBytesLength("profiles")==sizeof(stored)&&
+        prefs.getBytes("profiles",&stored,sizeof(stored))==sizeof(stored);
+    prefs.end();
+    if(!read||stored.magic!=CHANNEL_PROFILE_MAGIC||!stored.entries[0].used)return;
+    for(size_t i=0;i<MAX_CHANNEL_PROFILES;++i){
+        const auto& p=stored.entries[i];
+        if(!p.used)continue;
+        if(p.psk_len!=1&&p.psk_len!=16&&p.psk_len!=32)return;
+        if(!memchr(p.name,0,sizeof(p.name)))return;
+        if(i&&(!p.name[0]||!meshink_channel_key::valid_name(p.name,12)))return;
+    }
+    if(stored.selected>=MAX_CHANNEL_PROFILES||
+       !stored.entries[stored.selected].used)stored.selected=0;
+    channel_profiles=stored;
+}
+static bool select_channel_profile(uint8_t slot) {
+    if(slot>=MAX_CHANNEL_PROFILES||!channel_profiles.entries[slot].used||
+       leaf.isTransmitting()||leaf.hasPendingAck())return false;
+    const ChannelProfile& next=channel_profiles.entries[slot];
+    if(!leaf.setChannel(next.psk,next.psk_len,next.name))return false;
+    const uint8_t previous=channel_profiles.selected;
+    channel_profiles.selected=slot;
+    if(!save_channel_profiles()){
+        channel_profiles.selected=previous;
+        const ChannelProfile& old=channel_profiles.entries[previous];
+        leaf.setChannel(old.psk,old.psk_len,old.name);
+        return false;
+    }
+    return true;
+}
+static void update_radio_summary();
 
 static void bind(ListStorage& item) {
     item.entry.title=item.title;
