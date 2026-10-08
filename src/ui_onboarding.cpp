@@ -2756,9 +2756,7 @@ static void draw_gps_settings() {
     }
     settings_row("CURRENT STATUS",current_status,238);
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
-    char interval[24];const uint32_t seconds=mesh_protocol_gps_interval();if(!seconds)strcpy(interval,"CONTINUOUS");else if(seconds<60)snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));settings_row("GPS INTERVAL",interval,474);
-    settings_row("POSITION ADVERT",mesh_protocol_gps_advert_location()?"SHARE GPS POSITION":"LOCATION HIDDEN",592);
-    settings_row("DEEP SLEEP POWER SAVE",mesh_protocol_gps_deep_sleep_power_save()?"ON":"OFF",710);
+    settings_row("DEEP SLEEP POWER SAVE",mesh_protocol_gps_deep_sleep_power_save()?"ON":"OFF",474);
 }
 
 static const char* gps_constellation_state(MeshInkGpsConstellation constellation){
@@ -4331,9 +4329,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 else{show_toast("NO KNOWN GPS LOCATION");draw_screen();refresh(MeshInkRefreshMode::Direct);}
                 return true;
             }
-            if(hit_outer_row(x,y,474)){mesh_protocol_cycle_gps_interval();show_toast("GPS INTERVAL SAVED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,592)){mesh_protocol_toggle_gps_advert_location();show_toast(mesh_protocol_gps_advert_location()?"POSITION SHARED":"POSITION HIDDEN");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit_outer_row(x,y,710)){
+            if(hit_outer_row(x,y,474)){
                 const bool enabled=!mesh_protocol_gps_deep_sleep_power_save();
                 if(mesh_protocol_gps_set_deep_sleep_power_save(enabled))
                     show_toast(enabled?"DEEP SLEEP POWER SAVE ON":"DEEP SLEEP POWER SAVE OFF");
