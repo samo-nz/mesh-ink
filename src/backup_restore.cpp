@@ -1,6 +1,5 @@
 #include "backup_restore.h"
 #include "message_store.h"
-#include "map_tiles.h"
 #include "hardware/storage.h"
 #include "protocol/mesh_protocol.h"
 #include <Arduino.h>
@@ -88,15 +87,7 @@ static uint32_t crc32(const uint8_t* data,size_t count,uint32_t crc=0xFFFFFFFFU)
     }
     return crc;
 }
-static bool sd_ready(){
-    if(!map_tiles_media_ready())return false;
-    // The map service can retain an inconclusive mount when the filesystem
-    // contains no map archive. Require a readable root for backup/restore.
-    File root=meshink_storage_open("/");
-    const bool ok=root&&root.isDirectory();
-    if(root)root.close();
-    return ok;
-}
+static bool sd_ready(){return meshink_storage_media_ready();}
 static bool sd_writable(){
     if(!sd_ready())return fail("Insert a readable SD card");
     // Never overwrite an existing map, screenshot, or previous backup.
