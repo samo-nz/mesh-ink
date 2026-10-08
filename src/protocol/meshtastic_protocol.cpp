@@ -17,6 +17,7 @@
 #include "../hardware/rtc.h"
 #include "../message_store.h"
 #include "../backup_restore.h"
+#include "../hardware/storage.h"
 #include "../ui_onboarding.h"
 
 namespace {
@@ -891,11 +892,8 @@ static const char* radio_summary_value() {
 
 static void setup() {
     runtime_ready=false;
-    bool storage_mounted=SPIFFS.begin(false);
-    if(!storage_mounted){
-        ui_show_storage_initializing();
-        storage_mounted=SPIFFS.begin(true);
-    }
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
+    if(!storage_mounted)ui_show_storage_initializing();
     if(!storage_mounted){
         Serial.println("[T5-MESHTASTIC] SPIFFS unavailable");
         return;
