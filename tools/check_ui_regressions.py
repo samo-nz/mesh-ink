@@ -1868,3 +1868,5 @@ assert "PositionRecord parsed[MAX_NODES]{};" in position_loader, "snapshot fully
 assert "SPIFFS.rename(POSITIONS_PATH,archive)" in position_loader and 'SPIFFS.exists(archive)' in position_loader, "invalid snapshot preserved without overwriting previous archives"
 assert 'SPIFFS.remove(POSITIONS_PATH)' not in position_loader, "position loader never erases original"
 assert "header_bytes=%u" in position_loader and "expected_record=%u" in position_loader, "invalid snapshot reports enough metadata to diagnose cause"
+assert "if(position_snapshot_write_blocked_)return false;" in meshtastic_protocol_source, "a damaged map snapshot cannot be overwritten when preservation fails"
+assert "position_snapshot_write_blocked_=true;" in position_loader, "archive failures lock the existing position snapshot"
