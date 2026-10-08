@@ -1710,7 +1710,7 @@ assert 'first fresh fix accepted because GPS clock authority was stale' in board
 # 2.1.1-test.7: user-facing radio/GPS/time cleanup.
 assert 'static const char* active_radio_label()' in source and 'mesh_protocol_radio_matches(' in source, "radio menu resolves actual settings back to a known preset"
 assert 'draw_app_header("SELECT PROTOCOL",true);' in source and "mesh_protocol_available_count()" in source, "protocol selection lists compiled backends"
-assert "mesh_protocol_restart_into(protocol->id);" in source, "choosing a different protocol persists and restarts through the generic facade"
+assert "if(!mesh_protocol_restart_into(protocol->id)){" in source, "choosing a different protocol performs one verified persist-and-restart transaction"
 assert "mesh_protocol_supports_radio_presets()" in source, "legacy MeshInk radio preset picker appears only for helpers that support it"
 assert '"REGION"' in meshtastic_protocol_source and '"MODEM PRESET"' in meshtastic_protocol_source and '"HOP LIMIT"' in meshtastic_protocol_source, "Leaf helper contributes its own radio settings"
 assert '"AUTO ADD CONTACTS"' in meshcore_protocol_source and '"PACKET REPEATING"' in meshcore_protocol_source, "MeshCore helper contributes its privacy/repeating settings"
