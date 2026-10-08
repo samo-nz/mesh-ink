@@ -317,7 +317,7 @@ static Screen screen = Screen::Welcome;
 static Screen setup_cancel_from=Screen::SetupName;
 static Screen backup_return_screen=Screen::ProtocolSettings;
 static bool backup_restore_mode=false,backup_from_setup=false,backup_restore_pending=false;
-static uint8_t backup_flags=7,backup_available=7;
+static uint8_t backup_flags=15,backup_available=15;
 static MeshInkBackupInfo backup_entries[24]{};
 static size_t backup_count=0,backup_page=0;
 static char backup_filename[32]{},backup_result_message[84]{};
@@ -2919,18 +2919,19 @@ static void draw_backup_options(){
     if(backup_restore_mode)
         ui_text_fit(backup_filename,ui_x(24),ui_y(182),ui_w(492),2,0,false);
     else ui_centred("SELECT BACKUP CATEGORIES",ui_y(182),2,0,false);
-    constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","SETTINGS & IDENTITY"};
-    constexpr uint8_t flags[]={1,2,4};
-    for(int i=0;i<3;++i){
-        ui_section_card(ui_rect(24,245+i*124,492,100));
+    constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","PROTOCOL SETTINGS","DEVICE SETTINGS"};
+    constexpr uint8_t flags[]={1,2,4,8};
+    for(int i=0;i<4;++i){
+        const int row_y=231+i*103;
+        ui_section_card(ui_rect(24,row_y,492,91));
         const bool on=(backup_flags&flags[i])!=0;
         const bool available=(backup_available&flags[i])!=0;
-        rounded_box(ui_rect(42,263+i*124,53,53),ui_w(8),on);
-        if(on)ui_text("X",ui_x(57),ui_y(275+i*124),3,0xFF,true);
-        ui_text(names[i],ui_x(120),ui_y(277+i*124),3,available?0:0x88,true);
+        rounded_box(ui_rect(42,row_y+17,50,50),ui_w(8),on);
+        if(on)ui_text("X",ui_x(55),ui_y(row_y+29),3,0xFF,true);
+        ui_text(names[i],ui_x(116),ui_y(row_y+30),3,available?0:0x88,true);
     }
     ui_draw_wrapped("WARNING: SD IS REMOVABLE. BACKUPS MAY CONTAIN PRIVATE IDENTITY KEYS, CHANNEL KEYS AND MESSAGES. KEEP YOUR CARD SECURE.",
-        ui_x(30),ui_y(636),ui_w(475),2,0,false,5);
+        ui_x(30),ui_y(672),ui_w(475),2,0,false,5);
     if(backup_restore_mode){
         ui_action_button("CHOOSE FILE",ui_rect(24,811,232,80),false);
         ui_action_button("RESTORE",ui_rect(284,811,232,80),true);
@@ -2954,9 +2955,10 @@ static void draw_backup_files(){
     for(size_t i=start;i<backup_count&&i<start+5;++i){
         const MeshInkBackupInfo& entry=backup_entries[i];
         char details[72]{};
-        snprintf(details,sizeof(details),"%s%s%s %lu BYTES",
+        snprintf(details,sizeof(details),"%s%s%s%s%lu BYTES",
             entry.categories&1?"MSG ":"",entry.categories&2?"NODES ":"",
-            entry.categories&4?"SETTINGS ":"",(unsigned long)entry.bytes);
+            entry.categories&4?"PROTO ":"",entry.categories&8?"DEVICE ":"",
+            (unsigned long)entry.bytes);
         settings_row(entry.filename,details,170+(int)(i-start)*119);
     }
     if(backup_count>5){
@@ -2967,7 +2969,7 @@ static void draw_backup_files(){
 static void draw_backup_confirm(){
     draw_app_header("CONFIRM RESTORE",true);
     ui_centred("REPLACE SELECTED DATA?",ui_y(195),3,0,true);
-    ui_draw_wrapped("Only the chosen categories for this protocol will be replaced. The SD backup and all other protocol data will be retained.",
+    ui_draw_wrapped("Selected protocol data will be replaced. If Device Settings is selected, device-wide display, power, clock and GPS preferences will also be restored. The SD backup is retained.",
         ui_x(36),ui_y(350),ui_w(470),3,0,false,6);
     ui_action_button("CANCEL",ui_rect(24,735,232,85),false);
     ui_action_button("RESTORE",ui_rect(284,735,232,85),true);
@@ -4543,8 +4545,8 @@ static bool handle_backup_tap(int16_t x,int16_t y){
             else open_screen(Screen::ProtocolSettings);
             return true;
         }
-        constexpr uint8_t flags[]={1,2,4};
-        for(int i=0;i<3;++i)if(hit(x,y,ui_rect(24,245+i*124,492,100))){
+        constexpr uint8_t flags[]={1,2,4,8};
+        for(int i=0;i<4;++i)if(hit(x,y,ui_rect(24,231+i*103,492,91))){
             if(backup_available&flags[i])backup_flags^=flags[i];
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
         }
@@ -5088,7 +5090,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(kind==ProtocolSettingsRowKind::Backup){
                     backup_return_screen=Screen::ProtocolSettings;
                     backup_restore_mode=false;backup_from_setup=false;
-                    backup_available=7;backup_flags=7;
+                    backup_available=15;backup_flags=15;
                     open_screen(Screen::BackupOptions);return true;
                 }
                 if(kind==ProtocolSettingsRowKind::NodeName){
