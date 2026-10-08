@@ -616,7 +616,12 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(!loose_present) {
         discover_archives();
         bool found=false;
+        bool archive_unavailable=false;
         for(size_t i=0;i<archive_count;++i) {
+            if(pmtiles_archive_failed(archive_paths[i])){
+                archive_unavailable=true;
+                continue; // Do not reopen or gunzip an archive that already failed.
+            }
             ++result.sd_checks;
             const uint32_t lookup_started=map_perf_now_us();
             const bool found_in_archive=pmtiles_find_png(archive_paths[i],z,x,y,range);
@@ -627,6 +632,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 selected_pmtiles=true;
                 break;
             }
+            if(pmtiles_archive_failed(archive_paths[i])){
+                archive_unavailable=true;
+                continue; // A decode/metadata failure is not a missing tile.
+            }
             if(pmtiles_had_io_error()){
                 Serial.printf("[T5-MAP] archive lookup I/O failed: %s z=%d x=%d y=%d\n",
                               archive_paths[i],z,x,y);
@@ -634,7 +643,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 return false;
             }
         }
-        if(!found){mark_absent(z,x,y);return false;}
+        if(!found){
+            if(!archive_unavailable)mark_absent(z,x,y);
+            return false;
+        }
     }
     bool pmt_preloaded=false;
     if(selected_pmtiles&&range.length) {
