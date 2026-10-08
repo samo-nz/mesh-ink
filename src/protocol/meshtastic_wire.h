@@ -99,7 +99,7 @@ inline DeviceTelemetry decode_device_telemetry(const uint8_t* b,size_t len){
 // DeviceMetrics.battery_level=1 (varint), voltage=2 (float).
 inline size_t encode_device_telemetry(uint8_t out[32],uint32_t epoch,
                                       uint8_t battery,float volts){
-    if(!out||battery>100||volts<0.0f||volts>10.0f)return 0;
+    if(!out||volts<0.0f||volts>10.0f)return 0;
     uint8_t nested[9]{0x08,battery,0x15,0,0,0,0};
     uint32_t bits=0;memcpy(&bits,&volts,sizeof(bits));
     put_u32(nested+3,bits);
