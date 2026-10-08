@@ -8,6 +8,82 @@
 
 namespace {
 
+
+static constexpr MeshInkRadioPreset CORE_RADIO_PRESETS[] = {
+    {"KEEP CURRENT","NO RADIO CHANGES",0,0.0f,0,0,0},
+    {"AUSTRALIA","915.800 / SF10 / BW250 / CR5",915800,250.0f,10,5,1},
+    {"AUSTRALIA NARROW","916.575 / SF7 / BW62.5 / CR8",916575,62.5f,7,8,1},
+    {"AUSTRALIA MID","915.075 / SF9 / BW125 / CR5",915075,125.0f,9,5,1},
+    {"AUSTRALIA SA WA","923.125 / SF8 / BW62.5 / CR8",923125,62.5f,8,8,1},
+    {"AUSTRALIA QLD","923.125 / SF8 / BW62.5 / CR5",923125,62.5f,8,5,1},
+    {"BRAZIL","923.125 / SF8 / BW62.5 / CR8",923125,62.5f,8,8,1},
+    {"CANADA","910.525 / SF7 / BW62.5 / CR5 / 3B",910525,62.5f,7,5,3},
+    {"COSTA RICA","910.525 / SF11 / BW125 / CR5",910525,125.0f,11,5,1},
+    {"EU UK NARROW","869.618 / SF8 / BW62.5 / CR8",869618,62.5f,8,8,1},
+    {"EU UK DEPRECATED","869.525 / SF11 / BW250 / CR5",869525,250.0f,11,5,1},
+    {"CZECH NARROW","869.432 / SF7 / BW62.5 / CR5",869432,62.5f,7,5,1},
+    {"EU 433 LONG RANGE","433.650 / SF11 / BW250 / CR5",433650,250.0f,11,5,1},
+    {"EU 433 NARROW","433.650 / SF8 / BW62.5 / CR8",433650,62.5f,8,8,1},
+    {"HUNGARY","869.618 / SF7 / BW62.5 / CR5 / 2B",869618,62.5f,7,5,2},
+    {"NETHERLANDS","869.618 / SF7 / BW62.5 / CR5",869618,62.5f,7,5,1},
+    {"NL LIMBURG","869.618 / SF8 / BW62.5 / CR8 / 2B",869618,62.5f,8,8,2},
+    {"NZ NARROW","917.375 / SF7 / BW62.5 / CR5 / 2B",917375,62.5f,7,5,2},
+    {"NZ GISBORNE","917.375 / SF11 / BW250 / CR5 / 1B",917375,250.0f,11,5,1},
+    {"PORTUGAL 433","433.375 / SF9 / BW62.5 / CR6",433375,62.5f,9,6,1},
+    {"PORTUGAL 868","869.618 / SF7 / BW62.5 / CR6",869618,62.5f,7,6,1},
+    {"SLOVAKIA","869.618 / SF7 / BW62.5 / CR5 / 2B",869618,62.5f,7,5,2},
+    {"SWITZERLAND","869.618 / SF8 / BW62.5 / CR8",869618,62.5f,8,8,1},
+    {"USA","910.525 / SF7 / BW62.5 / CR5",910525,62.5f,7,5,1},
+    {"USA PHILLYMESH","902.250 / SF11 / BW500 / CR5 / 2B",902250,500.0f,11,5,2},
+    {"USA SOCAL","927.875 / SF7 / BW62.5 / CR5 / 3B",927875,62.5f,7,5,3},
+    {"VIETNAM NARROW","920.250 / SF8 / BW62.5 / CR5",920250,62.5f,8,5,1},
+    {"VIETNAM DEPRECATED","920.250 / SF11 / BW250 / CR5",920250,250.0f,11,5,1},
+};
+
+static constexpr const char* CORE_SETUP_REGIONS[]={
+    "NEW ZEALAND","AUSTRALIA","EUROPE / UK","NORTH AMERICA",
+    "BRAZIL / ASIA","CUSTOM / OTHER"
+};
+static size_t core_radio_count(){return sizeof(CORE_RADIO_PRESETS)/sizeof(CORE_RADIO_PRESETS[0]);}
+static const MeshInkRadioPreset* core_radio_at(size_t index){
+    return index<core_radio_count()?&CORE_RADIO_PRESETS[index]:nullptr;
+}
+static size_t core_region_count(){return sizeof(CORE_SETUP_REGIONS)/sizeof(CORE_SETUP_REGIONS[0]);}
+static const char* core_region_name(size_t index){
+    return index<core_region_count()?CORE_SETUP_REGIONS[index]:"";
+}
+static bool core_preset_matches_region(size_t index,size_t region){
+    if(index==0||index>=core_radio_count())return false;
+    switch(region){
+        case 0:return index==17||index==18;
+        case 1:return index>=1&&index<=5;
+        case 2:return (index>=9&&index<=16)||(index>=19&&index<=22);
+        case 3:return index==7||index==8||(index>=23&&index<=25);
+        case 4:return index==6||index==26||index==27;
+        default:return false;
+    }
+}
+static size_t core_setup_preset_count(size_t region){
+    size_t count=1; // CUSTOM, initialized with no inherited radio settings.
+    for(size_t i=1;i<core_radio_count();++i)
+        if(core_preset_matches_region(i,region))++count;
+    return count;
+}
+static int core_setup_preset_at(size_t region,size_t visible){
+    if(visible==0)return -1;
+    size_t n=1;
+    for(size_t i=1;i<core_radio_count();++i){
+        if(!core_preset_matches_region(i,region))continue;
+        if(n++==visible)return (int)i;
+    }
+    return -2;
+}
+static const char* core_setup_preset_label(size_t region,size_t visible){
+    const int index=core_setup_preset_at(region,visible);
+    return index==-1?"CUSTOM / MANUAL":
+           index>=0?CORE_RADIO_PRESETS[index].title:"";
+}
+
 static bool name_character_allowed(char c) {
     return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_';
 }
@@ -169,6 +245,14 @@ static const MeshInkProtocolBackend& backend() {
         b.refresh_ui_data = local_mesh_refresh_ui_data;
         b.send_active = local_mesh_send_active;
         b.send_advert = local_mesh_send_advert;
+
+        b.radio_preset_count=core_radio_count;
+        b.radio_preset_at=core_radio_at;
+        b.setup_region_count=core_region_count;
+        b.setup_region_name=core_region_name;
+        b.setup_preset_count_for_region=core_setup_preset_count;
+        b.setup_preset_name_for_region=core_setup_preset_label;
+        b.setup_preset_index_for_region=core_setup_preset_at;
 
         b.apply_radio = local_mesh_apply_radio;
         b.setup_save_tx_power = local_mesh_save_tx_power;
