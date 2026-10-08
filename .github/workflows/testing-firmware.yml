@@ -46,6 +46,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_channel_key.cpp -o /tmp/channel-key-test
           /tmp/channel-key-test
+      - name: SD backup wire format and corruption tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_format.cpp -o /tmp/meshink-backup-format-test
+          /tmp/meshink-backup-format-test
       - name: Maps-only gesture geometry regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
