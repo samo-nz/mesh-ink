@@ -846,6 +846,9 @@ static void setup() {
         return;
     }
 
+    // Initialize shared board services for the setup UI, but defer LoRa start
+    // until the region has been explicitly confirmed.
+    meshink_board_begin_local();
     // No Meshtastic RF transmissions before the region is confirmed in setup.
     Preferences wizard_gate;
     bool configured=false;
@@ -858,7 +861,6 @@ static void setup() {
         return;
     }
 
-    meshink_board_begin_local();
     if(!meshink_radio_initialize()){
         ui_show_radio_failure(meshink_radio_classify_failure());
         return;
