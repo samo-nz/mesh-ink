@@ -5710,7 +5710,11 @@ static void ui_load_persistent_state() {
     String saved_name=prefs.getString("name","");
     selected_preset=prefs.getUChar("preset_v2",17);
     const bool legacy_setup_complete=prefs.getBool("complete",false);
-    setup_meshcore_done=prefs.getBool("setup_mc",legacy_setup_complete);
+    // Legacy 'complete' meant the original single-protocol installation.
+    // Once either new per-protocol flag exists it must never mark the other
+    // protocol configured by accident.
+    const bool new_setup_flags=prefs.isKey("setup_mc")||prefs.isKey("setup_mst");
+    setup_meshcore_done=prefs.getBool("setup_mc",!new_setup_flags&&legacy_setup_complete);
     setup_meshtastic_done=prefs.getBool("setup_mst",false);
     setup_any_done=setup_meshcore_done||setup_meshtastic_done;
     setup_complete=setup_protocol_done(mesh_protocol_descriptor().id);
