@@ -1347,7 +1347,7 @@ static void loop() {
         const UiMessageState state=failed?UiMessageState::Failed:UiMessageState::Sent;
         if(meshink_message_store().update_state(last_message_sequence,state)){
             if(failed)++radio_errors;
-            Serial.printf("[T5-MESHTASTIC] TX complete seq=%lu state=%s\\n",
+            Serial.printf("[T5-MESHTASTIC] TX complete seq=%lu state=%s\n",
                           (unsigned long)last_message_sequence,failed?"FAILED":"SENT");
             last_message_sequence=0;last_message_packet_id=0;
             provider->message_state_changed();
@@ -1404,7 +1404,7 @@ static bool send_active(const char* text) {
     }
     if(!packet_id){
         ++send_refused;
-        Serial.printf("[T5-MESHTASTIC] text rejected reason=%u\\n",
+        Serial.printf("[T5-MESHTASTIC] text rejected reason=%u\n",
                       (unsigned)leaf.getLastSendResult());
         return false;
     }
