@@ -312,7 +312,7 @@ enum class Screen : uint8_t {
     Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
-// Separate protocol completion flags; a legacy complete MeshCore install is preserved.
+// Separate protocol completion flags; a legacy completed installation is preserved.
 static bool setup_meshcore_done=false, setup_meshtastic_done=false, setup_any_done=false;
 static uint8_t setup_return_protocol=0;
 static uint8_t setup_protocol_choice=0;
@@ -765,7 +765,7 @@ static bool apply_selected_preset() {
 }
 
 
-// The same setup screens serve both protocols. MeshCore maps its existing
+// The same setup screens serve both protocols. Protocol one maps its existing
 // radio presets into short regional lists; Leaf enumerates its native regions.
 static constexpr const char* SETUP_MESHCORE_REGIONS[] = {
     "NEW ZEALAND","AUSTRALIA","EUROPE / UK","NORTH AMERICA",
