@@ -96,6 +96,13 @@ struct MeshInkProtocolBackend {
     bool (*settings_item)(size_t index, MeshInkProtocolSettingItem& item) = nullptr;
     MeshInkProtocolSettingResult (*settings_activate)(uint16_t id) = nullptr;
 
+    // First-run radio wizard: optional protocol-owned region/preset enumeration.
+    size_t (*setup_region_count)() = nullptr;
+    const char* (*setup_region_name)(size_t index) = nullptr;
+    size_t (*setup_preset_count)() = nullptr;
+    const char* (*setup_preset_name)(size_t index) = nullptr;
+    bool (*setup_commit_radio)(size_t region, size_t preset, uint8_t hops) = nullptr;
+
     // Legacy capability hooks retained for protocol internals/compatibility.
     const char* (*privacy_value)(uint8_t item) = nullptr;
     void (*toggle_privacy)(uint8_t item) = nullptr;
