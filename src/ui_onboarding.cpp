@@ -5352,7 +5352,7 @@ static void enter_standby(const char* reason){
     update_status_hardware();
     draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
     // Leaf does not yet support retained RX wake. Honour the saved choice
-    // on MeshCore, but fall back to ordinary standby without a retry loop.
+    // on supported backends, but fall back to normal standby without retries.
     deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();
     if(deep_sleep_pending&&setup_complete){
         const uint8_t retained_tab=retained_tab_for_screen(screen);
