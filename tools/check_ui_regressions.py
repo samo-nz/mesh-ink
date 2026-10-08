@@ -802,7 +802,7 @@ for storage_api in ("meshink_storage_begin", "meshink_storage_end", "meshink_sto
 assert "T5_PIN_SD_CS" in storage_backend_source, "T5 SD chip select remains storage-backend-owned"
 assert "t5_shared_spi()" in storage_backend_source, "T5 shared SPI selection remains storage-backend-owned"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "field-tested 25 MHz SD access speed is preserved"
-assert "SD.begin(T5_PIN_SD_CS,t5_shared_spi(),T5_STORAGE_SPI_HZ)" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
+assert "return SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
 assert '#include "hardware/storage.h"' in map_source, "Maps consumes generic storage boundary"
 assert '#include "hardware/storage.h"' in pmtiles_header, "PMTiles consumes generic storage boundary"
 for leaked_storage_detail in ('#include <SD.h>', '#include "board/target.h"', "T5_PIN_SD_CS", "t5_shared_spi()", "MAP_SD_SPI_HZ", "SD.begin(", "SD.open(", "SD.exists(", "SD.end("):
