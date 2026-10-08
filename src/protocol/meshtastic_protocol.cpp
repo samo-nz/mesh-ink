@@ -400,6 +400,12 @@ public:
         }
         NodeRecord* item=ensure(packet.header.from);
         if(!item)return false;
+        // Avoid rewriting flash for each identical periodic NodeInfo advert.
+        const bool durable_change=!item->has_public_key||
+            memcmp(item->public_key,user.public_key.bytes,32)!=0||
+            item->role!=(uint8_t)user.role||
+            (user.long_name[0]&&strncmp(item->long_name,user.long_name,sizeof(item->long_name)-1))||
+            (user.short_name[0]&&strncmp(item->short_name,user.short_name,sizeof(item->short_name)-1));
         item->has_public_key=true;
         memcpy(item->public_key,user.public_key.bytes,32);
         item->role=(uint8_t)user.role;
@@ -413,7 +419,7 @@ public:
         if(user.long_name[0])strncpy(item->long_name,user.long_name,sizeof(item->long_name)-1);
         if(user.short_name[0])strncpy(item->short_name,user.short_name,sizeof(item->short_name)-1);
         snprintf(item->identity,sizeof(item->identity),"!%08lx",(unsigned long)item->node);
-        if(!save_nodes())Serial.println("[T5-MESHTASTIC] WARN node snapshot could not be saved");
+        if(durable_change&&!save_nodes())Serial.println("[T5-MESHTASTIC] WARN node snapshot could not be saved");
         refresh(true);
         ui_request_data_refresh("meshtastic-nodeinfo");
         return true;
@@ -622,11 +628,11 @@ public:
 
     bool add_active_node()override{
         NodeRecord* node=find(active_node_);if(!node)return false;
-        node->hidden=false;refresh(true);return true;
+        node->hidden=false;save_nodes();refresh(true);return true;
     }
     bool remove_active_contact()override{
         NodeRecord* node=find(active_node_);if(!node)return false;
-        node->hidden=true;refresh(true);return true;
+        node->hidden=true;save_nodes();refresh(true);return true;
     }
     bool request_active_node_info(UiNodeInfoRequest)override{return false;}
     bool login_active_node(const char*,bool)override{return false;}
