@@ -953,7 +953,10 @@ static void load_config() {
     const auto params=MeshRegion::getModemParams(mesh_config.radio.preset);
     const uint32_t slots=info?info->numSlots(params.bw):0;
     mesh_config.radio.channelNum=slot<=slots?slot:0;
-    mesh_config.radio.txPower=(power>=2&&power<=22)?power:0;
+    // A manually selected power may never exceed local regional limits
+    // or the T5 SX1262's supported output range.
+    const int max_power=min(22,(int)MeshRegion::getPowerLimit(mesh_config.radio.region));
+    mesh_config.radio.txPower=(power>=2&&power<=max_power)?power:0;
     mesh_config.hopLimit=constrain(hop,(uint8_t)1,(uint8_t)7);
     if(position_interval_min!=15&&position_interval_min!=30&&
        position_interval_min!=60)position_interval_min=0;
@@ -1105,6 +1108,8 @@ static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id){
    const auto next=list[(current+step)%count].code;
    if(!supported_region(next))continue;
    mesh_config.radio.region=next;mesh_config.radio.channelNum=0;
+   if(mesh_config.radio.txPower>MeshRegion::getPowerLimit(next))
+       mesh_config.radio.txPower=0;
    save_config();protocol_settings_dirty=true;update_radio_summary();
    return MeshInkProtocolSettingResult::RestartRequired;
   }
@@ -1122,8 +1127,14 @@ static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id){
   return MeshInkProtocolSettingResult::RestartRequired;
  case MT_POWER:{
   const int8_t options[]={0,10,14,17,20,22};
-  size_t i=0;while(i<6&&options[i]!=mesh_config.radio.txPower)++i;
-  mesh_config.radio.txPower=options[(i+1)%6];
+  const int max_power=min(22,(int)MeshRegion::getPowerLimit(mesh_config.radio.region));
+  size_t current=0;while(current<6&&options[current]!=mesh_config.radio.txPower)
+      ++current;
+  for(size_t attempt=1;attempt<=6;++attempt){
+   const int8_t candidate=options[(current+attempt)%6];
+   if(candidate!=0&&candidate>max_power)continue;
+   mesh_config.radio.txPower=candidate;break;
+  }
   save_config();protocol_settings_dirty=true;
   return MeshInkProtocolSettingResult::RestartRequired;
  }
