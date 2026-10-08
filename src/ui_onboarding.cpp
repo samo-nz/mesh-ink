@@ -4193,9 +4193,9 @@ static bool handle_channel_form_keyboard(int16_t x,int16_t y){
         append(c);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
-        if(x>=meshink_keyboard::orientation_split(metrics)){
-            keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
-        }
+        // HIDE and DONE both dismiss the keyboard; the ADD action in the
+        // header is the only operation that writes a new channel.
+        keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
         return true;
     }
     return true;
