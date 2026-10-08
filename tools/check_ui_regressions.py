@@ -1870,3 +1870,20 @@ assert 'SPIFFS.remove(POSITIONS_PATH)' not in position_loader, "position loader 
 assert "header_bytes=%u" in position_loader and "expected_record=%u" in position_loader, "invalid snapshot reports enough metadata to diagnose cause"
 assert "if(position_snapshot_write_blocked_)return false;" in meshtastic_protocol_source, "a damaged map snapshot cannot be overwritten when preservation fails"
 assert "position_snapshot_write_blocked_=true;" in position_loader, "archive failures lock the existing position snapshot"
+
+# 2.1.1-test.21: Meshtastic and MeshCore share one physical GNSS provider.
+# Leaf must explicitly enable its NMEA parser and publish real fix/search state.
+mt_start=meshtastic_protocol_source.split("static void setup() {",1)[1].split("static void handle_packet(",1)[0]
+mt_loop=meshtastic_protocol_source.split("static void loop() {",1)[1].split("static UiDataProvider* data_provider()",1)[0]
+mt_mode=meshtastic_protocol_source.split("static void meshtastic_gps_mode_changed(",1)[1].split("static void meshtastic_update_gps_ui()",1)[0]
+mt_status=meshtastic_protocol_source.split("static void meshtastic_update_gps_ui()",1)[1].split("static uint8_t my_public_key",1)[0]
+assert 'meshink_gps_service_begin();' in mt_start and 'meshink_gps_set_provider_enabled(gps_mode!=MeshInkGpsConstellationMode::None);' in mt_start, "Meshtastic activates the shared GPS parser on startup"
+assert mt_start.index('meshink_gps_service_begin();') < mt_start.index('meshink_gps_set_provider_enabled(gps_mode!=MeshInkGpsConstellationMode::None);'), "GPS manager begins before activation"
+assert 'meshink_gps_set_provider_enabled(enabled);' in mt_mode and 'ui_status_set_gps(enabled,false,0,0,0,0,' in mt_mode, "constellation changes update GPS service and icon immediately"
+assert 'b.gps_mode_changed=meshtastic_gps_mode_changed;' in meshtastic_protocol_source, "shared constellation selector invokes Meshtastic GPS callback"
+assert 'meshink_gps_service_loop();' in mt_loop and 'meshtastic_update_gps_ui();' in mt_loop, "Meshtastic loops GNSS parser and GPS status"
+assert mt_loop.index('meshink_gps_service_loop();') < mt_loop.index('meshtastic_update_gps_ui();'), "parse fresh NMEA before publishing GPS state"
+assert 'const MeshInkGpsStatus status=enabled?meshink_gps_read_status():MeshInkGpsStatus{};' in mt_status, "Meshtastic reads board GPS instead of default-off UI state"
+assert 'ui_status_set_gps(enabled,gps_stable_fix,' in mt_status, "Meshtastic reports shared enabled/search/fix status"
+assert 'gps_stable_fix=raw_fix;' in mt_status and 'now-gps_candidate_since>=3000UL' in mt_status, "GPS fix/search display is debounced"
+assert 'ui_is_standby()?10000UL:1000UL' in mt_status, "e-paper GPS update cadence is slower in standby"
