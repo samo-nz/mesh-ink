@@ -1343,7 +1343,7 @@ assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS up
 # mounting is independent of the LoRa/GPS rail, so do it while the rail is
 # still settling; MeshCore datastore/core lifecycle remains behind radio init.
 local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("static bool local_mesh_setup_retained_wake(")]
-assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
+assert local_setup_body.index("meshink_storage_mount_internal_safe()") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
 assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
