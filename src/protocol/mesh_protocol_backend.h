@@ -102,6 +102,8 @@ struct MeshInkProtocolBackend {
     size_t (*setup_preset_count)() = nullptr;
     const char* (*setup_preset_name)(size_t index) = nullptr;
     bool (*setup_commit_radio)(size_t region, size_t preset, uint8_t hops) = nullptr;
+    bool (*setup_save_tx_power)(uint8_t dbm) = nullptr;
+    uint8_t (*setup_current_tx_power)() = nullptr;
 
     // Legacy capability hooks retained for protocol internals/compatibility.
     const char* (*privacy_value)(uint8_t item) = nullptr;
