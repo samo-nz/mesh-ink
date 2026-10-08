@@ -889,7 +889,7 @@ assert "MeshInkGpsConstellationMode" in gps_types_source, "GPS tuning vocabulary
 assert '#include "hardware/gps.h"' in runtime_source, "local runtime must use generic GPS surface"
 assert '#include "hardware/gps.h"' in companion_source, "companion runtime must use generic GPS surface"
 assert "meshink_gps_background_tick();" in runtime_source, "GPS background servicing routes through generic backend"
-assert "meshink_gps_shutdown();" in runtime_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through generic backend"
+assert "meshink_gps_shutdown();" in protocol_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through shared MeshInk/companion ownership"
 assert "Serial1" not in runtime_source and "Serial1" not in companion_source and "Serial1" not in source, "application code must not own the GPS UART"
 assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
