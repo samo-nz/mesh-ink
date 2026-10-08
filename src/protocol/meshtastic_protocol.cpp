@@ -13,6 +13,8 @@
 #include <meshtastic/leafdata.pb.h>
 
 #include "mesh_protocol_backend.h"
+#include "meshtastic_wire.h"
+#include "../hardware/power.h"
 #include "../hardware/board.h"
 #include "../hardware/gps.h"
 #include "../hardware/radio.h"
@@ -42,6 +44,9 @@ constexpr size_t MAX_ACTIVE_MESSAGES=MESHINK_MESSAGE_CAPACITY;
 constexpr const char* NODES_PATH="/meshtastic_nodes.bin";
 constexpr const char* NODES_STAGING="/meshtastic_nodes.tmp";
 constexpr uint32_t NODES_MAGIC=0x314E544DU; // MTN1
+constexpr uint32_t POSITION_MAGIC=0x3150544DU; // MTP1
+constexpr const char* POSITIONS_PATH="/meshtastic_positions.bin";
+constexpr const char* POSITIONS_STAGE="/mt_positions.tmp";
 
 struct ListStorage {
     UiListEntry entry{};
@@ -65,6 +70,15 @@ struct NodeRecord {
     char long_name[40]{};
     char short_name[5]{};
     char identity[16]{};
+};
+
+// Position records are kept separate from NodeRecord so existing saved
+// Meshtastic NodeInfo snapshots remain binary-compatible.
+struct PositionRecord {
+    NodeNum node=0;
+    int32_t latitude=0;  // degrees x 1e6, MeshInk's existing map convention
+    int32_t longitude=0;
+    uint32_t received_utc=0;
 };
 
 struct MessageView {
@@ -187,6 +201,8 @@ static void make_short_name(const char* name,char out[5]) {
 
 class MeshtasticUiProvider final:public UiDataProvider {
     NodeRecord nodes_[MAX_NODES]{};
+    PositionRecord positions_[MAX_NODES]{};
+    uint32_t position_saved_at_=0;
     ListStorage contacts_[MAX_NODES]{};
     uint8_t contact_node_index_[MAX_NODES]{};
     size_t contact_count_=0;
@@ -227,6 +243,81 @@ class MeshtasticUiProvider final:public UiDataProvider {
             return &item;
         }
         return nullptr;
+    }
+
+    const PositionRecord* position_for(NodeNum id)const{
+        for(const auto& p:positions_)if(p.node==id)return &p;
+        return nullptr;
+    }
+    PositionRecord* writable_position(NodeNum id){
+        for(auto& p:positions_)if(p.node==id)return &p;
+        for(auto& p:positions_)if(!p.node){p.node=id;return &p;}
+        return nullptr;
+    }
+    bool save_positions(){
+        File f=SPIFFS.open(POSITIONS_STAGE,"w");if(!f)return false;
+        uint32_t header[2]={POSITION_MAGIC,0};
+        for(const auto& p:positions_)if(p.node)++header[1];
+        bool ok=f.write((const uint8_t*)header,sizeof(header))==sizeof(header);
+        for(const auto& p:positions_)if(ok&&p.node)
+            ok=f.write((const uint8_t*)&p,sizeof(p))==sizeof(p);
+        f.flush();f.close();
+        if(!ok){SPIFFS.remove(POSITIONS_STAGE);return false;}
+        // Keep previously valid map coordinates until the replacement exists.
+        constexpr const char* OLD="/mt_positions.old";
+        if(SPIFFS.exists(OLD))SPIFFS.remove(OLD);
+        const bool previous=SPIFFS.exists(POSITIONS_PATH);
+        if(previous&&!SPIFFS.rename(POSITIONS_PATH,OLD)){
+            SPIFFS.remove(POSITIONS_STAGE);return false;
+        }
+        if(!SPIFFS.rename(POSITIONS_STAGE,POSITIONS_PATH)){
+            if(previous)SPIFFS.rename(OLD,POSITIONS_PATH);
+            return false;
+        }
+        position_saved_at_=millis();
+        return true;
+    }
+    void load_positions(){
+        File f=SPIFFS.open(POSITIONS_PATH,"r");if(!f)return;
+        uint32_t header[2]{};
+        bool valid=f.read((uint8_t*)header,sizeof(header))==sizeof(header)&&
+                   header[0]==POSITION_MAGIC&&header[1]<=MAX_NODES&&
+                   f.size()==sizeof(header)+header[1]*sizeof(PositionRecord);
+        for(size_t i=0;valid&&i<header[1];++i){
+            PositionRecord p{};
+            valid=f.read((uint8_t*)&p,sizeof(p))==sizeof(p);
+            if(!valid)break;
+            if(!p.node||p.node==BROADCAST_ADDR||
+               p.latitude < -90000000||p.latitude > 90000000||
+               p.longitude < -180000000||p.longitude > 180000000)continue;
+            PositionRecord* slot=writable_position(p.node);
+            if(slot){*slot=p;ensure(p.node);}
+        }
+        f.close();
+        if(!valid)Serial.println("[T5-MESHTASTIC] WARN position snapshot invalid; no replacement");
+    }
+    void receive_position(const MeshPacket& packet){
+        if(packet.header.from==leaf.getNodeNum())return;
+        const auto decoded=meshink_mt_wire::decode_position(packet.payload,packet.payloadLen);
+        if(!decoded.valid)return;
+        NodeRecord* node=ensure(packet.header.from);
+        PositionRecord* pos=writable_position(packet.header.from);
+        if(!node||!pos)return;
+        const bool first=pos->received_utc==0;
+        const bool changed=pos->latitude!=decoded.lat_e6||
+                           pos->longitude!=decoded.lon_e6;
+        pos->latitude=decoded.lat_e6;pos->longitude=decoded.lon_e6;
+        pos->received_utc=now_utc();
+        node->last_seen=pos->received_utc;
+        node->last_rssi=packet.rxRssi;node->last_snr=packet.rxSnr;
+        const uint8_t start=packet.header.getHopStart();
+        const uint8_t left=packet.header.getHopLimit();
+        node->last_hops=start>=left?(uint8_t)(start-left):0;
+        // Throttle flash even if another node publishes every few seconds.
+        if((first||changed)&&(first||millis()-position_saved_at_>=300000UL))
+            if(!save_positions())Serial.println("[T5-MESHTASTIC] WARN position save failed");
+        refresh(true);
+        ui_request_data_refresh("meshtastic-position");
     }
     bool message_matches_active(const MeshInkStoredMessage& item)const {
         if(meshink_message_protocol(item)!=MESHTASTIC_PROTOCOL_ID)return false;
@@ -359,6 +450,7 @@ public:
     }
     void begin() {
         load_nodes();
+        load_positions();
         auto& store=meshink_message_store();
         store.begin();
         // Reconstruct placeholder peers from durable Meshtastic direct history.
@@ -559,8 +651,37 @@ public:
         rebuild_active();mark_active_read();return true;
     }
 
-    size_t map_node_count()const override{return 0;}
-    bool map_node(size_t,UiMapNode&)const override{return false;}
+    size_t map_node_count()const override{
+        size_t n=0;
+        for(const auto& p:positions_){
+            const NodeRecord* node=p.node?find(p.node):nullptr;
+            if(node&&!node->hidden)++n;
+        }
+        return n;
+    }
+    bool map_node(size_t index,UiMapNode& out)const override{
+        for(const auto& p:positions_){
+            const NodeRecord* node=p.node?find(p.node):nullptr;
+            if(!node||node->hidden)continue;
+            if(index--!=0)continue;
+            out=UiMapNode{};
+            strncpy(out.name,node->long_name[0]?node->long_name:node->identity,
+                    sizeof(out.name)-1);
+            node_key(node->node,out.key);
+            out.latitude=p.latitude;out.longitude=p.longitude;
+            out.role=shared_role(node->role);
+            out.advertised_at=p.received_utc;
+            // This marks a location learned from radio GPS telemetry.
+            // Map marker navigation remains unchanged for BOTH protocols.
+            out.gps_from_reply=true;
+            const uint32_t now=now_utc();
+            const uint32_t age=now>=p.received_utc?now-p.received_utc:0;
+            out.gps_received_millis=millis()-
+                (uint32_t)min((uint64_t)age*1000ULL,(uint64_t)0x7FFFFFFFUL);
+            return true;
+        }
+        return false;
+    }
     bool open_map_node(size_t)override{return false;}
 
     size_t contact_count()const override{return contact_count_;}
@@ -601,13 +722,17 @@ public:
         if(active_channel_)return false;
         const NodeRecord* node=find(active_node_);
         if(!node)return false;
-        static char seen[32],advert[32],route[32],position[24];
+        static char seen[32],advert[32],route[32],position[48];
         format_age(node->last_seen,seen,sizeof(seen));
         format_age(node->last_node_info,advert,sizeof(advert));
         if(node->last_hops)snprintf(route,sizeof(route),"%u HOP%s",
             (unsigned)node->last_hops,node->last_hops==1?"":"S");
         else strcpy(route,"DIRECT / ZERO HOP");
-        strcpy(position,"NO POSITION RECEIVED");
+        const PositionRecord* pos=position_for(node->node);
+        if(pos)snprintf(position,sizeof(position),"%.5f, %.5f",
+                        (double)pos->latitude/1000000.0,
+                        (double)pos->longitude/1000000.0);
+        else strcpy(position,"NO POSITION RECEIVED");
         out=UiNodeDetails{};
         out.name=node->long_name[0]?node->long_name:node->identity;
         out.identity=node->identity;
@@ -624,7 +749,8 @@ public:
         out.capabilities=0;
         out.saved_contact=!node->hidden;
         out.advert_age=advert;
-        out.position_source="POSITION DECODING NOT ENABLED";
+        out.position_source=pos?"MESHTASTIC POSITION PACKET":"NO POSITION RECEIVED";
+        if(pos){out.latitude=pos->latitude;out.longitude=pos->longitude;}
         return true;
     }
 
@@ -981,6 +1107,10 @@ static void setup() {
 }
 
 static void handle_packet(const MeshPacket& packet) {
+    if(packet.portNum==meshtastic_PortNum_POSITION_APP){
+        provider->receive_position(packet);
+        return;
+    }
     if(packet.portNum==meshtastic_PortNum_NODEINFO_APP){
         provider->learn_node_info(packet);
         return;
