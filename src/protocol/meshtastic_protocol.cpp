@@ -95,6 +95,18 @@ static uint8_t my_public_key[32]{};
 static uint8_t my_private_key[32]{};
 static char radio_summary[64]="ANZ / LongFast";
 static bool protocol_settings_dirty=false;
+static uint8_t position_interval_min=0; // zero means strictly opt-in
+static uint8_t position_precision=0;   // 0 exact, 1 ~100m, 2 ~1km
+static uint8_t telemetry_interval_min=0;
+static uint8_t nodeinfo_interval_hours=3;
+static bool carrier_sense_enabled=true;
+static uint32_t last_position_send_ms=0;
+static uint32_t last_telemetry_send_ms=0;
+static uint32_t last_message_packet_id=0;
+static uint32_t last_message_sequence=0;
+static uint32_t sent_count=0,received_count=0,send_refused=0,radio_errors=0;
+static uint32_t position_received_count=0;
+static void update_radio_summary();
 // Leaf currently implements just the standard public primary channel.
 // Secondary channel controls are present in the shared UI but intentionally
 // make no radio or persistent configuration changes until Leaf can listen
@@ -296,6 +308,7 @@ class MeshtasticUiProvider final:public UiDataProvider {
         f.close();
         if(!valid)Serial.println("[T5-MESHTASTIC] WARN position snapshot invalid; no replacement");
     }
+public:
     void receive_position(const MeshPacket& packet){
         if(packet.header.from==leaf.getNodeNum())return;
         const auto decoded=meshink_mt_wire::decode_position(packet.payload,packet.payloadLen);
@@ -319,6 +332,7 @@ class MeshtasticUiProvider final:public UiDataProvider {
         refresh(true);
         ui_request_data_refresh("meshtastic-position");
     }
+private:
     bool message_matches_active(const MeshInkStoredMessage& item)const {
         if(meshink_message_protocol(item)!=MESHTASTIC_PROTOCOL_ID)return false;
         if(active_channel_)
@@ -843,6 +857,13 @@ static void save_config() {
     prefs.putUChar("region",(uint8_t)mesh_config.radio.region);
     prefs.putUChar("preset",(uint8_t)mesh_config.radio.preset);
     prefs.putUChar("hop",mesh_config.hopLimit);
+    prefs.putChar("power",mesh_config.radio.txPower);
+    prefs.putULong("slot",mesh_config.radio.channelNum);
+    prefs.putUChar("pos_int",position_interval_min);
+    prefs.putUChar("pos_prec",position_precision);
+    prefs.putUChar("tel_int",telemetry_interval_min);
+    prefs.putUChar("info_int",nodeinfo_interval_hours);
+    prefs.putBool("carrier",carrier_sense_enabled);
     prefs.end();
 }
 
@@ -857,10 +878,24 @@ static void load_config() {
     uint8_t region=(uint8_t)libmeshtastic_leaf::REGION_ANZ;
     uint8_t preset=(uint8_t)libmeshtastic_leaf::PRESET_LONG_FAST;
     uint8_t hop=3;
+    int8_t power=0;
+    uint32_t slot=0;
+    position_interval_min=0;
+    position_precision=0;
+    telemetry_interval_min=0;
+    nodeinfo_interval_hours=3;
+    carrier_sense_enabled=true;
     if(prefs.begin("meshtastic",true)){
         region=prefs.getUChar("region",region);
         preset=prefs.getUChar("preset",preset);
         hop=prefs.getUChar("hop",hop);
+        power=prefs.getChar("power",0);
+        slot=prefs.getULong("slot",0);
+        position_interval_min=prefs.getUChar("pos_int",0);
+        position_precision=prefs.getUChar("pos_prec",0);
+        telemetry_interval_min=prefs.getUChar("tel_int",0);
+        nodeinfo_interval_hours=prefs.getUChar("info_int",3);
+        carrier_sense_enabled=prefs.getBool("carrier",true);
         prefs.end();
     }
     if(!supported_region((RegionCode)region))
@@ -870,7 +905,20 @@ static void load_config() {
     mesh_config=MeshConfig{};
     mesh_config.radio.region=(RegionCode)region;
     mesh_config.radio.preset=(ModemPreset)preset;
+    const auto info=MeshRegion::getRegion(mesh_config.radio.region);
+    const auto params=MeshRegion::getModemParams(mesh_config.radio.preset);
+    const uint32_t slots=info?info->numSlots(params.bw):0;
+    mesh_config.radio.channelNum=slot<=slots?slot:0;
+    mesh_config.radio.txPower=(power>=2&&power<=22)?power:0;
     mesh_config.hopLimit=constrain(hop,(uint8_t)1,(uint8_t)7);
+    if(position_interval_min!=15&&position_interval_min!=30&&
+       position_interval_min!=60)position_interval_min=0;
+    if(position_precision>2)position_precision=0;
+    if(telemetry_interval_min!=15&&telemetry_interval_min!=30&&
+       telemetry_interval_min!=60)telemetry_interval_min=0;
+    if(nodeinfo_interval_hours!=0&&nodeinfo_interval_hours!=1&&
+       nodeinfo_interval_hours!=3&&nodeinfo_interval_hours!=6)
+        nodeinfo_interval_hours=3;
     protocol_settings_dirty=false;
     update_radio_summary();
 }
@@ -1096,7 +1144,9 @@ static void setup() {
         Serial.println("[T5-MESHTASTIC] libmeshtastic-leaf begin failed");
         return;
     }
-    leaf.setDefaultChannel();
+    leaf.setDefaultChannel(); // exactly one standard public primary channel
+    leaf.setCarrierSense(carrier_sense_enabled);
+    leaf.setNodeInfoInterval((uint32_t)nodeinfo_interval_hours*3600U);
     provider->begin();
     ui_use_data_provider(provider);
     runtime_ready=true;
