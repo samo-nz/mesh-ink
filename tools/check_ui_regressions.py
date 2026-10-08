@@ -1601,7 +1601,7 @@ assert "layout.height-ui_h(38)" in history_branch, "older history pages retain o
 # Test65: native-size typography layout audit.
 assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key labels use native font height for vertical centring"
 assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
-assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
+assert 'title=action==0?"ZERO-HOP ADVERT":"FLOOD ADVERT";' in source and 'protocol_settings_row_y(row)' in source, "MeshCore advertising uses paginated Protocol Settings rows rather than a separate card"
 assert "next_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic capability-driven extent"
 
 
