@@ -647,7 +647,8 @@ public:
         return index<channel_count_&&channels_[index].channel_index!=0;
     }
     bool create_channel(const char* name,const char* key_hex)override{
-        if(!meshink_channel_key::valid_name(name,channel_name_limit())||!key_hex)return false;
+        if(!meshink_channel_key::valid_name(name,channel_name_limit())||!key_hex||
+           (key_hex[0]&&strlen(key_hex)!=32))return false;
         int free_slot=-1;
         // Slot 0 is reserved for the public channel, even if not initialized.
         for(int i=1;i<MAX_GROUP_CHANNELS;++i){
