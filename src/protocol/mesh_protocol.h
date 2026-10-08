@@ -16,6 +16,8 @@ size_t mesh_protocol_available_count();
 const MeshInkProtocolDescriptor* mesh_protocol_available(size_t index);
 bool mesh_protocol_select_for_next_boot(uint8_t protocol_id);
 bool mesh_protocol_restart_into(uint8_t protocol_id);
+// Restore has already stopped the runtime; do not flush obsolete state.
+void mesh_protocol_restart_after_restore();
 
 void mesh_protocol_setup();
 bool mesh_protocol_setup_rx_wake();
