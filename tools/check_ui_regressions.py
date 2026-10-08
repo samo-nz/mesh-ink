@@ -915,7 +915,7 @@ rtc_header_source = (root / "src" / "hardware" / "rtc.h").read_text(encoding="ut
 rtc_types_source = (root / "src" / "hardware" / "rtc_types.h").read_text(encoding="utf-8")
 assert "MESHINK_RTC_BACKEND_HEADER" in rtc_header_source, "RTC backend is compile-time selectable"
 assert "MeshInkTimeSource" in rtc_types_source, "time-source vocabulary is board independent"
-assert "local_mesh_set_manual_time" in runtime_source and "meshink_rtc_set_manual_time" in runtime_source, "manual time routes through generic RTC backend"
+assert "mesh_protocol_set_manual_time" in protocol_source and "meshink_rtc_set_manual_time" in protocol_source, "manual time is owned by shared MeshInk RTC service"
 assert "meshink_rtc_expect_companion_time" in companion_source and "CMD_SET_DEVICE_TIME" in companion_source, "companion SET_DEVICE_TIME is explicitly identified before upstream handling"
 assert "T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL" in board_target_source, "trusted GPS time owns a 24-hour authority window"
 assert "trusted_companion" in board_target_source and "gpsAuthorityActive(current)" in board_target_source, "companion time is gated only by fresh GPS authority after upstream command validation"
