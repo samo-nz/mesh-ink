@@ -62,6 +62,39 @@ inline size_t encode_position(uint8_t out[16],int32_t lat_e6,int32_t lon_e6){
     out[5]=0x15;put_u32(out+6,(uint32_t)((int64_t)lon_e6*10));
     return 10;
 }
+struct DeviceTelemetry {uint8_t battery=0;float voltage=0;bool valid=false;};
+inline DeviceTelemetry decode_device_telemetry(const uint8_t* b,size_t len){
+    DeviceTelemetry out{};if(!b)return out;
+    size_t off=0;
+    while(off<len){
+        uint64_t tag=0;if(!varint(b,len,off,tag)||!tag)return out;
+        if((tag>>3)==2&&(tag&7)==2){
+            uint64_t n=0;if(!varint(b,len,off,n)||n>len-off)return out;
+            const size_t end=off+(size_t)n;
+            bool battery_ok=false,voltage_ok=false;
+            uint32_t battery=0;float volts=0;
+            while(off<end){
+                uint64_t nested_tag=0;
+                if(!varint(b,end,off,nested_tag)||!nested_tag)return out;
+                if((nested_tag>>3)==1&&(nested_tag&7)==0){
+                    uint64_t value=0;if(!varint(b,end,off,value)||value>100)return out;
+                    battery=(uint32_t)value;battery_ok=true;
+                }else if((nested_tag>>3)==2&&(nested_tag&7)==5){
+                    if(end-off<4)return out;
+                    const uint32_t bits=u32(b+off);off+=4;
+                    memcpy(&volts,&bits,4);
+                    voltage_ok=volts>=0.0f&&volts<10.0f;
+                }else if(!skip(b,end,off,(unsigned)(nested_tag&7)))return out;
+            }
+            if(battery_ok&&voltage_ok){
+                out.battery=(uint8_t)battery;out.voltage=volts;out.valid=true;
+            }
+            return out;
+        }
+        if(!skip(b,len,off,(unsigned)(tag&7)))return out;
+    }
+    return out;
+}
 // Telemetry.time=1 (fixed32), device_metrics=2 (length-delimited).
 // DeviceMetrics.battery_level=1 (varint), voltage=2 (float).
 inline size_t encode_device_telemetry(uint8_t out[32],uint32_t epoch,
