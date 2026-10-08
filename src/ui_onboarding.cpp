@@ -2717,7 +2717,7 @@ static void draw_protocol_settings() {
         if(editable)settings_row(title,value,protocol_settings_row_y(row));
         else settings_info_row(title,value,protocol_settings_row_y(row));
     }
-    draw_page_indicator(protocol_settings_page,list_page_count(count),ui_y(820));
+    draw_list_page_footer(protocol_settings_page,count);
     if(keyboard_visible)draw_keyboard();
 }
 
