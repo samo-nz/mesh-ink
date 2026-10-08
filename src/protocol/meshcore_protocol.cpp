@@ -18,6 +18,7 @@ static size_t node_name_max_length() {
 
 enum : uint16_t {
     MESHCORE_SETTING_PATH_HASH = 1,
+    MESHCORE_SETTING_GPS_INTERVAL = 2,
     MESHCORE_SETTING_AUTO_ADD_CONTACTS = 10,
     MESHCORE_SETTING_AUTO_ADD_HOPS = 11,
     MESHCORE_SETTING_ADVERT_LOCATION = 12,
@@ -27,7 +28,7 @@ enum : uint16_t {
 };
 
 static size_t protocol_settings_count() {
-    return 7;
+    return 8;
 }
 
 static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& item) {
@@ -38,27 +39,36 @@ static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& ite
                     local_mesh_path_hash_mode()==0?"1 BYTE":
                     local_mesh_path_hash_mode()==1?"2 BYTES":"3 BYTES", true};
             return true;
-        case 1:
+        case 1: {
+            static char interval[24];
+            const uint32_t seconds=local_mesh_gps_interval();
+            if(!seconds) strcpy(interval,"CONTINUOUS");
+            else if(seconds<60) snprintf(interval,sizeof(interval),"%lu SECONDS",(unsigned long)seconds);
+            else snprintf(interval,sizeof(interval),"%lu MINUTES",(unsigned long)(seconds/60));
+            item = {MESHCORE_SETTING_GPS_INTERVAL, "GPS PUBLISH INTERVAL", interval, true};
+            return true;
+        }
+        case 2:
             item = {MESHCORE_SETTING_AUTO_ADD_CONTACTS, "AUTO ADD CONTACTS",
                     local_mesh_privacy_value(0), true};
             return true;
-        case 2:
+        case 3:
             item = {MESHCORE_SETTING_AUTO_ADD_HOPS, "AUTO ADD MAX HOPS",
                     local_mesh_privacy_value(1), true};
             return true;
-        case 3:
+        case 4:
             item = {MESHCORE_SETTING_ADVERT_LOCATION, "ADVERTISE LOCATION",
                     local_mesh_privacy_value(2), true};
             return true;
-        case 4:
+        case 5:
             item = {MESHCORE_SETTING_BASE_TELEMETRY, "BASE TELEMETRY",
                     local_mesh_privacy_value(3), true};
             return true;
-        case 5:
+        case 6:
             item = {MESHCORE_SETTING_LOCATION_TELEMETRY, "LOCATION TELEMETRY",
                     local_mesh_privacy_value(4), true};
             return true;
-        case 6:
+        case 7:
             item = {MESHCORE_SETTING_PACKET_REPEATING, "PACKET REPEATING",
                     local_mesh_privacy_value(5), true};
             return true;
@@ -71,6 +81,9 @@ static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id) {
     switch (id) {
         case MESHCORE_SETTING_PATH_HASH:
             local_mesh_cycle_path_hash();
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_GPS_INTERVAL:
+            local_mesh_cycle_gps_interval();
             return MeshInkProtocolSettingResult::Saved;
         case MESHCORE_SETTING_AUTO_ADD_CONTACTS:
             local_mesh_toggle_privacy(0);
