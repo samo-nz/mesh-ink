@@ -58,6 +58,8 @@ const char* mesh_protocol_setup_region_name(size_t index);
 size_t mesh_protocol_setup_preset_count();
 const char* mesh_protocol_setup_preset_name(size_t index);
 bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops);
+bool mesh_protocol_setup_save_tx_power(uint8_t dbm);
+uint8_t mesh_protocol_setup_current_tx_power();
 void mesh_protocol_cycle_path_hash();
 uint8_t mesh_protocol_path_hash_mode();
 
