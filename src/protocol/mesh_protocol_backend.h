@@ -23,6 +23,21 @@ struct MeshInkProtocolDescriptor {
     uint32_t capabilities = 0;
 };
 
+enum class MeshInkProtocolSettingResult : uint8_t {
+    Unchanged = 0,
+    Saved,
+    RestartRequired,
+    RestartNow,
+    Failed,
+};
+
+struct MeshInkProtocolSettingItem {
+    uint16_t id = 0;
+    const char* title = "";
+    const char* value = "";
+    bool editable = true;
+};
+
 struct MeshInkProtocolBackend {
     MeshInkProtocolDescriptor descriptor{};
 
@@ -75,7 +90,13 @@ struct MeshInkProtocolBackend {
     void (*cycle_gps_interval)() = nullptr;
     void (*toggle_gps_advert_location)() = nullptr;
 
-    // Optional protocol-specific settings/diagnostics.
+    // Protocol Settings rows. Shared UI owns layout/navigation while each
+    // helper owns the meaning, value and mutation of protocol-specific rows.
+    size_t (*settings_count)() = nullptr;
+    bool (*settings_item)(size_t index, MeshInkProtocolSettingItem& item) = nullptr;
+    MeshInkProtocolSettingResult (*settings_activate)(uint16_t id) = nullptr;
+
+    // Legacy capability hooks retained for protocol internals/compatibility.
     const char* (*privacy_value)(uint8_t item) = nullptr;
     void (*toggle_privacy)(uint8_t item) = nullptr;
     bool (*request_diagnostics)() = nullptr;
