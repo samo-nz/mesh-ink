@@ -22,3 +22,5 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,
 bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t categories);
 uint8_t meshink_backup_categories(uint8_t protocol,const char* filename);
 const char* meshink_backup_error();
+// Run after SPIFFS mounts but before any protocol reads its files/NVS.
+bool meshink_backup_recover_pending();
