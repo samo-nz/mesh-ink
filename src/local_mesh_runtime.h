@@ -17,6 +17,8 @@ bool local_mesh_send_channel(size_t channel_index, const char* text);
 bool local_mesh_send_active(const char* text);
 bool local_mesh_send_advert(bool flood);
 bool local_mesh_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode);
+bool local_mesh_save_tx_power(uint8_t dbm);
+uint8_t local_mesh_tx_power();
 void local_mesh_apply_name(const char* name);
 void local_mesh_sync_gps_mode(MeshInkGpsConstellationMode mode);
 uint32_t local_mesh_gps_interval();
