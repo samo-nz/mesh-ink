@@ -9,6 +9,8 @@ using MeshInkStorageFile = fs::File;
 bool meshink_storage_begin();
 // Generic mount/readability check shared by Maps and SD backup/restore.
 bool meshink_storage_media_ready();
+// Internal flash: never autoformat a partition containing existing data.
+bool meshink_storage_mount_internal_safe();
 void meshink_storage_end();
 MeshInkStorageFile meshink_storage_open(const char* path);
 MeshInkStorageFile meshink_storage_open_write(const char* path);
