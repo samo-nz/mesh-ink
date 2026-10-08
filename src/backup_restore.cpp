@@ -19,7 +19,6 @@ constexpr char CORE_NVS[]="@mesh-auth";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
 constexpr char LEAF_MESSAGES[]="/meshtastic_messages.bin";
 constexpr char LEAF_NODES[]="/meshtastic_nodes.bin";
-constexpr char MESSAGES_SUFFIX[]="_messages.bin";
 struct __attribute__((packed)) Header {
     uint32_t magic;
     uint16_t version;
@@ -81,7 +80,10 @@ static bool sd_ready(){
     return map_tiles_media_ready();
 }
 static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
-    if(!path||path[0]!='/')return false;
+    if(!path)return false;
+    if(cat==MESHINK_BACKUP_SETTINGS&&path[0]=='@')
+        return !strcmp(path,protocol==1?CORE_NVS:LEAF_NVS);
+    if(path[0]!='/')return false;
     if(cat==MESHINK_BACKUP_MESSAGES)
         return !strcmp(path,protocol==1?CORE_MESSAGES:LEAF_MESSAGES);
     if(cat==MESHINK_BACKUP_NODES){
