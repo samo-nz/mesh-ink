@@ -132,6 +132,12 @@ const MeshInkProtocolDescriptor* mesh_protocol_available(size_t index) {
     return nullptr;
 }
 
+size_t mesh_protocol_setup_region_count() { return active_backend().setup_region_count ? active_backend().setup_region_count() : 0; }
+const char* mesh_protocol_setup_region_name(size_t index) { return active_backend().setup_region_name ? safe_text(active_backend().setup_region_name(index)) : ""; }
+size_t mesh_protocol_setup_preset_count() { return active_backend().setup_preset_count ? active_backend().setup_preset_count() : 0; }
+const char* mesh_protocol_setup_preset_name(size_t index) { return active_backend().setup_preset_name ? safe_text(active_backend().setup_preset_name(index)) : ""; }
+bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops) { return active_backend().setup_commit_radio ? active_backend().setup_commit_radio(region,preset,hops) : false; }
+
 bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
     if (!find_backend(protocol_id)) return false;
     Preferences prefs;
