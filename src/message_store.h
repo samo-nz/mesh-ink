@@ -81,6 +81,7 @@ public:
     MeshInkMessageStore(const char* path,const char* invalid_path)
         : path_(path),invalid_path_(invalid_path) {}
     bool begin();
+    void prepare_for_restore();
     size_t count() const { return initialized_?header_.count:0; }
     uint32_t revision() const { return initialized_?header_.sequence:0; }
     bool read(size_t logical,MeshInkStoredMessage& out) const;
