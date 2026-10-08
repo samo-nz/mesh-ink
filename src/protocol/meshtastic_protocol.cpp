@@ -76,8 +76,6 @@ static char radio_summary[64]="ANZ / LongFast";
 static uint32_t pending_packet_id=0;
 static uint32_t pending_message_sequence=0;
 static bool protocol_settings_dirty=false;
-static bool direct_pki_only=true;
-
 // Leaf currently implements just the standard public primary channel.
 // Secondary channel controls are present in the shared UI but intentionally
 // make no radio or persistent configuration changes until Leaf can listen
