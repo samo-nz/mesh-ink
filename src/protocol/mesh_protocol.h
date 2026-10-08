@@ -45,7 +45,6 @@ bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uin
 void mesh_protocol_apply_name(const char* name);
 bool mesh_protocol_name_character_allowed(char c);
 size_t mesh_protocol_node_name_max_length();
-const char* mesh_protocol_node_name();
 const char* mesh_protocol_radio_summary();
 bool mesh_protocol_radio_matches(float frequency_mhz, float bandwidth_khz, uint8_t spreading_factor,
                                  uint8_t coding_rate, uint8_t path_hash_bytes);
