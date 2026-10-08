@@ -27,7 +27,7 @@ inline bool supported(const Header& header,uint8_t protocol,size_t max_entries){
     return header.magic==MAGIC&&header.version==VERSION&&
            header.protocol==protocol&&(protocol==1||protocol==2)&&
            header.count>0&&header.count<=max_entries&&
-           (header.categories&~7U)==0&&header.categories;
+           (header.categories&~15U)==0&&header.categories;
 }
 inline uint32_t crc32(const uint8_t* data,size_t count,uint32_t crc=0xFFFFFFFFU){
     for(size_t i=0;i<count;++i){
