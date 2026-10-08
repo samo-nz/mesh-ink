@@ -157,6 +157,12 @@ int mesh_protocol_setup_preset_index(size_t region,size_t index) {
     return active_backend().setup_preset_index_for_region
         ?active_backend().setup_preset_index_for_region(region,index):(int)index;
 }
+bool mesh_protocol_setup_validate_radio(size_t region,float frequency_mhz,float bandwidth_khz,
+        uint8_t sf,uint8_t cr,uint8_t hash,uint8_t power) {
+    return active_backend().setup_validate_radio
+        ?active_backend().setup_validate_radio(region,frequency_mhz,bandwidth_khz,
+                                               sf,cr,hash,power):false;
+}
 bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops) { return active_backend().setup_commit_radio ? active_backend().setup_commit_radio(region,preset,hops) : false; }
 
 bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
