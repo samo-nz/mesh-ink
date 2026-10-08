@@ -43,7 +43,7 @@ jobs:
           /tmp/map-archive-test
       - name: Shared channel key validation
         run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \\
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_channel_key.cpp -o /tmp/channel-key-test
           /tmp/channel-key-test
       - name: Maps-only gesture geometry regression
