@@ -4573,6 +4573,8 @@ static bool handle_backup_tap(int16_t x,int16_t y){
             if(meshink_backup_restore(mesh_protocol_descriptor().id,
                                        backup_filename,backup_flags))
                 mesh_protocol_restart_after_restore();
+            else if(meshink_backup_restore_requires_restart())
+                mesh_protocol_restart_after_restore();
             else backup_show_result(meshink_backup_error());
         }
         return true;
