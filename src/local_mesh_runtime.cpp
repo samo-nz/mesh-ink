@@ -1272,7 +1272,7 @@ void local_mesh_loop(){
     const uint32_t now=millis();
     if((int32_t)(now-next_ui_gps)>=0){
         next_ui_gps=now+(ui_is_standby()?10000:1000);
-        const bool enabled=local_mesh_gps_enabled();
+        const bool enabled=meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;
         const bool gps_error=location.error!=MeshInkGpsError::None;
         const bool raw_fix=!gps_error&&location.valid;
         if(gps_error){
