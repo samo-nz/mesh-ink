@@ -3,9 +3,13 @@
 #include <Mesh.h>
 #include "../hardware/radio_types.h"
 
+class PhysicalLayer;
+
 // Generic runtime-facing radio surface. The selected board backend owns the
 // concrete LoRa chip/wrapper, initialization, statistics and power mechanics.
 mesh::Radio& meshink_radio_meshcore();
+PhysicalLayer* meshink_radio_radiolib();
+bool meshink_radio_set_lora_crc(uint8_t bytes);
 bool meshink_radio_initialize();
 bool meshink_radio_resume_rx_wake();
 bool meshink_radio_resume_retained_wake();
