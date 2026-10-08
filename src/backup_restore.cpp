@@ -329,7 +329,7 @@ static bool update_shared_name_from_stage(const Stage& stage,uint8_t protocol){
     // protocol must never rename an already configured first protocol.
     const bool other_configured=protocol==1
         ?p.getBool("setup_mst",false)
-        :p.getBool("setup_mc",p.getBool("complete",false));
+        :p.getBool("setup_mc",!p.isKey("setup_mst")&&p.getBool("complete",false));
     bool saved=true;
     if(!other_configured)saved=p.putString("name",new_name)==strlen(new_name);
     p.end();
