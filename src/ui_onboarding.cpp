@@ -1646,9 +1646,9 @@ static void draw_app_header(const char* title,bool back=false,const char* action
 
 static const char* node_role_label(UiNodeRole role){
     switch(role){
-        case UiNodeRole::Chat:return "CHAT";
-        case UiNodeRole::Repeater:return "REPEATER";
-        case UiNodeRole::Room:return "ROOM SERVER";
+        case UiNodeRole::Client:return "CLIENT";
+        case UiNodeRole::Relay:return "RELAY";
+        case UiNodeRole::Service:return "SERVICE";
         case UiNodeRole::Sensor:return "SENSOR";
         default:return "UNKNOWN";
     }
@@ -1660,9 +1660,9 @@ static void thick_rect(int x,int y,int w,int h){
     for(int d=0;d<3;++d)meshink_display_draw_rect({x+d,y+d,w-2*d,h-2*d},0,fb);
 }
 static void draw_node_role_icon(UiNodeRole role,int x,int y){
-    if(role==UiNodeRole::Chat){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
-    else if(role==UiNodeRole::Repeater){
-        // Radio tower: tapered mast plus two signal arcs on each side.
+    if(role==UiNodeRole::Client){thick_rect(x,y+3,28,20);thick_line(x+6,y+23,x+3,y+29);thick_line(x+6,y+23,x+12,y+23);}
+    else if(role==UiNodeRole::Relay){
+        // Relay node: tapered mast plus two signal arcs on each side.
         meshink_display_fill_rect({x+12,y+5,5,6},0,fb);
         thick_line(x+14,y+8,x+8,y+30);thick_line(x+14,y+8,x+20,y+30);
         thick_line(x+8,y+30,x+20,y+30);line(x+10,y+22,x+18,y+22);line(x+11,y+17,x+17,y+17);
@@ -1671,8 +1671,8 @@ static void draw_node_role_icon(UiNodeRole role,int x,int y){
         thick_line(x+6,y+4,x+1,y+8);thick_line(x+1,y+8,x+1,y+18);thick_line(x+1,y+18,x+6,y+22);
         thick_line(x+22,y+4,x+27,y+8);thick_line(x+27,y+8,x+27,y+18);thick_line(x+27,y+18,x+22,y+22);
     }
-    else if(role==UiNodeRole::Room){
-        // Simple house silhouette: peaked roof, square body, one window and door.
+    else if(role==UiNodeRole::Service){
+        // Service node: simple house silhouette with one window and door.
         thick_line(x+2,y+14,x+14,y+3);thick_line(x+14,y+3,x+26,y+14);
         thick_line(x+5,y+12,x+5,y+31);thick_line(x+23,y+12,x+23,y+31);
         thick_line(x+5,y+31,x+23,y+31);
@@ -1841,7 +1841,7 @@ static void draw_map_nodes() {
         UiMapNode node{};if(!ui_data->map_node(marker.index,node))continue;
         int32_t score=0;
         if(node.gps_from_reply)score+=4000000;
-        if(node.role==UiNodeRole::Repeater)score+=3000000;
+        if(node.role==UiNodeRole::Relay)score+=3000000;
         if(node.advertised_at&&now>=node.advertised_at) {
             const uint32_t age=min((uint32_t)1000000,now-node.advertised_at);
             score+=(int32_t)(1000000-age);
@@ -1877,7 +1877,7 @@ static void draw_map_nodes() {
     for(size_t order=0;order<count;++order) {
         const auto& n=map_marker_hits[ranked[order].marker];
         UiMapNode node{};if(!ui_data->map_node(n.index,node))continue;
-        const bool important=node.gps_from_reply||node.role==UiNodeRole::Repeater;
+        const bool important=node.gps_from_reply||node.role==UiNodeRole::Relay;
         if(labels_drawn>=label_budget&&!important)continue;
 
         char short_name[19]{};strncpy(short_name,node.name,sizeof(short_name)-1);
@@ -1926,7 +1926,7 @@ static void draw_map_nodes() {
             // Protect every true node position, not just labels already placed.
             for(size_t j=0;j<count&&!overlap;++j){
                 const auto& m=map_marker_hits[j];
-                const int radius=m.role==UiNodeRole::Repeater?14:9;
+                const int radius=m.role==UiNodeRole::Relay?14:9;
                 if(x<m.x+radius+3&&x+w>m.x-radius-3&&
                    y<m.y+radius+3&&y+h>m.y-radius-3)overlap=true;
             }
@@ -1965,7 +1965,7 @@ static void draw_map_nodes() {
     // radio-tower glyph so they stand out immediately when assessing coverage.
     for(size_t i=0;i<count;++i) {
         const auto& n=map_marker_hits[i];
-        if(n.role==UiNodeRole::Repeater){
+        if(n.role==UiNodeRole::Relay){
             draw_map_repeater_marker(n.x,n.y);
             continue;
         }
@@ -4113,7 +4113,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             for(size_t i=0;i<map_marker_hit_count;++i) {
                 const auto& marker=map_marker_hits[i];
-                const int hit_radius=marker.role==UiNodeRole::Repeater?14:10;
+                const int hit_radius=marker.role==UiNodeRole::Relay?14:10;
                 if(abs(x-marker.x)<=hit_radius&&abs(y-marker.y)<=hit_radius&&
                    ui_data&&ui_data->open_map_node(marker.index)) {
                     details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
