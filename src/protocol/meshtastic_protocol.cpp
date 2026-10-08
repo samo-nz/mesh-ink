@@ -1327,7 +1327,34 @@ static void loop() {
         else if(result!=libmeshtastic_leaf::ReceiveResult::NO_PACKET)
             Serial.printf("[T5-MESHTASTIC] receive result=%u\n",(unsigned)result);
     }
+    // A nonzero send ID means queued, not transmitted. Leaf reports
+    // in-flight/backoff as isTransmitting() and only clears it after RF finish.
+    // Direct delivery still requires a separate genuine routing ACK.
+    if(last_message_sequence&&!leaf.isTransmitting()){
+        const bool failed=leaf.getLastSendResult()==
+                           libmeshtastic_leaf::SendResult::RADIO_ERROR;
+        const UiMessageState state=failed?UiMessageState::Failed:UiMessageState::Sent;
+        if(meshink_message_store().update_state(last_message_sequence,state)){
+            if(failed)++radio_errors;
+            Serial.printf("[T5-MESHTASTIC] TX complete seq=%lu state=%s\\n",
+                          (unsigned long)last_message_sequence,failed?"FAILED":"SENT");
+            last_message_sequence=0;last_message_packet_id=0;
+            provider->message_state_changed();
+            ui_request_data_refresh("meshtastic-tx");
+        }
+    }
     meshink_gps_service_loop();
+    // Background packets are opt-in and lowest priority. Do not interrupt
+    // messages, pending acknowledgements, or an on-air transmission.
+    const uint32_t now=millis();
+    if(!leaf.isTransmitting()&&!leaf.hasPendingAck()&&!last_message_sequence){
+        if(position_interval_min&&
+           now-last_position_send_ms>=(uint32_t)position_interval_min*60000UL)
+            (void)send_position_now();
+        else if(telemetry_interval_min&&
+                now-last_telemetry_send_ms>=(uint32_t)telemetry_interval_min*60000UL)
+            (void)send_telemetry_now();
+    }
     meshink_rtc_tick();
 }
 
@@ -1412,6 +1439,36 @@ static bool is_running() {
     return runtime_ready;
 }
 
+
+static bool meshtastic_request_diagnostics(){return runtime_ready;}
+static const char* meshtastic_diag_core(){
+    static char info[100];
+    snprintf(info,sizeof(info),"Leaf 1.0.0 | node !%08lx | public primary channel",
+             (unsigned long)leaf.getNodeNum());
+    return info;
+}
+static const char* meshtastic_diag_radio(){
+    static char info[144];
+    const auto air=leaf.getAirtime();
+    snprintf(info,sizeof(info),
+             "%s | power %s | slot %lu | airtime %.1f%% | channel %.1f%%",
+             radio_summary,mesh_config.radio.txPower?"MANUAL":"AUTO",
+             (unsigned long)mesh_config.radio.channelNum,
+             (double)air.txUtilizationPercent,
+             (double)air.channelUtilizationPercent);
+    return info;
+}
+static const char* meshtastic_diag_packets(){
+    static char info[170];
+    snprintf(info,sizeof(info),
+             "TX queued %lu | RX text %lu | RX position %lu | refused %lu | RF errors %lu | waiting ACK %s",
+             (unsigned long)sent_count,(unsigned long)received_count,
+             (unsigned long)position_received_count,
+             (unsigned long)send_refused,(unsigned long)radio_errors,
+             leaf.hasPendingAck()?"YES":"NO");
+    return info;
+}
+
 static const MeshInkProtocolBackend& backend() {
     static const MeshInkProtocolBackend value=[]{
         MeshInkProtocolBackend b{};
@@ -1419,7 +1476,7 @@ static const MeshInkProtocolBackend& backend() {
         b.descriptor.name="MESHTASTIC";
         b.descriptor.core_name="libmeshtastic-leaf";
         b.descriptor.core_version="1.0.0 (bd542d6e)";
-        b.descriptor.capabilities=0;
+        b.descriptor.capabilities=MESHINK_PROTOCOL_CAP_DIAGNOSTICS;
 
         b.setup=setup;
         b.loop=loop;
@@ -1444,6 +1501,11 @@ static const MeshInkProtocolBackend& backend() {
         b.name_character_allowed=name_character_allowed;
         b.node_name_max_length=node_name_max_length;
         b.radio_summary=radio_summary_value;
+        b.request_diagnostics=meshtastic_request_diagnostics;
+        b.diagnostics_busy=[]()->bool{return false;};
+        b.diagnostics_core=meshtastic_diag_core;
+        b.diagnostics_radio=meshtastic_diag_radio;
+        b.diagnostics_packets=meshtastic_diag_packets;
         return b;
     }();
     return value;
