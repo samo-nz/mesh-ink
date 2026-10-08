@@ -112,20 +112,6 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
-      - name: Decode 2.1.1-test.15 boot panic addresses
-        run: |
-          set -e
-          ELF=".pio/build/t5-unified-cache64/firmware.elf"
-          test -s "$ELF"
-          ADDR2LINE=$(find "$HOME/.platformio/packages" -type f -name '*addr2line' -executable | grep -E '(xtensa|esp32)' | head -n 1)
-          test -n "$ADDR2LINE"
-          echo "Tool: $ADDR2LINE"
-          echo "ELF digest:"
-          sha256sum "$ELF"
-          "$ADDR2LINE" -f -C -p -i -e "$ELF" \
-            0x420bcb24 0x4205132b 0x4206d895 0x4206cc92 \
-            0x42006e8b 0x42025353 0x42025a0f 0x42050c91 0x420bd9fa 0x40386b89
-
       - name: Verify cache64 SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
