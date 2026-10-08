@@ -1,9 +1,9 @@
 #pragma once
 
-#include <Mesh.h>
 #include "../hardware/radio_types.h"
 
 class PhysicalLayer;
+namespace mesh { class Radio; }
 
 // Generic runtime-facing radio surface. The selected board backend owns the
 // concrete LoRa chip/wrapper, initialization, statistics and power mechanics.
