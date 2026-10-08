@@ -1838,3 +1838,23 @@ assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index("e
 new_journal=message_store_source.split("bool MeshInkMessageStore::create_empty()",1)[1].split("void MeshInkMessageStore::write_header()",1)[0]
 assert "const bool verified=verify&&verify.size()==expected_bytes" in new_journal, "newly created journal size and header checked"
 assert "removing incomplete new file" in new_journal, "partial first-use initialization is cleaned up so it can retry"
+
+# 2.1.1-test.19: Meshtastic handheld Leaf feature rollout.
+wire=(root/"src"/"protocol"/"meshtastic_wire.h").read_text(encoding="utf-8")
+tests=(root/"tests"/"test_meshtastic_wire.cpp").read_text(encoding="utf-8")
+assert 'leaf.setDefaultChannel();' in meshtastic_protocol_source, "public primary channel remains the only enabled channel"
+assert "select_channel_profile" not in meshtastic_protocol_source, "secondary channel support is deliberately deferred"
+assert 'position_interval_min=0' in meshtastic_protocol_source and 'telemetry_interval_min=0' in meshtastic_protocol_source, "position and telemetry transmissions default OFF"
+assert 'gps.valid' in meshtastic_protocol_source and 'position_precision' in meshtastic_protocol_source, "position broadcasting requires fix and honours privacy precision"
+assert 'MESHTASTIC_SETTING_APPLY_RESTART' not in meshtastic_protocol_source or 'MT_APPLY' in meshtastic_protocol_source, "radio changes retain explicit apply/reboot"
+assert 'out.gps_from_reply=true' in meshtastic_protocol_source, "position packets render as GPS markers"
+assert 'bool open_map_node(size_t)override{return false;}' in meshtastic_protocol_source, "shared marker-tap navigation remains deferred"
+assert 'load_positions();' in meshtastic_protocol_source and 'POSITIONS_STAGE' in meshtastic_protocol_source, "position snapshot survives reboot independently of legacy node record layout"
+assert 'UiMessageState::Sending,packet_id' in meshtastic_protocol_source, "Leaf acceptance is not prematurely marked sent"
+assert 'leaf.isTransmitting()' in meshtastic_protocol_source and 'UiMessageState::Sent' in meshtastic_protocol_source, "RF completion advances outgoing message state"
+assert 'mark_delivered_by_ack(' in meshtastic_protocol_source and 'last_message_packet_id==request_id' in meshtastic_protocol_source, "genuine ACK cannot be downgraded by TX status update"
+assert 'meshink_power_read_battery_mv(mv)' in meshtastic_protocol_source and 'meshtastic_PortNum_TELEMETRY_APP' in meshtastic_protocol_source, "battery telemetry is standard Meshtastic payload"
+assert 'meshtastic_PortNum_POSITION_APP' in meshtastic_protocol_source and 'decode_position' in wire, "standard Meshtastic position packet reception"
+assert 'max_power=min(22,' in meshtastic_protocol_source, "manual TX power obeys regional and radio caps"
+assert 'MESHINK_PROTOCOL_CAP_DIAGNOSTICS' in meshtastic_protocol_source, "Meshtastic diagnostics are available in More"
+assert 'decode_device_telemetry' in wire and 'decode_position' in tests, "host tests cover position and telemetry wire formats"
