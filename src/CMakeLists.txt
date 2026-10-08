@@ -13,6 +13,7 @@ idf_component_register(
         "protocol/meshtastic_protocol.cpp"
         "message_store.cpp"
         "backup_restore.cpp"
+        "device_settings_snapshot.cpp"
         "map_tiles.cpp"
         "pmtiles_reader.cpp"
         "ui_onboarding.cpp"
