@@ -305,6 +305,9 @@ MeshInkProtocolSettingResult mesh_protocol_activate_setting(uint16_t id) {
         : MeshInkProtocolSettingResult::Failed;
 }
 
+bool mesh_protocol_setup_save_tx_power(uint8_t dbm) { return active_backend().setup_save_tx_power ? active_backend().setup_save_tx_power(dbm) : false; }
+uint8_t mesh_protocol_setup_current_tx_power() { return active_backend().setup_current_tx_power ? active_backend().setup_current_tx_power() : 0; }
+
 void mesh_protocol_cycle_path_hash() {
     if (active_backend().cycle_path_hash) active_backend().cycle_path_hash();
 }
