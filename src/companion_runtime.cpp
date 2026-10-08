@@ -22,6 +22,7 @@
 #include "companion_notice.h"
 #include "local_mesh_runtime.h"
 #include "message_store.h"
+#include "backup_restore.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
 #include "hardware/board.h"
@@ -489,6 +490,10 @@ void companion_setup() {
     const bool storage_mounted=SPIFFS.begin(true);
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
+    if(storage_mounted&&!meshink_backup_recover_pending()){
+        Serial.println("[T5-ERROR] interrupted restore requires recovery; refusing companion startup");
+        while(true)delay(1000);
+    }
     if(storage_mounted&&!meshink_message_store().begin())
         Serial.println("[T5-ERROR] MeshInk message journal unavailable in companion mode");
     store.begin();
@@ -607,6 +612,11 @@ void local_mesh_setup() {
     }
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
+    if(!storage_mounted||!meshink_backup_recover_pending()){
+        Serial.println("[T5-ERROR] storage or interrupted restore recovery failed; refusing core startup");
+        ui_show_storage_initializing();
+        return;
+    }
 
     meshink_board_begin_local();
     const bool radio_ready=meshink_radio_initialize();
@@ -688,6 +698,7 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
         return false;
     }
     Serial.printf("[T5-DEEPSLEEP] SPIFFS mounted +%lums\n",(unsigned long)(millis()-started));
+    if(!meshink_backup_recover_pending())return false;
 
     ui_prepare_headless_rx_wake();
 
