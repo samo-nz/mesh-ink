@@ -200,6 +200,12 @@ bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMess
     return true;
 }
 
+void MeshInkMessageStore::prepare_for_restore(){
+    if(file_){file_.flush();file_.close();}
+    initialized_=false;
+    if(records_){heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;}
+}
+
 bool MeshInkMessageStore::begin(){
     if(initialized_)return true;
     StoreCpuBoostScope cpu_boost;
