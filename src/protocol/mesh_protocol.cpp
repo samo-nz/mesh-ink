@@ -63,12 +63,13 @@ static const MeshInkProtocolBackend* first_backend() {
     return &fallback_backend();
 }
 
-static uint8_t selected_protocol_id() {
+static bool selected_protocol_id(uint8_t& id) {
+    id=0;
     Preferences prefs;
-    if (!prefs.begin("mesh-protocol", true)) return 0;
-    const uint8_t id = prefs.getUChar("active", 0);
+    if (!prefs.begin("mesh-protocol", true)) return false;
+    id=prefs.getUChar("active", 0);
     prefs.end();
-    return id;
+    return true;
 }
 
 static const MeshInkProtocolBackend* find_backend(uint8_t id) {
@@ -83,8 +84,14 @@ static const MeshInkProtocolBackend* find_backend(uint8_t id) {
 static const MeshInkProtocolBackend& active_backend() {
     static const MeshInkProtocolBackend* cached = nullptr;
     if (!cached) {
-        cached = find_backend(selected_protocol_id());
-        if (!cached) cached = first_backend();
+        uint8_t selected=0;
+        // If NVS cannot be opened, do not cache the fallback. A subsequent
+        // lookup after framework startup must be able to resolve Meshtastic.
+        if (!selected_protocol_id(selected)) return *first_backend();
+        cached=find_backend(selected);
+        if (!cached) cached=first_backend();
+        Serial.printf("[T5-PROTOCOL] persisted=%u selected=%u\\n",
+                      (unsigned)selected,(unsigned)cached->descriptor.id);
     }
     return *cached;
 }
@@ -169,8 +176,15 @@ bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
     if (!find_backend(protocol_id)) return false;
     Preferences prefs;
     if (!prefs.begin("mesh-protocol", false)) return false;
-    const bool ok = prefs.putUChar("active", protocol_id) == 1;
+    const bool written = prefs.putUChar("active", protocol_id) == 1;
     prefs.end();
+    if(!written)return false;
+    // putUChar commits the NVS transaction; verify from a fresh handle.
+    Preferences verify;
+    if(!verify.begin("mesh-protocol",true))return false;
+    const bool ok=verify.isKey("active")&&verify.getUChar("active",0)==protocol_id;
+    verify.end();
+    if(!ok)Serial.printf("[T5-PROTOCOL] NVS readback failed target=%u\\n",(unsigned)protocol_id);
     return ok;
 }
 
