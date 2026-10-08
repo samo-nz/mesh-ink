@@ -91,6 +91,24 @@ for rel in (
         if token in text:
             errors.append(f"{rel}: generic protocol layer contains backend-specific token {token!r}")
 
+backend_contract=(SRC/"protocol/mesh_protocol_backend.h").read_text(encoding="utf-8")
+for token in (
+    "(*current_time)",
+    "(*time_valid)",
+    "(*set_manual_time)",
+    "(*gps_fix)",
+    "(*gps_constellation_mode)",
+    "(*gps_deep_sleep_power_save)",
+    "(*node_name)",
+    "(*direct_unread_total)",
+    "(*channel_unread_total)",
+):
+    if token in backend_contract:
+        errors.append(
+            "src/protocol/mesh_protocol_backend.h: shared MeshInk service leaked back "
+            f"into backend contract via {token}"
+        )
+
 meshcore_helper=(SRC/"protocol/meshcore_protocol.cpp").read_text(encoding="utf-8")
 if "meshink_protocol_backend_slot_1" not in meshcore_helper:
     errors.append("src/protocol/meshcore_protocol.cpp: MeshCore helper is not registered in backend slot 1")
@@ -111,6 +129,9 @@ if "build_src_flags =" not in warning_env or "-Wall" not in warning_env or "-Wex
     errors.append("platformio.ini: MeshInk-source warnings-visible RC audit environment is missing")
 if "build_unflags =" in warning_env:
     errors.append("platformio.ini: warning audit must not alter dependency/framework production flags")
+unified_env=platformio[platformio.index("[env:t5-unified]"):platformio.index("[env:t5-unified-cache64]")]
+if "-DMESHINK_DEVICE_SERVICES_ENABLED=1" not in unified_env:
+    errors.append("platformio.ini: full firmware must enable MeshInk-owned GPS/RTC device services")
 
 if errors:
     raise AssertionError("\n".join(errors))
