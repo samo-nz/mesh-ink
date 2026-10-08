@@ -3,6 +3,13 @@
 
 #include "mesh_protocol.h"
 
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+#include "../hardware/rtc.h"
+#if ENV_INCLUDE_GPS == 1
+#include "../hardware/gps.h"
+#endif
+#endif
+
 namespace {
 
 using BackendSlot = const MeshInkProtocolBackend* (*)();
@@ -194,6 +201,9 @@ void mesh_protocol_flush_now() {
 
 void mesh_protocol_prepare_shutdown() {
     if (active_backend().prepare_shutdown) active_backend().prepare_shutdown();
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    meshink_gps_shutdown();
+#endif
 }
 
 void mesh_protocol_request_companion_mode() {
@@ -256,10 +266,6 @@ size_t mesh_protocol_node_name_max_length() {
         : 20;
 }
 
-const char* mesh_protocol_node_name() {
-    return active_backend().node_name ? safe_text(active_backend().node_name()) : "";
-}
-
 const char* mesh_protocol_radio_summary() {
     return active_backend().radio_summary ? safe_text(active_backend().radio_summary()) : "";
 }
@@ -281,15 +287,33 @@ uint8_t mesh_protocol_path_hash_mode() {
 }
 
 void mesh_protocol_apply_gps(bool enabled) {
-    if (active_backend().apply_gps) active_backend().apply_gps(enabled);
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    const auto current = meshink_gps_constellation_mode();
+    const auto requested = enabled
+        ? (current == MeshInkGpsConstellationMode::None
+            ? MeshInkGpsConstellationMode::GpsBeiDou
+            : current)
+        : MeshInkGpsConstellationMode::None;
+    (void)mesh_protocol_gps_set_constellation_mode(requested);
+#else
+    (void)enabled;
+#endif
 }
 
 bool mesh_protocol_gps_enabled() {
-    return active_backend().gps_enabled ? active_backend().gps_enabled() : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_constellation_mode() != MeshInkGpsConstellationMode::None;
+#else
+    return false;
+#endif
 }
 
 bool mesh_protocol_gps_fix() {
-    return active_backend().gps_fix ? active_backend().gps_fix() : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_read_status().valid;
+#else
+    return false;
+#endif
 }
 
 uint32_t mesh_protocol_gps_interval() {
@@ -313,33 +337,47 @@ void mesh_protocol_cycle_gps_interval() {
 }
 
 MeshInkGpsConstellationMode mesh_protocol_gps_constellation_mode() {
-    return active_backend().gps_constellation_mode
-        ? active_backend().gps_constellation_mode()
-        : MeshInkGpsConstellationMode::None;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_constellation_mode();
+#else
+    return MeshInkGpsConstellationMode::None;
+#endif
 }
 
 bool mesh_protocol_gps_set_constellation_mode(MeshInkGpsConstellationMode mode) {
-    return active_backend().gps_set_constellation_mode
-        ? active_backend().gps_set_constellation_mode(mode)
-        : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    if (!meshink_gps_set_constellation_mode(mode)) return false;
+    if (active_backend().gps_mode_changed) active_backend().gps_mode_changed(mode);
+    return true;
+#else
+    (void)mode;
+    return false;
+#endif
 }
 
 bool mesh_protocol_gps_deep_sleep_power_save() {
-    return active_backend().gps_deep_sleep_power_save
-        ? active_backend().gps_deep_sleep_power_save()
-        : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_deep_sleep_power_save();
+#else
+    return false;
+#endif
 }
 
 bool mesh_protocol_gps_set_deep_sleep_power_save(bool enabled) {
-    return active_backend().gps_set_deep_sleep_power_save
-        ? active_backend().gps_set_deep_sleep_power_save(enabled)
-        : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_set_deep_sleep_power_save(enabled);
+#else
+    (void)enabled;
+    return false;
+#endif
 }
 
 const char* mesh_protocol_gps_tuning_note() {
-    return active_backend().gps_tuning_note
-        ? safe_text(active_backend().gps_tuning_note())
-        : "";
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return safe_text(meshink_gps_tuning_note());
+#else
+    return "";
+#endif
 }
 
 void mesh_protocol_toggle_gps_advert_location() {
@@ -348,37 +386,61 @@ void mesh_protocol_toggle_gps_advert_location() {
 }
 
 uint32_t mesh_protocol_current_time() {
-    return active_backend().current_time ? active_backend().current_time() : 0;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_current_time();
+#else
+    return 0;
+#endif
 }
 
 bool mesh_protocol_time_valid() {
-    return active_backend().time_valid ? active_backend().time_valid() : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_valid();
+#else
+    return false;
+#endif
 }
 
 bool mesh_protocol_set_manual_time(uint32_t utc) {
-    return active_backend().set_manual_time ? active_backend().set_manual_time(utc) : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_set_manual_time(utc);
+#else
+    (void)utc;
+    return false;
+#endif
 }
 
 bool mesh_protocol_set_time_mode(MeshInkTimeMode mode) {
-    return active_backend().set_time_mode ? active_backend().set_time_mode(mode) : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_set_time_mode(mode);
+#else
+    (void)mode;
+    return false;
+#endif
 }
 
 MeshInkTimeMode mesh_protocol_time_mode() {
-    return active_backend().time_mode
-        ? active_backend().time_mode()
-        : MeshInkTimeMode::Auto;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_time_mode();
+#else
+    return MeshInkTimeMode::Auto;
+#endif
 }
 
 MeshInkTimeSource mesh_protocol_time_source() {
-    return active_backend().time_source
-        ? active_backend().time_source()
-        : MeshInkTimeSource::Unknown;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_time_source();
+#else
+    return MeshInkTimeSource::Unknown;
+#endif
 }
 
 bool mesh_protocol_gps_time_authoritative() {
-    return active_backend().gps_time_authoritative
-        ? active_backend().gps_time_authoritative()
-        : false;
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_gps_authoritative();
+#else
+    return false;
+#endif
 }
 
 const char* mesh_protocol_privacy_value(uint8_t item) {
@@ -422,13 +484,11 @@ const char* mesh_protocol_diagnostics_packets() {
 }
 
 uint16_t mesh_protocol_direct_unread_total() {
-    return active_backend().direct_unread_total
-        ? active_backend().direct_unread_total()
-        : 0;
+    UiDataProvider* provider = mesh_protocol_provider();
+    return provider ? provider->direct_unread_total() : 0;
 }
 
 uint16_t mesh_protocol_channel_unread_total() {
-    return active_backend().channel_unread_total
-        ? active_backend().channel_unread_total()
-        : 0;
+    UiDataProvider* provider = mesh_protocol_provider();
+    return provider ? provider->channel_unread_total() : 0;
 }
