@@ -423,7 +423,7 @@ contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home 
 contains("static constexpr size_t LIST_ITEMS_PER_PAGE = 5;", "contacts/channels use paged list rows")
 contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering address later pages")
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
-contains("(screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&", "Contacts/Channels/Discovery vertical swipe changes pages")
+contains("(screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::ChannelManage||screen==Screen::Discovery)&&", "Contacts/Channels/manager/Discovery vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
 contains("rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,", "list cards use shared logical interior width with rounded treatment")
 contains("row*portrait_layout().list_row_stride", "list drawing/touch use shared row stride")
@@ -1446,7 +1446,7 @@ assert "overview_source_y+ui_text_height(2)+ui_h(18)" in source, "Overview sourc
 assert "telemetry_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "Telemetry position reserves explicit space before provenance"
 assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
-assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
+assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::ChannelManage||screen==Screen::Discovery" in source, "Discovery and channel manager share vertical swipe paging with Contacts and Channels"
 assert "ui_data->open_advert(index)" in source, "Discovery touch indexing follows the visible page"
 
 assert "ui_text_fit(short_name,best_x+4,best_y+2,w-ui_w(8),2,0,true);" in source, "capped map label backings also clip long node names"
@@ -1730,3 +1730,15 @@ assert 'mesh_protocol_gps_set_deep_sleep_power_save(enabled)' in source, "GPS se
 firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"
+
+# Channel-management protections: never treat Leaf's one receive channel as a
+# selectable replacement, and never delete an existing channel on row tap.
+assert "leaf.setDefaultChannel();" in meshtastic_protocol_source, "Leaf still starts with the public default channel"
+assert "select_channel_profile" not in meshtastic_protocol_source, "Leaf channel switching stays postponed"
+assert "channel_management_available()const override{return true;}" in runtime_source, "MeshCore channel management is enabled"
+assert "channel_removable(size_t index)const override" in runtime_source, "MeshCore identifies protected public channels"
+assert "if(slot==0)return false;" in runtime_source, "MeshCore cannot delete public slot zero"
+assert 'case Screen::ChannelDelete:' in source and 'if(hit(x,y,meshink_confirm_right_rect(portrait_layout(),650)))' in source, "deletion requires a distinct confirmation screen and confirmation tap"
+assert "if(!ui_data||!ui_data->channel_removable(channel_delete_index))" in source, "UI checks per-channel deletion permission"
+assert '"WARNING: CHANNEL KEY WILL BE LOST"' in source and '"YES, REMOVE"' in source, "confirmation warns about secret loss and requires an affirmative action"
+assert '"CANCEL"' in source[source.index("static void draw_channel_delete()"):source.index("// Bold radio-tower marker")], "cancel is always available"

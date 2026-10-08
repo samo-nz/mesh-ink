@@ -458,6 +458,9 @@ static uint32_t local_contacts_save_due=0;
 static bool local_persist_contact(const ContactInfo& contact) {
     return contact.type!=ADV_TYPE_NONE;
 }
+void local_mesh_save_channels_now() {
+    store.saveChannels(&the_mesh);
+}
 void local_mesh_schedule_contacts_save() {
     // Match upstream MeshCore's lazy contact-write cadence to coalesce bursts
     // of messages/telemetry and avoid unnecessary flash writes.

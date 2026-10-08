@@ -76,6 +76,11 @@ static char radio_summary[64]="ANZ / LongFast";
 static uint32_t pending_packet_id=0;
 static uint32_t pending_message_sequence=0;
 static bool protocol_settings_dirty=false;
+// Leaf currently implements just the standard public primary channel.
+// Secondary channel controls are present in the shared UI but intentionally
+// make no radio or persistent configuration changes until Leaf can listen
+// to multiple Meshtastic channels at once.
+static void update_radio_summary();
 
 static void bind(ListStorage& item) {
     item.entry.title=item.title;
@@ -514,6 +519,10 @@ public:
     }
 
     size_t channel_count()const override{return 1;}
+    size_t channel_name_limit()const override{return 12;}
+    size_t channel_capacity()const override{return 8;}
+    // The public primary channel must never be replaced or removed.
+    // UiDataProvider's default management methods deliberately return false.
     const UiListEntry& channel(size_t index)const override{
         static UiListEntry empty{};
         return index==0?channel_.entry:empty;

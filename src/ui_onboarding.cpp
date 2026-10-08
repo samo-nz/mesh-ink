@@ -15,6 +15,7 @@
 #include <freertos/task.h>
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
+#include "channel_key.h"
 #include "ui_data.h"
 #include "protocol/mesh_protocol.h"
 #include "map_tiles.h"
@@ -234,6 +235,12 @@ static size_t selected_channel = 0;
 static constexpr size_t LIST_ITEMS_PER_PAGE = 5;
 static size_t contacts_page = 0;
 static size_t channels_page = 0;
+static size_t channel_manage_page = 0;
+static char channel_form_name[32]{};
+static char channel_form_key_hex[65]{};
+static bool channel_form_key_field=false;
+static char channel_delete_title[42]{};
+static size_t channel_delete_index=0;
 static size_t discovery_page = 0;
 static size_t protocol_settings_page = 0;
 static uint8_t chat_page = 0;
@@ -299,7 +306,8 @@ static uint32_t message_alert_cooldown_until=0;
 enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
-    Channels, ChannelChat, Maps, Discovery, More, AdvertMenu, Diagnostics,
+    Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
+    Maps, Discovery, More, AdvertMenu, Diagnostics,
     Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
@@ -322,6 +330,9 @@ static uint8_t retained_tab_for_screen(Screen value){
             return details_from_discovery?4:1;
         case Screen::Channels:
         case Screen::ChannelChat:
+        case Screen::ChannelManage:
+        case Screen::ChannelCreate:
+        case Screen::ChannelDelete:
             return 2;
         case Screen::Maps:
             return 3;
@@ -1213,8 +1224,10 @@ static void draw_keyboard() {
     }
     key(keyboard_symbols?"ABC":(keyboard_upper?"abc":"#+="),metrics.mode_key);
     key("DEL",metrics.delete_key);
-    key("LAND",metrics.orientation_key);
-    if(keyboard_message_mode||keyboard_password_mode){
+    key(screen==Screen::ChannelCreate?"HIDE":"LAND",metrics.orientation_key);
+    if(screen==Screen::ChannelCreate){
+        key("DONE",metrics.wide_action_key);
+    }else if(keyboard_message_mode||keyboard_password_mode){
         // Space is valid for message/password entry. Match familiar phone
         // keyboards with a wide space bar and an isolated action at right.
         key("SPACE",metrics.space_key);
@@ -1770,7 +1783,7 @@ static void draw_contacts() {
 }
 
 static void draw_channels() {
-    draw_app_header("CHANNELS");
+    draw_app_header("CHANNELS",false,"MANAGE");
     if(!ui_data)ui_centred("NO CONFIGURED CHANNELS",ui_y(300),3,0,true);
     else {
         const size_t count=ui_data->channel_count();
@@ -1784,6 +1797,64 @@ static void draw_channels() {
         }
     }
     draw_bottom_nav(1);
+}
+
+// Channel management stays protocol-neutral; Leaf exposes a safe UI preview.
+static void draw_channel_manage() {
+    draw_app_header("MANAGE CHANNELS",true,"ADD");
+    if(!ui_data){ui_centred("CHANNELS UNAVAILABLE",ui_y(310),3,0,true);return;}
+    const size_t count=ui_data->channel_count();
+    clamp_list_page(channel_manage_page,count);
+    if(!count)ui_centred("NO CHANNELS CONFIGURED",ui_y(300),3,0,true);
+    else{
+        const size_t first=channel_manage_page*LIST_ITEMS_PER_PAGE;
+        for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row)
+            draw_list_entry(ui_data->channel(first+row),
+                portrait_layout().list_top+row*portrait_layout().list_row_stride,2);
+        draw_list_page_footer(channel_manage_page,count);
+    }
+    if(!ui_data->channel_management_available())
+        ui_centred("SECONDARY CHANNELS COMING SOON",ui_y(796),2,0,true);
+}
+
+static void draw_channel_create() {
+    draw_app_header("ADD CHANNEL",true,"ADD");
+    const auto name_rect=ui_rect(22,162,496,82);
+    const auto key_rect=ui_rect(22,303,496,82);
+    ui_text("CHANNEL NAME",ui_x(26),ui_y(128),2,0,true);
+    rounded_box(name_rect,max(ui_w(12),ui_h(12)),!channel_form_key_field&&keyboard_visible);
+    ui_text_fit(channel_form_name[0]?channel_form_name:"Tap to enter name",
+                name_rect.x+ui_w(15),name_rect.y+ui_h(20),name_rect.width-ui_w(30),3,
+                !channel_form_key_field&&keyboard_visible?0xFF:0,true);
+    ui_text("PRIVATE KEY (32/64 HEX DIGITS)",ui_x(26),ui_y(268),2,0,true);
+    rounded_box(key_rect,max(ui_w(12),ui_h(12)),channel_form_key_field&&keyboard_visible);
+    char private_label[36]{};
+    if(channel_form_key_hex[0])
+        snprintf(private_label,sizeof(private_label),"KEY ENTERED: %u DIGITS",(unsigned)strlen(channel_form_key_hex));
+    else strcpy(private_label,"Generate a random key");
+    ui_text_fit(private_label,key_rect.x+ui_w(15),key_rect.y+ui_h(20),key_rect.width-ui_w(30),3,
+                channel_form_key_field&&keyboard_visible?0xFF:0,true);
+    ui_centred("LEAVE KEY BLANK FOR A NEW PRIVATE KEY",ui_y(417),2,0,false);
+    if(ui_data&&!ui_data->channel_management_available())
+        ui_centred("MESHTASTIC: COMING SOON",ui_y(465),2,0,true);
+    if(keyboard_visible)draw_keyboard();
+    else ui_action_button("SHOW KEYBOARD",ui_rect(55,520,430,70),false);
+}
+
+static void draw_channel_delete() {
+    draw_app_header("REMOVE CHANNEL",true);
+    ui_centred("REMOVE THIS CHANNEL?",ui_y(188),4,0,true);
+    ui_centred_fit(channel_delete_title,ui_y(268),portrait_layout().section_width,3,0,true);
+    ui_centred("WARNING: CHANNEL KEY WILL BE LOST",ui_y(360),2,0,true);
+    ui_draw_wrapped("Removing this channel deletes its key from MeshInk. "
+                    "You cannot rejoin without the exact same key. "
+                    "This cannot be undone.",
+                    portrait_layout().section_margin,ui_y(405),
+                    portrait_layout().section_width,3,0,false,5);
+    if(ui_data&&!ui_data->channel_removable(channel_delete_index))
+        ui_centred("DEFAULT CHANNEL CANNOT BE REMOVED",ui_y(594),2,0,true);
+    ui_action_button("CANCEL",meshink_confirm_left_rect(portrait_layout(),650),false);
+    ui_action_button("YES, REMOVE",meshink_confirm_right_rect(portrait_layout(),650),true);
 }
 
 // Bold radio-tower marker for repeaters. Keep it deliberately simple so the
@@ -3345,7 +3416,9 @@ static void draw_screen() {
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
-        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
+        case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;
+        case Screen::ChannelManage:draw_channel_manage();break;case Screen::ChannelCreate:draw_channel_create();break;case Screen::ChannelDelete:draw_channel_delete();break;
+        case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
         case Screen::Settings:draw_settings();break;case Screen::ProtocolSelect:draw_protocol_select();break;case Screen::ProtocolSettings:draw_protocol_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
         case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
         case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
@@ -3355,6 +3428,7 @@ static void draw_screen() {
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
         draw_bottom_nav(screen==Screen::ContactChat?0:1);
+    else if(screen==Screen::ChannelManage)draw_bottom_nav(1);
     else if(screen==Screen::Discovery||screen==Screen::AdvertMenu||screen==Screen::Diagnostics||
             (settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible)))
         draw_bottom_nav(3);
@@ -3827,6 +3901,18 @@ static void cycle_keyboard_mode(){
     else keyboard_symbols=true;
 }
 static void append(char c) {
+    if(screen==Screen::ChannelCreate){
+        char* value=channel_form_key_field?channel_form_key_hex:channel_form_name;
+        const size_t limit=channel_form_key_field?64:
+            min(sizeof(channel_form_name)-1,ui_data?ui_data->channel_name_limit():(size_t)12);
+        if(channel_form_key_field){
+            if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return;
+            if(c>='a'&&c<='f')c=(char)(c-'a'+'A');
+        }else if((unsigned char)c<33||(unsigned char)c>126)return;
+        const size_t n=strlen(value);
+        if(n<limit){value[n]=c;value[n+1]=0;}
+        return;
+    }
     if(keyboard_password_mode){size_t n=strlen(remote_password);if(n<15){remote_password[n]=c;remote_password[n+1]=0;}return;}
     if(keyboard_message_mode){
         const size_t n=strlen(compose_text);
@@ -3870,7 +3956,13 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     const bool already_on_map=screen==Screen::Maps;
     map_taps={}; // prevent a pending map double tap from firing on another UI
     text_refresh_pending=false;
-    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;save_remote_password=false;remote_password[0]=0;screen=next;
+    if(screen==Screen::ChannelCreate&&next!=Screen::ChannelCreate){
+        memset(channel_form_key_hex,0,sizeof(channel_form_key_hex));
+        memset(channel_form_name,0,sizeof(channel_form_name));
+    }
+    keyboard_visible=next==Screen::ChannelCreate;
+    keyboard_message_mode=false;keyboard_password_mode=false;
+    save_remote_password=false;remote_password[0]=0;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
         return;
@@ -4082,6 +4174,33 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     return true;
 }
 
+static bool handle_channel_form_keyboard(int16_t x,int16_t y){
+    if(screen!=Screen::ChannelCreate||!keyboard_visible)return false;
+    const auto metrics=keyboard_metrics(false);
+    if(y<metrics.dismiss_above)return false;
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){
+            cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(x>=meshink_keyboard::delete_split(metrics)){
+            char* value=channel_form_key_field?channel_form_key_hex:channel_form_name;
+            const size_t n=strlen(value);if(n)value[n-1]=0;
+            queue_text_refresh();return true;
+        }
+    }
+    char c=0;
+    if(keyboard_character_at(x,y,false,c)){
+        append(c);queue_text_refresh();return true;
+    }
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        // HIDE and DONE both dismiss the keyboard; the ADD action in the
+        // header is the only operation that writes a new channel.
+        keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
+        return true;
+    }
+    return true;
+}
+
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;reset_chat_paging();open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
@@ -4089,9 +4208,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::ProtocolSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
+    if(screen==Screen::ChannelCreate&&handle_channel_form_keyboard(x,y))return true;
     const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                               !keyboard_visible&&chat_page==0;
-    if(((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
+    if(screen!=Screen::ChannelCreate&&screen!=Screen::ChannelDelete&&
+       ((screen!=Screen::ContactChat&&screen!=Screen::ChannelChat)||chat_main_page)&&
        y>=portrait_layout().bottom_nav_top){
         const int tab=min(3,max(0,(int)x/portrait_layout().tab_width));open_screen(tab==0?Screen::Contacts:tab==1?Screen::Channels:tab==2?Screen::Maps:Screen::More);return true;}
     switch(screen){
@@ -4109,6 +4230,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::Channels:
+            if(hit_header_action(x,y)){channel_manage_page=0;open_screen(Screen::ChannelManage);return true;}
             if(ui_data){
                 const size_t count=ui_data->channel_count();
                 clamp_list_page(channels_page,count);
@@ -4119,6 +4241,82 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                         row*portrait_layout().list_row_stride,
                         portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
                 }
+            }
+            break;
+        case Screen::ChannelManage:
+            if(hit_header_back(x,y)){open_screen(Screen::Channels);return true;}
+            if(hit_header_action(x,y)){
+                memset(channel_form_name,0,sizeof(channel_form_name));
+                memset(channel_form_key_hex,0,sizeof(channel_form_key_hex));
+                channel_form_key_field=false;keyboard_symbols=false;keyboard_upper=true;
+                open_screen(Screen::ChannelCreate);return true;
+            }
+            if(ui_data){
+                const size_t count=ui_data->channel_count();
+                clamp_list_page(channel_manage_page,count);
+                const size_t first=channel_manage_page*LIST_ITEMS_PER_PAGE;
+                for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                    const size_t index=first+row;
+                    if(hit_outer_row(x,y,portrait_layout().list_top+
+                        row*portrait_layout().list_row_stride,portrait_layout().list_row_height)){
+                        channel_delete_index=index;
+                        strncpy(channel_delete_title,ui_data->channel(index).title,
+                                sizeof(channel_delete_title)-1);
+                        channel_delete_title[sizeof(channel_delete_title)-1]=0;
+                        open_screen(Screen::ChannelDelete);return true;
+                    }
+                }
+            }
+            break;
+        case Screen::ChannelCreate:
+            if(hit_header_back(x,y)){open_screen(Screen::ChannelManage);return true;}
+            if(hit_header_action(x,y)){
+                if(!ui_data||!ui_data->channel_management_available()){
+                    show_toast("COMING SOON");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(!meshink_channel_key::valid_name(channel_form_name,ui_data->channel_name_limit())){
+                    show_toast("INVALID CHANNEL NAME");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(channel_form_key_hex[0]&&strlen(channel_form_key_hex)!=32&&
+                   strlen(channel_form_key_hex)!=64){
+                    show_toast("KEY MUST BE 32/64 HEX");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(!ui_data->create_channel(channel_form_name,channel_form_key_hex)){
+                    show_toast("CHANNEL SAVE FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                channel_manage_page=0;
+                show_toast("CHANNEL ADDED");open_screen(Screen::ChannelManage);return true;
+            }
+            if(hit(x,y,ui_rect(22,162,496,82))){
+                channel_form_key_field=false;keyboard_visible=true;
+                keyboard_symbols=false;keyboard_upper=true;
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            if(hit(x,y,ui_rect(22,303,496,82))){
+                channel_form_key_field=true;keyboard_visible=true;
+                keyboard_symbols=false;keyboard_upper=true;
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            if(!keyboard_visible&&hit(x,y,ui_rect(55,520,430,70))){
+                keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            break;
+        case Screen::ChannelDelete:
+            if(hit_header_back(x,y)||hit(x,y,meshink_confirm_left_rect(portrait_layout(),650))){
+                open_screen(Screen::ChannelManage);return true;
+            }
+            if(hit(x,y,meshink_confirm_right_rect(portrait_layout(),650))){
+                if(!ui_data||!ui_data->channel_removable(channel_delete_index)){
+                    show_toast("CHANNEL CANNOT BE DELETED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(channel_delete_index>=ui_data->channel_count()||
+                   strcmp(ui_data->channel(channel_delete_index).title,channel_delete_title)!=0){
+                    show_toast("CHANNEL LIST CHANGED");open_screen(Screen::ChannelManage);return true;
+                }
+                if(!ui_data->delete_channel(channel_delete_index)){
+                    show_toast("CHANNEL DELETE FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                show_toast("CHANNEL REMOVED");open_screen(Screen::ChannelManage);return true;
             }
             break;
         case Screen::ContactChat:
@@ -5217,13 +5415,14 @@ void ui_loop() {
                           (unsigned)(protocol_settings_page+1),(unsigned)pages);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
-        }else if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&
+        }else if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::ChannelManage||screen==Screen::Discovery)&&
            abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=!ui_data?0:
                 (screen==Screen::Contacts?ui_data->contact_count():
-                 screen==Screen::Channels?ui_data->channel_count():ui_data->advert_count());
+                 (screen==Screen::Channels||screen==Screen::ChannelManage)?ui_data->channel_count():ui_data->advert_count());
             size_t& page=screen==Screen::Contacts?contacts_page:
-                         screen==Screen::Channels?channels_page:discovery_page;
+                         screen==Screen::Channels?channels_page:
+                          screen==Screen::ChannelManage?channel_manage_page:discovery_page;
             clamp_list_page(page,count);
             const size_t pages=list_page_count(count);
             int next=(int)page+(tap.dy<0?1:-1);
@@ -5232,7 +5431,7 @@ void ui_loop() {
             if((size_t)next!=page){
                 page=(size_t)next;
                 const char* name=screen==Screen::Contacts?"contacts":
-                                 screen==Screen::Channels?"channels":"discovery";
+                                 (screen==Screen::Channels||screen==Screen::ChannelManage)?"channels":"discovery";
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",name,
                           (unsigned)(page+1),(unsigned)pages);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
