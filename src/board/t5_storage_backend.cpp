@@ -18,6 +18,18 @@ bool meshink_storage_begin() {
     return SD.begin(T5_PIN_SD_CS,t5_shared_spi(),T5_STORAGE_SPI_HZ);
 }
 
+bool meshink_storage_media_ready() {
+    File root=SD.open("/",FILE_READ);
+    if(root&&root.isDirectory()){root.close();return true;}
+    if(root)root.close();
+    // An inserted card may be mounted after startup without opening Maps.
+    if(!meshink_storage_begin())return false;
+    root=SD.open("/",FILE_READ);
+    const bool ready=root&&root.isDirectory();
+    if(root)root.close();
+    return ready;
+}
+
 void meshink_storage_end() {
     SD.end();
 }
