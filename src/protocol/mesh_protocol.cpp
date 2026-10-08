@@ -278,6 +278,27 @@ bool mesh_protocol_radio_matches(float frequency_mhz, float bandwidth_khz, uint8
         : false;
 }
 
+bool mesh_protocol_supports_radio_presets() {
+    return active_backend().apply_radio && active_backend().radio_matches;
+}
+
+size_t mesh_protocol_setting_count() {
+    return active_backend().settings_count ? active_backend().settings_count() : 0;
+}
+
+bool mesh_protocol_setting_item(size_t index, MeshInkProtocolSettingItem& item) {
+    item = MeshInkProtocolSettingItem{};
+    return active_backend().settings_item
+        ? active_backend().settings_item(index, item)
+        : false;
+}
+
+MeshInkProtocolSettingResult mesh_protocol_activate_setting(uint16_t id) {
+    return active_backend().settings_activate
+        ? active_backend().settings_activate(id)
+        : MeshInkProtocolSettingResult::Failed;
+}
+
 void mesh_protocol_cycle_path_hash() {
     if (active_backend().cycle_path_hash) active_backend().cycle_path_hash();
 }
