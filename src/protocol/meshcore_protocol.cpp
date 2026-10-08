@@ -16,6 +16,85 @@ static size_t node_name_max_length() {
     return 20;
 }
 
+enum : uint16_t {
+    MESHCORE_SETTING_PATH_HASH = 1,
+    MESHCORE_SETTING_AUTO_ADD_CONTACTS = 10,
+    MESHCORE_SETTING_AUTO_ADD_HOPS = 11,
+    MESHCORE_SETTING_ADVERT_LOCATION = 12,
+    MESHCORE_SETTING_BASE_TELEMETRY = 13,
+    MESHCORE_SETTING_LOCATION_TELEMETRY = 14,
+    MESHCORE_SETTING_PACKET_REPEATING = 15,
+};
+
+static size_t protocol_settings_count() {
+    return 7;
+}
+
+static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& item) {
+    item = MeshInkProtocolSettingItem{};
+    switch (index) {
+        case 0:
+            item = {MESHCORE_SETTING_PATH_HASH, "PATH HASH MODE",
+                    local_mesh_path_hash_mode()==0?"1 BYTE":
+                    local_mesh_path_hash_mode()==1?"2 BYTES":"3 BYTES", true};
+            return true;
+        case 1:
+            item = {MESHCORE_SETTING_AUTO_ADD_CONTACTS, "AUTO ADD CONTACTS",
+                    local_mesh_privacy_value(0), true};
+            return true;
+        case 2:
+            item = {MESHCORE_SETTING_AUTO_ADD_HOPS, "AUTO ADD MAX HOPS",
+                    local_mesh_privacy_value(1), true};
+            return true;
+        case 3:
+            item = {MESHCORE_SETTING_ADVERT_LOCATION, "ADVERTISE LOCATION",
+                    local_mesh_privacy_value(2), true};
+            return true;
+        case 4:
+            item = {MESHCORE_SETTING_BASE_TELEMETRY, "BASE TELEMETRY",
+                    local_mesh_privacy_value(3), true};
+            return true;
+        case 5:
+            item = {MESHCORE_SETTING_LOCATION_TELEMETRY, "LOCATION TELEMETRY",
+                    local_mesh_privacy_value(4), true};
+            return true;
+        case 6:
+            item = {MESHCORE_SETTING_PACKET_REPEATING, "PACKET REPEATING",
+                    local_mesh_privacy_value(5), true};
+            return true;
+        default:
+            return false;
+    }
+}
+
+static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id) {
+    switch (id) {
+        case MESHCORE_SETTING_PATH_HASH:
+            local_mesh_cycle_path_hash();
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_AUTO_ADD_CONTACTS:
+            local_mesh_toggle_privacy(0);
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_AUTO_ADD_HOPS:
+            local_mesh_toggle_privacy(1);
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_ADVERT_LOCATION:
+            local_mesh_toggle_privacy(2);
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_BASE_TELEMETRY:
+            local_mesh_toggle_privacy(3);
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_LOCATION_TELEMETRY:
+            local_mesh_toggle_privacy(4);
+            return MeshInkProtocolSettingResult::Saved;
+        case MESHCORE_SETTING_PACKET_REPEATING:
+            local_mesh_toggle_privacy(5);
+            return MeshInkProtocolSettingResult::Saved;
+        default:
+            return MeshInkProtocolSettingResult::Failed;
+    }
+}
+
 static void request_companion_mode() {
     if (local_mesh_is_running()) local_mesh_flush_contacts_save_now();
 
@@ -86,6 +165,10 @@ static const MeshInkProtocolBackend& backend() {
         b.radio_matches = local_mesh_radio_matches;
         b.cycle_path_hash = local_mesh_cycle_path_hash;
         b.path_hash_mode = local_mesh_path_hash_mode;
+
+        b.settings_count = protocol_settings_count;
+        b.settings_item = protocol_settings_item;
+        b.settings_activate = activate_protocol_setting;
 
         b.gps_mode_changed = local_mesh_sync_gps_mode;
         b.gps_interval = local_mesh_gps_interval;
