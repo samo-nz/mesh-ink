@@ -3003,7 +3003,11 @@ static void draw_backup_files(){
     snprintf(subtitle,sizeof(subtitle),"%s / %u BACKUPS",
              mesh_protocol_name(),(unsigned)backup_count);
     ui_centred(subtitle,ui_y(112),2,0,true);
-    if(!backup_count)ui_centred("NO COMPATIBLE SD BACKUPS",ui_y(340),3,0,true);
+    if(!backup_count){
+        ui_centred(meshink_backup_error()[0]?"SD CARD NOT READY":
+                   "NO COMPATIBLE SD BACKUPS",ui_y(340),3,0,true);
+        ui_action_button("RETRY SD",ui_rect(65,475,410,80),false);
+    }
     const size_t start=backup_page*5;
     for(size_t i=start;i<backup_count&&i<start+5;++i){
         const MeshInkBackupInfo& entry=backup_entries[i];
@@ -4567,6 +4571,12 @@ static void backup_open_files(Screen source){
 static bool handle_backup_tap(int16_t x,int16_t y){
     if(screen==Screen::BackupFiles){
         if(hit_header_back(x,y)){open_screen(backup_return_screen);return true;}
+        if(!backup_count&&hit(x,y,ui_rect(65,475,410,80))){
+            backup_count=meshink_backup_list(mesh_protocol_descriptor().id,backup_entries,
+                sizeof(backup_entries)/sizeof(backup_entries[0]));
+            backup_page=0;
+            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
         const size_t first=backup_page*5;
         for(size_t i=first;i<backup_count&&i<first+5;++i){
             if(!hit_outer_row(x,y,170+(int)(i-first)*119))continue;
