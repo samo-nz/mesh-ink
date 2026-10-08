@@ -63,6 +63,11 @@ static size_t previous_nvs_size=0;
 static LeafSettings leaf_data{},old_leaf_data{};
 static Plan plans[MAX_ENTRIES];
 static Stage stages[MAX_ENTRIES];
+constexpr char RESTORE_TXN[]="/restore.txn";
+constexpr char RESTORE_TXN_TEMP[]="/restore.txn.tmp";
+constexpr uint32_t RESTORE_MAGIC=0x31585452U; // RTX1
+struct RestoreHeader {uint32_t magic;uint16_t version;uint16_t count;};
+static_assert(sizeof(RestoreHeader)==8,"Stable restore journal header required");
 
 static bool fail(const char* reason){
     snprintf(last_error,sizeof(last_error),"%s",reason);
@@ -371,15 +376,160 @@ static bool update_shared_name_from_stage(const Stage& stage,uint8_t protocol){
     return saved;
 }
 
-static void rollback_files(size_t count){
-    for(size_t i=count;i>0;--i){
-        Stage& stage=stages[i-1];
-        if(stage.committed)SPIFFS.remove(stage.path);
-        if(stage.moved_old)SPIFFS.rename(stage.previous,stage.path);
-        SPIFFS.remove(stage.staged);
+static bool snapshot_previous_nvs(Stage& stage){
+    Preferences p;
+    uint8_t* data=nvs_data;
+    size_t size=0;
+    bool exists=false;
+    if(!strcmp(stage.path,CORE_NVS)){
+        if(p.begin("mesh-auth",true)){
+            size=p.getBytesLength("credentials");
+            exists=size>0&&size<=sizeof(nvs_data)&&
+                   p.getBytes("credentials",data,size)==size;
+            p.end();
+            if(size&&!exists)return false;
+        }
+    }else if(!strcmp(stage.path,LEAF_NVS)){
+        read_leaf_settings(old_leaf_data);
+        size=sizeof(old_leaf_data);
+        memcpy(data,&old_leaf_data,size);
+        exists=true;
+    }else if(!strcmp(stage.path,SHARED_NAME)){
+        if(p.begin("t5-ui",true)){
+            const String name=p.getString("name","");
+            if(name.length()){
+                if(name.length()>20){p.end();return false;}
+                size=name.length()+1;
+                memcpy(data,name.c_str(),size);
+                exists=true;
+            }
+            p.end();
+        }
+    }else return false;
+    stage.old_exists=exists;
+    SPIFFS.remove(stage.previous);
+    if(!exists)return true;
+    File backup=SPIFFS.open(stage.previous,"w");
+    if(!backup)return false;
+    const bool ok=backup.write(data,size)==size;
+    backup.flush();backup.close();
+    return ok;
+}
+static bool apply_leaf_snapshot(const char* filename){
+    File f=SPIFFS.open(filename,"r");
+    if(!f)return false;
+    LeafSettings data{};
+    const bool ok=f.size()==sizeof(data)&&
+        f.read((uint8_t*)&data,sizeof(data))==sizeof(data);
+    f.close();
+    if(!ok||data.magic!=0x31534C4DU)return false;
+    Preferences p;
+    if(!p.begin("meshtastic",false))return false;
+    bool saved=p.putUChar("region",data.region)==1 &&
+        p.putUChar("preset",data.preset)==1 &&
+        p.putUChar("hop",data.hop)==1;
+    if(data.has_private)saved=(p.putBytes("private",data.private_key,32)==32)&&saved;
+    else saved=p.remove("private")&&saved;
+    if(data.has_public)saved=(p.putBytes("public",data.public_key,32)==32)&&saved;
+    else saved=p.remove("public")&&saved;
+    p.end();
+    return saved;
+}
+static bool restore_previous_nvs(const Stage& stage){
+    if(!stage.path[0]||stage.path[0]!='@')return true;
+    if(!strcmp(stage.path,LEAF_NVS))
+        return stage.old_exists ? apply_leaf_snapshot(stage.previous) : true;
+    const char* name=!strcmp(stage.path,CORE_NVS)?"mesh-auth":"t5-ui";
+    const char* key=!strcmp(stage.path,CORE_NVS)?"credentials":"name";
+    Preferences p;
+    if(!p.begin(name,false))return false;
+    bool restored=false;
+    if(!stage.old_exists)restored=!p.isKey(key)||p.remove(key);
+    else{
+        File f=SPIFFS.open(stage.previous,"r");
+        if(f&&f.size()<=sizeof(nvs_data)&&f.size()){
+            const size_t length=f.size();
+            if(f.read(nvs_data,length)==length){
+                if(!strcmp(stage.path,CORE_NVS))
+                    restored=p.putBytes(key,nvs_data,length)==length;
+                else if(nvs_data[length-1]==0)
+                    restored=p.putString(key,(const char*)nvs_data)==length-1;
+            }
+        }
+        if(f)f.close();
     }
+    p.end();return restored;
+}
+static bool save_transaction(size_t count){
+    SPIFFS.remove(RESTORE_TXN_TEMP);
+    File f=SPIFFS.open(RESTORE_TXN_TEMP,"w");
+    if(!f)return false;
+    const RestoreHeader header{RESTORE_MAGIC,1,(uint16_t)count};
+    const bool ok=f.write((const uint8_t*)&header,sizeof(header))==sizeof(header)&&
+        f.write((const uint8_t*)stages,count*sizeof(Stage))==count*sizeof(Stage);
+    f.flush();f.close();
+    if(!ok){SPIFFS.remove(RESTORE_TXN_TEMP);return false;}
+    if(!SPIFFS.rename(RESTORE_TXN_TEMP,RESTORE_TXN))return false;
+    return true;
+}
+static bool rollback_transaction(size_t count){
+    bool ok=true;
+    // A crash can happen between rename steps. Existence of the old file,
+    // rather than volatile booleans, determines what has actually changed.
+    for(size_t i=count;i>0;--i){
+        const Stage& stage=stages[i-1];
+        if(stage.path[0]=='@')continue;
+        if(SPIFFS.exists(stage.previous)){
+            if(SPIFFS.exists(stage.path)&&!SPIFFS.remove(stage.path))ok=false;
+            if(!SPIFFS.rename(stage.previous,stage.path))ok=false;
+        }else if(!stage.old_exists &&
+                 !SPIFFS.exists(stage.staged) && SPIFFS.exists(stage.path)){
+            if(!SPIFFS.remove(stage.path))ok=false;
+        }
+    }
+    for(size_t i=count;i>0;--i)
+        if(stages[i-1].path[0]=='@'&&!restore_previous_nvs(stages[i-1]))ok=false;
+    if(ok){
+        for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
+        SPIFFS.remove(RESTORE_TXN);
+    }
+    return ok;
 }
 } // namespace
+
+bool meshink_backup_recover_pending(){
+    if(!SPIFFS.exists(RESTORE_TXN))return true;
+    File f=SPIFFS.open(RESTORE_TXN,"r");
+    RestoreHeader head{};
+    if(!f||f.read((uint8_t*)&head,sizeof(head))!=sizeof(head)||
+       head.magic!=RESTORE_MAGIC||head.version!=1||
+       head.count>MAX_ENTRIES||
+       f.size()!=sizeof(head)+head.count*sizeof(Stage)){
+        if(f)f.close();
+        return fail("Restore recovery metadata invalid; storage not opened");
+    }
+    const size_t count=head.count;
+    const bool read_ok=f.read((uint8_t*)stages,count*sizeof(Stage))==count*sizeof(Stage);
+    f.close();
+    if(!read_ok)return fail("Incomplete restore recovery metadata");
+    // Manifest paths must remain restricted to internal paths originally
+    // selected from a verified, protocol-filtered backup.
+    for(size_t i=0;i<count;++i){
+        Stage& stage=stages[i];
+        if(!memchr(stage.path,0,sizeof(stage.path))||
+           !memchr(stage.staged,0,sizeof(stage.staged))||
+           !memchr(stage.previous,0,sizeof(stage.previous))||
+           !(stage.category==1||stage.category==2||stage.category==4)||
+           (stage.path[0]!='@'&&stage.path[0]!='/')||
+           strncmp(stage.staged,"/rst",4)||
+           strncmp(stage.previous,"/rst",4))
+            return fail("Unsafe restore recovery entry");
+    }
+    if(!rollback_transaction(count))
+        return fail("Interrupted restore rollback failed; refusing startup");
+    Serial.println("[T5-BACKUP] interrupted restore rolled back on startup");
+    return true;
+}
 
 const char* meshink_backup_error(){return last_error;}
 
@@ -553,19 +703,36 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
         return fail("Backup missing required identity settings");
     }
+    // Collect existing files/NVS snapshots and publish a durable undo manifest
+    // BEFORE replacing any live protocol data. If reset interrupts this
+    // section, the next boot rolls the entire operation back.
+    for(size_t i=0;i<count;++i){
+        Stage& stage=stages[i];
+        if(stage.path[0]=='@'){
+            if(!snapshot_previous_nvs(stage)){
+                for(size_t j=0;j<count;++j)SPIFFS.remove(stages[j].staged);
+                return fail("Cannot save existing settings for rollback");
+            }
+        }else{
+            stage.old_exists=SPIFFS.exists(stage.path);
+            if(SPIFFS.exists(stage.previous)&&!SPIFFS.remove(stage.previous))
+                return fail("Cannot clear stale restore snapshot");
+        }
+    }
+    if(!save_transaction(count))return fail("Cannot create restore recovery record");
+    // Stop the running protocol and flush pending data BEFORE overwriting
+    // storage. Never use the normal restart path's post-restore flush.
+    mesh_protocol_flush_now();
+    mesh_protocol_prepare_shutdown();
     if(categories&MESHINK_BACKUP_MESSAGES)
         meshink_message_store().prepare_for_restore();
     for(size_t i=0;i<count;++i){
         Stage& stage=stages[i];
         if(stage.path[0]=='@')continue;
-        stage.old_exists=SPIFFS.exists(stage.path);
-        SPIFFS.remove(stage.previous);
         if(stage.old_exists){
             if(!SPIFFS.rename(stage.path,stage.previous)){ok=false;break;}
-            stage.moved_old=true;
         }
         if(!SPIFFS.rename(stage.staged,stage.path)){ok=false;break;}
-        stage.committed=true;
     }
     if(ok){
         for(size_t i=0;i<count;++i){
@@ -577,24 +744,32 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         }
     }
     if(!ok){
-        rollback_files(count);
-        if(categories&MESHINK_BACKUP_MESSAGES)meshink_message_store().begin();
-        return fail("Restore commit failed; file changes rolled back");
+        const bool recovered=rollback_transaction(count);
+        return fail(recovered?"Restore aborted; original data recovered":
+                              "Restore failed and recovery is pending; restart required");
     }
     // Set the protocol's completion flag only when the complete identity
     // has been restored, allowing users to skip first-time setup on a wiped unit.
     if(categories&MESHINK_BACKUP_SETTINGS){
         Preferences ui;
-        if(ui.begin("t5-ui",false)){
-            ui.putBool(protocol==1?"setup_mc":"setup_mst",true);
-            ui.putBool("complete",true);
-            ui.putUChar("setup_return",0);
-            ui.putUChar("setup_choice",0);
-            ui.end();
+        if(!ui.begin("t5-ui",false)){
+            rollback_transaction(count);
+            return fail("Cannot persist restored setup state");
+        }
+        bool saved=ui.putBool(protocol==1?"setup_mc":"setup_mst",true)==1&&
+                   ui.putBool("complete",true)==1&&
+                   ui.putUChar("setup_return",0)==1&&
+                   ui.putUChar("setup_choice",0)==1;
+        ui.end();
+        if(!saved){
+            rollback_transaction(count);
+            return fail("Failed to persist restored setup state");
         }
     }
+    // Once no further storage mutations are needed, make the result durable
+    // by removing the recovery marker. Keep previous files for diagnosis.
+    if(!SPIFFS.remove(RESTORE_TXN))
+        return fail("Cannot finalize restore; reboot recovery required");
     for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
-    // Keep the original .old files recoverable until another restore replaces
-    // them. The SD backup itself is never removed or modified by restoration.
     return true;
 }
