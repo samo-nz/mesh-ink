@@ -396,7 +396,7 @@ void pmtiles_disable_archive(const char* path) {
         failed_archives[failed_count][sizeof(failed_archives[0])-1]=0;
         ++failed_count;
     }
-    Serial.printf("[T5-PMT] disabled archive until SD remount: %s\\n",path);
+    Serial.printf("[T5-PMT] disabled archive until SD remount: %s\n",path);
     if(!strcmp(cached_path,path)){
         clear_directory(root);
         clear_leaves();
