@@ -1858,3 +1858,13 @@ assert 'meshtastic_PortNum_POSITION_APP' in meshtastic_protocol_source and 'deco
 assert 'max_power=min(22,' in meshtastic_protocol_source, "manual TX power obeys regional and radio caps"
 assert 'MESHINK_PROTOCOL_CAP_DIAGNOSTICS' in meshtastic_protocol_source, "Meshtastic diagnostics are available in More"
 assert 'decode_device_telemetry' in wire and 'decode_position' in tests, "host tests cover position and telemetry wire formats"
+
+# 2.1.1-test.20: On first-use Meshtastic boots, a missing position snapshot
+# is normal, not a corrupt journal. Never clear or overwrite a bad snapshot.
+position_loader=meshtastic_protocol_source.split("void load_positions(){",1)[1].split("\npublic:\n    void receive_telemetry(",1)[0]
+assert 'if(!SPIFFS.exists(POSITIONS_PATH))return;' in position_loader, "no warning or read for missing first-use position cache"
+assert position_loader.index('if(!SPIFFS.exists(POSITIONS_PATH))')<position_loader.index('File f=SPIFFS.open(POSITIONS_PATH,"r");'), "position existence verified before opening"
+assert "PositionRecord parsed[MAX_NODES]{};" in position_loader, "snapshot fully validated before exposing any marker"
+assert "SPIFFS.rename(POSITIONS_PATH,archive)" in position_loader and 'SPIFFS.exists(archive)' in position_loader, "invalid snapshot preserved without overwriting previous archives"
+assert 'SPIFFS.remove(POSITIONS_PATH)' not in position_loader, "position loader never erases original"
+assert "header_bytes=%u" in position_loader and "expected_record=%u" in position_loader, "invalid snapshot reports enough metadata to diagnose cause"
