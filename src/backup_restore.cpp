@@ -221,6 +221,36 @@ static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     bool ok=n>0&&n<=sizeof(nvs_data)&&p.getBytes("credentials",nvs_data,n)==n;
     p.end();if(ok)length=n;return ok;
 }
+static bool has_plan(size_t count,uint8_t category,const char* path=nullptr){
+    for(size_t i=0;i<count;++i)
+        if(plans[i].part.category==category&&
+           (!path||!strcmp(plans[i].part.path,path)))return true;
+    return false;
+}
+static bool manifest_has(const Part* items,size_t count,uint8_t category,const char* path=nullptr){
+    for(size_t i=0;i<count;++i)
+        if(items[i].category==category&&(!path||!strcmp(items[i].path,path)))return true;
+    return false;
+}
+static bool categories_complete(uint8_t protocol,uint8_t categories,const Part* parts,size_t count){
+    if((categories&MESHINK_BACKUP_MESSAGES)&&
+       !manifest_has(parts,count,MESHINK_BACKUP_MESSAGES,
+            protocol==1?CORE_MESSAGES:LEAF_MESSAGES))return false;
+    if(categories&MESHINK_BACKUP_NODES){
+        if(protocol==1){
+            if(!manifest_has(parts,count,MESHINK_BACKUP_NODES,"/contacts3"))return false;
+        }else if(!manifest_has(parts,count,MESHINK_BACKUP_NODES,LEAF_NODES))return false;
+    }
+    if(categories&MESHINK_BACKUP_SETTINGS){
+        if(protocol==1){
+            if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,"/prefs.json")||
+               !manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,"/identity/_main.id"))
+                return false;
+        }else if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,LEAF_NVS))return false;
+        if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,SHARED_NAME))return false;
+    }
+    return true;
+}
 static bool source_crc(Plan& plan,uint8_t protocol){
     uint32_t crc=0xFFFFFFFFU;size_t count=0;
     if(plan.part.path[0]=='@'){
@@ -309,7 +339,11 @@ static bool inspect(const char* filename,uint8_t protocol,
         }
     }
     const bool ok=input.position()==input.size();
-    input.close();return ok||fail("Backup contains unexpected trailing data");
+    input.close();
+    if(!ok)return fail("Backup contains unexpected trailing data");
+    if(!categories_complete(protocol,header.categories,entries,header.count))
+        return fail("Backup missing required selected data");
+    return true;
 }
 static bool update_core_auth_from_stage(const Stage& stage){
     File f=SPIFFS.open(stage.staged,"r");
@@ -657,6 +691,24 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
         }else if(!add_plan(parts,protocol,4,LEAF_NVS))
             return fail("Settings backup preparation failed");
         if(!add_plan(parts,protocol,4,SHARED_NAME))return fail("Node name backup failed");
+    }
+    if((categories&MESHINK_BACKUP_MESSAGES)&&
+       !has_plan(parts,MESHINK_BACKUP_MESSAGES,protocol==1?CORE_MESSAGES:LEAF_MESSAGES))
+        return fail("No message journal to back up");
+    if(categories&MESHINK_BACKUP_NODES){
+        if(protocol==1&&!has_plan(parts,MESHINK_BACKUP_NODES,"/contacts3"))
+            return fail("No durable MeshCore contacts file");
+        if(protocol==2&&!has_plan(parts,MESHINK_BACKUP_NODES,LEAF_NODES))
+            return fail("No saved nodes; deselect Nodes");
+    }
+    if(categories&MESHINK_BACKUP_SETTINGS){
+        if(protocol==1&&(!has_plan(parts,4,"/prefs.json")||
+            !has_plan(parts,4,"/identity/_main.id")))
+            return fail("Identity/prefs unavailable; backup refused");
+        if(protocol==2&&!has_plan(parts,4,LEAF_NVS))
+            return fail("Meshtastic keys unavailable");
+        if(!has_plan(parts,4,SHARED_NAME))
+            return fail("Node name unavailable");
     }
     if(!parts)return fail("No selected data is available");
     for(size_t i=0;i<parts;++i)if(!source_crc(plans[i],protocol))
