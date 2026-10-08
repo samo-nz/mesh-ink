@@ -61,6 +61,7 @@ struct SetupSnapshot {
     uint8_t present=0,complete=0,mc=0,mst=0,return_id=0,choice=0;
 };
 static char last_error[84]="";
+static bool restore_quiesced=false;
 static uint8_t io[512];
 static uint8_t nvs_data[4096];
 static uint8_t previous_nvs[4096];
@@ -599,6 +600,7 @@ bool meshink_backup_recover_pending(){
 }
 
 const char* meshink_backup_error(){return last_error;}
+bool meshink_backup_restore_requires_restart(){return restore_quiesced;}
 
 size_t meshink_backup_list(uint8_t protocol,MeshInkBackupInfo* out,size_t capacity){
     last_error[0]=0;
@@ -740,6 +742,7 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
 }
 bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t categories){
     last_error[0]=0;
+    restore_quiesced=false;
     if((protocol!=1&&protocol!=2)||!categories||(categories&~7U))
         return fail("Choose restore categories");
     if(!sd_ready())return fail("SD card unavailable");
@@ -847,6 +850,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     // storage. Never use the normal restart path's post-restore flush.
     mesh_protocol_flush_now();
     mesh_protocol_prepare_shutdown();
+    restore_quiesced=true;
     if(categories&MESHINK_BACKUP_MESSAGES)
         meshink_message_store().prepare_for_restore();
     for(size_t i=0;i<count;++i){
