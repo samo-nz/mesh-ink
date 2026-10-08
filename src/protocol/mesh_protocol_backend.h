@@ -38,6 +38,16 @@ struct MeshInkProtocolSettingItem {
     bool editable;
 };
 
+struct MeshInkRadioPreset {
+    const char* title="";
+    const char* detail="";
+    uint32_t frequency_khz=0;
+    float bandwidth_khz=0.0f;
+    uint8_t spreading_factor=0;
+    uint8_t coding_rate=0;
+    uint8_t path_hash_bytes=0;
+};
+
 struct MeshInkProtocolBackend {
     MeshInkProtocolDescriptor descriptor{};
 
@@ -96,11 +106,18 @@ struct MeshInkProtocolBackend {
     bool (*settings_item)(size_t index, MeshInkProtocolSettingItem& item) = nullptr;
     MeshInkProtocolSettingResult (*settings_activate)(uint16_t id) = nullptr;
 
+    // Radio preset metadata belongs to its protocol helper, not the shared UI.
+    size_t (*radio_preset_count)() = nullptr;
+    const MeshInkRadioPreset* (*radio_preset_at)(size_t index) = nullptr;
+
     // First-run radio wizard: optional protocol-owned region/preset enumeration.
     size_t (*setup_region_count)() = nullptr;
     const char* (*setup_region_name)(size_t index) = nullptr;
     size_t (*setup_preset_count)() = nullptr;
     const char* (*setup_preset_name)(size_t index) = nullptr;
+    size_t (*setup_preset_count_for_region)(size_t region) = nullptr;
+    const char* (*setup_preset_name_for_region)(size_t region,size_t index) = nullptr;
+    int (*setup_preset_index_for_region)(size_t region,size_t index) = nullptr;
     bool (*setup_commit_radio)(size_t region, size_t preset, uint8_t hops) = nullptr;
     bool (*setup_save_tx_power)(uint8_t dbm) = nullptr;
     uint8_t (*setup_current_tx_power)() = nullptr;
