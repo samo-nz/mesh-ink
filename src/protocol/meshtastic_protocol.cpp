@@ -779,7 +779,10 @@ static bool name_character_allowed(char c) {
 }
 
 static size_t node_name_max_length() {
-    return 24;
+    // MeshInk owns the shared node-name buffer and currently stores 20
+    // characters. Leaf can advertise longer names, but the shared editor must
+    // never report a larger writable limit than its product-owned storage.
+    return 20;
 }
 
 static const char* radio_summary_value() {
