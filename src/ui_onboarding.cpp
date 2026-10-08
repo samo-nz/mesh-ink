@@ -3460,7 +3460,7 @@ static void draw_standby(){
     // as ordinary STANDBY so future unread-card layout changes can shift the
     // whole treatment rather than relying on fixed status-bar coordinates.
     const int standby_state_y=any_unread?ui_y(775):ui_y(620);
-    if(deep_sleep_standby)
+    if(deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby())
         ui_centred_fit("DEEP SLEEP STANDBY",standby_state_y,
                        portrait_layout().width-ui_w(32),4,0,true);
     else
@@ -5348,7 +5348,9 @@ static void enter_standby(const char* reason){
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
     draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
-    deep_sleep_pending=deep_sleep_standby;
+    // Leaf does not yet support retained RX wake. Honour the saved choice
+    // on MeshCore, but fall back to ordinary standby without a retry loop.
+    deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();
     if(deep_sleep_pending&&setup_complete){
         const uint8_t retained_tab=retained_tab_for_screen(screen);
         meshink_power_retain_ui_tab(retained_tab);
@@ -5912,7 +5914,8 @@ void ui_loop() {
     }
     service_critical_battery();
     service_primary_button();
-    if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&!message_alert_active&&
+    if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&
+       mesh_protocol_supports_deep_sleep_standby()&&!message_alert_active&&
        !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
         deep_sleep_retry_at=millis()+250;
         if(mesh_protocol_enter_deep_sleep_standby())return;
