@@ -62,6 +62,8 @@ const char* mesh_protocol_setup_region_name(size_t index);
 size_t mesh_protocol_setup_preset_count(size_t region);
 const char* mesh_protocol_setup_preset_name(size_t region,size_t index);
 int mesh_protocol_setup_preset_index(size_t region,size_t index);
+bool mesh_protocol_setup_validate_radio(size_t region,float frequency_mhz,float bandwidth_khz,
+        uint8_t spreading_factor,uint8_t coding_rate,uint8_t path_hash_bytes,uint8_t power_dbm);
 bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops);
 bool mesh_protocol_setup_save_tx_power(uint8_t dbm);
 uint8_t mesh_protocol_setup_current_tx_power();
