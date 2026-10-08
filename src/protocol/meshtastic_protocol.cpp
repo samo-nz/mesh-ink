@@ -958,12 +958,17 @@ public:
         format_clock(message.timestamp,active_message_view_.time,sizeof(active_message_view_.time));
         active_message_view_.entry.outgoing=message.state!=(uint8_t)UiMessageState::Received;
         active_message_view_.entry.state=(UiMessageState)message.state;
-        if(message.flags&MESHINK_MESSAGE_HAS_RX){
-            snprintf(active_message_view_.network,sizeof(active_message_view_.network),
-                     "MESHTASTIC  SNR %.1f  %u HOP%s",
-                     (double)message.snr_q4/4.0,
-                     (unsigned)message.path_len,message.path_len==1?"":"S");
-        }else strcpy(active_message_view_.network,"MESHTASTIC");
+        if(!active_message_view_.entry.outgoing){
+            if(message.flags&MESHINK_MESSAGE_HAS_RX){
+                snprintf(active_message_view_.network,sizeof(active_message_view_.network),
+                         "MESHTASTIC  SNR %.1f  %u HOP%s",
+                         (double)message.snr_q4/4.0,
+                         (unsigned)message.path_len,message.path_len==1?"":"S");
+            }else strcpy(active_message_view_.network,"MESHTASTIC");
+        }
+        // Outgoing message metadata must stay empty: the shared chat footer
+        // then displays the persisted Sending/Sent/Delivered/Failed state.
+        // Do not touch the message journal or its existing state encoding.
         return active_message_view_.entry;
     }
     uint16_t direct_unread_total()const override{return direct_unread_total_;}
