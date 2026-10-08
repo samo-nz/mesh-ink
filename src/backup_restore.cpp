@@ -1,5 +1,6 @@
 #include "backup_restore.h"
 #include "backup_format.h"
+#include "device_settings_snapshot.h"
 #include "message_store.h"
 #include "hardware/storage.h"
 #include "protocol/mesh_protocol.h"
@@ -21,6 +22,7 @@ constexpr char LEAF_NVS[]="@meshtastic";
 constexpr char CORE_NVS[]="@mesh-auth";
 constexpr char SHARED_NAME[]="@node-name";
 constexpr char SETUP_NVS[]="@setup-state";
+constexpr char DEVICE_NVS[]="@device-settings";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
 constexpr char LEAF_MESSAGES[]="/meshtastic_messages.bin";
 constexpr char LEAF_NODES[]="/meshtastic_nodes.bin";
@@ -57,6 +59,7 @@ static uint8_t nvs_data[4096];
 static uint8_t previous_nvs[4096];
 static size_t previous_nvs_size=0;
 static LeafSettings leaf_data{},old_leaf_data{};
+static meshink_device_settings::Snapshot device_data{};
 static Plan plans[MAX_ENTRIES];
 static Stage stages[MAX_ENTRIES];
 constexpr char RESTORE_TXN[]="/restore.txn";
@@ -102,6 +105,7 @@ static bool sd_writable(){
 }
 static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
     if(!path)return false;
+    if(cat==MESHINK_BACKUP_DEVICE_SETTINGS)return !strcmp(path,DEVICE_NVS);
     if(cat==MESHINK_BACKUP_SETTINGS&&path[0]=='@')
         return !strcmp(path,SHARED_NAME)||
                !strcmp(path,protocol==1?CORE_NVS:LEAF_NVS);
@@ -135,7 +139,8 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
     p.part.category=cat;
     strncpy(p.part.path,path,sizeof(p.part.path)-1);
     if(path[0]=='@'){
-        if(!strcmp(path,SHARED_NAME)){
+        if(!strcmp(path,DEVICE_NVS))p.part.size=sizeof(meshink_device_settings::Snapshot);
+        else if(!strcmp(path,SHARED_NAME)){
             Preferences device;
             if(device.begin("t5-ui",true)){
                 const String name=device.getString("name","");
@@ -173,6 +178,12 @@ static void read_leaf_settings(LeafSettings& data){
 }
 static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     length=0;
+    if(!strcmp(path,DEVICE_NVS)){
+        if(!meshink_device_settings::capture(device_data))return false;
+        length=sizeof(device_data);
+        memcpy(nvs_data,&device_data,length);
+        return true;
+    }
     if(!strcmp(path,SHARED_NAME)){
         Preferences p;
         if(!p.begin("t5-ui",true))return false;
@@ -223,6 +234,8 @@ static bool categories_complete(uint8_t protocol,uint8_t categories,const Part* 
         }else if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,LEAF_NVS))return false;
         if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,SHARED_NAME))return false;
     }
+    if((categories&MESHINK_BACKUP_DEVICE_SETTINGS)&&
+        !manifest_has(parts,count,MESHINK_BACKUP_DEVICE_SETTINGS,DEVICE_NVS))return false;
     return true;
 }
 static bool source_crc(Plan& plan,uint8_t protocol){
@@ -285,7 +298,7 @@ static bool inspect(const char* filename,uint8_t protocol,
             input.close();return fail("Incomplete backup manifest");
         }
         if(!memchr(part.path,0,sizeof(part.path))||
-           !(part.category==1||part.category==2||part.category==4)||
+           !(part.category==1||part.category==2||part.category==4||part.category==8)||
            !(part.category&header.categories)||
            !is_real_path(part.path,protocol,part.category)||
            part.size==0||part.size>MAX_PART_BYTES){
@@ -407,6 +420,10 @@ static bool snapshot_previous_nvs(Stage& stage){
         size=sizeof(old_leaf_data);
         memcpy(data,&old_leaf_data,size);
         exists=true;
+    }else if(!strcmp(stage.path,DEVICE_NVS)){
+        if(!meshink_device_settings::capture(device_data))return false;
+        memcpy(data,&device_data,sizeof(device_data));
+        size=sizeof(device_data);exists=true;
     }else if(!strcmp(stage.path,SETUP_NVS)){
         SetupSnapshot snapshot{};
         if(!p.begin("t5-ui",true))return false;
@@ -467,6 +484,14 @@ static bool restore_previous_nvs(const Stage& stage){
     if(!stage.path[0]||stage.path[0]!='@')return true;
     if(!strcmp(stage.path,LEAF_NVS))
         return stage.old_exists ? apply_leaf_snapshot(stage.previous) : true;
+    if(!strcmp(stage.path,DEVICE_NVS)){
+        File f=SPIFFS.open(stage.previous,"r");
+        meshink_device_settings::Snapshot snapshot{};
+        const bool loaded=f&&f.size()==sizeof(snapshot)&&
+            f.read((uint8_t*)&snapshot,sizeof(snapshot))==sizeof(snapshot);
+        if(f)f.close();
+        return loaded&&meshink_device_settings::apply(snapshot);
+    }
     if(!strcmp(stage.path,SETUP_NVS)){
         File f=SPIFFS.open(stage.previous,"r");
         SetupSnapshot snap{};
@@ -568,7 +593,7 @@ bool meshink_backup_recover_pending(){
         if(!memchr(stage.path,0,sizeof(stage.path))||
            !memchr(stage.staged,0,sizeof(stage.staged))||
            !memchr(stage.previous,0,sizeof(stage.previous))||
-           !(stage.category==1||stage.category==2||stage.category==4)||
+           !(stage.category==1||stage.category==2||stage.category==4||stage.category==8)||
            (stage.path[0]!='@'&&stage.path[0]!='/')||
            strncmp(stage.staged,"/rst",4)||
            strncmp(stage.previous,"/rst",4))
@@ -623,7 +648,7 @@ uint8_t meshink_backup_categories(uint8_t protocol,const char* filename){
 bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,size_t path_len){
     last_error[0]=0;
     if(saved_path&&path_len)saved_path[0]=0;
-    if((protocol!=1&&protocol!=2)||!categories||(categories&~7U))
+    if((protocol!=1&&protocol!=2)||!categories||(categories&~15U))
         return fail("Choose backup categories");
     if(!sd_writable())return false;
     mesh_protocol_flush_now();
@@ -666,6 +691,9 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
             return fail("Settings backup preparation failed");
         if(!add_plan(parts,protocol,4,SHARED_NAME))return fail("Node name backup failed");
     }
+    if((categories&MESHINK_BACKUP_DEVICE_SETTINGS)&&
+       !add_plan(parts,protocol,MESHINK_BACKUP_DEVICE_SETTINGS,DEVICE_NVS))
+        return fail("Device settings backup preparation failed");
     if((categories&MESHINK_BACKUP_MESSAGES)&&
        !has_plan(parts,MESHINK_BACKUP_MESSAGES,protocol==1?CORE_MESSAGES:LEAF_MESSAGES))
         return fail("No message journal to back up");
@@ -684,6 +712,9 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
         if(!has_plan(parts,4,SHARED_NAME))
             return fail("Node name unavailable");
     }
+    if((categories&MESHINK_BACKUP_DEVICE_SETTINGS)&&
+       !has_plan(parts,MESHINK_BACKUP_DEVICE_SETTINGS,DEVICE_NVS))
+        return fail("Device Settings unavailable");
     if(!parts)return fail("No selected data is available");
     for(size_t i=0;i<parts;++i)if(!source_crc(plans[i],protocol))
         return fail("Source data changed during backup");
@@ -724,7 +755,7 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
 bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t categories){
     last_error[0]=0;
     restore_quiesced=false;
-    if((protocol!=1&&protocol!=2)||!categories||(categories&~7U))
+    if((protocol!=1&&protocol!=2)||!categories||(categories&~15U))
         return fail("Choose restore categories");
     if(!sd_ready())return fail("SD card unavailable");
     Header hdr{};Part parts[MAX_ENTRIES]{};
@@ -810,6 +841,16 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         state.category=MESHINK_BACKUP_SETTINGS;
         ++count;
     }
+    // Device-wide options have their own independent rollback snapshot.
+    if(categories&MESHINK_BACKUP_DEVICE_SETTINGS){
+        if(count>=MAX_ENTRIES)return fail("Not enough recovery slots for device settings");
+        Stage& stage=stages[count];stage=Stage{};
+        snprintf(stage.path,sizeof(stage.path),"%s",DEVICE_NVS);
+        snprintf(stage.staged,sizeof(stage.staged),"/rst%02u.tmp",(unsigned)count);
+        snprintf(stage.previous,sizeof(stage.previous),"/rst%02u.old",(unsigned)count);
+        stage.category=MESHINK_BACKUP_DEVICE_SETTINGS;
+        ++count;
+    }
     // Collect existing files/NVS snapshots and publish a durable undo manifest
     // BEFORE replacing any live protocol data. If reset interrupts this
     // section, the next boot rolls the entire operation back.
@@ -848,6 +889,14 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
             if(!strcmp(stage.path,CORE_NVS))ok=update_core_auth_from_stage(stage);
             else if(!strcmp(stage.path,LEAF_NVS))ok=update_leaf_from_stage(stage);
             else if(!strcmp(stage.path,SHARED_NAME))ok=update_shared_name_from_stage(stage,protocol);
+            else if(!strcmp(stage.path,DEVICE_NVS)){
+                File f=SPIFFS.open(stage.staged,"r");
+                meshink_device_settings::Snapshot snapshot{};
+                const bool loaded=f&&f.size()==sizeof(snapshot)&&
+                    f.read((uint8_t*)&snapshot,sizeof(snapshot))==sizeof(snapshot);
+                if(f)f.close();
+                ok=loaded&&meshink_device_settings::apply(snapshot);
+            }
             if(!ok)break;
         }
     }
