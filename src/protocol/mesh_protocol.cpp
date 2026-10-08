@@ -132,10 +132,31 @@ const MeshInkProtocolDescriptor* mesh_protocol_available(size_t index) {
     return nullptr;
 }
 
+size_t mesh_protocol_radio_preset_count() {
+    return active_backend().radio_preset_count?active_backend().radio_preset_count():0;
+}
+const MeshInkRadioPreset& mesh_protocol_radio_preset_at(size_t index) {
+    static const MeshInkRadioPreset empty{"","",0,0.0f,0,0,0};
+    if(!active_backend().radio_preset_at)return empty;
+    const auto* preset=active_backend().radio_preset_at(index);
+    return preset?*preset:empty;
+}
 size_t mesh_protocol_setup_region_count() { return active_backend().setup_region_count ? active_backend().setup_region_count() : 0; }
 const char* mesh_protocol_setup_region_name(size_t index) { return active_backend().setup_region_name ? safe_text(active_backend().setup_region_name(index)) : ""; }
-size_t mesh_protocol_setup_preset_count() { return active_backend().setup_preset_count ? active_backend().setup_preset_count() : 0; }
-const char* mesh_protocol_setup_preset_name(size_t index) { return active_backend().setup_preset_name ? safe_text(active_backend().setup_preset_name(index)) : ""; }
+size_t mesh_protocol_setup_preset_count(size_t region) {
+    return active_backend().setup_preset_count_for_region
+        ?active_backend().setup_preset_count_for_region(region)
+        :(active_backend().setup_preset_count?active_backend().setup_preset_count():0);
+}
+const char* mesh_protocol_setup_preset_name(size_t region,size_t index) {
+    return active_backend().setup_preset_name_for_region
+        ?safe_text(active_backend().setup_preset_name_for_region(region,index))
+        :(active_backend().setup_preset_name? safe_text(active_backend().setup_preset_name(index)):"");
+}
+int mesh_protocol_setup_preset_index(size_t region,size_t index) {
+    return active_backend().setup_preset_index_for_region
+        ?active_backend().setup_preset_index_for_region(region,index):(int)index;
+}
 bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops) { return active_backend().setup_commit_radio ? active_backend().setup_commit_radio(region,preset,hops) : false; }
 
 bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
