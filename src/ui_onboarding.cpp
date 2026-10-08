@@ -300,7 +300,7 @@ enum class Screen : uint8_t {
     Welcome, Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, Maps, Discovery, More, AdvertMenu, Diagnostics,
-    Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, PrivacySettings, DisplaySettings, NightSchedule, Help, About
+    Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static uint8_t retained_wake_tab=0;
@@ -726,7 +726,6 @@ static bool apply_selected_preset() {
     else T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset '%s' applied\n",preset.title);
     return applied;
 }
-static const char* path_hash_label(){static const char* labels[]={"1 BYTE","2 BYTES","3 BYTES"};return labels[min((uint8_t)2,mesh_protocol_path_hash_mode())];}
 
 static const uint8_t* glyph(char c) {
     for (const auto& g : FONT) if (g.c == c) return g.r;
@@ -2964,13 +2963,6 @@ static void draw_custom_timezone(){
     ui_action_button("CANCEL",custom_timezone_action_rect(false),false);ui_action_button("SAVE",custom_timezone_action_rect(true),true);
 }
 
-static void draw_privacy_settings() {
-    draw_app_header("PRIVACY",true);
-    settings_row("AUTO ADD CONTACTS",mesh_protocol_privacy_value(0),130);settings_row("AUTO ADD MAX HOPS",mesh_protocol_privacy_value(1),248);
-    settings_row("ADVERTISE LOCATION",mesh_protocol_privacy_value(2),366);settings_row("BASE TELEMETRY",mesh_protocol_privacy_value(3),484);
-    settings_row("LOCATION TELEMETRY",mesh_protocol_privacy_value(4),602);settings_row("PACKET REPEATING",mesh_protocol_privacy_value(5),720);
-}
-
 static void draw_display_settings() {
     draw_app_header("DISPLAY & POWER",true);
     const MeshInkUiLayout& layout=portrait_layout();
@@ -3358,9 +3350,9 @@ static void draw_screen() {
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::AdvertMenu:draw_advert_menu();break;case Screen::Diagnostics:draw_diagnostics();break;
         case Screen::Settings:draw_settings();break;case Screen::ProtocolSelect:draw_protocol_select();break;case Screen::ProtocolSettings:draw_protocol_settings();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
         case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
-        case Screen::PrivacySettings:draw_privacy_settings();break;case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
+        case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
-    const bool settings_page=screen==Screen::Settings||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::PrivacySettings||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
+    const bool settings_page=screen==Screen::Settings||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
@@ -4423,17 +4415,6 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 screen=Screen::DateTime;show_toast("CUSTOM TIMEZONE SAVED");draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
             }
             break;
-        case Screen::PrivacySettings:
-            if(hit_header_back(x,y)){open_screen(Screen::ProtocolSettings);return true;}
-            for(uint8_t i=0;i<6;++i){
-                if(!hit_outer_row(x,y,130+i*118))continue;
-                mesh_protocol_toggle_privacy(i);
-                show_toast("SETTING SAVED");
-                draw_screen();
-                refresh(MeshInkRefreshMode::Direct);
-                return true;
-            }
-            return true;
         case Screen::DisplaySettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
             if(frontlight_mode==FrontlightMode::NightTimer&&
