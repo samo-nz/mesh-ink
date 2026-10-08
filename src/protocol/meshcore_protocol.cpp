@@ -82,33 +82,18 @@ static const MeshInkProtocolBackend& backend() {
         b.apply_name = local_mesh_apply_name;
         b.name_character_allowed = name_character_allowed;
         b.node_name_max_length = node_name_max_length;
-        b.node_name = local_mesh_node_name;
         b.radio_summary = local_mesh_radio_summary;
         b.radio_matches = local_mesh_radio_matches;
         b.cycle_path_hash = local_mesh_cycle_path_hash;
         b.path_hash_mode = local_mesh_path_hash_mode;
 
-        b.apply_gps = local_mesh_apply_gps;
-        b.gps_enabled = local_mesh_gps_enabled;
-        b.gps_fix = local_mesh_gps_fix;
+        b.gps_mode_changed = local_mesh_sync_gps_mode;
         b.gps_interval = local_mesh_gps_interval;
         b.gps_advert_location = local_mesh_gps_advert_location;
         b.my_location = local_mesh_my_location;
         b.cycle_gps_interval = local_mesh_cycle_gps_interval;
-        b.gps_constellation_mode = local_mesh_gps_constellation_mode;
-        b.gps_set_constellation_mode = local_mesh_gps_set_constellation_mode;
-        b.gps_deep_sleep_power_save = local_mesh_gps_deep_sleep_power_save;
-        b.gps_set_deep_sleep_power_save = local_mesh_gps_set_deep_sleep_power_save;
-        b.gps_tuning_note = local_mesh_gps_tuning_note;
         b.toggle_gps_advert_location = local_mesh_toggle_gps_advert_location;
 
-        b.current_time = local_mesh_current_time;
-        b.time_valid = local_mesh_time_valid;
-        b.set_manual_time = local_mesh_set_manual_time;
-        b.set_time_mode = local_mesh_set_time_mode;
-        b.time_mode = local_mesh_time_mode;
-        b.time_source = local_mesh_time_source;
-        b.gps_time_authoritative = local_mesh_gps_time_authoritative;
 
         b.privacy_value = local_mesh_privacy_value;
         b.toggle_privacy = local_mesh_toggle_privacy;
@@ -118,8 +103,6 @@ static const MeshInkProtocolBackend& backend() {
         b.diagnostics_radio = local_mesh_diagnostics_radio;
         b.diagnostics_packets = local_mesh_diagnostics_packets;
 
-        b.direct_unread_total = local_mesh_direct_unread_total;
-        b.channel_unread_total = local_mesh_channel_unread_total;
         return b;
     }();
     return value;
