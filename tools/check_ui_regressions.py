@@ -23,6 +23,7 @@ unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 protocol_source = (root / "src" / "protocol" / "mesh_protocol.cpp").read_text(encoding="utf-8")
 protocol_header_source = (root / "src" / "protocol" / "mesh_protocol.h").read_text(encoding="utf-8")
 meshcore_protocol_source = (root / "src" / "protocol" / "meshcore_protocol.cpp").read_text(encoding="utf-8")
+meshtastic_protocol_source = (root / "src" / "protocol" / "meshtastic_protocol.cpp").read_text(encoding="utf-8")
 standalone_source = (root / "src" / "ui_standalone_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
@@ -548,7 +549,7 @@ assert "settings->gps_enabled=1;" in companion, "new setup GPS must default ON"
 assert "settings->gps_interval=0;" in companion, "new setup GPS must default continuous"
 assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default marker missing"
 # Portrait keyboard ergonomics: message entry uses a wide space bar with no
-# adjacent HIDE key; Radio Settings name entry has a wide SAVE action and
+# adjacent HIDE key; Protocol Settings name entry has a wide SAVE action and
 # dismisses by tapping above the keyboard instead.
 # Keyboard drawing, touch and message entry now share one scalable geometry
 # source. The T5 reference remains exact while board profiles can tune offsets.
@@ -572,7 +573,7 @@ contains('key(keyboard_password_mode?"LOGIN":"SEND",metrics.action_key);', "mess
 contains('if(y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "message keyboard dismiss boundary follows shared geometry")
 assert source.count("x<meshink_keyboard::action_split(metrics)")>=3, "portrait/landscape SPACE boundaries come from shared geometry"
 contains('key("SAVE",metrics.wide_action_key);', "name entry uses the shared wide SAVE action instead of a dead space bar")
-contains('if(screen==Screen::RadioSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Radio Settings dismiss boundary follows shared geometry")
+contains('if(screen==Screen::ProtocolSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Protocol Settings dismiss boundary follows shared geometry")
 assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
 
 # 1.8.4 interaction-latency fixes and sentence-style message keyboard.
@@ -584,10 +585,10 @@ contains("keyboard_upper=false;", "auto lowercase transition")
 contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fresh messages reopen uppercase")
 contains("if(text_refresh_pending)return;", "typing refresh is throttled/coalesced instead of indefinitely debounced")
 contains("static void draw_message_entry_fast()", "message typing avoids full chat redraw")
-contains("static void draw_radio_name_fast()", "Radio Settings name typing avoids full settings redraw")
-contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Radio Settings preserves the existing node name when editing")
+contains("static void draw_protocol_name_fast()", "Protocol Settings name typing avoids full settings redraw")
+contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Protocol Settings preserves the existing node name when editing")
 
-contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
+contains("(settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible))", "bottom tabs are hidden behind Protocol Settings keyboard")
 contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
 contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
 contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
@@ -1417,7 +1418,9 @@ assert source.count("chat_compose_top()")>=3, "current-page composer draw and to
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
 assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;" in source, "long settings subtitles shrink before clipping"
 assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
-assert "if(!keyboard_visible&&mesh_protocol_has(MESHINK_PROTOCOL_CAP_PATH_HASH))settings_row(\"PATH HASH MODE\",path_hash_label(),510);" in source, "Radio Settings gates path hash by helper capability and keyboard visibility"
+assert '"PATH HASH MODE"' not in source, "shared UI must not hard-code MeshCore path-hash settings"
+assert '"PATH HASH MODE"' in meshcore_protocol_source and "MESHCORE_SETTING_PATH_HASH" in meshcore_protocol_source, "MeshCore helper owns path-hash settings"
+assert "mesh_protocol_setting_item(" in source and "mesh_protocol_activate_setting(" in source, "Protocol Settings renders and activates helper-owned rows"
 assert 'if(value>99)strcpy(out,"99+");' in source, "status unread counters are visually bounded"
 assert source.count("text(count,left,ui_y(13),3,0,true);")>=2, "direct and channel status counters use the same primary numeric face/size as clock and battery"
 assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in source, "GPS satellite count uses the same primary numeric face/size"
@@ -1527,7 +1530,9 @@ assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REF
 assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
 assert "ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);" in source, "portrait composer uses the clipped bottom-tail entry renderer"
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
-assert '{"SETTINGS","Device and radio",MoreAction::Settings}' in source and '{"DISPLAY & POWER","Frontlight, refresh, standby",SettingsAction::DisplayPower}' in source, "More/Settings subtitles use calmer sentence case"
+assert '{"SETTINGS","Device and protocol configuration",MoreAction::Settings}' in source and '{"DISPLAY & POWER","Frontlight, refresh and standby",SettingsAction::DisplayPower}' in source, "More/Settings subtitles describe the reorganized device/protocol split"
+assert '{"PROTOCOL",mesh_protocol_name(),SettingsAction::Protocol}' in source, "Settings exposes the active protocol selector"
+assert '{"PROTOCOL SETTINGS","Identity, radio and protocol features",SettingsAction::ProtocolSettings}' in source, "Settings exposes one protocol-specific submenu"
 
 # Test62: native smooth tiers are deliberately a little larger than the old
 # 5x7 primary sizes (21/28/35/42px) without any bitmap enlargement.
@@ -1687,11 +1692,16 @@ assert 'first fresh fix accepted because GPS clock authority was stale' in board
 
 # 2.1.1-test.7: user-facing radio/GPS/time cleanup.
 assert 'static const char* active_radio_label()' in source and 'mesh_protocol_radio_matches(' in source, "radio menu resolves actual settings back to a known preset"
-assert '{"ID & RADIO",active_radio_label(),SettingsAction::IdentityRadio}' in source, "top-level radio menu shows the preset name when the active configuration matches"
+assert 'draw_app_header("SELECT PROTOCOL",true);' in source and "mesh_protocol_available_count()" in source, "protocol selection lists compiled backends"
+assert "mesh_protocol_restart_into(protocol->id);" in source, "choosing a different protocol persists and restarts through the generic facade"
+assert "mesh_protocol_supports_radio_presets()" in source, "legacy MeshInk radio preset picker appears only for helpers that support it"
+assert '"REGION"' in meshtastic_protocol_source and '"MODEM PRESET"' in meshtastic_protocol_source and '"HOP LIMIT"' in meshtastic_protocol_source, "Leaf helper contributes its own radio settings"
+assert '"AUTO ADD CONTACTS"' in meshcore_protocol_source and '"PACKET REPEATING"' in meshcore_protocol_source, "MeshCore helper contributes its privacy/repeating settings"
 assert 'return mesh_protocol_radio_summary();' in source and '"%.3f / SF%u / BW%.1f / CR%u"' in runtime_source, "unmatched radio settings use compact raw numbers without a CUSTOM prefix"
 assert 'NMEA OUTPUT' not in source and 'RMC + GGA (AUTOMATIC)' not in source, "non-actionable NMEA output row is removed"
 assert 'case MeshInkTimeSource::Protocol:source=mesh_protocol_name();break;' in source, "protocol time source uses the active helper name"
 assert 'MESHCORE FALLBACK' not in source, "oversized MeshCore fallback wording is removed"
+assert "Screen::PrivacySettings" not in source and "draw_privacy_settings" not in source, "MeshCore privacy controls no longer occupy a shared Settings screen"
 
 assert 'static volatile bool display_slider_dragging=false;' in source, "Display & Power brightness slider has live drag state"
 assert 'quick_slider_dragging||display_slider_dragging' in source and 'frontlight_preview(quick_slider_preview);' in source, "quick and Display sliders share immediate PWM preview while dragging"
