@@ -16,6 +16,7 @@ constexpr size_t MAX_ENTRIES=60;
 constexpr size_t MAX_PART_BYTES=256000;
 constexpr char LEAF_NVS[]="@meshtastic";
 constexpr char CORE_NVS[]="@mesh-auth";
+constexpr char SHARED_NAME[]="@node-name";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
 constexpr char LEAF_MESSAGES[]="/meshtastic_messages.bin";
 constexpr char LEAF_NODES[]="/meshtastic_nodes.bin";
@@ -82,7 +83,8 @@ static bool sd_ready(){
 static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
     if(!path)return false;
     if(cat==MESHINK_BACKUP_SETTINGS&&path[0]=='@')
-        return !strcmp(path,protocol==1?CORE_NVS:LEAF_NVS);
+        return !strcmp(path,SHARED_NAME)||
+               !strcmp(path,protocol==1?CORE_NVS:LEAF_NVS);
     if(path[0]!='/')return false;
     if(cat==MESHINK_BACKUP_MESSAGES)
         return !strcmp(path,protocol==1?CORE_MESSAGES:LEAF_MESSAGES);
@@ -113,7 +115,14 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
     p.part.category=cat;
     strncpy(p.part.path,path,sizeof(p.part.path)-1);
     if(path[0]=='@'){
-        if(protocol==1){
+        if(!strcmp(path,SHARED_NAME)){
+            Preferences device;
+            if(device.begin("t5-ui",true)){
+                const String name=device.getString("name","");
+                p.part.size=min((size_t)21,name.length()+1);
+                device.end();
+            }
+        }else if(protocol==1){
             Preferences prefs;
             if(!prefs.begin("mesh-auth",true))return true;
             p.part.size=(uint32_t)prefs.getBytesLength("credentials");
@@ -142,8 +151,18 @@ static void read_leaf_settings(LeafSettings& data){
         p.getBytes("public",data.public_key,32)==32;
     p.end();
 }
-static bool load_nvs_source(uint8_t protocol,size_t& length){
+static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     length=0;
+    if(!strcmp(path,SHARED_NAME)){
+        Preferences p;
+        if(!p.begin("t5-ui",true))return false;
+        const String name=p.getString("name","");
+        p.end();
+        if(name.length()<1||name.length()>20)return false;
+        length=name.length()+1;
+        memcpy(nvs_data,name.c_str(),length);
+        return true;
+    }
     if(protocol==2){
         read_leaf_settings(leaf_data);
         memcpy(nvs_data,&leaf_data,sizeof(leaf_data));
@@ -159,7 +178,7 @@ static bool load_nvs_source(uint8_t protocol,size_t& length){
 static bool source_crc(Plan& plan,uint8_t protocol){
     uint32_t crc=0xFFFFFFFFU;size_t count=0;
     if(plan.part.path[0]=='@'){
-        if(!load_nvs_source(protocol,count)||count!=plan.part.size)return false;
+        if(!load_nvs_source(plan.part.path,protocol,count)||count!=plan.part.size)return false;
         crc=crc32(nvs_data,count,crc);
     }else{
         File f=SPIFFS.open(plan.part.path,"r");
@@ -178,7 +197,7 @@ static bool source_write(File& output,const Plan& p,uint8_t protocol){
     size_t written=0;
     if(p.part.path[0]=='@'){
         size_t length=0;
-        if(!load_nvs_source(protocol,length)||length!=p.part.size)return false;
+        if(!load_nvs_source(p.part.path,protocol,length)||length!=p.part.size)return false;
         return output.write(nvs_data,length)==length;
     }
     File f=SPIFFS.open(p.part.path,"r");
@@ -294,6 +313,29 @@ static bool update_leaf_from_stage(const Stage& stage){
     }
     p.end();return ok;
 }
+
+static bool update_shared_name_from_stage(const Stage& stage,uint8_t protocol){
+    File f=SPIFFS.open(stage.staged,"r");
+    if(!f||f.size()<2||f.size()>21){if(f)f.close();return false;}
+    char new_name[22]{};
+    const size_t len=f.size();
+    const bool ok=f.read((uint8_t*)new_name,len)==len&&
+                  new_name[len-1]==0&&strlen(new_name)==len-1;
+    f.close();
+    if(!ok||strchr(new_name,' '))return false;
+    Preferences p;
+    if(!p.begin("t5-ui",false))return false;
+    // Node name is deliberately shared in MeshInk. Restoring a second
+    // protocol must never rename an already configured first protocol.
+    const bool other_configured=protocol==1
+        ?p.getBool("setup_mst",false)
+        :p.getBool("setup_mc",p.getBool("complete",false));
+    bool saved=true;
+    if(!other_configured)saved=p.putString("name",new_name)==strlen(new_name);
+    p.end();
+    return saved;
+}
+
 static void rollback_files(size_t count){
     for(size_t i=count;i>0;--i){
         Stage& stage=stages[i-1];
@@ -381,10 +423,11 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     }
     if(categories&MESHINK_BACKUP_SETTINGS){
         if(protocol==1){
-            for(const char* f:{"/prefs.json","/channels2","/identity/_main.id",CORE_NVS})
+            for(const char* f:{"/prefs.json","/channels2","/identity/_main.id",CORE_NVS,SHARED_NAME})
                 if(!add_plan(parts,protocol,4,f))return fail("Settings backup preparation failed");
         }else if(!add_plan(parts,protocol,4,LEAF_NVS))
             return fail("Settings backup preparation failed");
+        if(!add_plan(parts,protocol,4,SHARED_NAME))return fail("Node name backup failed");
     }
     if(!parts)return fail("No selected data is available");
     for(size_t i=0;i<parts;++i)if(!source_crc(plans[i],protocol))
@@ -492,6 +535,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
             Stage& stage=stages[i];
             if(!strcmp(stage.path,CORE_NVS))ok=update_core_auth_from_stage(stage);
             else if(!strcmp(stage.path,LEAF_NVS))ok=update_leaf_from_stage(stage);
+            else if(!strcmp(stage.path,SHARED_NAME))ok=update_shared_name_from_stage(stage,protocol);
             if(!ok)break;
         }
     }
