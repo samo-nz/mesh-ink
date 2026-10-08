@@ -39,7 +39,14 @@ bool meshink_storage_begin() {
     pinMode(T5_PIN_SD_CS,OUTPUT);
     digitalWrite(T5_PIN_SD_CS,HIGH);
     SD.end();
-    return SD.begin(T5_PIN_SD_CS,t5_shared_spi(),T5_STORAGE_SPI_HZ);
+    // First-use Meshtastic setup defers LoRa/radio_init until a region is
+    // selected. RadioLib therefore has not yet configured this shared SPI
+    // bus when Maps warms the SD card. Arduino SD.begin() calls spi.begin()
+    // with default ESP32-S3 pins if we don't start it explicitly.
+    // SPIClass::begin is a no-op if the radio already started the bus.
+    SPIClass& shared_spi=t5_shared_spi();
+    shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);
+    return SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);
 }
 
 bool meshink_storage_media_ready() {
