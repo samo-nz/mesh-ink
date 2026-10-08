@@ -12,6 +12,11 @@ constexpr uint8_t MESHINK_MESSAGE_PATH_UNKNOWN=0xFF;
 enum class MeshInkMessageKind:uint8_t { Direct=0, Channel=1 };
 enum class MeshInkMessageOrigin:uint8_t { LocalUi=0, CompanionApp=1 };
 
+constexpr uint8_t MESHINK_MESSAGE_PROTOCOL_SHIFT=4;
+constexpr uint8_t MESHINK_MESSAGE_ORIGIN_MASK=0x0F;
+constexpr uint8_t MESHINK_MESSAGE_PROTOCOL_MASK=0x0F;
+
+
 enum MeshInkMessageFlags:uint8_t {
     MESHINK_MESSAGE_HAS_RX       = 1U<<0,
     MESHINK_MESSAGE_ROUTE_KNOWN  = 1U<<1,
@@ -33,8 +38,16 @@ struct MeshInkStoredMessage {
     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
     uint8_t repeats=0;
     uint8_t flags=0;
-    uint8_t origin=0;
+    uint8_t origin=0; // low nibble origin, high nibble protocol id
 };
+
+inline uint8_t meshink_message_protocol(const MeshInkStoredMessage& message) {
+    return (uint8_t)((message.origin>>MESHINK_MESSAGE_PROTOCOL_SHIFT)&MESHINK_MESSAGE_PROTOCOL_MASK);
+}
+
+inline MeshInkMessageOrigin meshink_message_origin(const MeshInkStoredMessage& message) {
+    return (MeshInkMessageOrigin)(message.origin&MESHINK_MESSAGE_ORIGIN_MASK);
+}
 
 struct MeshInkMessageStoreHeader {
     uint32_t magic;
@@ -74,9 +87,10 @@ public:
                     MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi,
                     bool has_rx=false,int8_t snr_q4=0,
                     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN,
-                    bool unread=false);
+                    bool unread=false,uint8_t protocol_id=0);
     bool update_state(uint32_t sequence,UiMessageState state);
-    bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len);
+    bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+                           uint8_t protocol_id=0);
     bool mark_matching_received_read(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                                      uint32_t timestamp,const char* text);
     void update_ack(uint32_t sequence,uint32_t ack);
