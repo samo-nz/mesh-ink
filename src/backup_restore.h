@@ -5,7 +5,8 @@
 enum MeshInkBackupCategory : uint8_t {
     MESHINK_BACKUP_MESSAGES = 1,
     MESHINK_BACKUP_NODES = 2,
-    MESHINK_BACKUP_SETTINGS = 4
+    MESHINK_BACKUP_SETTINGS = 4,
+    MESHINK_BACKUP_DEVICE_SETTINGS = 8
 };
 
 struct MeshInkBackupInfo {
