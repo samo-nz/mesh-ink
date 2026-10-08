@@ -354,7 +354,7 @@ bool MeshInkMessageStore::mark_read_through(
 
 bool MeshInkMessageStore::mark_matching_received_read(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-        uint32_t timestamp,const char* text){
+        uint32_t timestamp,const char* text,uint8_t protocol_id){
     if(!initialized_&&!begin())return false;
     MeshInkStoredMessage item{};
     if(!file_||!key||!key_len||key_len>sizeof(item.key)||!text)return false;
@@ -367,6 +367,7 @@ bool MeshInkMessageStore::mark_matching_received_read(
         if(records_)item=records_[p];
         else if(!read_record(file_,p,item))return false;
         if(item.sequence==0||
+           meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
            item.kind!=(uint8_t)kind||
            item.state!=(uint8_t)UiMessageState::Received||
            !(item.flags&MESHINK_MESSAGE_UNREAD)||
@@ -506,7 +507,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
     return ok;
 }
 
-bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
+bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack,uint8_t protocol_id){
     if(!initialized_||!file_||!ack)return false;
     // Normal operation scans the PSRAM/RAM journal mirror without changing
     // CPU frequency. Only the cache-allocation fallback touches flash here.
@@ -517,8 +518,7 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
         else if(!read_record(file_,p,item))break;
-        if(item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
-            if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
+        if(meshink_message_protocol(item)==(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)&&\n           item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){\n            if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
             else{
                 item.state=(uint8_t)UiMessageState::Delivered;
                 delivered=write_record(p,item);
@@ -531,13 +531,14 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack){
 
 uint32_t MeshInkMessageStore::find_matching_outgoing(
         MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-        uint32_t timestamp,const char* text) const{
+        uint32_t timestamp,const char* text,uint8_t protocol_id) const{
     if(!initialized_||!file_||!key||!text)return 0;
     if(records_){
         for(size_t n=header_.count;n>0;--n){
             const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
             const MeshInkStoredMessage& item=records_[p];
-            if(item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
+            if(meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
+               item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
                item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
                strncmp(item.text,text,sizeof(item.text)))continue;
             return item.sequence;
@@ -549,7 +550,8 @@ uint32_t MeshInkMessageStore::find_matching_outgoing(
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
         if(!read_record(file_,p,item))break;
-        if(item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
+        if(meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
+           item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
            item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
            strncmp(item.text,text,sizeof(item.text)))continue;
         return item.sequence;
