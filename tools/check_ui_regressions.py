@@ -1741,4 +1741,7 @@ assert "if(slot==0)return false;" in runtime_source, "MeshCore cannot delete pub
 assert 'case Screen::ChannelDelete:' in source and 'if(hit(x,y,meshink_confirm_right_rect(portrait_layout(),650)))' in source, "deletion requires a distinct confirmation screen and confirmation tap"
 assert "if(!ui_data||!ui_data->channel_removable(channel_delete_index))" in source, "UI checks per-channel deletion permission"
 assert '"WARNING: CHANNEL KEY WILL BE LOST"' in source and '"YES, REMOVE"' in source, "confirmation warns about secret loss and requires an affirmative action"
+assert 'ui_text("PRIVATE KEY (32 HEX DIGITS)"' in source, "MeshCore channel UI uses BLE companion-compatible 128-bit keys"
+assert "strlen(channel_form_key_hex)!=32" in source, "channel UI validates 128-bit key before creation"
+assert "key_hex[0]&&strlen(key_hex)!=32" in (root / "src/local_mesh_runtime.cpp").read_text(encoding="utf-8"), "MeshCore provider rejects BLE-incompatible keys"
 assert '"CANCEL"' in source[source.index("static void draw_channel_delete()"):source.index("// Bold radio-tower marker")], "cancel is always available"
