@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "mesh_protocol_backend.h"
+#include "../hardware/rtc_types.h"
 
 const MeshInkProtocolDescriptor& mesh_protocol_descriptor();
 const char* mesh_protocol_name();
