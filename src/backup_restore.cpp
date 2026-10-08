@@ -17,6 +17,7 @@ constexpr size_t MAX_PART_BYTES=256000;
 constexpr char LEAF_NVS[]="@meshtastic";
 constexpr char CORE_NVS[]="@mesh-auth";
 constexpr char SHARED_NAME[]="@node-name";
+constexpr char SETUP_NVS[]="@setup-state";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
 constexpr char LEAF_MESSAGES[]="/meshtastic_messages.bin";
 constexpr char LEAF_NODES[]="/meshtastic_nodes.bin";
@@ -54,6 +55,11 @@ struct Stage {
     bool old_exists=false;
     bool moved_old=false;
     bool committed=false;
+    bool deleting=false;
+};
+struct SetupSnapshot {
+    uint32_t magic=0x31595553U; // SUY1
+    uint8_t present=0,complete=0,mc=0,mst=0,return_id=0,choice=0;
 };
 static char last_error[84]="";
 static uint8_t io[512];
@@ -394,6 +400,21 @@ static bool snapshot_previous_nvs(Stage& stage){
         size=sizeof(old_leaf_data);
         memcpy(data,&old_leaf_data,size);
         exists=true;
+    }else if(!strcmp(stage.path,SETUP_NVS)){
+        SetupSnapshot snapshot{};
+        if(!p.begin("t5-ui",true))return false;
+        if(p.isKey("complete"))snapshot.present|=1;
+        if(p.isKey("setup_mc"))snapshot.present|=2;
+        if(p.isKey("setup_mst"))snapshot.present|=4;
+        if(p.isKey("setup_return"))snapshot.present|=8;
+        if(p.isKey("setup_choice"))snapshot.present|=16;
+        snapshot.complete=p.getBool("complete",false);
+        snapshot.mc=p.getBool("setup_mc",false);
+        snapshot.mst=p.getBool("setup_mst",false);
+        snapshot.return_id=p.getUChar("setup_return",0);
+        snapshot.choice=p.getUChar("setup_choice",0);
+        p.end();
+        memcpy(data,&snapshot,sizeof(snapshot));size=sizeof(snapshot);exists=true;
     }else if(!strcmp(stage.path,SHARED_NAME)){
         if(p.begin("t5-ui",true)){
             const String name=p.getString("name","");
@@ -439,6 +460,27 @@ static bool restore_previous_nvs(const Stage& stage){
     if(!stage.path[0]||stage.path[0]!='@')return true;
     if(!strcmp(stage.path,LEAF_NVS))
         return stage.old_exists ? apply_leaf_snapshot(stage.previous) : true;
+    if(!strcmp(stage.path,SETUP_NVS)){
+        File f=SPIFFS.open(stage.previous,"r");
+        SetupSnapshot snap{};
+        const bool loaded=f&&f.size()==sizeof(snap)&&
+            f.read((uint8_t*)&snap,sizeof(snap))==sizeof(snap);
+        if(f)f.close();
+        if(!loaded||snap.magic!=0x31595553U)return false;
+        Preferences p;
+        if(!p.begin("t5-ui",false))return false;
+        bool ok=true;
+        const char* names[]={"complete","setup_mc","setup_mst","setup_return","setup_choice"};
+        const uint8_t values[]={snap.complete,snap.mc,snap.mst,snap.return_id,snap.choice};
+        for(int i=0;i<5;++i){
+            const bool present=(snap.present&(1U<<i))!=0;
+            if(present){
+                if(i<3)ok=(p.putBool(names[i],values[i]!=0)==1)&&ok;
+                else ok=(p.putUChar(names[i],values[i])==1)&&ok;
+            }else if(p.isKey(names[i]))ok=p.remove(names[i])&&ok;
+        }
+        p.end();return ok;
+    }
     const char* name=!strcmp(stage.path,CORE_NVS)?"mesh-auth":"t5-ui";
     const char* key=!strcmp(stage.path,CORE_NVS)?"credentials":"name";
     Preferences p;
@@ -482,7 +524,7 @@ static bool rollback_transaction(size_t count){
         if(SPIFFS.exists(stage.previous)){
             if(SPIFFS.exists(stage.path)&&!SPIFFS.remove(stage.path))ok=false;
             if(!SPIFFS.rename(stage.previous,stage.path))ok=false;
-        }else if(!stage.old_exists &&
+        }else if(!stage.old_exists && !stage.deleting &&
                  !SPIFFS.exists(stage.staged) && SPIFFS.exists(stage.path)){
             if(!SPIFFS.remove(stage.path))ok=false;
         }
@@ -703,6 +745,44 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
         return fail("Backup missing required identity settings");
     }
+    if((categories&MESHINK_BACKUP_NODES)&&protocol==1){
+        // A Nodes restore means replace, not merge. Preserve obsolete MeshCore
+        // blob files in the undo transaction and remove them from the live tree.
+        File folder=SPIFFS.open("/bl");
+        if(folder&&folder.isDirectory()){
+            File item=folder.openNextFile();
+            while(item){
+                const String name=item.name();
+                if(!item.isDirectory()&&is_real_path(name.c_str(),protocol,2)){
+                    bool included=false;
+                    for(size_t i=0;i<count;++i)
+                        if(!strcmp(stages[i].path,name.c_str())){included=true;break;}
+                    if(!included){
+                        if(count>=MAX_ENTRIES){item.close();folder.close();return fail("Too many old nodes to replace safely");}
+                        Stage& stage=stages[count];
+                        stage=Stage{};
+                        snprintf(stage.path,sizeof(stage.path),"%s",name.c_str());
+                        snprintf(stage.staged,sizeof(stage.staged),"/rst%02u.tmp",(unsigned)count);
+                        snprintf(stage.previous,sizeof(stage.previous),"/rst%02u.old",(unsigned)count);
+                        stage.category=MESHINK_BACKUP_NODES;stage.deleting=true;
+                        ++count;
+                    }
+                }
+                item.close();item=folder.openNextFile();
+            }
+        }
+        if(folder)folder.close();
+    }
+    if(categories&MESHINK_BACKUP_SETTINGS){
+        if(count>=MAX_ENTRIES)return fail("Not enough recovery slots for settings");
+        Stage& state=stages[count];
+        state=Stage{};
+        snprintf(state.path,sizeof(state.path),"%s",SETUP_NVS);
+        snprintf(state.staged,sizeof(state.staged),"/rst%02u.tmp",(unsigned)count);
+        snprintf(state.previous,sizeof(state.previous),"/rst%02u.old",(unsigned)count);
+        state.category=MESHINK_BACKUP_SETTINGS;
+        ++count;
+    }
     // Collect existing files/NVS snapshots and publish a durable undo manifest
     // BEFORE replacing any live protocol data. If reset interrupts this
     // section, the next boot rolls the entire operation back.
@@ -732,7 +812,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         if(stage.old_exists){
             if(!SPIFFS.rename(stage.path,stage.previous)){ok=false;break;}
         }
-        if(!SPIFFS.rename(stage.staged,stage.path)){ok=false;break;}
+        if(!stage.deleting&&!SPIFFS.rename(stage.staged,stage.path)){ok=false;break;}
     }
     if(ok){
         for(size_t i=0;i<count;++i){
