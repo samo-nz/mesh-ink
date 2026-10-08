@@ -39,13 +39,15 @@ struct MeshInkProtocolSettingItem {
 };
 
 struct MeshInkRadioPreset {
-    const char* title="";
-    const char* detail="";
-    uint32_t frequency_khz=0;
-    float bandwidth_khz=0.0f;
-    uint8_t spreading_factor=0;
-    uint8_t coding_rate=0;
-    uint8_t path_hash_bytes=0;
+    // Keep this a C++11 aggregate; the ESP32 Arduino toolchain does not treat
+    // a default-member-initialized record as aggregate-initializable.
+    const char* title;
+    const char* detail;
+    uint32_t frequency_khz;
+    float bandwidth_khz;
+    uint8_t spreading_factor;
+    uint8_t coding_rate;
+    uint8_t path_hash_bytes;
 };
 
 struct MeshInkProtocolBackend {
