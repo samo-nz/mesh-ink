@@ -304,13 +304,34 @@ static uint8_t message_alert_phase=0;
 static uint32_t message_alert_deadline=0;
 static uint32_t message_alert_cooldown_until=0;
 enum class Screen : uint8_t {
-    Welcome, Presets, CompanionConfirm, ShutdownConfirm,
+    Welcome, SetupName, SetupRegion, SetupPreset, SetupRadio, SetupReview, SetupCancel,
+    Presets, CompanionConfirm, ShutdownConfirm,
     Contacts, ContactChat, ContactDetails,
     Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
     Maps, Discovery, More, AdvertMenu, Diagnostics,
     Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
+// Separate protocol completion flags; a legacy complete MeshCore install is preserved.
+static bool setup_meshcore_done=false, setup_meshtastic_done=false, setup_any_done=false;
+static uint8_t setup_return_protocol=0;
+static uint8_t setup_protocol_choice=0;
+static uint8_t setup_region=0,setup_region_page=0,setup_preset_page=0;
+static int setup_radio_preset=-1;
+static uint8_t setup_hops=3,setup_sf=0,setup_cr=0,setup_hash=0,setup_edit_field=0;
+static float setup_bw=0;
+static char setup_freq[18]{},setup_power[8]{};
+static bool setup_name_explicit=false;
+static bool setup_is_screen(Screen value){
+    return value==Screen::Welcome||value==Screen::SetupName||value==Screen::SetupRegion||
+           value==Screen::SetupPreset||value==Screen::SetupRadio||
+           value==Screen::SetupReview||value==Screen::SetupCancel;
+}
+static bool setup_protocol_done(uint8_t id){
+    return id==2?setup_meshtastic_done:(id==1&&setup_meshcore_done);
+}
+static bool setup_is_meshcore(){return mesh_protocol_descriptor().id==1;}
+
 static uint8_t retained_wake_tab=0;
 static bool retained_wake_tab_valid=false;
 static Screen preset_return_screen = Screen::Welcome;
@@ -337,6 +358,12 @@ static uint8_t retained_tab_for_screen(Screen value){
         case Screen::Maps:
             return 3;
         case Screen::Welcome:
+        case Screen::SetupName:
+        case Screen::SetupRegion:
+        case Screen::SetupPreset:
+        case Screen::SetupRadio:
+        case Screen::SetupReview:
+        case Screen::SetupCancel:
         case Screen::Presets:
             return 1;
         default:
@@ -736,6 +763,118 @@ static bool apply_selected_preset() {
     if(!applied)Serial.printf("[T5-ERROR] radio preset '%s' could not be applied\n",preset.title);
     else T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset '%s' applied\n",preset.title);
     return applied;
+}
+
+
+// The same setup screens serve both protocols. MeshCore maps its existing
+// radio presets into short regional lists; Leaf enumerates its native regions.
+static constexpr const char* SETUP_MESHCORE_REGIONS[] = {
+    "NEW ZEALAND","AUSTRALIA","EUROPE / UK","NORTH AMERICA",
+    "BRAZIL / ASIA","CUSTOM / OTHER"
+};
+static size_t setup_region_count(){
+    return setup_is_meshcore()
+        ?sizeof(SETUP_MESHCORE_REGIONS)/sizeof(SETUP_MESHCORE_REGIONS[0])
+        :mesh_protocol_setup_region_count();
+}
+static const char* setup_region_label(size_t index){
+    if(setup_is_meshcore())
+        return index<setup_region_count()?SETUP_MESHCORE_REGIONS[index]:"";
+    return mesh_protocol_setup_region_name(index);
+}
+static bool setup_preset_in_region(size_t index,size_t region){
+    if(index==0||index>=PRESET_COUNT)return false;
+    switch(region){
+        case 0:return index==17||index==18;
+        case 1:return index>=1&&index<=5;
+        case 2:return (index>=9&&index<=16)||(index>=19&&index<=22);
+        case 3:return index==7||index==8||(index>=23&&index<=25);
+        case 4:return index==6||index==26||index==27;
+        default:return false; // Custom region is deliberately preset-free.
+    }
+}
+static int setup_core_preset_at(size_t visible_index){
+    if(visible_index==0)return -1; // Custom from scratch, not a cloned preset.
+    size_t seen=1;
+    for(size_t i=1;i<PRESET_COUNT;++i){
+        if(!setup_preset_in_region(i,setup_region))continue;
+        if(seen++==visible_index)return (int)i;
+    }
+    return -2;
+}
+static size_t setup_preset_count(){
+    if(!setup_is_meshcore())return mesh_protocol_setup_preset_count();
+    size_t count=1; // Custom always present.
+    for(size_t i=1;i<PRESET_COUNT;++i)if(setup_preset_in_region(i,setup_region))++count;
+    return count;
+}
+static const char* setup_preset_label(size_t index){
+    if(!setup_is_meshcore())return mesh_protocol_setup_preset_name(index);
+    const int preset=setup_core_preset_at(index);
+    return preset==-1?"CUSTOM / MANUAL":preset>=0?PRESETS[preset].title:"";
+}
+static void setup_load_core_preset(int index){
+    setup_radio_preset=index;
+    setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
+    setup_freq[0]=0;setup_power[0]=0;setup_edit_field=0;
+    if(index<=0||index>=PRESET_COUNT)return;
+    const Preset& preset=PRESETS[index];
+    snprintf(setup_freq,sizeof(setup_freq),"%.3f",(double)preset.frequency_khz/1000.0);
+    setup_bw=preset.bandwidth_khz;
+    setup_sf=preset.spreading_factor;
+    setup_cr=preset.coding_rate;
+    setup_hash=preset.path_hash_bytes;
+    const uint8_t power=mesh_protocol_setup_current_tx_power();
+    snprintf(setup_power,sizeof(setup_power),"%u",(unsigned)(power?power:20));
+}
+static bool setup_radio_valid(){
+    if(!setup_freq[0]||!setup_power[0]||!setup_bw||!setup_sf||!setup_cr||!setup_hash)return false;
+    char *freq_end=nullptr,*power_end=nullptr;
+    const double frequency=strtod(setup_freq,&freq_end);
+    const long power=strtol(setup_power,&power_end,10);
+    return freq_end!=setup_freq&&!*freq_end&&frequency>=150.0&&frequency<=960.0&&
+           power_end!=setup_power&&!*power_end&&power>=2&&power<=22&&
+           setup_bw>=7.0f&&setup_bw<=500.0f&&
+           setup_sf>=5&&setup_sf<=12&&setup_cr>=5&&setup_cr<=8&&setup_hash>=1&&setup_hash<=3;
+}
+static void setup_initialize_draft(){
+    setup_region=0;setup_region_page=0;setup_preset_page=0;
+    setup_hops=3;setup_radio_preset=-1;
+    setup_freq[0]=0;setup_power[0]=0;
+    setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
+    setup_edit_field=0;setup_name_explicit=false;
+    // Leaf's ANZ value is not assumed to be index zero in its region listing.
+    if(!setup_is_meshcore())
+        for(size_t i=0;i<setup_region_count();++i)
+            if(!strcmp(setup_region_label(i),"ANZ")){setup_region=(uint8_t)i;break;}
+}
+static bool setup_finish(){
+    if(!node_name[0])return false;
+    if(setup_is_meshcore()){
+        if(!setup_radio_valid())return false;
+        const float freq=(float)strtod(setup_freq,nullptr);
+        if(!mesh_protocol_apply_radio(freq,setup_bw,setup_sf,setup_cr,setup_hash-1))return false;
+        if(!mesh_protocol_setup_save_tx_power((uint8_t)strtoul(setup_power,nullptr,10)))return false;
+        if(setup_radio_preset>0)selected_preset=(uint8_t)setup_radio_preset;
+        else selected_preset=0; // KEEP CURRENT is only the settings-picker sentinel.
+    }else if(!mesh_protocol_setup_commit_radio(setup_region,(size_t)setup_radio_preset,setup_hops)){
+        return false;
+    }
+    Preferences commit;
+    if(!commit.begin("t5-ui",false))return false;
+    commit.putString("name",node_name);
+    commit.putUChar("preset_v2",selected_preset);
+    commit.putBool("complete",true); // preserve legacy readers
+    commit.putBool("name_migrated",true);
+    commit.putBool(setup_is_meshcore()?"setup_mc":"setup_mst",true);
+    commit.putUChar("setup_return",0);
+    commit.end();
+    setup_complete=true;
+    setup_any_done=true;
+    if(setup_is_meshcore())setup_meshcore_done=true;else setup_meshtastic_done=true;
+    // Restart with the confirmed parameters so both protocols initialize the
+    // same way they will on every subsequent boot.
+    return mesh_protocol_restart_into(mesh_protocol_descriptor().id);
 }
 
 static const uint8_t* glyph(char c) {
