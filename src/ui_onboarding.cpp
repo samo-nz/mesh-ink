@@ -4227,6 +4227,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::Channels:
+            if(hit_header_action(x,y)){channel_manage_page=0;open_screen(Screen::ChannelManage);return true;}
             if(ui_data){
                 const size_t count=ui_data->channel_count();
                 clamp_list_page(channels_page,count);
@@ -4237,6 +4238,82 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                         row*portrait_layout().list_row_stride,
                         portrait_layout().list_row_height)){selected_channel=index;if(ui_data->open_channel(index)){reset_chat_paging();open_screen(Screen::ChannelChat);}return true;}
                 }
+            }
+            break;
+        case Screen::ChannelManage:
+            if(hit_header_back(x,y)){open_screen(Screen::Channels);return true;}
+            if(hit_header_action(x,y)){
+                memset(channel_form_name,0,sizeof(channel_form_name));
+                memset(channel_form_key_hex,0,sizeof(channel_form_key_hex));
+                channel_form_key_field=false;keyboard_symbols=false;keyboard_upper=true;
+                open_screen(Screen::ChannelCreate);return true;
+            }
+            if(ui_data){
+                const size_t count=ui_data->channel_count();
+                clamp_list_page(channel_manage_page,count);
+                const size_t first=channel_manage_page*LIST_ITEMS_PER_PAGE;
+                for(size_t row=0;row<LIST_ITEMS_PER_PAGE&&first+row<count;++row){
+                    const size_t index=first+row;
+                    if(hit_outer_row(x,y,portrait_layout().list_top+
+                        row*portrait_layout().list_row_stride,portrait_layout().list_row_height)){
+                        channel_delete_index=index;
+                        strncpy(channel_delete_title,ui_data->channel(index).title,
+                                sizeof(channel_delete_title)-1);
+                        channel_delete_title[sizeof(channel_delete_title)-1]=0;
+                        open_screen(Screen::ChannelDelete);return true;
+                    }
+                }
+            }
+            break;
+        case Screen::ChannelCreate:
+            if(hit_header_back(x,y)){open_screen(Screen::ChannelManage);return true;}
+            if(hit_header_action(x,y)){
+                if(!ui_data||!ui_data->channel_management_available()){
+                    show_toast("COMING SOON");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(!meshink_channel_key::valid_name(channel_form_name,ui_data->channel_name_limit())){
+                    show_toast("INVALID CHANNEL NAME");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(channel_form_key_hex[0]&&strlen(channel_form_key_hex)!=32&&
+                   strlen(channel_form_key_hex)!=64){
+                    show_toast("KEY MUST BE 32/64 HEX");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(!ui_data->create_channel(channel_form_name,channel_form_key_hex)){
+                    show_toast("CHANNEL SAVE FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                channel_manage_page=0;
+                show_toast("CHANNEL ADDED");open_screen(Screen::ChannelManage);return true;
+            }
+            if(hit(x,y,ui_rect(22,162,496,82))){
+                channel_form_key_field=false;keyboard_visible=true;
+                keyboard_symbols=false;keyboard_upper=true;
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            if(hit(x,y,ui_rect(22,303,496,82))){
+                channel_form_key_field=true;keyboard_visible=true;
+                keyboard_symbols=false;keyboard_upper=true;
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            if(!keyboard_visible&&hit(x,y,ui_rect(55,520,430,70))){
+                keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            break;
+        case Screen::ChannelDelete:
+            if(hit_header_back(x,y)||hit(x,y,meshink_confirm_left_rect(portrait_layout(),650))){
+                open_screen(Screen::ChannelManage);return true;
+            }
+            if(hit(x,y,meshink_confirm_right_rect(portrait_layout(),650))){
+                if(!ui_data||!ui_data->channel_management_available()){
+                    show_toast("PUBLIC CHANNEL LOCKED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                if(channel_delete_index>=ui_data->channel_count()||
+                   strcmp(ui_data->channel(channel_delete_index).title,channel_delete_title)!=0){
+                    show_toast("CHANNEL LIST CHANGED");open_screen(Screen::ChannelManage);return true;
+                }
+                if(!ui_data->delete_channel(channel_delete_index)){
+                    show_toast("CHANNEL DELETE FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
+                show_toast("CHANNEL REMOVED");open_screen(Screen::ChannelManage);return true;
             }
             break;
         case Screen::ContactChat:
