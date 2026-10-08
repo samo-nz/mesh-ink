@@ -2369,7 +2369,7 @@ static void draw_contact_details() {
     const uint8_t pages=node_info_page_count(node.capabilities);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.capabilities,details_page);
     ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,true);
-    ui_centred(node_role_label(node.role),ui_y(174),2,0,true);
+    ui_centred((node.role_label&&node.role_label[0])?node.role_label:node_role_label(node.role),ui_y(174),2,0,true);
     auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
         ui_action_button(label,rect,selected);
     };
