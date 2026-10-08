@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include "ui_data.h"
 #include "hardware/gps_types.h"
-#include "hardware/rtc_types.h"
 
 
 void local_mesh_setup();
@@ -19,28 +18,13 @@ bool local_mesh_send_active(const char* text);
 bool local_mesh_send_advert(bool flood);
 bool local_mesh_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode);
 void local_mesh_apply_name(const char* name);
-void local_mesh_apply_gps(bool enabled);
-bool local_mesh_gps_enabled();
-bool local_mesh_gps_fix();
+void local_mesh_sync_gps_mode(MeshInkGpsConstellationMode mode);
 uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();
 bool local_mesh_my_location(long& latitude, long& longitude);
 void local_mesh_cycle_gps_interval();
-MeshInkGpsConstellationMode local_mesh_gps_constellation_mode();
-bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode);
-bool local_mesh_gps_deep_sleep_power_save();
-bool local_mesh_gps_set_deep_sleep_power_save(bool enabled);
-const char* local_mesh_gps_tuning_note();
 
 void local_mesh_toggle_gps_advert_location();
-uint32_t local_mesh_current_time();
-bool local_mesh_time_valid();
-bool local_mesh_set_manual_time(uint32_t utc);
-bool local_mesh_set_time_mode(MeshInkTimeMode mode);
-MeshInkTimeMode local_mesh_time_mode();
-MeshInkTimeSource local_mesh_time_source();
-bool local_mesh_gps_time_authoritative();
-const char* local_mesh_node_name();
 const char* local_mesh_radio_summary();
 bool local_mesh_radio_matches(float frequency_mhz,float bandwidth_khz,uint8_t spreading_factor,uint8_t coding_rate,uint8_t path_hash_bytes);
 const char* local_mesh_privacy_value(uint8_t item);
@@ -48,8 +32,6 @@ void local_mesh_toggle_privacy(uint8_t item);
 void local_mesh_cycle_path_hash();
 uint8_t local_mesh_path_hash_mode();
 void local_mesh_prepare_shutdown();
-uint16_t local_mesh_direct_unread_total();
-uint16_t local_mesh_channel_unread_total();
 
 bool local_mesh_request_diagnostics();
 bool local_mesh_diagnostics_busy();
