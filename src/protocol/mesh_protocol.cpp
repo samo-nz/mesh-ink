@@ -155,6 +155,11 @@ bool mesh_protocol_restart_into(uint8_t protocol_id) {
     return true;
 }
 
+void mesh_protocol_restart_after_restore() {
+    delay(100);
+    ESP.restart();
+}
+
 void mesh_protocol_setup() {
     if (active_backend().setup) active_backend().setup();
 }
