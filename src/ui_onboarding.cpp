@@ -768,10 +768,10 @@ static bool setup_radio_valid(){
     char *freq_end=nullptr,*power_end=nullptr;
     const double frequency=strtod(setup_freq,&freq_end);
     const long power=strtol(setup_power,&power_end,10);
-    return freq_end!=setup_freq&&!*freq_end&&frequency>=150.0&&frequency<=960.0&&
+    return freq_end!=setup_freq&&!*freq_end&&
            power_end!=setup_power&&!*power_end&&power>=2&&power<=22&&
-           setup_bw>=7.0f&&setup_bw<=500.0f&&
-           setup_sf>=5&&setup_sf<=12&&setup_cr>=5&&setup_cr<=8&&setup_hash>=1&&setup_hash<=3;
+           mesh_protocol_setup_validate_radio(setup_region,(float)frequency,setup_bw,
+                                               setup_sf,setup_cr,setup_hash,(uint8_t)power);
 }
 static void setup_initialize_draft(){
     setup_region=0;setup_region_page=0;setup_preset_page=0;
@@ -2881,8 +2881,19 @@ static void draw_setup_review(){
     settings_info_row("NODE NAME",node_name,268);
     settings_info_row("REGION",setup_region_label(setup_region),398);
     if(setup_is_meshcore()){
-        settings_info_row("RADIO",setup_radio_preset<0?"CUSTOM":
-            mesh_protocol_radio_preset_at(setup_radio_preset).title,528);
+        const MeshInkRadioPreset& base=mesh_protocol_radio_preset_at(
+            setup_radio_preset<0?0:(size_t)setup_radio_preset);
+        const bool modified=setup_radio_preset>0&&
+            (fabsf(strtof(setup_freq,nullptr)-base.frequency_khz/1000.0f)>0.0005f||
+             fabsf(setup_bw-base.bandwidth_khz)>0.05f||
+             setup_sf!=base.spreading_factor||
+             setup_cr!=base.coding_rate||setup_hash!=base.path_hash_bytes);
+        char preset_summary[72]{};
+        if(setup_radio_preset<0)snprintf(preset_summary,sizeof(preset_summary),"CUSTOM");
+        else if(modified)snprintf(preset_summary,sizeof(preset_summary),
+                                 "CUSTOM BASED ON %s",base.title);
+        else snprintf(preset_summary,sizeof(preset_summary),"%s",base.title);
+        settings_info_row("RADIO",preset_summary,528);
         char summary[90]{};
         snprintf(summary,sizeof(summary),"%s MHz  /  SF%u  /  BW%.1f  /  CR4/%u  /  %sdBm",
             setup_freq,(unsigned)setup_sf,(double)setup_bw,
@@ -2894,6 +2905,9 @@ static void draw_setup_review(){
         snprintf(details,sizeof(details),"HOP LIMIT: %u",(unsigned)setup_hops);
         ui_centred(details,ui_y(710),2,0,false);
     }
+    if(setup_is_meshcore())
+        ui_text_fit("VERIFY LOCAL TX REGULATIONS BEFORE TRANSMITTING",
+                    ui_x(28),ui_y(755),ui_w(488),2,0,false);
     setup_footer("START MESHINK");
 }
 
