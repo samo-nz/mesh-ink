@@ -518,7 +518,9 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack,uint8_t protocol_id
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
         else if(!read_record(file_,p,item))break;
-        if(meshink_message_protocol(item)==(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)&&\n           item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){\n            if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
+        if(meshink_message_protocol(item)==(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)&&
+           item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
+            if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
             else{
                 item.state=(uint8_t)UiMessageState::Delivered;
                 delivered=write_record(p,item);
