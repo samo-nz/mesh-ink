@@ -115,9 +115,9 @@ static void format_time(uint32_t timestamp,char out[10]){
 }
 static UiNodeRole meshcore_ui_role(uint8_t type){
     switch(type){
-        case ADV_TYPE_CHAT:return UiNodeRole::Chat;
-        case ADV_TYPE_REPEATER:return UiNodeRole::Repeater;
-        case ADV_TYPE_ROOM:return UiNodeRole::Room;
+        case ADV_TYPE_CHAT:return UiNodeRole::Client;
+        case ADV_TYPE_REPEATER:return UiNodeRole::Relay;
+        case ADV_TYPE_ROOM:return UiNodeRole::Service;
         case ADV_TYPE_SENSOR:return UiNodeRole::Sensor;
         default:return UiNodeRole::Unknown;
     }
