@@ -76,7 +76,7 @@ assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved 
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
 contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
 assert "static void draw_welcome()" not in source, "legacy single-page onboarding has been removed"
-assert 'setup_meshcore_done=prefs.getBool("setup_mc",legacy_setup_complete);' in source, "legacy MeshCore installs retain completed setup"
+assert 'const bool new_setup_flags=prefs.isKey("setup_mc")||prefs.isKey("setup_mst");' in source and 'setup_meshcore_done=prefs.getBool("setup_mc",!new_setup_flags&&legacy_setup_complete);' in source, "legacy MeshCore setups migrate without marking a new Meshtastic-first install as MeshCore configured"
 assert 'setup_meshtastic_done=prefs.getBool("setup_mst",false);' in source, "Meshtastic setup is tracked independently"
 assert 'if(screen==Screen::SetupName||screen==Screen::SetupRadio){' in source, "standard keyboard ENTER is reused in the wizard"
 assert 'setup_return_protocol' in source and 'Screen::SetupCancel' in source, "second protocol setup can be cancelled"
