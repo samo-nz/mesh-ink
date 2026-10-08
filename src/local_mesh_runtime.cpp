@@ -642,6 +642,7 @@ public:
     }
     size_t channel_name_limit()const override{return sizeof(ChannelDetails::name)-1;}
     size_t channel_capacity()const override{return MAX_GROUP_CHANNELS;}
+    bool channel_management_available()const override{return true;}
     bool create_channel(const char* name,const char* key_hex)override{
         if(!meshink_channel_key::valid_name(name,channel_name_limit())||!key_hex)return false;
         int free_slot=-1;
