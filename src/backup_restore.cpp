@@ -1,4 +1,5 @@
 #include "backup_restore.h"
+#include "backup_format.h"
 #include "message_store.h"
 #include "hardware/storage.h"
 #include "protocol/mesh_protocol.h"
@@ -9,8 +10,11 @@
 #include <string.h>
 
 namespace {
-constexpr uint32_t MAGIC=0x3142494DU; // MIB1
-constexpr uint16_t FORMAT_VERSION=1;
+using meshink_backup_format::Header;
+using meshink_backup_format::Part;
+using meshink_backup_format::crc32;
+constexpr uint32_t MAGIC=meshink_backup_format::MAGIC;
+constexpr uint16_t FORMAT_VERSION=meshink_backup_format::VERSION;
 constexpr size_t MAX_ENTRIES=60;
 constexpr size_t MAX_PART_BYTES=256000;
 constexpr char LEAF_NVS[]="@meshtastic";
@@ -20,20 +24,6 @@ constexpr char SETUP_NVS[]="@setup-state";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
 constexpr char LEAF_MESSAGES[]="/meshtastic_messages.bin";
 constexpr char LEAF_NODES[]="/meshtastic_nodes.bin";
-struct __attribute__((packed)) Header {
-    uint32_t magic;
-    uint16_t version;
-    uint8_t protocol;
-    uint8_t categories;
-    uint16_t count;
-    uint16_t reserved;
-};
-struct __attribute__((packed)) Part {
-    uint8_t category;
-    char path[47];
-    uint32_t size;
-    uint32_t crc;
-};
 struct __attribute__((packed)) LeafSettings {
     uint32_t magic;
     uint8_t region,preset,hop,has_private,has_public;
@@ -79,14 +69,6 @@ static bool fail(const char* reason){
     snprintf(last_error,sizeof(last_error),"%s",reason);
     Serial.printf("[T5-BACKUP] %s\n",last_error);
     return false;
-}
-static uint32_t crc32(const uint8_t* data,size_t count,uint32_t crc=0xFFFFFFFFU){
-    for(size_t i=0;i<count;++i){
-        crc^=data[i];
-        for(int bit=0;bit<8;++bit)
-            crc=(crc>>1)^((crc&1)?0xEDB88320U:0);
-    }
-    return crc;
 }
 static bool sd_ready(){return meshink_storage_media_ready();}
 static bool sd_writable(){
@@ -294,8 +276,7 @@ static bool inspect(const char* filename,uint8_t protocol,
     if(!input)return fail("Backup file unavailable");
     if(input.read((uint8_t*)&header,sizeof(header))!=sizeof(header)||
        header.magic!=MAGIC||header.version!=FORMAT_VERSION||
-       header.protocol!=protocol||header.count>MAX_ENTRIES||
-       (header.categories&~7U)!=0){
+       !meshink_backup_format::supported(header,protocol,MAX_ENTRIES)){
         input.close();return fail("Backup format or protocol mismatch");
     }
     for(size_t i=0;i<header.count;++i){
