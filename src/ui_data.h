@@ -85,6 +85,12 @@ public:
     virtual size_t channel_count() const = 0;
     virtual const UiListEntry& channel(size_t index) const = 0;
     virtual bool open_channel(size_t index) = 0;
+    // Shared channel management: keys are supplied as 32/64 hex digits, or
+    // empty to generate a fresh private key. Providers own encryption and storage.
+    virtual size_t channel_name_limit() const { return 12; }
+    virtual size_t channel_capacity() const { return 0; }
+    virtual bool create_channel(const char* name, const char* key_hex) { (void)name; (void)key_hex; return false; }
+    virtual bool delete_channel(size_t index) { (void)index; return false; }
     virtual size_t advert_count() const = 0;
     virtual const UiListEntry& advert(size_t index) const = 0;
     virtual bool open_advert(size_t index) = 0;
