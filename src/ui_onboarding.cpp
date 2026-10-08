@@ -1843,15 +1843,18 @@ static void draw_channel_create() {
 
 static void draw_channel_delete() {
     draw_app_header("REMOVE CHANNEL",true);
-    ui_centred("DELETE CHANNEL?",ui_y(205),4,0,true);
-    ui_centred_fit(channel_delete_title,ui_y(300),portrait_layout().section_width,3,0,true);
-    ui_draw_wrapped("This removes the channel and its key from this device.",
-                    portrait_layout().section_margin,ui_y(405),portrait_layout().section_width,
-                    3,0,false,3);
+    ui_centred("REMOVE THIS CHANNEL?",ui_y(188),4,0,true);
+    ui_centred_fit(channel_delete_title,ui_y(268),portrait_layout().section_width,3,0,true);
+    ui_centred("WARNING: CHANNEL KEY WILL BE LOST",ui_y(360),2,0,true);
+    ui_draw_wrapped("Removing this channel deletes its key from MeshInk. "
+                    "You cannot rejoin without the exact same key. "
+                    "This cannot be undone.",
+                    portrait_layout().section_margin,ui_y(405),
+                    portrait_layout().section_width,3,0,false,5);
     if(ui_data&&!ui_data->channel_removable(channel_delete_index))
-        ui_centred("DEFAULT CHANNEL IS LOCKED",ui_y(548),2,0,true);
+        ui_centred("DEFAULT CHANNEL CANNOT BE REMOVED",ui_y(594),2,0,true);
     ui_action_button("CANCEL",meshink_confirm_left_rect(portrait_layout(),650),false);
-    ui_action_button("DELETE",meshink_confirm_right_rect(portrait_layout(),650),true);
+    ui_action_button("YES, REMOVE",meshink_confirm_right_rect(portrait_layout(),650),true);
 }
 
 // Bold radio-tower marker for repeaters. Keep it deliberately simple so the
