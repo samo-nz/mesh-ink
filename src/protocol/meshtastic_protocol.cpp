@@ -97,6 +97,61 @@ struct MessageView {
 static libmeshtastic_leaf::libmeshtastic_leaf leaf;
 static MeshConfig mesh_config{};
 static bool runtime_ready=false;
+
+// The H752-01 GPS parser is a shared board service, but Leaf does not have
+// MeshCore node preferences or its GPS duty-cycle manager. Meshtastic must
+// explicitly enable the shared location provider and publish GPS status to
+// the common e-paper UI.
+static uint32_t gps_next_ui_update=0;
+static uint32_t gps_candidate_since=0;
+static bool gps_candidate_fix=false;
+static bool gps_stable_fix=false;
+
+static void meshtastic_gps_mode_changed(MeshInkGpsConstellationMode mode){
+    if(!runtime_ready)return;
+    const bool enabled=mode!=MeshInkGpsConstellationMode::None;
+    meshink_gps_set_provider_enabled(enabled);
+    gps_next_ui_update=0;
+    gps_candidate_since=millis();
+    gps_candidate_fix=false;
+    gps_stable_fix=false;
+    const MeshInkGpsStatus status=enabled?meshink_gps_read_status():MeshInkGpsStatus{};
+    // Reflect a user's GPS ON/OFF selection immediately, even before
+    // the first new NMEA sentence or the next periodic GPS poll.
+    ui_status_set_gps(enabled,false,0,0,0,0,
+                      enabled?status.error:MeshInkGpsError::None);
+    Serial.printf("[T5-MESHTASTIC] GPS provider %s (mode=%u)\n",
+                  enabled?"ENABLED":"DISABLED",(unsigned)mode);
+}
+
+static void meshtastic_update_gps_ui(){
+    const uint32_t now=millis();
+    if(gps_next_ui_update&&(int32_t)(now-gps_next_ui_update)<0)return;
+    gps_next_ui_update=now+(ui_is_standby()?10000UL:1000UL);
+    const bool enabled=meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;
+    const MeshInkGpsStatus status=enabled?meshink_gps_read_status():MeshInkGpsStatus{};
+    const bool raw_fix=enabled&&status.error==MeshInkGpsError::None&&status.valid;
+    if(!raw_fix&&(!enabled||status.error!=MeshInkGpsError::None)){
+        gps_stable_fix=false;
+        gps_candidate_fix=false;
+        gps_candidate_since=now;
+    }else{
+        if(gps_candidate_fix!=raw_fix){
+            gps_candidate_fix=raw_fix;
+            gps_candidate_since=now;
+        }
+        if(gps_stable_fix==raw_fix||now-gps_candidate_since>=3000UL)
+            gps_stable_fix=raw_fix;
+    }
+    // Satellite counts are meaningful while searching too. The common UI
+    // already rate-limits icon transitions and e-paper redraws.
+    ui_status_set_gps(enabled,gps_stable_fix,
+        enabled?(int)status.satellites:0,
+        gps_stable_fix?status.latitude:0,
+        gps_stable_fix?status.longitude:0,
+        gps_stable_fix?status.timestamp:0,
+        enabled?status.error:MeshInkGpsError::None);
+}
 static uint8_t my_public_key[32]{};
 static uint8_t my_private_key[32]{};
 static char radio_summary[64]="ANZ / LongFast";
@@ -1330,6 +1385,18 @@ static void setup() {
     }
 
     meshink_gps_service_begin();
+    // Unlike MeshCore, Leaf has no getNodePrefs()->gps_enabled path to
+    // activate the GNSS parser. Apply the persisted shared constellation
+    // selection explicitly after the sensor manager is initialized.
+    const auto gps_mode=meshink_gps_constellation_mode();
+    meshink_gps_set_provider_enabled(gps_mode!=MeshInkGpsConstellationMode::None);
+    Serial.printf("[T5-MESHTASTIC] GPS provider %s at startup (mode=%u)\n",
+                  gps_mode!=MeshInkGpsConstellationMode::None?"ENABLED":"DISABLED",
+                  (unsigned)gps_mode);
+    gps_next_ui_update=0;
+    gps_candidate_since=millis();
+    gps_candidate_fix=false;
+    gps_stable_fix=false;
     load_config();
     if(!load_identity()){
         Serial.println("[T5-MESHTASTIC] failed to load/generate identity");
@@ -1362,6 +1429,7 @@ static void setup() {
     ui_use_data_provider(provider);
     runtime_ready=true;
     ui_mesh_ready();
+    meshtastic_update_gps_ui();
 
     Serial.printf("[T5-MESHTASTIC] ready core=1.0.0 node=!%08lx radio=%s\n",
         (unsigned long)leaf.getNodeNum(),radio_summary);
@@ -1416,6 +1484,7 @@ static void loop() {
         }
     }
     meshink_gps_service_loop();
+    meshtastic_update_gps_ui();
     // Background packets are opt-in and lowest priority. Do not interrupt
     // messages, pending acknowledgements, or an on-air transmission.
     const uint32_t now=millis();
@@ -1573,6 +1642,7 @@ static const MeshInkProtocolBackend& backend() {
         b.name_character_allowed=name_character_allowed;
         b.node_name_max_length=node_name_max_length;
         b.radio_summary=radio_summary_value;
+        b.gps_mode_changed=meshtastic_gps_mode_changed;
         b.request_diagnostics=meshtastic_request_diagnostics;
         b.diagnostics_busy=[]()->bool{return false;};
         b.diagnostics_core=meshtastic_diag_core;
