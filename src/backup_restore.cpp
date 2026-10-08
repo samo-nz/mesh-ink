@@ -191,7 +191,7 @@ static bool source_write(File& output,const Plan& p,uint8_t protocol){
     f.close();return ok&&written==p.part.size;
 }
 static bool allowed_filename(const char* file,uint8_t protocol){
-    if(!file||strlen(file)!=13)return false;
+    if(!file||strlen(file)!=12)return false;
     const char* prefix=protocol==1?"MCBK":"MTBK";
     if(strncmp(file,prefix,4))return false;
     for(int i=4;i<8;++i)if(file[i]<'0'||file[i]>'9')return false;
