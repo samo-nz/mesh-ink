@@ -875,8 +875,8 @@ public:
     bool active_contact(ContactInfo& out)const{if(active_channel_)return false;auto* found=meshink_meshcore().lookupContactByPubKey(active_key_,6);if(!found)return false;out=*found;return true;}
     uint8_t active_channel_index()const{return active_key_[0];}
     bool active_channel(ChannelDetails& out)const{return active_channel_&&meshink_meshcore().getChannel(active_key_[0],out);}
-    uint16_t direct_unread_total()const{uint16_t total=0;for(const auto& item:direct_unread_)total+=item.count;return total;}
-    uint16_t channel_unread_total()const{uint16_t total=0;for(const auto count:channel_unread_)total+=count;return total;}
+    uint16_t direct_unread_total()const override{uint16_t total=0;for(const auto& item:direct_unread_)total+=item.count;return total;}
+    uint16_t channel_unread_total()const override{uint16_t total=0;for(const auto count:channel_unread_)total+=count;return total;}
 };
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
@@ -1336,20 +1336,8 @@ bool local_mesh_send_channel(size_t index,const char* text){if(!provider.open_ch
 bool local_mesh_send_advert(bool flood){if(pending_advert>=0)return false;const uint8_t command[2]={7,(uint8_t)(flood?1:0)};if(!local_mesh_enqueue_command(command,sizeof(command)))return false;pending_advert=flood?1:0;return true;}
 bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=meshink_meshcore().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);meshink_meshcore().savePrefs();meshink_radio_apply_params(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=meshink_meshcore().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;meshink_meshcore().savePrefs();}
+void local_mesh_sync_gps_mode(MeshInkGpsConstellationMode mode){
 #if ENV_INCLUDE_GPS == 1
-bool local_mesh_gps_enabled(){return meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;}
-void local_mesh_apply_gps(bool enabled){
-    const auto current=meshink_gps_constellation_mode();
-    const auto requested=enabled
-        ?(current==MeshInkGpsConstellationMode::None?MeshInkGpsConstellationMode::GpsBeiDou:current)
-        :MeshInkGpsConstellationMode::None;
-    local_mesh_gps_set_constellation_mode(requested);
-}
-bool local_mesh_gps_fix(){return meshink_gps_read_status().valid;}
-uint32_t local_mesh_gps_interval(){return meshink_meshcore().getNodePrefs()->gps_interval;}
-MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return meshink_gps_constellation_mode();}
-bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
-    if(!meshink_gps_set_constellation_mode(mode))return false;
     const bool enabled=mode!=MeshInkGpsConstellationMode::None;
     auto* p=meshink_meshcore().getNodePrefs();
     p->gps_enabled=enabled?1:0;
@@ -1357,22 +1345,15 @@ bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     meshink_meshcore().applyGpsPrefs();
     gps_duty_sleeping=!enabled;
     reset_gps_duty_cycle();
-    return true;
+#else
+    (void)mode;
+#endif
 }
-bool local_mesh_gps_deep_sleep_power_save(){return meshink_gps_deep_sleep_power_save();}
-bool local_mesh_gps_set_deep_sleep_power_save(bool enabled){return meshink_gps_set_deep_sleep_power_save(enabled);}
-const char* local_mesh_gps_tuning_note(){return meshink_gps_tuning_note();}
+#if ENV_INCLUDE_GPS == 1
+uint32_t local_mesh_gps_interval(){return meshink_meshcore().getNodePrefs()->gps_interval;}
 void local_mesh_cycle_gps_interval(){static constexpr uint32_t values[]={0,60,300,900,1800};auto* p=meshink_meshcore().getNodePrefs();size_t i=0;while(i<4&&p->gps_interval!=values[i])++i;p->gps_interval=values[(i+1)%5];meshink_meshcore().savePrefs();meshink_meshcore().applyGpsPrefs();gps_duty_sleeping=false;reset_gps_duty_cycle();}
 #else
-void local_mesh_apply_gps(bool){}
-bool local_mesh_gps_enabled(){return false;}
-bool local_mesh_gps_fix(){return false;}
 uint32_t local_mesh_gps_interval(){return 0;}
-MeshInkGpsConstellationMode local_mesh_gps_constellation_mode(){return MeshInkGpsConstellationMode::None;}
-bool local_mesh_gps_set_constellation_mode(MeshInkGpsConstellationMode){return false;}
-bool local_mesh_gps_deep_sleep_power_save(){return false;}
-bool local_mesh_gps_set_deep_sleep_power_save(bool){return false;}
-const char* local_mesh_gps_tuning_note(){return "";}
 void local_mesh_cycle_gps_interval(){}
 #endif
 bool local_mesh_gps_advert_location(){return meshink_meshcore().getNodePrefs()->advert_loc_policy!=0;}
@@ -1386,14 +1367,6 @@ bool local_mesh_my_location(long& latitude,long& longitude){
     return true;
 }
 void local_mesh_toggle_gps_advert_location(){auto* p=meshink_meshcore().getNodePrefs();p->advert_loc_policy=p->advert_loc_policy?0:1;meshink_meshcore().savePrefs();}
-uint32_t local_mesh_current_time(){return meshink_rtc_current_time();}
-bool local_mesh_time_valid(){return meshink_rtc_valid();}
-bool local_mesh_set_manual_time(uint32_t utc){return meshink_rtc_set_manual_time(utc);}
-bool local_mesh_set_time_mode(MeshInkTimeMode mode){return meshink_rtc_set_time_mode(mode);}
-MeshInkTimeMode local_mesh_time_mode(){return meshink_rtc_time_mode();}
-MeshInkTimeSource local_mesh_time_source(){return meshink_rtc_time_source();}
-bool local_mesh_gps_time_authoritative(){return meshink_rtc_gps_authoritative();}
-const char* local_mesh_node_name(){return meshink_meshcore().getNodeName();}
 const char* local_mesh_radio_summary(){auto* p=meshink_meshcore().getNodePrefs();snprintf(radio_summary,sizeof(radio_summary),"%.3f / SF%u / BW%.1f / CR%u",p->freq,p->sf,p->bw,p->cr);return radio_summary;}
 bool local_mesh_radio_matches(float frequency_mhz,float bandwidth_khz,uint8_t spreading_factor,uint8_t coding_rate,uint8_t path_hash_bytes){
     const auto* p=meshink_meshcore().getNodePrefs();
@@ -1408,15 +1381,10 @@ void local_mesh_toggle_privacy(uint8_t item){auto* p=meshink_meshcore().getNodeP
 void local_mesh_cycle_path_hash(){auto* p=meshink_meshcore().getNodePrefs();p->path_hash_mode=(p->path_hash_mode+1)%3;meshink_meshcore().savePrefs();}
 uint8_t local_mesh_path_hash_mode(){return min((uint8_t)2,meshink_meshcore().getNodePrefs()->path_hash_mode);}
 void local_mesh_prepare_shutdown(){
-    T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] stopping MeshCore peripherals");
+    T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] stopping MeshCore radio");
     meshink_radio_power_off();
-#if ENV_INCLUDE_GPS == 1
-    meshink_gps_shutdown();
-#endif
     T5_DEBUGLN(T5_LOG_MESH,"[T5-SHUTDOWN] LoRa radio sleep requested");
 }
-uint16_t local_mesh_direct_unread_total(){return provider.direct_unread_total();}
-uint16_t local_mesh_channel_unread_total(){return provider.channel_unread_total();}
 
 bool local_mesh_request_diagnostics(){
     if(pending_stats.active||pending_info.active||pending_login.active||pending_direct.active||pending_advert>=0)return false;
