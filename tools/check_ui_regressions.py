@@ -1769,7 +1769,7 @@ assert 'static void draw_backup_options()' in source and 'static void draw_backu
 assert 'if(!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
 assert 'if(!meshink_storage_rename(temp,path))' in backup_source, "SD backup is committed after temporary write"
 assert 'if(!inspect(filename,protocol,hdr,parts,true))' in backup_source, "restore validates every selected source before replacement"
-assert 'rollback_files(count);' in backup_source, "restore failure rolls back replaced protocol files"
+assert 'rollback_transaction(count)' in backup_source and 'meshink_backup_recover_pending()' in backup_source, "restore failure and interrupted boot roll back selected protocol files and NVS"
 assert 'mesh_protocol_flush_now();' in backup_source, "MeshCore contacts are flushed before backup"
 
 assert 'static bool sd_writable()' in backup_source and 'memcmp(sample,actual,sizeof(sample))==0' in backup_source, "backup tests SD write/read readiness without overwriting user files"
