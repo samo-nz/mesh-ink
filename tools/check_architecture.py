@@ -147,11 +147,17 @@ if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
 leaf_pin="https://github.com/Meshtastic-Solutions/libmeshtastic-leaf.git#bd542d6e77aa7b9507dcc8d153f6dad0c35a8c17"
 if leaf_pin not in unified_env:
     errors.append("platformio.ini: libmeshtastic-leaf must stay pinned to reviewed 1.0.0 commit")
-crypto_pin="Crypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
-if crypto_pin not in unified_env:
-    errors.append("platformio.ini: Meshtastic Crypto fork must remain the pinned shared Crypto provider")
-if "lib_ignore =\n    Crypto" in unified_env:
-    errors.append("platformio.ini: shared Crypto provider must not be hidden by lib_ignore")
+crypto_section=platformio[platformio.index("[meshink-crypto]"):platformio.index("[meshink-crypto-meshcore]")]
+meshtastic_crypto_pin="Crypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
+if meshtastic_crypto_pin not in crypto_section:
+    errors.append("platformio.ini: active shared Crypto provider must stay pinned to Leaf's reviewed Meshtastic fork")
+fallback_section=platformio[platformio.index("[meshink-crypto-meshcore]"):platformio.index("[env:t5-pro]")]
+if "rweather/Crypto @ ^0.4.0" not in fallback_section:
+    errors.append("platformio.ini: MeshCore Crypto recovery provider is missing")
+if "${meshink-crypto.lib_deps}" not in unified_env:
+    errors.append("platformio.ini: unified firmware must consume Crypto only through [meshink-crypto]")
+if meshtastic_crypto_pin in unified_env or "rweather/Crypto" in unified_env:
+    errors.append("platformio.ini: protocol build hard-codes a Crypto provider instead of the shared selector")
 
 if errors:
     raise AssertionError("\n".join(errors))
