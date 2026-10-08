@@ -684,12 +684,11 @@ enum : uint16_t {
     MESHTASTIC_SETTING_REGION = 1,
     MESHTASTIC_SETTING_MODEM_PRESET = 2,
     MESHTASTIC_SETTING_HOP_LIMIT = 3,
-    MESHTASTIC_SETTING_ROLE = 4,
-    MESHTASTIC_SETTING_APPLY_RESTART = 5,
+    MESHTASTIC_SETTING_APPLY_RESTART = 4,
 };
 
 static size_t protocol_settings_count() {
-    return 5;
+    return 4;
 }
 
 static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& item) {
@@ -709,9 +708,6 @@ static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& ite
             item={MESHTASTIC_SETTING_HOP_LIMIT,"HOP LIMIT",hop_value,true};
             return true;
         case 3:
-            item={MESHTASTIC_SETTING_ROLE,"NODE ROLE","CLIENT MUTE",false};
-            return true;
-        case 4:
             item={MESHTASTIC_SETTING_APPLY_RESTART,"APPLY RADIO CHANGES",
                   protocol_settings_dirty?"RESTART REQUIRED":"CURRENT SETTINGS ACTIVE",
                   protocol_settings_dirty};
@@ -753,8 +749,6 @@ static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id) {
             save_config();
             protocol_settings_dirty=true;
             return MeshInkProtocolSettingResult::RestartRequired;
-        case MESHTASTIC_SETTING_ROLE:
-            return MeshInkProtocolSettingResult::Unchanged;
         case MESHTASTIC_SETTING_APPLY_RESTART:
             return protocol_settings_dirty
                 ?MeshInkProtocolSettingResult::RestartNow
