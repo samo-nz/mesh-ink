@@ -5412,13 +5412,14 @@ void ui_loop() {
                           (unsigned)(protocol_settings_page+1),(unsigned)pages);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
             }
-        }else if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&
+        }else if((screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::ChannelManage||screen==Screen::Discovery)&&
            abs(tap.dy)>60&&abs(tap.dy)>abs(tap.dx)){
             const size_t count=!ui_data?0:
                 (screen==Screen::Contacts?ui_data->contact_count():
-                 screen==Screen::Channels?ui_data->channel_count():ui_data->advert_count());
+                 (screen==Screen::Channels||screen==Screen::ChannelManage)?ui_data->channel_count():ui_data->advert_count());
             size_t& page=screen==Screen::Contacts?contacts_page:
-                         screen==Screen::Channels?channels_page:discovery_page;
+                         screen==Screen::Channels?channels_page:
+                          screen==Screen::ChannelManage?channel_manage_page:discovery_page;
             clamp_list_page(page,count);
             const size_t pages=list_page_count(count);
             int next=(int)page+(tap.dy<0?1:-1);
@@ -5427,7 +5428,7 @@ void ui_loop() {
             if((size_t)next!=page){
                 page=(size_t)next;
                 const char* name=screen==Screen::Contacts?"contacts":
-                                 screen==Screen::Channels?"channels":"discovery";
+                                 (screen==Screen::Channels||screen==Screen::ChannelManage)?"channels":"discovery";
                 T5_DEBUGF(T5_LOG_UI,"[T5-UI] %s page=%u/%u\n",name,
                           (unsigned)(page+1),(unsigned)pages);
                 draw_screen();refresh(MeshInkRefreshMode::FastGray16);
