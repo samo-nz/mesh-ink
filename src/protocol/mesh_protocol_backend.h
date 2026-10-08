@@ -5,7 +5,6 @@
 
 #include "../ui_data.h"
 #include "../hardware/gps_types.h"
-#include "../hardware/rtc_types.h"
 
 enum MeshInkProtocolCapability : uint32_t {
     MESHINK_PROTOCOL_CAP_DISCOVERY   = 1u << 0,
@@ -60,36 +59,21 @@ struct MeshInkProtocolBackend {
     void (*apply_name)(const char* name) = nullptr;
     bool (*name_character_allowed)(char c) = nullptr;
     size_t (*node_name_max_length)() = nullptr;
-    const char* (*node_name)() = nullptr;
     const char* (*radio_summary)() = nullptr;
     bool (*radio_matches)(float frequency_mhz, float bandwidth_khz, uint8_t spreading_factor,
                           uint8_t coding_rate, uint8_t path_hash_bytes) = nullptr;
     void (*cycle_path_hash)() = nullptr;
     uint8_t (*path_hash_mode)() = nullptr;
 
-    // GPS/location behavior.
-    void (*apply_gps)(bool enabled) = nullptr;
-    bool (*gps_enabled)() = nullptr;
-    bool (*gps_fix)() = nullptr;
+    // MeshInk owns the physical GPS receiver and RTC. A protocol helper only
+    // synchronizes protocol state when the shared receiver mode changes, and
+    // exposes protocol-specific position publication policy/scheduling.
+    void (*gps_mode_changed)(MeshInkGpsConstellationMode mode) = nullptr;
     uint32_t (*gps_interval)() = nullptr;
     bool (*gps_advert_location)() = nullptr;
     bool (*my_location)(long& latitude, long& longitude) = nullptr;
     void (*cycle_gps_interval)() = nullptr;
-    MeshInkGpsConstellationMode (*gps_constellation_mode)() = nullptr;
-    bool (*gps_set_constellation_mode)(MeshInkGpsConstellationMode mode) = nullptr;
-    bool (*gps_deep_sleep_power_save)() = nullptr;
-    bool (*gps_set_deep_sleep_power_save)(bool enabled) = nullptr;
-    const char* (*gps_tuning_note)() = nullptr;
     void (*toggle_gps_advert_location)() = nullptr;
-
-    // Time is shared UI behavior; the protocol helper may feed the RTC.
-    uint32_t (*current_time)() = nullptr;
-    bool (*time_valid)() = nullptr;
-    bool (*set_manual_time)(uint32_t utc) = nullptr;
-    bool (*set_time_mode)(MeshInkTimeMode mode) = nullptr;
-    MeshInkTimeMode (*time_mode)() = nullptr;
-    MeshInkTimeSource (*time_source)() = nullptr;
-    bool (*gps_time_authoritative)() = nullptr;
 
     // Optional protocol-specific settings/diagnostics.
     const char* (*privacy_value)(uint8_t item) = nullptr;
@@ -99,9 +83,6 @@ struct MeshInkProtocolBackend {
     const char* (*diagnostics_core)() = nullptr;
     const char* (*diagnostics_radio)() = nullptr;
     const char* (*diagnostics_packets)() = nullptr;
-
-    uint16_t (*direct_unread_total)() = nullptr;
-    uint16_t (*channel_unread_total)() = nullptr;
 };
 
 // Protocol helpers register into generic slots. Build targets enable only the
