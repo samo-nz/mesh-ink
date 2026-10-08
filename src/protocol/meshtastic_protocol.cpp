@@ -16,6 +16,7 @@
 #include "../hardware/radio.h"
 #include "../hardware/rtc.h"
 #include "../message_store.h"
+#include "../backup_restore.h"
 #include "../ui_onboarding.h"
 
 namespace {
@@ -900,6 +901,10 @@ static void setup() {
         return;
     }
 
+    if(!meshink_backup_recover_pending()){
+        Serial.println("[T5-MESHTASTIC] interrupted restore recovery failed");
+        return;
+    }
     // Initialize shared board services for the setup UI, but defer LoRa start
     // until the region has been explicitly confirmed.
     meshink_board_begin_local();
