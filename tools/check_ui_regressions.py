@@ -13,6 +13,7 @@ ui_header_source = (root / "src" / "ui_onboarding.h").read_text(encoding="utf-8"
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
 message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
+backup_source = (root / "src" / "backup_restore.cpp").read_text(encoding="utf-8")
 message_limits_source = (root / "src" / "message_limits.h").read_text(encoding="utf-8")
 component_cmake_source = (root / "src" / "CMakeLists.txt").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
@@ -1758,3 +1759,15 @@ assert 'ui_text("PRIVATE KEY (32 HEX DIGITS)"' in source, "MeshCore channel UI u
 assert "strlen(channel_form_key_hex)!=32" in source, "channel UI validates 128-bit key before creation"
 assert "key_hex[0]&&strlen(key_hex)!=32" in (root / "src/local_mesh_runtime.cpp").read_text(encoding="utf-8"), "MeshCore provider rejects BLE-incompatible keys"
 assert '"CANCEL"' in source[source.index("static void draw_channel_delete()"):source.index("// Bold radio-tower marker")], "cancel is always available"
+
+# Protocol-specific recovery: no cross-protocol journal replacement or destructive
+# first-run restore without a verified SD manifest.
+assert '"backup_restore.cpp"' in component_cmake_source, "backup engine is linked in the hybrid firmware"
+assert '+<backup_restore.cpp>' in platformio_source, "backup engine is compiled in the Arduino firmware"
+assert 'meshink_backup_list(' in source and 'meshink_backup_restore(' in source, "setup and settings both expose SD restore"
+assert 'static void draw_backup_options()' in source and 'static void draw_backup_files()' in source, "shared backup list and category UI present"
+assert 'if(!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
+assert 'if(!meshink_storage_rename(temp,path))' in backup_source, "SD backup is committed after temporary write"
+assert 'if(!inspect(filename,protocol,hdr,parts,true))' in backup_source, "restore validates every selected source before replacement"
+assert 'rollback_files(count);' in backup_source, "restore failure rolls back replaced protocol files"
+assert 'mesh_protocol_flush_now();' in backup_source, "MeshCore contacts are flushed before backup"
