@@ -113,6 +113,16 @@ meshcore_helper=(SRC/"protocol/meshcore_protocol.cpp").read_text(encoding="utf-8
 if "meshink_protocol_backend_slot_1" not in meshcore_helper:
     errors.append("src/protocol/meshcore_protocol.cpp: MeshCore helper is not registered in backend slot 1")
 
+meshtastic_helper=(SRC/"protocol/meshtastic_protocol.cpp").read_text(encoding="utf-8")
+if "meshink_protocol_backend_slot_2" not in meshtastic_helper:
+    errors.append("src/protocol/meshtastic_protocol.cpp: Meshtastic helper is not registered in backend slot 2")
+for token in ("P_LORA_", "CustomSX1262", "T5RadioHal", "radio_spi"):
+    if token in meshtastic_helper:
+        errors.append(
+            "src/protocol/meshtastic_protocol.cpp: board-specific radio detail "
+            f"{token!r} bypasses hardware/radio.h"
+        )
+
 for rel in (
     "src/ui_onboarding.cpp",
     "src/message_store.cpp",
@@ -132,6 +142,11 @@ if "build_unflags =" in warning_env:
 unified_env=platformio[platformio.index("[env:t5-unified]"):platformio.index("[env:t5-unified-cache64]")]
 if "-DMESHINK_DEVICE_SERVICES_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must enable MeshInk-owned GPS/RTC device services")
+if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
+    errors.append("platformio.ini: full firmware must register the Meshtastic backend")
+leaf_pin="https://github.com/Meshtastic-Solutions/libmeshtastic-leaf.git#bd542d6e77aa7b9507dcc8d153f6dad0c35a8c17"
+if leaf_pin not in unified_env:
+    errors.append("platformio.ini: libmeshtastic-leaf must stay pinned to reviewed 1.0.0 commit")
 
 if errors:
     raise AssertionError("\n".join(errors))
