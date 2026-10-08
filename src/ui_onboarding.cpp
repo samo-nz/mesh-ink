@@ -312,6 +312,7 @@ enum class Screen : uint8_t {
     Settings, ProtocolSelect, ProtocolSettings, GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
+static Screen setup_cancel_from=Screen::SetupName;
 // Separate protocol completion flags; a legacy completed installation is preserved.
 static bool setup_meshcore_done=false, setup_meshtastic_done=false, setup_any_done=false;
 static uint8_t setup_return_protocol=0;
@@ -867,6 +868,7 @@ static bool setup_finish(){
     commit.putBool("name_migrated",true);
     commit.putBool(setup_is_meshcore()?"setup_mc":"setup_mst",true);
     commit.putUChar("setup_return",0);
+    commit.putUChar("setup_choice",0);
     commit.end();
     setup_complete=true;
     setup_any_done=true;
@@ -4473,12 +4475,13 @@ static bool handle_setup_tap(int16_t x,int16_t y){
     }
     if(screen!=Screen::Welcome&&screen!=Screen::SetupCancel&&
        setup_any_done&&hit_header_action(x,y)){
+        setup_cancel_from=screen;
         setup_enter(Screen::SetupCancel);
         return true;
     }
     if(screen==Screen::SetupCancel){
         if(hit(x,y,ui_rect(24,660,232,75))){
-            setup_enter(Screen::SetupName);return true;
+            setup_enter(setup_cancel_from);return true;
         }
         if(hit(x,y,ui_rect(284,660,232,75))){
             if(setup_return_protocol&&setup_protocol_done(setup_return_protocol))
@@ -4501,9 +4504,18 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             if(!setup_protocol_choice){show_toast("CHOOSE A PROTOCOL");return true;}
             if(setup_protocol_choice!=mesh_protocol_descriptor().id){
                 Preferences p;
-                if(p.begin("t5-ui",false)){p.putUChar("setup_return",0);p.end();}
+                if(p.begin("t5-ui",false)){
+                    p.putUChar("setup_return",0);
+                    p.putUChar("setup_choice",setup_protocol_choice);
+                    p.end();
+                }
                 mesh_protocol_restart_into(setup_protocol_choice);
             }else{
+                Preferences choice;
+                if(choice.begin("t5-ui",false)){
+                    choice.putUChar("setup_choice",setup_protocol_choice);
+                    choice.end();
+                }
                 setup_initialize_draft();
                 setup_enter(Screen::SetupName);
             }
@@ -5473,7 +5485,8 @@ bool ui_promote_headless_to_interactive() {
     message_alert_active=false;
     // ui_startup() already restored the retained top-level tab. Do not
     // overwrite it when promoting a deep-sleep/headless runtime to interactive.
-    if(!setup_complete)screen=setup_any_done?Screen::SetupName:Screen::Welcome;
+    if(!setup_complete)screen=(setup_any_done||
+        setup_protocol_choice==mesh_protocol_descriptor().id)?Screen::SetupName:Screen::Welcome;
     keyboard_visible=false;
     ui_finish_startup();
     Serial.println("[T5-DEEPSLEEP] interactive UI attached to existing protocol runtime");
@@ -5510,6 +5523,7 @@ static void ui_load_persistent_state() {
     setup_any_done=setup_meshcore_done||setup_meshtastic_done;
     setup_complete=setup_protocol_done(mesh_protocol_descriptor().id);
     setup_return_protocol=prefs.getUChar("setup_return",0);
+    setup_protocol_choice=prefs.getUChar("setup_choice",0);
     const bool timezone_v2=prefs.getBool("tz_v2",false);
     timezone_index=prefs.getUChar("timezone",0);
     if(!timezone_v2)timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);
@@ -5590,7 +5604,8 @@ static void ui_load_persistent_state() {
     setup_initialize_draft();
     screen=setup_complete
         ?(retained_wake_tab_valid?screen_for_retained_tab(retained_wake_tab):Screen::Contacts)
-        :(setup_any_done?Screen::SetupName:Screen::Welcome);
+        :((setup_any_done||setup_protocol_choice==mesh_protocol_descriptor().id)
+            ?Screen::SetupName:Screen::Welcome);
     if(setup_complete&&retained_wake_tab_valid)
         T5_DEBUGF(T5_LOG_UI,"[T5-DEEPSLEEP] restored top tab=%u screen=%u\n",
                   (unsigned)retained_wake_tab,(unsigned)screen);
