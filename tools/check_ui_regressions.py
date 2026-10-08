@@ -453,10 +453,10 @@ assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote r
 contains("draw_node_role_icon(item.role", "Contacts and Discovery show generic node role icons")
 contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
 contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
-contains('case UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
-contains("Radio tower: tapered mast plus two signal arcs", "Contacts and Discovery repeater icon uses the radio-tower glyph")
-contains('case UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
-contains("Simple house silhouette: peaked roof", "Contacts and Discovery room-server icon uses the house glyph")
+contains('case UiNodeRole::Relay:return "RELAY";', "Relay role label")
+contains("Relay node: tapered mast plus two signal arcs", "Contacts and Discovery relay icon uses the radio-tower glyph")
+contains('case UiNodeRole::Service:return "SERVICE";', "Service role label")
+contains("Service node: simple house silhouette", "Contacts and Discovery service icon uses the house glyph")
 contains('case UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
 assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
@@ -994,7 +994,7 @@ assert "const size_t label_budget=" in source and "compact_labels=map_zoom<=10" 
 assert "draw_map_repeater_marker(n.x,n.y)" in source, "Repeater nodes use the dedicated tower marker"
 assert "Two bold broadcast arcs per side" in source and "meshink_display_fill_rect({x-13,y-14,27,29}" in source, "Map repeater marker uses the larger bold separated-wave tower glyph"
 assert "own_marker_reserved" in source and "own_marker_x+22" in source and "own_marker_y+22" in source, "Map labels reserve the own-location bullseye footprint"
-assert "const int radius=m.role==UiNodeRole::Repeater?14:9;" in source, "Label solver protects the enlarged repeater marker"
+assert "const int radius=m.role==UiNodeRole::Relay?14:9;" in source, "Label solver protects the enlarged repeater marker"
 assert "thick_line(n.x,n.y,target_x,target_y);" in source, "Displaced map labels keep a three-pixel leader to their node"
 assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
 assert "UiNodeRole role" in data_source, "Map node data carries a protocol-neutral role"
