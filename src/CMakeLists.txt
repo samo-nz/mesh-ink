@@ -10,6 +10,7 @@ idf_component_register(
         "local_mesh_runtime.cpp"
         "protocol/mesh_protocol.cpp"
         "protocol/meshcore_protocol.cpp"
+        "protocol/meshtastic_protocol.cpp"
         "message_store.cpp"
         "map_tiles.cpp"
         "pmtiles_reader.cpp"
