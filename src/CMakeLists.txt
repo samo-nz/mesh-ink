@@ -12,6 +12,7 @@ idf_component_register(
         "protocol/meshcore_protocol.cpp"
         "protocol/meshtastic_protocol.cpp"
         "message_store.cpp"
+        "backup_restore.cpp"
         "map_tiles.cpp"
         "pmtiles_reader.cpp"
         "ui_onboarding.cpp"
