@@ -706,7 +706,7 @@ static void setup() {
     }
     if(!meshink_radio_set_lora_crc(2)){
         Serial.println("[T5-MESHTASTIC] failed to enable Meshtastic LoRa CRC");
-        ui_show_radio_failure(MeshInkRadioFailureClass::InitializationFailed);
+        ui_show_radio_failure(MeshInkRadioFailureClass::RadioFault);
         return;
     }
     PhysicalLayer* phy=meshink_radio_radiolib();
