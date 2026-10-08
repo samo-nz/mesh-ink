@@ -75,6 +75,7 @@ static uint8_t my_private_key[32]{};
 static char radio_summary[64]="ANZ / LongFast";
 static uint32_t pending_packet_id=0;
 static uint32_t pending_message_sequence=0;
+static bool protocol_settings_dirty=false;
 
 static void bind(ListStorage& item) {
     item.entry.title=item.title;
@@ -633,6 +634,29 @@ static bool load_identity() {
     return valid;
 }
 
+static void update_radio_summary() {
+    const char* preset_name=MeshRegion::getPresetName(mesh_config.radio.preset);
+    const float frequency=MeshRegion::getFrequency(
+        mesh_config.radio.region,mesh_config.radio.preset,preset_name);
+    snprintf(radio_summary,sizeof(radio_summary),"%s / %s / %.3f MHz",
+        MeshRegion::getRegionName(mesh_config.radio.region),preset_name,(double)frequency);
+}
+
+static void save_config() {
+    Preferences prefs;
+    if(!prefs.begin("meshtastic",false))return;
+    prefs.putUChar("region",(uint8_t)mesh_config.radio.region);
+    prefs.putUChar("preset",(uint8_t)mesh_config.radio.preset);
+    prefs.putUChar("hop",mesh_config.hopLimit);
+    prefs.end();
+}
+
+static bool supported_region(RegionCode region) {
+    if(region==libmeshtastic_leaf::REGION_UNSET||
+       region==libmeshtastic_leaf::REGION_LORA_24)return false;
+    return MeshRegion::getRegion(region)!=nullptr;
+}
+
 static void load_config() {
     Preferences prefs;
     uint8_t region=(uint8_t)libmeshtastic_leaf::REGION_ANZ;
@@ -644,19 +668,100 @@ static void load_config() {
         hop=prefs.getUChar("hop",hop);
         prefs.end();
     }
-    if(region>(uint8_t)libmeshtastic_leaf::REGION_UNSET)
+    if(!supported_region((RegionCode)region))
         region=(uint8_t)libmeshtastic_leaf::REGION_ANZ;
-    if(preset>(uint8_t)libmeshtastic_leaf::PRESET_SHORT_TURBO)
+    if(preset>(uint8_t)libmeshtastic_leaf::PRESET_MEDIUM_TURBO)
         preset=(uint8_t)libmeshtastic_leaf::PRESET_LONG_FAST;
     mesh_config=MeshConfig{};
     mesh_config.radio.region=(RegionCode)region;
     mesh_config.radio.preset=(ModemPreset)preset;
     mesh_config.hopLimit=constrain(hop,(uint8_t)1,(uint8_t)7);
-    const char* preset_name=MeshRegion::getPresetName(mesh_config.radio.preset);
-    const float frequency=MeshRegion::getFrequency(
-        mesh_config.radio.region,mesh_config.radio.preset,preset_name);
-    snprintf(radio_summary,sizeof(radio_summary),"%s / %s / %.3f MHz",
-        MeshRegion::getRegionName(mesh_config.radio.region),preset_name,(double)frequency);
+    protocol_settings_dirty=false;
+    update_radio_summary();
+}
+
+enum : uint16_t {
+    MESHTASTIC_SETTING_REGION = 1,
+    MESHTASTIC_SETTING_MODEM_PRESET = 2,
+    MESHTASTIC_SETTING_HOP_LIMIT = 3,
+    MESHTASTIC_SETTING_ROLE = 4,
+    MESHTASTIC_SETTING_APPLY_RESTART = 5,
+};
+
+static size_t protocol_settings_count() {
+    return 5;
+}
+
+static bool protocol_settings_item(size_t index, MeshInkProtocolSettingItem& item) {
+    static char hop_value[16];
+    item = MeshInkProtocolSettingItem{};
+    switch(index){
+        case 0:
+            item={MESHTASTIC_SETTING_REGION,"REGION",
+                  MeshRegion::getRegionName(mesh_config.radio.region),true};
+            return true;
+        case 1:
+            item={MESHTASTIC_SETTING_MODEM_PRESET,"MODEM PRESET",
+                  MeshRegion::getPresetName(mesh_config.radio.preset,true),true};
+            return true;
+        case 2:
+            snprintf(hop_value,sizeof(hop_value),"%u HOPS",(unsigned)mesh_config.hopLimit);
+            item={MESHTASTIC_SETTING_HOP_LIMIT,"HOP LIMIT",hop_value,true};
+            return true;
+        case 3:
+            item={MESHTASTIC_SETTING_ROLE,"NODE ROLE","CLIENT MUTE",false};
+            return true;
+        case 4:
+            item={MESHTASTIC_SETTING_APPLY_RESTART,"APPLY RADIO CHANGES",
+                  protocol_settings_dirty?"RESTART REQUIRED":"CURRENT SETTINGS ACTIVE",
+                  protocol_settings_dirty};
+            return true;
+        default:
+            return false;
+    }
+}
+
+static MeshInkProtocolSettingResult activate_protocol_setting(uint16_t id) {
+    switch(id){
+        case MESHTASTIC_SETTING_REGION:{
+            size_t count=0;
+            const auto* regions=MeshRegion::getAllRegions(count);
+            if(!regions||!count)return MeshInkProtocolSettingResult::Failed;
+            size_t current=0;
+            while(current<count&&regions[current].code!=mesh_config.radio.region)++current;
+            for(size_t step=1;step<=count;++step){
+                const RegionCode next=regions[(current+step)%count].code;
+                if(!supported_region(next))continue;
+                mesh_config.radio.region=next;
+                save_config();
+                protocol_settings_dirty=true;
+                update_radio_summary();
+                return MeshInkProtocolSettingResult::RestartRequired;
+            }
+            return MeshInkProtocolSettingResult::Failed;
+        }
+        case MESHTASTIC_SETTING_MODEM_PRESET:
+            mesh_config.radio.preset=(ModemPreset)(
+                ((uint8_t)mesh_config.radio.preset+1)%
+                ((uint8_t)libmeshtastic_leaf::PRESET_MEDIUM_TURBO+1));
+            save_config();
+            protocol_settings_dirty=true;
+            update_radio_summary();
+            return MeshInkProtocolSettingResult::RestartRequired;
+        case MESHTASTIC_SETTING_HOP_LIMIT:
+            mesh_config.hopLimit=(uint8_t)(mesh_config.hopLimit>=7?1:mesh_config.hopLimit+1);
+            save_config();
+            protocol_settings_dirty=true;
+            return MeshInkProtocolSettingResult::RestartRequired;
+        case MESHTASTIC_SETTING_ROLE:
+            return MeshInkProtocolSettingResult::Unchanged;
+        case MESHTASTIC_SETTING_APPLY_RESTART:
+            return protocol_settings_dirty
+                ?MeshInkProtocolSettingResult::RestartNow
+                :MeshInkProtocolSettingResult::Unchanged;
+        default:
+            return MeshInkProtocolSettingResult::Failed;
+    }
 }
 
 static void apply_owner(const char* name) {
@@ -869,6 +974,10 @@ static const MeshInkProtocolBackend& backend() {
         b.provider=data_provider;
         b.refresh_ui_data=refresh_ui_data;
         b.send_active=send_active;
+
+        b.settings_count=protocol_settings_count;
+        b.settings_item=protocol_settings_item;
+        b.settings_activate=activate_protocol_setting;
 
         b.apply_name=apply_name;
         b.name_character_allowed=name_character_allowed;
