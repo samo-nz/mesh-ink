@@ -643,6 +643,9 @@ public:
     size_t channel_name_limit()const override{return sizeof(ChannelDetails::name)-1;}
     size_t channel_capacity()const override{return MAX_GROUP_CHANNELS;}
     bool channel_management_available()const override{return true;}
+    bool channel_removable(size_t index)const override{
+        return index<channel_count_&&channels_[index].channel_index!=0;
+    }
     bool create_channel(const char* name,const char* key_hex)override{
         if(!meshink_channel_key::valid_name(name,channel_name_limit())||!key_hex)return false;
         int free_slot=-1;
@@ -657,8 +660,9 @@ public:
         strncpy(created.name,name,sizeof(created.name)-1);
         size_t key_len=0;
         if(!key_hex[0]){
-            // Generate a fresh 256-bit group secret with the ESP32 CSPRNG.
-            esp_fill_random(created.channel.secret,32);
+            // Use a 128-bit group key for MeshCore companion compatibility.
+            // Keep the unused high 16 bytes zero, matching its 128-bit format.
+            esp_fill_random(created.channel.secret,16);
         }else{
             if(!meshink_channel_key::parse_hex(key_hex,created.channel.secret,key_len))
                 return false;
@@ -671,6 +675,7 @@ public:
     bool delete_channel(size_t index)override{
         if(index>=channel_count_)return false;
         const uint8_t slot=channels_[index].channel_index;
+        if(slot==0)return false; // Never remove the default public channel.
         ChannelDetails erased{};
         if(!meshink_meshcore().setChannel(slot,erased))return false;
         meshink_meshcore().saveChannels();
