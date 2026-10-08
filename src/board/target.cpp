@@ -545,6 +545,14 @@ static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
 MeshInkSX1262Wrapper radio_driver(radio, board);
 
+PhysicalLayer* t5_radio_physical_layer() {
+    return &radio;
+}
+
+bool t5_radio_set_lora_crc(uint8_t bytes) {
+    return radio.setCRC(bytes)==RADIOLIB_ERR_NONE;
+}
+
 void MeshInkSX1262Wrapper::stageWakePacket(const uint8_t* data,uint16_t len,float rssi,float snr) {
     if(!data||!len){
         wake_packet_len_=0;
