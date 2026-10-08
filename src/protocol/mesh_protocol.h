@@ -53,6 +53,11 @@ bool mesh_protocol_supports_radio_presets();
 size_t mesh_protocol_setting_count();
 bool mesh_protocol_setting_item(size_t index, MeshInkProtocolSettingItem& item);
 MeshInkProtocolSettingResult mesh_protocol_activate_setting(uint16_t id);
+size_t mesh_protocol_setup_region_count();
+const char* mesh_protocol_setup_region_name(size_t index);
+size_t mesh_protocol_setup_preset_count();
+const char* mesh_protocol_setup_preset_name(size_t index);
+bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops);
 void mesh_protocol_cycle_path_hash();
 uint8_t mesh_protocol_path_hash_mode();
 
