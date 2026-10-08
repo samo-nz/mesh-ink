@@ -78,7 +78,42 @@ static uint32_t crc32(const uint8_t* data,size_t count,uint32_t crc=0xFFFFFFFFU)
     return crc;
 }
 static bool sd_ready(){
-    return map_tiles_media_ready();
+    if(!map_tiles_media_ready())return false;
+    // The map service can retain an inconclusive mount when the filesystem
+    // contains no map archive. Require a readable root for backup/restore.
+    File root=meshink_storage_open("/");
+    const bool ok=root&&root.isDirectory();
+    if(root)root.close();
+    return ok;
+}
+static bool sd_writable(){
+    if(!sd_ready())return fail("Insert a readable SD card");
+    // Never overwrite an existing map, screenshot, or previous backup.
+    char path[20]{};
+    bool found=false;
+    for(unsigned i=0;i<100;++i){
+        snprintf(path,sizeof(path),"/MIBCHK%02u.TMP",i);
+        if(!meshink_storage_exists(path)){found=true;break;}
+    }
+    if(!found)return fail("No safe SD test filename");
+    const uint8_t sample[8]={'M','E','S','H','I','N','K','!'};
+    File writer=meshink_storage_open_write(path);
+    if(!writer)return fail("SD card not writable");
+    const bool written=writer.write(sample,sizeof(sample))==sizeof(sample);
+    writer.flush();writer.close();
+    bool ok=written;
+    if(ok){
+        File verify=meshink_storage_open(path);
+        uint8_t actual[sizeof(sample)]{};
+        ok=verify&&verify.size()==sizeof(sample)&&
+           verify.read(actual,sizeof(actual))==sizeof(actual)&&
+           memcmp(sample,actual,sizeof(sample))==0;
+        if(verify)verify.close();
+    }
+    const bool removed=meshink_storage_remove(path);
+    if(!ok)return fail("SD write/read verification failed");
+    if(!removed)return fail("SD test file could not be removed");
+    return true;
 }
 static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
     if(!path)return false;
@@ -388,7 +423,7 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     if(saved_path&&path_len)saved_path[0]=0;
     if((protocol!=1&&protocol!=2)||!categories||(categories&~7U))
         return fail("Choose backup categories");
-    if(!sd_ready())return fail("Insert a readable SD card");
+    if(!sd_writable())return false;
     mesh_protocol_flush_now();
     uint32_t sequence=0;size_t count=0;
     if(categories&MESHINK_BACKUP_MESSAGES){
