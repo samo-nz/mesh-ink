@@ -49,6 +49,10 @@ size_t mesh_protocol_node_name_max_length();
 const char* mesh_protocol_radio_summary();
 bool mesh_protocol_radio_matches(float frequency_mhz, float bandwidth_khz, uint8_t spreading_factor,
                                  uint8_t coding_rate, uint8_t path_hash_bytes);
+bool mesh_protocol_supports_radio_presets();
+size_t mesh_protocol_setting_count();
+bool mesh_protocol_setting_item(size_t index, MeshInkProtocolSettingItem& item);
+MeshInkProtocolSettingResult mesh_protocol_activate_setting(uint16_t id);
 void mesh_protocol_cycle_path_hash();
 uint8_t mesh_protocol_path_hash_mode();
 
