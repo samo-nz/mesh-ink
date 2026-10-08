@@ -5891,7 +5891,13 @@ void ui_finish_startup() {
         Preferences p;
         if(p.begin("t5-ui",false)){p.putBool("restore_pending",false);p.end();}
         backup_restore_pending=false;
-        backup_open_files(Screen::SetupName);
+        backup_return_screen=Screen::SetupName;
+        backup_from_setup=true;
+        backup_restore_mode=true;
+        backup_page=0;
+        backup_count=meshink_backup_list(mesh_protocol_descriptor().id,backup_entries,
+                         sizeof(backup_entries)/sizeof(backup_entries[0]));
+        screen=Screen::BackupFiles;
     }
     // Drop any touch points that accumulated during the non-interactive
     // splash, then show the correct initial setup or existing-user screen.
