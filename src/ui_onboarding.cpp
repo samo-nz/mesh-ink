@@ -5419,7 +5419,26 @@ void ui_apply_initial_radio_preset(){
 }
 
 void ui_mesh_ready(){
-    mesh_is_ready=true;Preferences state;bool migrated=false;if(state.begin("t5-ui",false)){migrated=state.getBool("name_migrated",false);if(!migrated&&node_name[0]){mesh_protocol_apply_name(node_name);state.putBool("name_migrated",true);T5_DEBUGF(T5_LOG_UI,"[T5-UI] migrated node name to active protocol '%s'\n",node_name);}else{strncpy(node_name,mesh_protocol_node_name(),sizeof(node_name)-1);node_name[sizeof(node_name)-1]=0;T5_DEBUGF(T5_LOG_UI,"[T5-UI] node name loaded from active protocol '%s'\n",node_name);}state.putString("name",node_name);state.end();}
+    mesh_is_ready=true;
+    // MeshInk owns the user-visible identity. Every active protocol receives
+    // the same stored name through its adapter instead of becoming the source
+    // of truth for shared product state.
+    Preferences state;
+    if(state.begin("t5-ui",false)){
+        const String stored_name=state.getString("name",node_name);
+        if(stored_name.length()){
+            strncpy(node_name,stored_name.c_str(),sizeof(node_name)-1);
+            node_name[sizeof(node_name)-1]=0;
+        }
+        state.putBool("name_migrated",true);
+        state.putString("name",node_name);
+        state.end();
+    }
+    if(node_name[0]){
+        mesh_protocol_apply_name(node_name);
+        T5_DEBUGF(T5_LOG_UI,"[T5-UI] MeshInk node name applied to %s '%s'\n",
+                  mesh_protocol_name(),node_name);
+    }
     update_status_hardware();status_bar_dirty=true;
 }
 
