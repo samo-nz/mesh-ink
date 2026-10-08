@@ -35,6 +35,9 @@ using libmeshtastic_leaf::RegionCode;
 constexpr uint8_t MESHTASTIC_PROTOCOL_ID=2;
 constexpr size_t MAX_NODES=50;
 constexpr size_t MAX_ACTIVE_MESSAGES=MESHINK_MESSAGE_CAPACITY;
+constexpr const char* NODES_PATH="/meshtastic_nodes.bin";
+constexpr const char* NODES_STAGING="/meshtastic_nodes.tmp";
+constexpr uint32_t NODES_MAGIC=0x314E544DU; // MTN1
 
 struct ListStorage {
     UiListEntry entry{};
@@ -307,7 +310,53 @@ public:
         bind(active_message_view_);
     }
 
+    bool save_nodes(){
+        File file=SPIFFS.open(NODES_STAGING,"w");
+        if(!file)return false;
+        uint16_t count=0;
+        for(const auto& item:nodes_)if(item.used)++count;
+        const uint32_t header[2]={NODES_MAGIC,count};
+        bool ok=file.write((const uint8_t*)header,sizeof(header))==sizeof(header);
+        for(const auto& item:nodes_)if(ok&&item.used)
+            ok=file.write((const uint8_t*)&item,sizeof(item))==sizeof(item);
+        file.flush();file.close();
+        if(!ok){SPIFFS.remove(NODES_STAGING);return false;}
+        // Preserve the original in a separate recovery file until the new
+        // snapshot has been completely written to flash.
+        SPIFFS.remove("/meshtastic_nodes.old");
+        const bool had_previous=SPIFFS.exists(NODES_PATH);
+        if(had_previous&&!SPIFFS.rename(NODES_PATH,"/meshtastic_nodes.old"))return false;
+        if(!SPIFFS.rename(NODES_STAGING,NODES_PATH)){
+            if(had_previous)SPIFFS.rename("/meshtastic_nodes.old",NODES_PATH);
+            return false;
+        }
+        return true;
+    }
+    void load_nodes(){
+        File file=SPIFFS.open(NODES_PATH,"r");
+        if(!file)return;
+        uint32_t header[2]{};
+        if(file.read((uint8_t*)header,sizeof(header))!=sizeof(header)||
+           header[0]!=NODES_MAGIC||header[1]>MAX_NODES||
+           file.size()!=sizeof(header)+header[1]*sizeof(NodeRecord)){
+            file.close();return;
+        }
+        for(size_t i=0;i<header[1];++i){
+            NodeRecord item{};
+            if(file.read((uint8_t*)&item,sizeof(item))!=sizeof(item))break;
+            if(!item.used||!MeshNodeId::isUsableNodeNum(item.node))continue;
+            NodeRecord* slot=ensure(item.node);
+            if(!slot)break;
+            *slot=item;
+            if(slot->has_public_key&&
+               (!MeshCryptoPKI::isUsablePublicKey(slot->public_key)||
+                MeshNodeId::nodeNumFromPublicKey(slot->public_key,32)!=slot->node))
+                slot->has_public_key=false;
+        }
+        file.close();
+    }
     void begin() {
+        load_nodes();
         auto& store=meshink_message_store();
         store.begin();
         // Reconstruct placeholder peers from durable Meshtastic direct history.
@@ -364,6 +413,7 @@ public:
         if(user.long_name[0])strncpy(item->long_name,user.long_name,sizeof(item->long_name)-1);
         if(user.short_name[0])strncpy(item->short_name,user.short_name,sizeof(item->short_name)-1);
         snprintf(item->identity,sizeof(item->identity),"!%08lx",(unsigned long)item->node);
+        if(!save_nodes())Serial.println("[T5-MESHTASTIC] WARN node snapshot could not be saved");
         refresh(true);
         ui_request_data_refresh("meshtastic-nodeinfo");
         return true;
