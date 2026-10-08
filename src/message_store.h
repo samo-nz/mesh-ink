@@ -67,6 +67,8 @@ class MeshInkMessageStore {
     MeshInkStoredMessage* records_=nullptr;
     bool cache_in_psram_=false;
     bool initialized_=false;
+    const char* path_;
+    const char* invalid_path_;
 
     bool ensure_cache();
     bool load_cache(File& source);
@@ -76,6 +78,8 @@ class MeshInkMessageStore {
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
+    MeshInkMessageStore(const char* path,const char* invalid_path)
+        : path_(path),invalid_path_(invalid_path) {}
     bool begin();
     size_t count() const { return initialized_?header_.count:0; }
     uint32_t revision() const { return initialized_?header_.sequence:0; }
