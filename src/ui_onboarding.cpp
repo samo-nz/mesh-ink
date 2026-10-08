@@ -5169,7 +5169,8 @@ static void set_touch_power(bool enabled){
 
 static void enter_standby(const char* reason){
     (void)reason;
-    if(standby_active)return;
+    // Onboarding is an interactive, mandatory activity; no standby during setup.
+    if(!setup_complete||setup_is_screen(screen)||standby_active)return;
     // Standby owns the whole display. Dismiss transient quick settings first
     // so it cannot remain layered over, or reappear immediately after, standby.
     // Preserve the view underneath Quick Settings before dismissing it.
@@ -5265,6 +5266,10 @@ static void service_message_alert(){
 
 static void service_primary_button(){
     static uint32_t pressed_at=0;static bool handled=false;
+    if(!setup_complete||setup_is_screen(screen)){
+        pressed_at=0;handled=false;
+        return; // Short and long BOOT presses are both inert during onboarding.
+    }
     const bool pressed=meshink_primary_button_pressed();
     if(pressed&&!pressed_at)pressed_at=millis();
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){
@@ -5753,7 +5758,8 @@ void ui_loop() {
         }
     }
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
-    if(!standby_active&&standby_timeout&&millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
+    if(setup_complete&&!setup_is_screen(screen)&&!standby_active&&standby_timeout&&
+       millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
         // Only ordinary portrait page navigation uses this stale-event fence.
@@ -5767,6 +5773,7 @@ void ui_loop() {
         if(stale_navigation_tap)continue;
         last_user_activity=millis();
         if(tap.home){
+            if(!setup_complete||setup_is_screen(screen))continue; // Home is inert during setup.
             if(keyboard_visible||keyboard_landscape)continue;
             map_taps={};
             // Home changes the logical page, not just the e-paper frame.
