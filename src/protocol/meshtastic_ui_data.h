@@ -14,3 +14,7 @@ void meshink_meshtastic_ui_sent(uint32_t packet_id, const char* text, bool succe
 const char* meshink_meshtastic_ui_radio_summary();
 size_t meshink_meshtastic_ui_settings_count();
 bool meshink_meshtastic_ui_settings_item(size_t index, MeshInkProtocolSettingItem& item);
+// Channel editing is sent to the local official Meshtastic AdminModule.
+// It cannot access pins, hardware settings, or MeshCore transports.
+bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel);
+uint32_t meshink_meshtastic_ui_own_node();

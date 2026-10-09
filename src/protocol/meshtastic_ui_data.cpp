@@ -2,6 +2,7 @@
 #include "../ui_onboarding.h"
 #include "../message_store.h"
 #include <pb_decode.h>
+#include <esp_system.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -53,6 +54,7 @@ struct State {
     uint8_t selected_channel=0;
     bool selected_is_channel=true;
     bool config_received=false;
+    bool config_complete=false;
     bool tx_enabled=true;
     uint8_t tx_power=0;
     uint32_t hops=0;
@@ -377,6 +379,36 @@ void note_packet(const meshtastic_MeshPacket& p){
     if(!outgoing)ui_notify_message_received(broadcast);
 }
 
+bool valid_channel_name(const char* text){
+    if(!text||!*text)return false;
+    const size_t len=strlen(text);
+    if(!len||len>11)return false;
+    for(size_t i=0;i<len;++i)
+        if((unsigned char)text[i]<32||(unsigned char)text[i]>126)return false;
+    return true;
+}
+int hex_value(char c){
+    if(c>='0'&&c<='9')return c-'0';
+    if(c>='a'&&c<='f')return c-'a'+10;
+    if(c>='A'&&c<='F')return c-'A'+10;
+    return -1;
+}
+bool assign_psk(meshtastic_Channel& channel,const char* key_hex){
+    if(!key_hex||!*key_hex){
+        channel.settings.psk.size=32;
+        esp_fill_random(channel.settings.psk.bytes,32);
+        return true;
+    }
+    const size_t len=strlen(key_hex);
+    if(len!=32&&len!=64)return false;
+    channel.settings.psk.size=len/2;
+    for(size_t i=0;i<len;i+=2){
+        const int a=hex_value(key_hex[i]),b=hex_value(key_hex[i+1]);
+        if(a<0||b<0)return false;
+        channel.settings.psk.bytes[i/2]=(uint8_t)((a<<4)|b);
+    }
+    return true;
+}
 class NativeProvider final : public UiDataProvider {
     mutable UiNodeDetails details_{};
 public:
@@ -450,6 +482,37 @@ public:
     }
     size_t channel_name_limit()const override{return 11;}
     size_t channel_capacity()const override{return kMaxChannels;}
+    bool channel_management_available()const override{
+        return state&&state->config_complete&&state->me!=0;
+    }
+    bool channel_removable(size_t index)const override{
+        Channel* c=channel_by_ordinal(index);
+        return channel_management_available()&&c&&c->index!=0;
+    }
+    bool create_channel(const char* name,const char* key_hex)override{
+        if(!channel_management_available()||!valid_channel_name(name))return false;
+        int vacant=-1;
+        for(unsigned i=1;i<kMaxChannels;++i)
+            if(!state->channels[i].enabled){vacant=(int)i;break;}
+        if(vacant<0)return false;
+        meshtastic_Channel c=meshtastic_Channel_init_zero;
+        c.index=(int8_t)vacant;
+        c.role=meshtastic_Channel_Role_SECONDARY;
+        c.has_settings=true;
+        snprintf(c.settings.name,sizeof(c.settings.name),"%s",name);
+        if(!assign_psk(c,key_hex))return false;
+        // The local official AdminModule saves the setting. Do not implement
+        // channel cryptography or persistence in MeshInk's UI helper.
+        return meshink_meshtastic_submit_channel(c);
+    }
+    bool delete_channel(size_t index)override{
+        if(!channel_removable(index))return false;
+        Channel* ch=channel_by_ordinal(index);if(!ch)return false;
+        meshtastic_Channel c=meshtastic_Channel_init_zero;
+        c.index=(int8_t)ch->index;
+        c.role=meshtastic_Channel_Role_DISABLED;
+        return meshink_meshtastic_submit_channel(c);
+    }
     size_t advert_count()const override{return 0;}
     const UiListEntry& advert(size_t)const override{return empty_entry;}
     bool open_advert(size_t)override{return false;}
@@ -582,6 +645,7 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
       case meshtastic_FromRadio_packet_tag:
         note_packet(response.packet);break;
       case meshtastic_FromRadio_config_complete_id_tag:
+        state->config_complete=true;
         changed();break;
       default:break;
     }
@@ -600,3 +664,5 @@ bool meshink_meshtastic_ui_settings_item(size_t i,MeshInkProtocolSettingItem& it
       default:return false;
     }
 }
+
+uint32_t meshink_meshtastic_ui_own_node(){return state?state->me:0;}

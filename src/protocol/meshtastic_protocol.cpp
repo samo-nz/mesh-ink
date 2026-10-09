@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <pb_encode.h>
 #include <pb_decode.h>
+#include "../../lib/Meshtastic/src/mesh/generated/meshtastic/admin.pb.h"
 #include <esp_system.h>
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
 #include "mesh_protocol_backend.h"
@@ -81,3 +82,30 @@ const MeshInkProtocolBackend& backend(){
 }
 }
 const MeshInkProtocolBackend* meshink_protocol_backend_slot_2(){return &backend();}
+
+bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel){
+    // Use official AdminModule commands aimed at the current device. Its
+    // native handler owns key/channel persistence and configuration changes.
+    if(!mesh_protocol_backend_slot_2()||!meshink_meshtastic_ui_own_node())return false;
+    meshtastic_AdminMessage admin=meshtastic_AdminMessage_init_zero;
+    admin.which_payload_variant=meshtastic_AdminMessage_set_channel_tag;
+    admin.set_channel=channel;
+    meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
+    request.which_payload_variant=meshtastic_ToRadio_packet_tag;
+    request.packet.to=meshink_meshtastic_ui_own_node();
+    request.packet.channel=0;
+    request.packet.id=esp_random();
+    if(!request.packet.id)request.packet.id=1;
+    request.packet.want_ack=true;
+    request.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
+    request.packet.decoded.portnum=meshtastic_PortNum_ADMIN_APP;
+    pb_ostream_t inner=pb_ostream_from_buffer(
+        request.packet.decoded.payload.bytes,
+        sizeof(request.packet.decoded.payload.bytes));
+    if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
+    request.packet.decoded.payload.size=inner.bytes_written;
+    uint8_t encoded[meshtastic_ToRadio_size]{};
+    pb_ostream_t outer=pb_ostream_from_buffer(encoded,sizeof(encoded));
+    return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
+           meshink_official_phoneapi_submit(encoded,outer.bytes_written);
+}
