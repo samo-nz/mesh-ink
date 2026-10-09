@@ -9,6 +9,12 @@ on:
       - tools/official_meshtastic/**
       - .github/workflows/official-meshtastic-headless.yml
 
+# Only the most recent revision needs a full ~10-minute upstream build.
+# Scope cancellations to this workflow and branch so other MeshInk CI is unaffected.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   headless:
     runs-on: ubuntu-latest
