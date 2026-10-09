@@ -1,0 +1,38 @@
+name: Official Meshtastic Headless H752-01 Experiment
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experimental/official-meshtastic
+    paths:
+      - tools/official_meshtastic/**
+      - .github/workflows/official-meshtastic-headless.yml
+
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Fetch pinned official Meshtastic 2.8.1
+        run: git clone --depth 1 --branch v2.8.1.8e6a88d https://github.com/meshtastic/firmware.git official-meshtastic
+      - name: Prepare screenless H752-01
+        run: python tools/official_meshtastic/prepare_headless.py official-meshtastic
+      - name: Build official protocol runtime
+        working-directory: official-meshtastic
+        run: pio run -e meshink-h752-headless
+      - name: Measure binary size against MeshInk OTA app slot
+        if: success()
+        shell: bash
+        run: |
+          ls -lh official-meshtastic/.pio/build/meshink-h752-headless/firmware.bin
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("official-meshtastic/.pio/build/meshink-h752-headless/firmware.bin")
+          n=p.stat().st_size
+          print("headless_official_binary_bytes=",n)
+          print("fits_meshink_6MiB_OTA_slot=",n<=0x600000)
+          PY
