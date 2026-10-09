@@ -113,6 +113,20 @@ meshcore_helper=(SRC/"protocol/meshcore_protocol.cpp").read_text(encoding="utf-8
 if "meshink_protocol_backend_slot_1" not in meshcore_helper:
     errors.append("src/protocol/meshcore_protocol.cpp: MeshCore helper is not registered in backend slot 1")
 
+
+# Native SX126x module settings belong exclusively to the board abstraction.
+native_config = (SRC/"hardware/radio_types.h").read_text(encoding="utf-8")
+native_backend = (SRC/"board/t5_radio_backend.cpp").read_text(encoding="utf-8")
+native_public = (SRC/"board/t5_radio_backend.h").read_text(encoding="utf-8")
+if "struct MeshInkSX126xModuleConfig" not in native_config:
+    errors.append("hardware/radio_types.h: generic native SX126x board contract missing")
+if "meshink_radio_native_module_config()" not in native_public or "meshink_radio_native_spi_bus()" not in native_public:
+    errors.append("board radio backend: protocol-native SPI/module descriptor missing")
+if "P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY" not in native_backend:
+    errors.append("board radio backend: H752 native radio pins must be board-owned")
+if any(token in native_config for token in ("P_LORA_", "T5_", "t5_")):
+    errors.append("hardware/radio_types.h: board-specific macros leaked into generic module contract")
+
 meshtastic_helper=(SRC/"protocol/meshtastic_protocol.cpp").read_text(encoding="utf-8")
 if "meshink_protocol_backend_slot_2" not in meshtastic_helper:
     errors.append("src/protocol/meshtastic_protocol.cpp: Meshtastic helper is not registered in backend slot 2")

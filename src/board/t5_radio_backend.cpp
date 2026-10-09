@@ -54,3 +54,20 @@ MeshInkRadioFailureClass meshink_radio_classify_failure() {
 const char* meshink_radio_name() {
     return "SX1262";
 }
+
+// This T5 backend is the only owner of H752-01 pin assignments and
+// radio-bus electrical setup. Official Meshtastic code receives these through
+// the generic hardware/radio.h surface, never through a board header.
+MeshInkSX126xModuleConfig meshink_radio_native_module_config() {
+    return {P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY,2.4f,true};
+}
+
+SPIClass& meshink_radio_native_spi_bus() {
+    return t5_shared_spi();
+}
+
+void meshink_radio_prepare_native_spi_bus() {
+    // The selected protocol is responsible for later radio init and ISR
+    // attachment; this prepares the common board-owned SPI bus only.
+    t5_shared_spi().begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+}

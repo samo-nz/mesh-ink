@@ -21,3 +21,16 @@ one exclusive radio owner and no second Arduino setup/loop.
 
 Deep-sleep wake hooks can be populated later; do not duplicate MeshCore's
 board-specific wake code inside the official Meshtastic engine.
+
+## Shared native-radio device contract
+
+`hardware/radio_types.h` defines `MeshInkSX126xModuleConfig` with no T5
+GPIO constants. The board backend implements `meshink_radio_native_module_config()`,
+`meshink_radio_native_spi_bus()` and `meshink_radio_prepare_native_spi_bus()`.
+The future native Meshtastic radio factory should create upstream
+`SX1262Interface` using those three hardware calls, configure its TCXO and
+DIO2 RF switch, and attach it to the official `Router`. It must never call
+the MeshCore-specific `meshink_radio_initialize()`.
+
+This abstraction also prepares the future retained-SX1262 deep-sleep path
+without implementing it before normal messaging works.
