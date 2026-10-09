@@ -40,11 +40,18 @@ jobs:
         if: success()
         shell: bash
         run: |
-          ls -lh official-meshtastic/.pio/build/meshink-h752-headless/firmware.bin
           python - <<'PY'
           from pathlib import Path
-          p=Path("official-meshtastic/.pio/build/meshink-h752-headless/firmware.bin")
-          n=p.stat().st_size
-          print("headless_official_binary_bytes=",n)
-          print("fits_meshink_6MiB_OTA_slot=",n<=0x600000)
+          build = Path("official-meshtastic/.pio/build/meshink-h752-headless")
+          # Official platformio-custom.py uses a versioned PROGNAME, not firmware.bin.
+          candidates = sorted(build.glob("firmware-*.bin"))
+          if len(candidates) != 1:
+              raise SystemExit(f"Expected one versioned application binary; found {candidates}")
+          p = candidates[0]
+          n = p.stat().st_size
+          print("headless_official_binary=", p)
+          print("headless_official_binary_bytes=", n)
+          print("fits_meshink_6MiB_OTA_slot=", n <= 0x600000)
+          if n > 0x600000:
+              raise SystemExit("Standalone headless runtime exceeds MeshInk's 6MiB OTA app slot")
           PY
