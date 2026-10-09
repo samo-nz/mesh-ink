@@ -28,6 +28,8 @@ idf_component_register(
         "../lib/Meshtastic/src"
         "../lib/Meshtastic/src/mesh"
         "../lib/Meshtastic/src/mesh/generated"
+        "../lib/Meshtastic/src/platform/esp32"
+        "../include/meshtastic_compat"
     REQUIRES
         bt
 )

@@ -7,3 +7,17 @@ The third-party Leaf dependency and its old 1,736-line helper and custom wire co
 The new `src/protocol/meshtastic_protocol.cpp` uses official ToRadio/FromRadio protobufs and the in-process `PhoneAPI` subclass in `meshtastic_official_phoneapi.cpp`. It registers the second MeshInk protocol slot. The native runtime still needs its upstream NodeDB/Router/MeshService/CryptoEngine lifecycle and a MeshInk SX1262 RadioInterface; compilation and radio operation must be established through development CI and device testing. No special release gates or warning UI are added; use the normal development cycle.
 
 MeshInk continues to own e-paper UI, input, GPS, RTC, radio electrical details, storage, battery, and reboot-based protocol selection. Neither protocol's network implementation should be copied into shared UI code.
+
+## Hardware-neutral integration boundary
+
+The official Meshtastic implementation is an upstream submodule, not a copied
+board firmware. `include/meshtastic_compat/variant.h` is deliberately
+headless and pin-free; the ESP32-S3/SX1262 hardware services remain owned by
+MeshInk. The existing `unified_main.cpp` setup/loop controls the splash,
+per-protocol startup, GPS/RTC/power ordering, radio lifecycle and UI handoff.
+The Meshtastic runtime adapter must initialize upstream NodeDB, MeshService,
+Router and the official SX1262Interface from that same boot callback, with
+one exclusive radio owner and no second Arduino setup/loop.
+
+Deep-sleep wake hooks can be populated later; do not duplicate MeshCore's
+board-specific wake code inside the official Meshtastic engine.
