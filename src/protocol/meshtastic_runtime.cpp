@@ -1,4 +1,5 @@
 #include "meshtastic_runtime.h"
+#include "meshtastic_platform.cpp" // headless service definitions (single TU)
 #include "meshtastic_radio.h"
 #include "../../lib/Meshtastic/src/FSCommon.h"
 #include "../../lib/Meshtastic/src/SPILock.h"
@@ -12,6 +13,8 @@
 #include "../../lib/Meshtastic/src/mesh/ReliableRouter.h"
 #include "../../lib/Meshtastic/src/mesh/MeshService.h"
 #include "../../lib/Meshtastic/src/mesh/CryptoEngine.h"
+#include "../../lib/Meshtastic/src/mesh/RadioLibInterface.h"
+#include "../../lib/Meshtastic/src/Throttle.h"
 #include "../../lib/Meshtastic/src/modules/Modules.h"
 #include "../../lib/Meshtastic/src/mqtt/MQTT.h"
 #include "../../lib/Meshtastic/src/main.h"
@@ -106,10 +109,24 @@ bool meshink_meshtastic_native_begin(){
 void meshink_meshtastic_native_loop(){
     if(!native_ready)return;
     runASAP=false;
-    // Meshtastic OSThread runs the genuine router, radio and protocol modules.
-    // Keep MeshInk's own UI/event scheduler in unified_main.
-    concurrency::mainController.runOrDelay();
+    // Match upstream main.cpp's radio RX/recovery upkeep. The native radio
+    // handles real DIO1 IRQ, missed-edge polling and RX re-arming itself.
+    if (auto* radio = RadioLibInterface::instance) {
+        static uint32_t lastIrqPoll=0;
+        if(!Throttle::isWithinTimespanMs(lastIrqPoll,1000)){
+            lastIrqPoll=millis();
+            radio->pollMissedIrqs();
+        }
+        static uint32_t lastMaintenance=0;
+        if(!Throttle::isWithinTimespanMs(lastMaintenance,AGC_RESET_INTERVAL_MS)){
+            lastMaintenance=millis();
+            radio->updateNoiseFloor();
+            radio->periodicRadioMaintenance();
+        }
+    }
     service->loop();
+    // Run the genuine Meshtastic router/modules without sleeping MeshInk UI.
+    concurrency::mainController.runOrDelay();
 }
 
 void meshink_meshtastic_native_stop(){

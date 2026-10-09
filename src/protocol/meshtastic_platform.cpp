@@ -9,6 +9,11 @@
 #include <esp_efuse_table.h>
 #include <cstring>
 
+// Meshtastic has no serial transport on this boot: MeshInk owns USB CDC.
+// The upstream DEBUG_PORT fallback checks this pointer before using it.
+class SerialConsole;
+SerialConsole *console=nullptr;
+
 meshtastic::NodeStatus *nodeStatus = new meshtastic::NodeStatus();
 meshtastic::BluetoothStatus *bluetoothStatus = new meshtastic::BluetoothStatus();
 ScanI2C::DeviceAddress screen_found = ScanI2C::ADDRESS_NONE;

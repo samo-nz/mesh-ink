@@ -1,4 +1,5 @@
 #include "meshtastic_radio.h"
+#include "meshtastic_sx1262_instance.cpp" // actual official SX1262 implementation
 #include "../hardware/radio.h"
 #include "../../lib/Meshtastic/src/mesh/SX1262Interface.h"
 #include "../../lib/Meshtastic/src/mesh/Router.h"
@@ -29,11 +30,15 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
             return false;
         }
         setTCXOVoltage(board_tcxo_voltage_); // reconfigure/recovery setting
-        if(!dio2_switch_)return true;
+        if(!dio2_switch_){startReceive();return true;}
         const int16_t rf=lora.setDio2AsRfSwitch(true);
         if(rf!=RADIOLIB_ERR_NONE)
             Serial.printf("[MeshInk/MT] Post-init DIO2 switch error %d\\n",(int)rf);
-        return rf==RADIOLIB_ERR_NONE;
+        if(rf!=RADIOLIB_ERR_NONE)return false;
+        // Start listening *after* the fitted TCXO and RF switch are set.
+        // The stock init() arms RX early; re-arm with final board electrical state.
+        startReceive();
+        return true;
     }
 public:
     MeshInkNativeSX1262(LockingArduinoHal* hal,RADIOLIB_PIN_TYPE cs,
