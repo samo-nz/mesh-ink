@@ -34,3 +34,18 @@ the MeshCore-specific `meshink_radio_initialize()`.
 
 This abstraction also prepares the future retained-SX1262 deep-sleep path
 without implementing it before normal messaging works.
+
+## Curated PlatformIO upstream build
+
+`tools/prepare_meshtastic_library.py` runs before PlatformIO library discovery
+and writes a disposable `library.json` into the checked-out Meshtastic
+submodule. Its source whitelist is maintained in
+`tools/official_meshtastic_library.json`, compiling only native official
+Meshtastic networking and dependencies, not the upstream display, USB,
+Bluetooth, power-manager or standalone main program. The upstream commit stays
+pinned and all permanent changes stay in MeshInk.
+
+`MESHTASTIC_EXCLUDE_POWER_FSM` and `MESHTASTIC_EXCLUDE_GPS` prevent a second
+sleep controller and a second GPS device manager. MeshInk still owns those
+physical services. Additional linker/runtime adaptation is expected before
+encrypted radio networking is hardware-testable.
