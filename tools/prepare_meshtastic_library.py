@@ -142,3 +142,23 @@ if safe_format not in fs_source:
         raise RuntimeError("Upstream filesystem format path changed")
     fs_cpp.write_text(fs_source.replace(unsafe_format, safe_format, 1), encoding="utf-8")
     print("[MeshInk] Blocked partition-wide format of shared SPIFFS")
+
+# Stock Meshtastic LOG_* macros always dereference its SerialConsole.
+# MeshInk owns USB CDC and does not construct a competing PhoneAPI/console.
+# Keep genuine RedirectablePrint with a MeshInk-owned Serial destination.
+debug_path = upstream / "src" / "DebugConfiguration.h"
+debug_source = debug_path.read_text(encoding="utf-8")
+debug_original = "#define DEBUG_PORT (*console) // Serial debug port"
+debug_meshink = (
+    "#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)\n"
+    "RedirectablePrint &meshink_meshtastic_debug_port();\n"
+    "#define DEBUG_PORT meshink_meshtastic_debug_port()\n"
+    "#else\n"
+    "#define DEBUG_PORT (*console) // Serial debug port\n"
+    "#endif"
+)
+if debug_meshink not in debug_source:
+    if debug_source.count(debug_original) != 1:
+        raise RuntimeError("Upstream debug sink declaration changed")
+    debug_path.write_text(debug_source.replace(debug_original, debug_meshink, 1), encoding="utf-8")
+    print("[MeshInk] Routed native Meshtastic diagnostics through existing MeshInk Serial")

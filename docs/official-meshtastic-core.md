@@ -124,3 +124,16 @@ microSD/LoRa, prepare the clock/SPI bus, initialize SX1262 using RadioLib's
 initial 1.6 V TCXO setting, then program the fitted TCXO at 2.4 V and DIO2
 RF switch. The official Meshtastic radio still owns interrupts, CAD and
 transmit/receive. No MeshCore radio object is initialized on Meshtastic boot.
+
+## Headless log sink and RX upkeep
+
+Official Meshtastic builds normally expand `LOG_*` through `*console`,
+which is unsafe when the stock USB `SerialConsole` is intentionally absent.
+The build-time `DebugConfiguration.h` compatibility guard now selects a
+real upstream `RedirectablePrint` instance attached to MeshInk's existing
+serial device. No second SerialConsole, serial reader, or PhoneAPI is started.
+
+For SX1262 receive reliability the MeshInk scheduler now invokes upstream
+`pollMissedIrqs()`, `updateNoiseFloor()` and
+`periodicRadioMaintenance()` at the cadences of official `main.cpp`.
+Final board TCXO/RF-switch setup is followed by a fresh official RX arm.

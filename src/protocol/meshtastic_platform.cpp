@@ -5,14 +5,18 @@
 #include "../../lib/Meshtastic/src/target_specific.h"
 #include "../hardware/power.h"
 #include <esp_efuse.h>
-#include <esp_efuse_mac.h>
+#include <esp_mac.h>
 #include <esp_efuse_table.h>
 #include <cstring>
 
-// Meshtastic has no serial transport on this boot: MeshInk owns USB CDC.
-// The upstream DEBUG_PORT fallback checks this pointer before using it.
-class SerialConsole;
-SerialConsole *console=nullptr;
+// MeshInk already owns USB CDC. Use Meshtastic's genuine RedirectablePrint
+// on MeshInk's existing Serial, without constructing StreamAPI/SerialConsole.
+RedirectablePrint &meshink_meshtastic_debug_port(){
+    static RedirectablePrint logger(&Serial);
+    static bool initialized=false;
+    if(!initialized){logger.rpInit();initialized=true;}
+    return logger;
+}
 
 meshtastic::NodeStatus *nodeStatus = new meshtastic::NodeStatus();
 meshtastic::BluetoothStatus *bluetoothStatus = new meshtastic::BluetoothStatus();
