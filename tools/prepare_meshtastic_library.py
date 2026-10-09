@@ -85,3 +85,28 @@ if marker not in text_source:
                                       marker + end_line, 1)
     text_module.write_text(text_source, encoding="utf-8")
     print("[MeshInk] Kept official text routing/observers, delegated display/buzzer wake to MeshInk")
+
+# Both protocols own network state, but MeshInk exclusively mounts the
+# physical flash. Mount Meshtastic preferences on that *same* SPIFFS instance
+# without LittleFS auto-formatting any partition (and without a second FS).
+fs_h = upstream / "src" / "FSCommon.h"
+fs_content = fs_h.read_text(encoding="utf-8")
+old_fs = (
+    '#if defined(ARCH_ESP32)\n'
+    '// ESP32 version\n'
+    '#include "LittleFS.h"\n'
+    '#define FSCom LittleFS\n'
+    '#define FSBegin() FSCom.begin(true) // format on failure'
+)
+new_fs = (
+    '#if defined(ARCH_ESP32)\n'
+    '// ESP32 version: MeshInk shared FS, no partition autoformat\n'
+    '#include "SPIFFS.h"\n'
+    '#define FSCom SPIFFS\n'
+    '#define FSBegin() FSCom.begin(false)'
+)
+if new_fs not in fs_content:
+    if fs_content.count(old_fs) != 1:
+        raise RuntimeError("Official FSCommon.h changed; review shared storage adapter")
+    fs_h.write_text(fs_content.replace(old_fs, new_fs, 1), encoding="utf-8")
+    print("[MeshInk] Meshtastic filesystem delegated to MeshInk SPIFFS without autoformat")

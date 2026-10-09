@@ -58,7 +58,17 @@
       "+<modules/TraceRouteModule.cpp>",
       "+<gps/RTC.cpp>",
       "+<modules/KeyVerificationModule.cpp>",
-      "+<modules/StatusLEDModule.cpp>"
+      "+<modules/StatusLEDModule.cpp>",
+      "+<DisplayFormatters.cpp>",
+      "+<RedirectablePrint.cpp>",
+      "+<SPILock.cpp>",
+      "+<memGet.cpp>",
+      "+<memory/MemAudit.cpp>",
+      "+<platform/esp32/ESP32CryptoEngine.cpp>",
+      "+<SafeFile.cpp>",
+      "+<airtime.cpp>",
+      "+<PowerFSM.cpp>",
+      "+<xmodem.cpp>"
     ]
   }
 }

@@ -101,3 +101,11 @@ router, and service must be initialized before
 `meshink_meshtastic_attach_radio(router)` is invoked. The factory does not
 invoke MeshCore's wrapper or create a second `setup()`. Merely compiling
 this factory does not make Meshtastic operational.
+
+### Native runtime dependencies
+
+The official source whitelist now includes Meshtastic's own scheduler locking,
+crypto implementation (including ESP32 crypto), airtime accounting, radio
+logging, configuration storage support and headless PowerFSM implementation.
+The build-only FSCommon header adaptation uses MeshInk's mounted SPIFFS with
+**auto-format disabled**; no second LittleFS mount or filesystem erase.
