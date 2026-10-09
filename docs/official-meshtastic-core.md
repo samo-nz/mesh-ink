@@ -49,3 +49,12 @@ pinned and all permanent changes stay in MeshInk.
 sleep controller and a second GPS device manager. MeshInk still owns those
 physical services. Additional linker/runtime adaptation is expected before
 encrypted radio networking is hardware-testable.
+
+The upstream `main.h` includes headless `Screen.h` which still declares an
+OLED geometry enum; we use the **official pinned OLED header dependency** to
+compile those declarations without compiling the Meshtastic screen runtime.
+`USE_THREAD_NAMES` matches the upstream ArduinoThread configuration.
+The build PRE script also applies one fail-closed *temporary checkout* guard
+to `Power.h` so its unused IDF5 ADC declarations don't break MeshInk's IDF4
+toolchain; the upstream Git submodule reference and protocol implementations
+stay untouched. This guard can be removed if the target framework upgrades.
