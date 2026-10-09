@@ -1904,3 +1904,16 @@ assert 'case UiMessageState::Sending:state="SENDING";' in footer, "pending messa
 assert 'case UiMessageState::Sent:state="SENT";' in footer, "RF-complete messages show SENT"
 assert 'case UiMessageState::Delivered:state="DELIVERED";' in footer, "acknowledged direct messages show DELIVERED"
 assert 'case UiMessageState::Failed:state="FAILED";' in footer, "failed messages show FAILED"
+
+# 2.1.1-test.23: Legacy (MAC-ID, unsigned) public-channel NodeInfo
+# may supply DISPLAY names, never authenticated PKI keys.
+mt_nodeinfo=meshtastic_protocol_source.split("bool learn_node_info(const MeshPacket& packet) {",1)[1].split("void receive_text(const MeshPacket& packet) {",1)[0]
+assert 'if(packet.hasSignature){' in mt_nodeinfo, "signed NodeInfo must be validated, never downgraded to unsigned"
+assert 'if(!verified)' in mt_nodeinfo and 'rejected invalid signed NodeInfo' in mt_nodeinfo, "invalid signed NodeInfo rejected"
+assert 'MeshCryptoPKI::verifyPayload(' in mt_nodeinfo and 'MeshNodeId::nodeNumFromPublicKey(' in mt_nodeinfo, "verified identity still checks key binding and signature"
+assert 'if(item->has_public_key){' in mt_nodeinfo and 'if(!verified||memcmp(item->public_key,user.public_key.bytes,32)!=0)' in mt_nodeinfo, "unsigned identity claims cannot overwrite signed names or keys"
+assert 'if(verified){' in mt_nodeinfo and 'memcpy(item->public_key,user.public_key.bytes,32);' in mt_nodeinfo, "only signed key material is saved for direct PKI"
+assert 'const char* name=long_name?user.long_name:user.short_name;' in mt_nodeinfo and 'strncpy(item->long_name,name,sizeof(item->long_name)-1);' in mt_nodeinfo, "legacy NodeInfo supplies user-visible name"
+assert 'if(durable_change){' in mt_nodeinfo and 'save_nodes()' in mt_nodeinfo, "learned name survives protocol switching and reboot"
+assert 'NAME UNVERIFIED' in meshtastic_protocol_source, "unsigned legacy NodeInfo names clearly identified as unverified"
+assert 'nodeinfo_verified_count' in meshtastic_protocol_source and 'nodeinfo_legacy_count' in meshtastic_protocol_source and 'nodeinfo_rejected_count' in meshtastic_protocol_source, "NodeInfo diagnostics separate signed, unsigned and invalid packets"
