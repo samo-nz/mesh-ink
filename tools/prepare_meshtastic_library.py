@@ -110,3 +110,35 @@ if new_fs not in fs_content:
         raise RuntimeError("Official FSCommon.h changed; review shared storage adapter")
     fs_h.write_text(fs_content.replace(old_fs, new_fs, 1), encoding="utf-8")
     print("[MeshInk] Meshtastic filesystem delegated to MeshInk SPIFFS without autoformat")
+
+# MeshInk owns the serial port: skip optional serial configuration if the
+# genuine Meshtastic SerialModule is excluded. Channel/LoRa admin is unchanged.
+admin_path = upstream / "src" / "modules" / "AdminModule.cpp"
+admin_source = admin_path.read_text(encoding="utf-8")
+serial_old = "    case meshtastic_ModuleConfig_serial_tag:\n        LOG_INFO(\"Set module config: Serial\");"
+serial_new = "    case meshtastic_ModuleConfig_serial_tag:\n#if MESHTASTIC_EXCLUDE_SERIAL\n        LOG_WARN(\"Serial peripheral is not hosted by MeshInk Meshtastic\");\n        return false;\n#else\n        LOG_INFO(\"Set module config: Serial\");"
+serial_end = "        moduleConfig.serial = c.payload_variant.serial;\n        break;\n"
+if serial_new not in admin_source:
+    if admin_source.count(serial_old) != 1 or admin_source.count(serial_end) != 1:
+        raise RuntimeError("Upstream serial admin source changed; review guarded setting")
+    admin_source = admin_source.replace(serial_old, serial_new, 1)
+    admin_source = admin_source.replace(serial_end, serial_end + "#endif\n", 1)
+    admin_path.write_text(admin_source, encoding="utf-8")
+    print("[MeshInk] Guarded optional serial admin setting")
+
+# The stock Meshtastic factory formatter must never erase MeshInk's entire
+# shared SPIFFS partition (UI journal and settings live alongside /prefs).
+fs_cpp = upstream / "src" / "FSCommon.cpp"
+fs_source = fs_cpp.read_text(encoding="utf-8")
+unsafe_format = "    return FSCom.format();"
+safe_format = ("#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)\n"
+               "    LOG_WARN(\"Refusing partition-wide format of shared SPIFFS\");\n"
+               "    return false;\n"
+               "#else\n"
+               "    return FSCom.format();\n"
+               "#endif")
+if safe_format not in fs_source:
+    if fs_source.count(unsafe_format) != 1:
+        raise RuntimeError("Upstream filesystem format path changed")
+    fs_cpp.write_text(fs_source.replace(unsafe_format, safe_format, 1), encoding="utf-8")
+    print("[MeshInk] Blocked partition-wide format of shared SPIFFS")

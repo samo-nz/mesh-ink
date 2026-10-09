@@ -2,7 +2,8 @@
 #include "meshtastic_radio.h"
 #include "../../lib/Meshtastic/src/FSCommon.h"
 #include "../../lib/Meshtastic/src/SPILock.h"
-#include "../../lib/Meshtastic/src/SerialConsole.h"
+#include "../../lib/Meshtastic/src/PowerMon.h"
+#include "../../lib/Meshtastic/src/mesh/TransmitHistory.h"
 #include "../../lib/Meshtastic/src/PowerFSM.h"
 #include "../../lib/Meshtastic/src/PowerStatus.h"
 #include "../../lib/Meshtastic/src/airtime.h"
@@ -69,13 +70,17 @@ bool meshink_meshtastic_native_begin(){
     concurrency::hasBeenSetup=true;
     concurrency::OSThread::setup();
     initSPI();
-    consoleInit();
+    // MeshInk owns USB serial; use only the in-process official PhoneAPI.
+    powerMonInit();
+    serialSinceMsec=millis();
     fsInit(); // uses MeshInk's already-mounted SPIFFS, no autoformat
     nodeDB=new(std::nothrow) NodeDB();
     if(!nodeDB){
         Serial.println("[MeshInk/MT] NodeDB failed");
         return false;
     }
+    TransmitHistory::getInstance()->loadFromDisk();
+    if(nodeStatus)nodeStatus->observe(&nodeDB->newStatus);
     router=new(std::nothrow) ReliableRouter();
     service=new(std::nothrow) MeshService();
     if(!router||!service){
@@ -83,13 +88,14 @@ bool meshink_meshtastic_native_begin(){
         return false;
     }
     service->init();
-    setupModules();
     if(!airTime)airTime=new(std::nothrow) AirTime();
     if(!airTime){
         Serial.println("[MeshInk/MT] Airtime allocator failed");
         return false;
     }
     if(!powerStatus)powerStatus=new(std::nothrow) meshtastic::PowerStatus();
+    if(!powerStatus)return false;
+    setupModules();
     PowerFSM_setup(); // official excluded-power-FSM no-op, MeshInk owns sleep
     native_ready=meshink_meshtastic_attach_radio(*router);
     if(!native_ready)Serial.println("[MeshInk/MT] Native radio initialization failed");
