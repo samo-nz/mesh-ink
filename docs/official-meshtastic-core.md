@@ -12,13 +12,13 @@
 
 `src/protocol/meshtastic_official_phoneapi.cpp` subclasses the official PhoneAPI for in-process ToRadio/FromRadio commands. **It does not initialize MeshService, NodeDB, Router or the radio**, and is intentionally omitted from the current firmware source filter.
 
-## Work required before replacing Leaf
+## Official core replacement gates
 
 1. Prove the official core source can compile/link with MeshInk's toolchain. Meshtastic upstream uses a newer PIOArduino/ESP-IDF combination; any toolchain change must preserve MeshInk's PSRAM and hardware behaviour.
 2. Extract official NodeDB, routing, encryption, channels, MeshService and scheduling into one MeshInk-owned lifecycle (no second setup/loop).
 3. Implement MeshInk `RadioInterface` RX/TX and status callbacks for SX1262 without concurrent MeshCore ownership. Wire GPS/RTC, power and storage to existing services.
 4. Connect ToRadio/FromRadio and native features through the Meshtastic helper and UiDataProvider; test preservation/migration of saved Meshtastic data.
 5. Pass unified firmware link/6MiB OTA size checks and **hardware** RX/TX, direct PKI, channel encryption, ACK/routing, deep sleep and protocol switching tests.
-6. Only then remove `libmeshtastic-leaf`. **Retain `meshtastic/Crypto`**: official CryptoEngine uses AES/CTR, Curve25519 and XEdDSA.
+6. Remove `libmeshtastic-leaf` and its old backend as part of the official-runtime switch, as soon as official RX/TX and protocol operation have been demonstrated. Leaf has no compatibility or preservation requirement. **Retain `meshtastic/Crypto`**: official CryptoEngine uses AES/CTR, Curve25519 and XEdDSA.
 
-The active firmware still runs Leaf and the existing working MeshCore backend; there is no safe-to-flash official-core binary yet.
+The active firmware still runs Leaf and the existing working MeshCore backend only because the native official router/radio integration is not implemented yet. There is no safe-to-flash official-core binary yet. Do not keep Leaf merely to protect its implementation; avoid destructive storage migration, and remove Leaf promptly once the official replacement works.

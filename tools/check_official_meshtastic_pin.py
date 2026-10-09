@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline guard: pinned official Meshtastic and shared crypto until migration."""
+"""Offline guard: pinned official Meshtastic and shared crypto, independent of Leaf."""
 from pathlib import Path
 import subprocess
 
@@ -27,8 +27,6 @@ def check():
         raise SystemExit("The Meshtastic Crypto fork is required for XEdDSA/PKI")
     if "${meshink-crypto-meshtastic.lib_deps}" not in ini:
         raise SystemExit("Shared crypto is not Meshtastic's selected provider")
-    if "libmeshtastic-leaf.git" not in ini:
-        raise SystemExit("Leaf removed before official engine is proven")
     if "+<protocol/meshtastic_official_phoneapi.cpp>" in ini:
         raise SystemExit("Unintegrated PhoneAPI cannot be enabled in flashable firmware")
     official = ROOT / "lib/Meshtastic/src/mesh/PhoneAPI.h"

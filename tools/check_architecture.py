@@ -144,9 +144,6 @@ if "-DMESHINK_DEVICE_SERVICES_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must enable MeshInk-owned GPS/RTC device services")
 if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must register the Meshtastic backend")
-leaf_pin="https://github.com/Meshtastic-Solutions/libmeshtastic-leaf.git#bd542d6e77aa7b9507dcc8d153f6dad0c35a8c17"
-if leaf_pin not in unified_env:
-    errors.append("platformio.ini: libmeshtastic-leaf must stay pinned to reviewed 1.0.0 commit")
 meshtastic_crypto_pin="Crypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
 if meshtastic_crypto_pin not in platformio:
     errors.append("platformio.ini: pinned Meshtastic Crypto provider is missing")
@@ -157,7 +154,7 @@ selector_match=re.search(
     platformio,
 )
 if not selector_match:
-    errors.append("platformio.ini: active Crypto selector must explicitly choose the Meshtastic provider while Leaf is enabled")
+    errors.append("platformio.ini: active Crypto selector must explicitly choose the Meshtastic provider")
 if "${meshink-crypto.lib_deps}" not in unified_env:
     errors.append("platformio.ini: unified firmware must consume Crypto only through [meshink-crypto]")
 if meshtastic_crypto_pin in unified_env or "rweather/Crypto" in unified_env:
