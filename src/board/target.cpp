@@ -1907,3 +1907,13 @@ mesh::LocalIdentity radio_new_identity() {
     RadioNoiseListener rng(radio);
     return mesh::LocalIdentity(&rng);
 }
+
+// Native SX1262 pre-init: the same board preparation and chip-select
+// deselection used by radio_init(), without initializing MeshCore's wrapper.
+void t5_prepare_native_radio_spi(){
+    meshink_rtc_begin();
+    t5_radio_shared_bus_idle(true);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+}

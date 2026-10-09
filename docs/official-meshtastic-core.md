@@ -118,3 +118,9 @@ startup. MeshInk still mounts storage and powers the board before entering
 this function; official SX1262 setup is attached last. The same runtime
 services its official thread controller in the selected backend loop. No
 second standalone Meshtastic `setup()` or `loop()` is compiled.
+
+T5 radio init now uses the same proven MeshCore electrical sequence: deselect
+microSD/LoRa, prepare the clock/SPI bus, initialize SX1262 using RadioLib's
+initial 1.6 V TCXO setting, then program the fitted TCXO at 2.4 V and DIO2
+RF switch. The official Meshtastic radio still owns interrupts, CAD and
+transmit/receive. No MeshCore radio object is initialized on Meshtastic boot.

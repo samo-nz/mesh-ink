@@ -95,3 +95,6 @@ MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();
 PhysicalLayer* t5_radio_physical_layer();
 bool t5_radio_set_lora_crc(uint8_t bytes);
+
+// T5-only implementation, called exclusively by the generic hardware/radio API.
+void t5_prepare_native_radio_spi();

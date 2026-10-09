@@ -69,5 +69,5 @@ SPIClass& meshink_radio_native_spi_bus() {
 void meshink_radio_prepare_native_spi_bus() {
     // The selected protocol is responsible for later radio init and ISR
     // attachment; this prepares the common board-owned SPI bus only.
-    t5_shared_spi().begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
+    t5_prepare_native_radio_spi();
 }

@@ -18,25 +18,37 @@ std::unique_ptr<LockingArduinoHal> native_hal;
 // never hardcoded to a GPIO or chip frequency in a protocol helper.
 class MeshInkNativeSX1262 final : public SX1262Interface {
     bool dio2_switch_;
-    bool apply_board_rf_switch() {
+    float board_tcxo_voltage_;
+    bool apply_board_settings() {
+        // Match the working MeshCore H752 sequence exactly: start the chip
+        // on RadioLib's 1.6 V TCXO, change the fitted TCXO to 2.4 V, and
+        // finally enable the DIO2-controlled RF switch.
+        const int16_t tcxo=lora.setTCXO(board_tcxo_voltage_);
+        if(tcxo!=RADIOLIB_ERR_NONE){
+            Serial.printf("[MeshInk/MT] Post-init TCXO error %d\\n",(int)tcxo);
+            return false;
+        }
+        setTCXOVoltage(board_tcxo_voltage_); // reconfigure/recovery setting
         if(!dio2_switch_)return true;
-        const int16_t result=lora.setDio2AsRfSwitch(true);
-        if(result!=RADIOLIB_ERR_NONE)
-            Serial.printf("[MeshInk/MT] DIO2 RF switch error %d\\n",(int)result);
-        return result==RADIOLIB_ERR_NONE;
+        const int16_t rf=lora.setDio2AsRfSwitch(true);
+        if(rf!=RADIOLIB_ERR_NONE)
+            Serial.printf("[MeshInk/MT] Post-init DIO2 switch error %d\\n",(int)rf);
+        return rf==RADIOLIB_ERR_NONE;
     }
 public:
     MeshInkNativeSX1262(LockingArduinoHal* hal,RADIOLIB_PIN_TYPE cs,
                         RADIOLIB_PIN_TYPE irq,RADIOLIB_PIN_TYPE rst,
-                        RADIOLIB_PIN_TYPE busy,bool dio2)
-        : SX1262Interface(hal,cs,irq,rst,busy),dio2_switch_(dio2){}
+                        RADIOLIB_PIN_TYPE busy,float tcxo,bool dio2)
+        : SX1262Interface(hal,cs,irq,rst,busy),dio2_switch_(dio2),
+          board_tcxo_voltage_(tcxo){}
     bool init() override {
+        setTCXOVoltage(1.6f);
         if(!SX1262Interface::init())return false;
-        return apply_board_rf_switch();
+        return apply_board_settings();
     }
     bool reconfigure() override {
         if(!SX1262Interface::reconfigure())return false;
-        return apply_board_rf_switch();
+        return apply_board_settings();
     }
 };
 }
@@ -64,9 +76,9 @@ std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
     std::unique_ptr<MeshInkNativeSX1262> radio(new(std::nothrow) MeshInkNativeSX1262(
         native_hal.get(),(RADIOLIB_PIN_TYPE)hw.chip_select,
         (RADIOLIB_PIN_TYPE)hw.dio1,(RADIOLIB_PIN_TYPE)hw.reset,
-        (RADIOLIB_PIN_TYPE)hw.busy,hw.dio2_rf_switch));
+        (RADIOLIB_PIN_TYPE)hw.busy,hw.tcxo_voltage,hw.dio2_rf_switch));
     if(!radio)return nullptr;
-    radio->setTCXOVoltage(hw.tcxo_voltage);
+    // The native wrapper applies the board TCXO voltage only after begin().
     // Upstream init() configures and arms native IRQ-driven RX, and applies
     // the Meshtastic modem's own synchronisation, CAD and transmission rules.
     if(!radio->init()){
