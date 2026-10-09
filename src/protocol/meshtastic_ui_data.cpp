@@ -476,9 +476,11 @@ NativeProvider provider;
 } // namespace
 
 void meshink_meshtastic_ui_begin(){
-    if(!state)state=new(std::nothrow) State();
+    // This state is deliberately heap allocated: zero-initializing a large
+    // temporary State on the ESP32 loop task stack can exhaust its stack.
+    delete state;
+    state=new(std::nothrow) State();
     if(!state)return;
-    *state=State{};
     setup_channel(state->channels[0],0,"PRIMARY","PRIMARY CHANNEL");
     update_unread();
 }
