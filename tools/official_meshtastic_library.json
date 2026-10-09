@@ -56,7 +56,9 @@
       "+<modules/StatusMessageModule.cpp>",
       "+<modules/TextMessageModule.cpp>",
       "+<modules/TraceRouteModule.cpp>",
-      "+<gps/RTC.cpp>"
+      "+<gps/RTC.cpp>",
+      "+<modules/KeyVerificationModule.cpp>",
+      "+<modules/StatusLEDModule.cpp>"
     ]
   }
 }

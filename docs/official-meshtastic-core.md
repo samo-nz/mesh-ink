@@ -63,3 +63,13 @@ The unified build explicitly selects C++17 for Meshtastic's native
 `std::optional` and digit separators, and pins upstream's `ErriezCRC32`
 dependency for NodeDB. Both protocol cores compile against the same C++
 standard within the firmware; no changes to hardware abstraction.
+
+### Headless protocol modules
+
+The selected upstream module set includes official Admin, PKI key verification,
+NodeInfo, NeighborInfo, routing, text messaging, status and TraceRoute.
+Board-facing implementations that MeshInk already owns (input, Bluetooth,
+serial, displays, battery telemetry, alert hardware) and optional standalone
+Paxcounter, StoreForward and sensor/demo modules are disabled at the build
+boundary. This avoids pulling extra device-firmware dependencies into the
+protocol core; network protocol formats remain upstream.

@@ -14,7 +14,8 @@
 #define HAS_BLUETOOTH 0
 #define HAS_WIFI 0
 #define HAS_RADIO 1
-#define HAS_TELEMETRY 1
+// MeshInk supplies hardware power telemetry; keep native network telemetry parsing.
+#define HAS_TELEMETRY 0
 #define USE_SX1262 1
 
 // Official Meshtastic's native SX1262Interface reads these names from
