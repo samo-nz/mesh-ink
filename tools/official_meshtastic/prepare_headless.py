@@ -176,18 +176,23 @@ extern "C" bool meshink_phoneapi_pending() {
 }
 """
 
-# Upstream v2.8.1 MAX17048Sensor.h inherits TelemetrySensor for power
-# telemetry, even when environmental and air-quality sensors are excluded.
-# TelemetrySensor.h does not account for POWER_TELEMETRY in its declaration
-# guard; that leaves MAX17048Sensor with an undefined base class. Fix just
-# that guard in the isolated checkout, retaining the power telemetry feature.
-TELEMETRY_SENSOR_REL = "src/modules/Telemetry/Sensor/TelemetrySensor.h"
-TELEMETRY_GUARD_OLD = (
-    "#if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR || !MESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR"
-)
-TELEMETRY_GUARD_NEW = (
-    "#if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR || !MESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR "
-    "|| !MESHTASTIC_EXCLUDE_POWER_TELEMETRY"
+# In upstream v2.8.1, MAX17048Sensor inherits both TelemetrySensor and
+# VoltageSensor for power telemetry. Both base-class headers accidentally
+# exclude their declarations when environmental sensors are disabled.
+# Restore just the missing power-telemetry branch in the temporary checkout;
+# do not drop the H752's battery telemetry to work around those declarations.
+UPSTREAM_GUARD_PATCHES = (
+    (
+        "src/modules/Telemetry/Sensor/TelemetrySensor.h",
+        "#if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR || !MESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR",
+        "#if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR || !MESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR "
+        "|| !MESHTASTIC_EXCLUDE_POWER_TELEMETRY",
+    ),
+    (
+        "src/modules/Telemetry/Sensor/VoltageSensor.h",
+        "#if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR",
+        "#if !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR || !MESHTASTIC_EXCLUDE_POWER_TELEMETRY",
+    ),
 )
 
 FILES = {
@@ -212,15 +217,15 @@ def prepare(root: Path):
             raise ValueError("Refusing to overwrite modified upstream checkout: " + str(path))
         path.write_text(body)
 
-    sensor_header = root / TELEMETRY_SENSOR_REL
-    source = sensor_header.read_text()
-    if TELEMETRY_GUARD_NEW in source:
-        pass  # Already patched in this temporary checkout.
-    elif source.count(TELEMETRY_GUARD_OLD) != 1:
-        raise ValueError("Unexpected upstream TelemetrySensor.h guard; review before patching")
-    else:
-        sensor_header.write_text(source.replace(TELEMETRY_GUARD_OLD, TELEMETRY_GUARD_NEW, 1))
-        print("Patched upstream TelemetrySensor declaration guard for power telemetry")
+    for relative, old_guard, new_guard in UPSTREAM_GUARD_PATCHES:
+        sensor_header = root / relative
+        source = sensor_header.read_text()
+        if new_guard in source:
+            continue  # Already patched in this temporary checkout.
+        if source.count(old_guard) != 1:
+            raise ValueError(f"Unexpected upstream guard in {relative}; review before patching")
+        sensor_header.write_text(source.replace(old_guard, new_guard, 1))
+        print(f"Patched upstream {relative} declaration guard for power telemetry")
     print(f"Created {ENV} based on {UPSTREAM_TAG}: build only, never flash over MeshInk.")
 
 if __name__ == "__main__":
