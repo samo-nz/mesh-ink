@@ -14,7 +14,7 @@
 #include "../../lib/Meshtastic/src/mesh/MeshService.h"
 #include "../../lib/Meshtastic/src/mesh/CryptoEngine.h"
 #include "../../lib/Meshtastic/src/mesh/RadioLibInterface.h"
-#include "../../lib/Meshtastic/src/Throttle.h"
+#include "../../lib/Meshtastic/src/mesh/Throttle.h"
 #include "../../lib/Meshtastic/src/modules/Modules.h"
 #include "../../lib/Meshtastic/src/mqtt/MQTT.h"
 #include "../../lib/Meshtastic/src/main.h"
