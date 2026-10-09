@@ -13,6 +13,7 @@ idf_component_register(
         "protocol/meshtastic_protocol.cpp"
         "protocol/meshtastic_ui_data.cpp"
         "protocol/meshtastic_official_phoneapi.cpp"
+        "protocol/meshtastic_radio.cpp"
         "message_store.cpp"
         "backup_restore.cpp"
         "device_settings_snapshot.cpp"

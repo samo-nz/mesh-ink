@@ -83,3 +83,19 @@ the **unchanged official message handling and observer notifications** while
 excluding the separate Meshtastic display/alert/wake block. MeshInk's own
 FromRadio provider drives the e-paper UI. The pinned upstream module remains
 version-controlled and unmodified.
+
+## Official SX1262 factory (added)
+
+`src/protocol/meshtastic_radio.cpp` constructs **the upstream**
+`SX1262Interface` with the shared MeshInk board SPI bus, generic native
+module descriptor, 2.4 V T5 TCXO supplied by board code, and the official
+`LockingArduinoHal`. It calls native `init()` and transfers the radio's
+ownership to `Router::addInterface()`, following the same boot-exclusive
+ownership as MeshCore. For this T5 target `SX126X_DIO2_AS_RF_SWITCH` is
+set as a hardware feature. No SX1262 packet code is duplicated in MeshInk.
+
+**Lifecycle integration remains:** official `NodeDB`, crypto, SPI locking,
+router, and service must be initialized before
+`meshink_meshtastic_attach_radio(router)` is invoked. The factory does not
+invoke MeshCore's wrapper or create a second `setup()`. Merely compiling
+this factory does not make Meshtastic operational.
