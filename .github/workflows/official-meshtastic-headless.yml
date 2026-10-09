@@ -29,6 +29,8 @@ jobs:
           # between build phases (SCons.Tool.FortranCommon import failure).
           printf '%s\n' 'pioarduino==6.1.19' > "$RUNNER_TEMP/meshink-uv-constraints.txt"
           echo "UV_CONSTRAINT=$RUNNER_TEMP/meshink-uv-constraints.txt" >> "$GITHUB_ENV"
+      - name: Test safe headless preparation and power telemetry guards
+        run: python -m unittest discover -s tools/official_meshtastic -p 'test_*.py' -v
       - name: Fetch pinned official Meshtastic 2.8.1
         run: git clone --depth 1 --branch v2.8.1.8e6a88d https://github.com/meshtastic/firmware.git official-meshtastic
       - name: Prepare screenless H752-01
