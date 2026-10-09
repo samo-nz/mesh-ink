@@ -18,3 +18,13 @@ bool meshink_meshtastic_ui_settings_item(size_t index, MeshInkProtocolSettingIte
 // It cannot access pins, hardware settings, or MeshCore transports.
 bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel);
 uint32_t meshink_meshtastic_ui_own_node();
+
+// Region/preset data is supplied by the upstream Meshtastic config handshake,
+// not by MeshCore's frequency table or a board-specific UI.
+size_t meshink_meshtastic_ui_region_count();
+const char* meshink_meshtastic_ui_region_name(size_t index);
+size_t meshink_meshtastic_ui_preset_count(size_t region);
+const char* meshink_meshtastic_ui_preset_name(size_t region,size_t preset);
+int meshink_meshtastic_ui_preset_index(size_t region,size_t preset);
+bool meshink_meshtastic_ui_commit_radio(size_t region,size_t preset,uint8_t hops);
+bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& lora);

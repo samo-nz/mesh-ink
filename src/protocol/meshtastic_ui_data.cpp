@@ -55,6 +55,9 @@ struct State {
     bool selected_is_channel=true;
     bool config_received=false;
     bool config_complete=false;
+    bool region_map_received=false;
+    meshtastic_LoRaRegionPresetMap region_map{};
+    meshtastic_Config_LoRaConfig lora{};
     bool tx_enabled=true;
     uint8_t tx_power=0;
     uint32_t hops=0;
@@ -319,6 +322,7 @@ void note_config(const meshtastic_Config& config){
     if(!state||config.which_payload_variant!=meshtastic_Config_lora_tag)return;
     const auto& l=config.payload_variant.lora;
     state->config_received=true;
+    state->lora=l;
     state->region=l.region;state->preset=l.modem_preset;
     state->tx_enabled=l.tx_enabled;state->tx_power=(uint8_t)std::max(0,(int)l.tx_power);
     state->hops=l.hop_limit;
@@ -644,6 +648,10 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         note_config(response.config);break;
       case meshtastic_FromRadio_packet_tag:
         note_packet(response.packet);break;
+      case meshtastic_FromRadio_region_presets_tag:
+        state->region_map=response.region_presets;
+        state->region_map_received=true;
+        changed();break;
       case meshtastic_FromRadio_config_complete_id_tag:
         state->config_complete=true;
         changed();break;
@@ -666,3 +674,106 @@ bool meshink_meshtastic_ui_settings_item(size_t i,MeshInkProtocolSettingItem& it
 }
 
 uint32_t meshink_meshtastic_ui_own_node(){return state?state->me:0;}
+
+namespace {
+struct NativeRegion {
+    meshtastic_Config_LoRaConfig_RegionCode code;
+    const char* label;
+};
+// These are official upstream region enum values. Never add the SX1280-only
+// 2.4 GHz region to an SX1262 build. Licensing, permitted RF parameters and
+// actual preset constraints remain the responsibility of upstream Meshtastic.
+const NativeRegion regions[]={
+    {meshtastic_Config_LoRaConfig_RegionCode_ANZ,"ANZ"},
+    {meshtastic_Config_LoRaConfig_RegionCode_NZ_865,"NZ 865"},
+    {meshtastic_Config_LoRaConfig_RegionCode_US,"US"},
+    {meshtastic_Config_LoRaConfig_RegionCode_EU_433,"EU 433"},
+    {meshtastic_Config_LoRaConfig_RegionCode_EU_868,"EU 868"},
+    {meshtastic_Config_LoRaConfig_RegionCode_EU_866,"EU 866"},
+    {meshtastic_Config_LoRaConfig_RegionCode_EU_N_868,"EU NARROW"},
+    {meshtastic_Config_LoRaConfig_RegionCode_CN,"CHINA"},
+    {meshtastic_Config_LoRaConfig_RegionCode_JP,"JAPAN"},
+    {meshtastic_Config_LoRaConfig_RegionCode_KR,"KOREA"},
+    {meshtastic_Config_LoRaConfig_RegionCode_IN,"INDIA"},
+    {meshtastic_Config_LoRaConfig_RegionCode_TW,"TAIWAN"},
+    {meshtastic_Config_LoRaConfig_RegionCode_TH,"THAILAND"},
+    {meshtastic_Config_LoRaConfig_RegionCode_MY_919,"MALAYSIA 919"},
+    {meshtastic_Config_LoRaConfig_RegionCode_SG_923,"SINGAPORE 923"},
+    {meshtastic_Config_LoRaConfig_RegionCode_BR_902,"BRAZIL 902"}
+};
+const meshtastic_LoRaPresetGroup* permitted_group(size_t region){
+    if(!state||!state->region_map_received||
+       region>=sizeof(regions)/sizeof(regions[0]))return nullptr;
+    const auto& map=state->region_map;
+    for(size_t i=0;i<map.region_groups_count;++i){
+        const auto& mapping=map.region_groups[i];
+        if(mapping.region==regions[region].code&&mapping.group_index<map.groups_count)
+            return &map.groups[mapping.group_index];
+    }
+    return nullptr;
+}
+meshtastic_Config_LoRaConfig_ModemPreset selected_preset(size_t region,size_t index){
+    if(const auto* group=permitted_group(region)){
+        if(index<group->presets_count)return group->presets[index];
+        return group->default_preset;
+    }
+    return meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+}
+const char* preset_label(meshtastic_Config_LoRaConfig_ModemPreset p){
+    switch(p){
+      case meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST:return "LONG FAST";
+      case meshtastic_Config_LoRaConfig_ModemPreset_LONG_SLOW:return "LONG SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_VERY_LONG_SLOW:return "VERY LONG SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_SLOW:return "MEDIUM SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_FAST:return "MEDIUM FAST";
+      case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_SLOW:return "SHORT SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST:return "SHORT FAST";
+      case meshtastic_Config_LoRaConfig_ModemPreset_LONG_MODERATE:return "LONG MODERATE";
+      case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_TURBO:return "SHORT TURBO";
+      case meshtastic_Config_LoRaConfig_ModemPreset_LONG_TURBO:return "LONG TURBO";
+      case meshtastic_Config_LoRaConfig_ModemPreset_LITE_FAST:return "LITE FAST";
+      case meshtastic_Config_LoRaConfig_ModemPreset_LITE_SLOW:return "LITE SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_NARROW_FAST:return "NARROW FAST";
+      case meshtastic_Config_LoRaConfig_ModemPreset_NARROW_SLOW:return "NARROW SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_TINY_FAST:return "TINY FAST";
+      case meshtastic_Config_LoRaConfig_ModemPreset_TINY_SLOW:return "TINY SLOW";
+      case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_TURBO:return "MEDIUM TURBO";
+      default:return "UNKNOWN";
+    }
+}
+}
+size_t meshink_meshtastic_ui_region_count(){
+    return sizeof(regions)/sizeof(regions[0]);
+}
+const char* meshink_meshtastic_ui_region_name(size_t i){
+    return i<meshink_meshtastic_ui_region_count()?regions[i].label:"";
+}
+size_t meshink_meshtastic_ui_preset_count(size_t region){
+    if(region>=meshink_meshtastic_ui_region_count())return 0;
+    if(const auto* group=permitted_group(region))return group->presets_count;
+    // A stale/missing upstream legality map cannot authorize extra choices.
+    return 1;
+}
+const char* meshink_meshtastic_ui_preset_name(size_t r,size_t p){
+    if(r>=meshink_meshtastic_ui_region_count()||
+       p>=meshink_meshtastic_ui_preset_count(r))return "";
+    return preset_label(selected_preset(r,p));
+}
+int meshink_meshtastic_ui_preset_index(size_t r,size_t p){
+    return r<meshink_meshtastic_ui_region_count()&&
+           p<meshink_meshtastic_ui_preset_count(r)?(int)p:-1;
+}
+bool meshink_meshtastic_ui_commit_radio(size_t r,size_t p,uint8_t hops){
+    if(!state||!state->config_complete||!state->config_received||
+       r>=meshink_meshtastic_ui_region_count()||hops<1||hops>7)return false;
+    const auto* allowed=permitted_group(r);
+    // Only commit combinations confirmed by the pinned official engine.
+    if(!allowed||p>=allowed->presets_count)return false;
+    meshtastic_Config_LoRaConfig next=state->lora;
+    next.region=regions[r].code;
+    next.use_preset=true;
+    next.modem_preset=allowed->presets[p];
+    next.hop_limit=hops;
+    next.tx_enabled=true;
+    return meshink_meshtastic_submit_lora_config(next);
+}
