@@ -20,7 +20,11 @@ RedirectablePrint &meshink_meshtastic_debug_port(){
 
 meshtastic::NodeStatus *nodeStatus = new meshtastic::NodeStatus();
 meshtastic::BluetoothStatus *bluetoothStatus = new meshtastic::BluetoothStatus();
-ScanI2C::DeviceAddress screen_found = ScanI2C::ADDRESS_NONE;
+// Only the upstream optional HardwareRNG guard reads this pointer; it is
+// correctly null because MeshInk owns USB and has no Meshtastic SerialConsole.
+// Native LOG_* always uses meshink_meshtastic_debug_port(), never this pointer.
+SerialConsole *console=nullptr;
+ScanI2C::DeviceAddress screen_found{}; // default I2CPort::NO_I2C
 
 // Native radio subscribes to these lifecycle events. MeshInk controls sleep.
 Observable<void *> preflightSleep;
