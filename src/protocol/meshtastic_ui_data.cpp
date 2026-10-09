@@ -1,5 +1,6 @@
 #include "meshtastic_ui_data.h"
 #include "../ui_onboarding.h"
+#include "../message_store.h"
 #include <pb_decode.h>
 #include <algorithm>
 #include <cstdio>
@@ -41,6 +42,7 @@ struct Message {
     uint32_t peer=0;
     uint8_t channel=0;
     bool broadcast=false, unread=false;
+    uint32_t journal_sequence=0;
     char text[241]{};
     char time[16]{};
     UiMessage row{};
@@ -69,6 +71,8 @@ struct State {
     char telemetry_text[50]{};
 };
 State* state=nullptr;
+bool journal_ready=false;
+constexpr uint8_t kProtocolId=2;
 UiListEntry empty_entry={"","","",0,UiNodeRole::Unknown};
 UiMessage empty_message={"","",false,UiMessageState::Received,""};
 
@@ -205,6 +209,22 @@ void update_unread(){
         }
     }
 }
+void message_key(const Message& m,uint8_t (&key)[7],size_t& bytes){
+    memset(key,0,sizeof(key));
+    if(m.broadcast){key[0]=m.channel;bytes=1;return;}
+    bytes=4;
+    for(unsigned i=0;i<4;++i)key[i]=(uint8_t)(m.peer>>(8*i));
+}
+void append_to_journal(Message& m,uint32_t timestamp,bool received,int8_t snr4=0){
+    if(!journal_ready)return;
+    uint8_t key[7]{};size_t key_size=0;
+    message_key(m,key,key_size);
+    m.journal_sequence=meshink_message_store().append(
+        m.broadcast?MeshInkMessageKind::Channel:MeshInkMessageKind::Direct,
+        key,key_size,m.text,timestamp,m.row.state,m.packet_id,
+        MeshInkMessageOrigin::LocalUi,received,snr4,
+        MESHINK_MESSAGE_PATH_UNKNOWN,m.unread,kProtocolId);
+}
 bool active_matches(const Message& m){
     if(!state)return false;
     return state->selected_is_channel?(m.broadcast&&m.channel==state->selected_channel)
@@ -217,7 +237,20 @@ void read_active(){
         if(active_matches(state->messages[i])&&state->messages[i].unread){
             state->messages[i].unread=false;updated=true;
         }
-    if(updated)update_unread();
+    if(updated){
+        if(journal_ready){
+            Message anchor{};
+            anchor.broadcast=state->selected_is_channel;
+            anchor.channel=state->selected_channel;
+            anchor.peer=state->selected_node;
+            uint8_t key[7]{};size_t key_size=0;
+            message_key(anchor,key,key_size);
+            meshink_message_store().mark_read_through(
+                anchor.broadcast?MeshInkMessageKind::Channel:MeshInkMessageKind::Direct,
+                key,key_size,kProtocolId);
+        }
+        update_unread();
+    }
 }
 void set_active_channel(uint8_t number){
     if(!state)return;
@@ -309,6 +342,8 @@ void note_routing(const meshtastic_MeshPacket& packet){
         if(m.packet_id==ref&&!m.broadcast&&!m.unread){
             if(m.row.state==UiMessageState::Sending||m.row.state==UiMessageState::Sent){
                 m.row.state=bad?UiMessageState::Failed:UiMessageState::Delivered;
+                if(journal_ready&&m.journal_sequence)
+                    meshink_message_store().update_state(m.journal_sequence,m.row.state);
                 changed();
             }
         }
@@ -333,6 +368,10 @@ void note_packet(const meshtastic_MeshPacket& p){
     format_time(msg->time,sizeof(msg->time),p.has_rx_time?p.rx_time:(uint32_t)time(nullptr));
     msg->unread=!outgoing&&!active_matches(*msg);
     msg->row={msg->text,msg->time,outgoing,outgoing?UiMessageState::Sent:UiMessageState::Received,"MESHTASTIC"};
+    const uint32_t timestamp=p.has_rx_time?p.rx_time:(uint32_t)time(nullptr);
+    const float scaled=p.rx_snr*4.0f;
+    const int snr4=std::max(-128,std::min(127,(int)scaled));
+    append_to_journal(*msg,timestamp,!outgoing,(int8_t)snr4);
     update_unread();
     changed();
     if(!outgoing)ui_notify_message_received(broadcast);
@@ -476,12 +515,37 @@ NativeProvider provider;
 } // namespace
 
 void meshink_meshtastic_ui_begin(){
-    // This state is deliberately heap allocated: zero-initializing a large
-    // temporary State on the ESP32 loop task stack can exhaust its stack.
+    // Keep the large view cache off the ESP32 loop-task stack and allocate it
+    // only for a Meshtastic boot, never for MeshCore.
     delete state;
     state=new(std::nothrow) State();
+    journal_ready=false;
     if(!state)return;
     setup_channel(state->channels[0],0,"PRIMARY","PRIMARY CHANNEL");
+    journal_ready=meshink_message_store().begin();
+    if(journal_ready){
+        MeshInkMessageStore& store=meshink_message_store();
+        for(size_t i=0;i<store.count();++i){
+            MeshInkStoredMessage record{};
+            if(!store.read(i,record)||meshink_message_protocol(record)!=kProtocolId)continue;
+            const bool broadcast=record.kind==(uint8_t)MeshInkMessageKind::Channel;
+            uint32_t peer=0;
+            if(!broadcast)for(unsigned b=0;b<4;++b)peer|=(uint32_t)record.key[b]<<(8*b);
+            if(!broadcast&&!peer)continue;
+            Message* msg=append_message();
+            if(!msg)break;
+            msg->broadcast=broadcast;msg->peer=peer;msg->channel=broadcast?record.key[0]:0;
+            msg->packet_id=record.ack;msg->journal_sequence=record.sequence;
+            msg->unread=(record.flags&MESHINK_MESSAGE_UNREAD)!=0;
+            snprintf(msg->text,sizeof(msg->text),"%s",record.text);
+            format_time(msg->time,sizeof(msg->time),record.timestamp);
+            msg->row={msg->text,msg->time,
+                record.state!=(uint8_t)UiMessageState::Received,
+                (UiMessageState)record.state,"MESHTASTIC"};
+            if(broadcast)channel_by_number(msg->channel);
+            else node_for(peer);
+        }
+    }
     update_unread();
 }
 UiDataProvider* meshink_meshtastic_ui_provider(){return state?&provider:nullptr;}
@@ -501,6 +565,7 @@ void meshink_meshtastic_ui_sent(uint32_t id,const char* text,bool success){
     snprintf(m->text,sizeof(m->text),"%s",text);
     format_time(m->time,sizeof(m->time),(uint32_t)time(nullptr));
     m->row={m->text,m->time,true,m->broadcast?UiMessageState::Sent:UiMessageState::Sending,"MESHTASTIC"};
+    append_to_journal(*m,(uint32_t)time(nullptr),false);
     changed();
 }
 void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){

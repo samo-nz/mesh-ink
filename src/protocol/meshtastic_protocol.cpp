@@ -8,6 +8,7 @@
 #include "meshtastic_ui_data.h"
 #include "../../include/meshtastic_official_version.h"
 #include "../ui_onboarding.h"
+#include "../hardware/storage.h"
 #include <cstring>
 
 // MeshInk handles the UI; all routing, channel crypto and network
@@ -15,6 +16,10 @@
 namespace {
 bool ready=false;
 void start(){
+    // Follow MeshCore's shared storage-first startup ordering. The selected
+    // protocol owns no board filesystems or data partitions itself.
+    const bool storage_ready=meshink_storage_mount_internal_safe();
+    if(!storage_ready)ui_show_storage_initializing();
     meshink_meshtastic_ui_begin();
     ui_use_data_provider(meshink_meshtastic_ui_provider());
     // Native Router, NodeDB and MeshService must initialize before PhoneAPI.
