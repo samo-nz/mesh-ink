@@ -69,6 +69,7 @@
       "+<airtime.cpp>",
       "+<PowerFSM.cpp>",
       "+<PowerMon.cpp>",
+      "+<detect/ScanI2C.cpp>",
       "+<xmodem.cpp>"
     ]
   }
