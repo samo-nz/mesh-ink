@@ -11,7 +11,7 @@ def check():
     actual = subprocess.check_output(
         ["git", "ls-tree", "HEAD", "lib/Meshtastic"], cwd=ROOT, text=True
     ).strip()
-    expected = f"160000 commit {UPSTREAM}\\tlib/Meshtastic".replace("\\\\t", "\\t")
+    expected = f"160000 commit {UPSTREAM}\tlib/Meshtastic"
     if actual != expected:
         raise SystemExit(f"Meshtastic gitlink mismatch: {actual!r}")
     submodules = (ROOT / ".gitmodules").read_text()
