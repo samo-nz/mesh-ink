@@ -176,6 +176,7 @@ static uint32_t last_message_packet_id=0;
 static uint32_t last_message_sequence=0;
 static uint32_t sent_count=0,received_count=0,send_refused=0,radio_errors=0;
 static uint32_t position_received_count=0;
+static uint32_t nodeinfo_verified_count=0,nodeinfo_legacy_count=0,nodeinfo_rejected_count=0;
 static void update_radio_summary();
 // Leaf currently implements just the standard public primary channel.
 // Secondary channel controls are present in the shared UI but intentionally
@@ -637,36 +638,78 @@ public:
     }
 
     bool learn_node_info(const MeshPacket& packet) {
+        // The standard public channel includes legitimate legacy (pre-2.8)
+        // nodes with MAC-derived IDs and unsigned NodeInfo broadcasts. Decode
+        // their claimed display names, but NEVER use unverified key material
+        // for PKI direct messages or replace a previously verified identity.
         meshtastic_User user=meshtastic_User_init_zero;
         pb_istream_t stream=pb_istream_from_buffer(packet.payload,packet.payloadLen);
         if(!pb_decode(&stream,meshtastic_User_fields,&user)){
+            ++nodeinfo_rejected_count;
             Serial.printf("[T5-MESHTASTIC] invalid NodeInfo protobuf from !%08lx\n",
                           (unsigned long)packet.header.from);
             return false;
         }
-        if(user.public_key.size!=32||
-           !MeshCryptoPKI::isUsablePublicKey(user.public_key.bytes)||
-           MeshNodeId::nodeNumFromPublicKey(user.public_key.bytes,32)!=packet.header.from||
-           !packet.hasSignature||
-           !MeshCryptoPKI::verifyPayload(
-               user.public_key.bytes,packet.header.from,packet.header.id,
-               (uint32_t)packet.portNum,packet.payload,packet.payloadLen,
-               packet.signature)){
-            Serial.printf("[T5-MESHTASTIC] rejected unverified NodeInfo from !%08lx\n",
-                          (unsigned long)packet.header.from);
-            return false;
+        if(!MeshNodeId::isUsableNodeNum(packet.header.from)||
+           packet.header.from==leaf.getNodeNum())return false;
+        // A malformed label is not allowed to reach the shared UI/font path.
+        const auto usable_label=[](const char* value,size_t maxlen)->bool{
+            if(!value[0])return false;
+            for(size_t i=0;i<maxlen&&value[i];++i)
+                if((uint8_t)value[i]<0x20||(uint8_t)value[i]==0x7f)
+                    return false;
+            return true;
+        };
+        const bool long_name=usable_label(user.long_name,sizeof(user.long_name));
+        const bool short_name=usable_label(user.short_name,sizeof(user.short_name));
+        if(!long_name&&!short_name)return false;
+
+        bool verified=false;
+        if(packet.hasSignature){
+            // Signed NodeInfo must pass ALL identity and XEdDSA checks.
+            // Never downgrade an invalid signed packet into an unsigned one.
+            verified=user.public_key.size==32&&
+                MeshCryptoPKI::isUsablePublicKey(user.public_key.bytes)&&
+                MeshNodeId::nodeNumFromPublicKey(user.public_key.bytes,32)==packet.header.from&&
+                MeshCryptoPKI::verifyPayload(
+                    user.public_key.bytes,packet.header.from,packet.header.id,
+                    (uint32_t)packet.portNum,packet.payload,packet.payloadLen,
+                    packet.signature);
+            if(!verified){
+                ++nodeinfo_rejected_count;
+                Serial.printf("[T5-MESHTASTIC] rejected invalid signed NodeInfo !%08lx\n",
+                              (unsigned long)packet.header.from);
+                return false;
+            }
         }
         NodeRecord* item=ensure(packet.header.from);
         if(!item)return false;
-        // Avoid rewriting flash for each identical periodic NodeInfo advert.
-        const bool durable_change=!item->has_public_key||
-            memcmp(item->public_key,user.public_key.bytes,32)!=0||
-            item->role!=(uint8_t)user.role||
-            (user.long_name[0]&&strncmp(item->long_name,user.long_name,sizeof(item->long_name)-1))||
-            (user.short_name[0]&&strncmp(item->short_name,user.short_name,sizeof(item->short_name)-1));
-        item->has_public_key=true;
-        memcpy(item->public_key,user.public_key.bytes,32);
-        item->role=(uint8_t)user.role;
+        if(item->has_public_key){
+            // A signed identity is never replaced by an unsigned claim or by
+            // a different key that happens to share the same 32-bit node ID.
+            if(!verified||memcmp(item->public_key,user.public_key.bytes,32)!=0){
+                ++nodeinfo_rejected_count;
+                Serial.printf("[T5-MESHTASTIC] rejected NodeInfo identity downgrade !%08lx\n",
+                              (unsigned long)packet.header.from);
+                return false;
+            }
+        }
+        const char* name=long_name?user.long_name:user.short_name;
+        const bool name_changed=strncmp(item->long_name,name,sizeof(item->long_name)-1)!=0;
+        const bool short_changed=short_name&&
+            strncmp(item->short_name,user.short_name,sizeof(item->short_name)-1)!=0;
+        const bool durable_change=name_changed||short_changed||
+            (verified&&(!item->has_public_key||
+                        item->role!=(uint8_t)user.role));
+        if(verified){
+            // Only cryptographically verified public keys can enable PKI.
+            memcpy(item->public_key,user.public_key.bytes,32);
+            item->has_public_key=true;
+            item->role=(uint8_t)user.role;
+            ++nodeinfo_verified_count;
+        }else{
+            ++nodeinfo_legacy_count;
+        }
         item->last_seen=now_utc();
         item->last_node_info=item->last_seen;
         item->last_rssi=packet.rxRssi;
@@ -674,15 +717,24 @@ public:
         const uint8_t start=packet.header.getHopStart();
         const uint8_t left=packet.header.getHopLimit();
         item->last_hops=start>=left?(uint8_t)(start-left):0;
-        if(user.long_name[0])strncpy(item->long_name,user.long_name,sizeof(item->long_name)-1);
-        if(user.short_name[0])strncpy(item->short_name,user.short_name,sizeof(item->short_name)-1);
+        strncpy(item->long_name,name,sizeof(item->long_name)-1);
+        item->long_name[sizeof(item->long_name)-1]=0;
+        if(short_name){
+            strncpy(item->short_name,user.short_name,sizeof(item->short_name)-1);
+            item->short_name[sizeof(item->short_name)-1]=0;
+        }
         snprintf(item->identity,sizeof(item->identity),"!%08lx",(unsigned long)item->node);
-        if(durable_change&&!save_nodes())Serial.println("[T5-MESHTASTIC] WARN node snapshot could not be saved");
+        if(durable_change){
+            Serial.printf("[T5-MESHTASTIC] NodeInfo !%08lx name='%s' trust=%s\n",
+                          (unsigned long)item->node,item->long_name,
+                          verified?"SIGNED":"UNVERIFIED");
+            if(!save_nodes())
+                Serial.println("[T5-MESHTASTIC] WARN node snapshot could not be saved");
+        }
         refresh(true);
         ui_request_data_refresh("meshtastic-nodeinfo");
         return true;
     }
-
     void receive_text(const MeshPacket& packet) {
         if(packet.header.from==leaf.getNodeNum())return;
         char text[MESHINK_MESSAGE_TEXT_BYTES]{};
@@ -759,7 +811,12 @@ public:
             out=ListStorage{};bind(out);
             strncpy(out.title,node.long_name[0]?node.long_name:node.identity,sizeof(out.title)-1);
             char age[28]{};format_age(node.last_seen,age,sizeof(age));
-            snprintf(out.subtitle,sizeof(out.subtitle),"%s  HEARD %.35s",role_label(node.role),age);
+            // Older Meshtastic NodeInfo names are useful but not authenticated.
+            // Make the distinction visible without changing saved NodeRecord.
+            const bool unverified_name=!node.has_public_key&&
+                strncmp(node.long_name,node.identity,sizeof(node.identity))!=0;
+            snprintf(out.subtitle,sizeof(out.subtitle),"%s  HEARD %.35s",
+                     unverified_name?"NAME UNVERIFIED":role_label(node.role),age);
             format_clock(node.last_seen,out.time,sizeof(out.time));
             out.entry.unread=unread_for(node.node);
             out.entry.role=shared_role(node.role);
@@ -1615,13 +1672,16 @@ static const char* meshtastic_diag_radio(){
     return info;
 }
 static const char* meshtastic_diag_packets(){
-    static char info[170];
+    static char info[220];
     snprintf(info,sizeof(info),
-             "TX queued %lu | RX text %lu | RX position %lu | refused %lu | RF errors %lu | waiting ACK %s",
+             "TX %lu | RX text %lu pos %lu | NodeInfo signed %lu legacy %lu rejected %lu | TX refused %lu RF errors %lu | ACK %s",
              (unsigned long)sent_count,(unsigned long)received_count,
              (unsigned long)position_received_count,
+             (unsigned long)nodeinfo_verified_count,
+             (unsigned long)nodeinfo_legacy_count,
+             (unsigned long)nodeinfo_rejected_count,
              (unsigned long)send_refused,(unsigned long)radio_errors,
-             leaf.hasPendingAck()?"YES":"NO");
+             leaf.hasPendingAck()?"WAIT":"NO");
     return info;
 }
 
