@@ -4,7 +4,6 @@
 #include "../../lib/Meshtastic/src/mesh/Router.h"
 #include "../../lib/Meshtastic/src/SPILock.h"
 #include <Arduino.h>
-#include <SPI.h>
 #include <memory>
 #include <new>
 
