@@ -6,6 +6,7 @@
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
 #include "mesh_protocol_backend.h"
 #include "meshtastic_official_phoneapi.h"
+#include "meshtastic_runtime.h"
 #include "meshtastic_ui_data.h"
 #include "../../include/meshtastic_official_version.h"
 #include "../ui_onboarding.h"
@@ -75,7 +76,8 @@ void start(){
     ui_use_data_provider(meshink_meshtastic_ui_provider());
     // Native Router, NodeDB and MeshService must initialize before PhoneAPI.
     // This seam does not initialize a second firmware application.
-    ready=meshink_official_phoneapi_open(1);
+    ready=meshink_meshtastic_native_begin() &&
+          meshink_official_phoneapi_open(1);
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_service_begin();
     gps_next_status=0;update_shared_gps_status();
@@ -84,6 +86,7 @@ void start(){
 void poll(){
     update_shared_gps_status();
     if(!ready)return;
+    meshink_meshtastic_native_loop();
     uint8_t bytes[meshtastic_FromRadio_size]{};
     for(unsigned i=0;i<12&&meshink_official_phoneapi_has_data();++i){
         const size_t n=meshink_official_phoneapi_receive(bytes,sizeof(bytes));
@@ -119,7 +122,11 @@ bool send(const char* text){
     meshink_meshtastic_ui_sent(request.packet.id,text,queued);
     return queued;
 }
-void stop(){meshink_official_phoneapi_close();ready=false;}
+void stop(){
+    meshink_official_phoneapi_close();
+    meshink_meshtastic_native_stop();
+    ready=false;
+}
 bool running(){return ready;}
 const MeshInkProtocolBackend& backend(){
   static const MeshInkProtocolBackend b=[](){

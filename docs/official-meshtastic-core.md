@@ -109,3 +109,12 @@ crypto implementation (including ESP32 crypto), airtime accounting, radio
 logging, configuration storage support and headless PowerFSM implementation.
 The build-only FSCommon header adaptation uses MeshInk's mounted SPIFFS with
 **auto-format disabled**; no second LittleFS mount or filesystem erase.
+
+## Native runtime start and loop
+
+`src/protocol/meshtastic_runtime.cpp` now owns Meshtastic's boot-selected
+router, NodeDB, MeshService, official modules, airtime accounting and scheduler
+startup. MeshInk still mounts storage and powers the board before entering
+this function; official SX1262 setup is attached last. The same runtime
+services its official thread controller in the selected backend loop. No
+second standalone Meshtastic `setup()` or `loop()` is compiled.

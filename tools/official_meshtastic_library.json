@@ -68,7 +68,8 @@
       "+<SafeFile.cpp>",
       "+<airtime.cpp>",
       "+<PowerFSM.cpp>",
-      "+<xmodem.cpp>"
+      "+<xmodem.cpp>",
+      "+<SerialConsole.cpp>"
     ]
   }
 }
