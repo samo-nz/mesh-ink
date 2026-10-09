@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from prepare_headless import ENV, UPSTREAM_GUARD_PATCHES, prepare
+from prepare_headless import (ENV, MOTION_INCLUDE_NEW, MOTION_SOURCE_REL,
+                              UPSTREAM_GUARD_PATCHES, prepare)
 
 
 class PrepareHeadlessTests(unittest.TestCase):
@@ -18,6 +19,7 @@ class PrepareHeadlessTests(unittest.TestCase):
         self._make("variants/esp32s3/t5s3_epaper/variant.h", "// board marker\n")
         for relative, old, _ in UPSTREAM_GUARD_PATCHES:
             self._make(relative, old + "\n// upstream code\n#endif\n")
+        self._make(MOTION_SOURCE_REL, '#include "MotionSensor.h"\n// upstream motion code\n')
 
     def _make(self, relative, content):
         p = self.root / relative
@@ -31,6 +33,9 @@ class PrepareHeadlessTests(unittest.TestCase):
             self.assertEqual(contents.count(new), 1, relative)
             self.assertNotIn(old + "\n", contents, relative)
             self.assertIn("// upstream code", contents, relative)
+        motion = (self.root / MOTION_SOURCE_REL).read_text()
+        self.assertIn(MOTION_INCLUDE_NEW, motion)
+        self.assertIn("// upstream motion code", motion)
         board = self.root / "variants/esp32s3/meshink_h752_headless"
         self.assertTrue((board / "meshink_phoneapi.cpp").is_file())
         self.assertIn("-DMESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR=1",
@@ -48,6 +53,11 @@ class PrepareHeadlessTests(unittest.TestCase):
         relative, _, _ = UPSTREAM_GUARD_PATCHES[1]
         self._make(relative, "#if UNEXPECTED_GUARD\n#endif\n")
         with self.assertRaisesRegex(ValueError, "Unexpected upstream guard"):
+            prepare(self.root)
+
+    def test_refuses_changed_upstream_motion_include(self):
+        self._make(MOTION_SOURCE_REL, '#include "DifferentMotion.h"\n')
+        with self.assertRaisesRegex(ValueError, "Unexpected upstream MotionSensor include"):
             prepare(self.root)
 
     def test_does_not_overwrite_modified_board_overlay(self):

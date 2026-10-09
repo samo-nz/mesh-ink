@@ -195,6 +195,14 @@ UPSTREAM_GUARD_PATCHES = (
     ),
 )
 
+# Upstream MotionSensor.cpp uses the global NodeDB "config" for compass and
+# wake settings, but loses its indirect declaration when the screen is excluded.
+# Keep I2C enabled for the H752's RTC/battery; make this dependency explicit in
+# the isolated upstream checkout instead of disabling I2C or editing MeshInk.
+MOTION_SOURCE_REL = "src/motion/MotionSensor.cpp"
+MOTION_INCLUDE_OLD = '#include "MotionSensor.h"\n'
+MOTION_INCLUDE_NEW = '#include "MotionSensor.h"\n#include "mesh/NodeDB.h"\n'
+
 FILES = {
     "platformio.ini": PLATFORMIO,
     "pins_arduino.h": PINS,
@@ -226,6 +234,13 @@ def prepare(root: Path):
             raise ValueError(f"Unexpected upstream guard in {relative}; review before patching")
         sensor_header.write_text(source.replace(old_guard, new_guard, 1))
         print(f"Patched upstream {relative} declaration guard for power telemetry")
+    motion_source = root / MOTION_SOURCE_REL
+    motion_content = motion_source.read_text()
+    if MOTION_INCLUDE_NEW not in motion_content:
+        if motion_content.count(MOTION_INCLUDE_OLD) != 1:
+            raise ValueError("Unexpected upstream MotionSensor include; review before patching")
+        motion_source.write_text(motion_content.replace(MOTION_INCLUDE_OLD, MOTION_INCLUDE_NEW, 1))
+        print("Patched upstream MotionSensor NodeDB config dependency")
     print(f"Created {ENV} based on {UPSTREAM_TAG}: build only, never flash over MeshInk.")
 
 if __name__ == "__main__":
