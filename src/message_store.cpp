@@ -13,15 +13,15 @@ constexpr uint16_t STORE_VERSION=3;
 constexpr char LEGACY_STORE_PATH[]="/ui_messages.bin";
 constexpr char CORE_STORE_PATH[]="/meshcore_messages.bin";
 constexpr char CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak";
-constexpr char LEAF_STORE_PATH[]="/meshtastic_messages.bin";
+constexpr char MESHTASTIC_STORE_PATH[]="/meshtastic_messages.bin";
 // SPIFFS_OBJ_NAME_LEN is 32 bytes INCLUDING NUL. The former
 // "/meshtastic_messages.invalid.bak" is 32 visible bytes and cannot be
 // created, leaving a first-use partial journal stuck in recovery forever.
-constexpr char LEAF_INVALID_PATH[]="/meshtastic_messages.bad";
+constexpr char MESHTASTIC_INVALID_PATH[]="/meshtastic_messages.bad";
 constexpr size_t SPIFFS_PATH_CAPACITY=32;
 static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
               "MeshCore recovery filename exceeds SPIFFS name limit");
-static_assert(sizeof(LEAF_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
+static_assert(sizeof(MESHTASTIC_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
               "Meshtastic recovery filename exceeds SPIFFS name limit");
 
 static_assert(sizeof(MeshInkMessageStoreHeader)==16,
@@ -47,7 +47,7 @@ struct StoreCpuBoostScope {
 };
 
 MeshInkMessageStore meshcore_journal(CORE_STORE_PATH,CORE_INVALID_PATH);
-MeshInkMessageStore meshtastic_journal(LEAF_STORE_PATH,LEAF_INVALID_PATH);
+MeshInkMessageStore meshtastic_journal(MESHTASTIC_STORE_PATH,MESHTASTIC_INVALID_PATH);
 // Old single-protocol installations wrote only the MeshCore journal here.
 static bool copy_legacy_meshcore_journal(){
     if(SPIFFS.exists(CORE_STORE_PATH)||!SPIFFS.exists(LEGACY_STORE_PATH))return true;
@@ -316,13 +316,13 @@ bool MeshInkMessageStore::begin(){
     // copy of older messages. Use numbered short paths for subsequent faults.
     char archived[SPIFFS_PATH_CAPACITY]{};
     bool archive_available=false;
-    const bool leaf=strcmp(path_,LEAF_STORE_PATH)==0;
+    const bool meshtastic=strcmp(path_,MESHTASTIC_STORE_PATH)==0;
     for(unsigned attempt=0;attempt<=16;++attempt){
         if(attempt==0){
             snprintf(archived,sizeof(archived),"%s",invalid_path_);
         }else{
             snprintf(archived,sizeof(archived),
-                     leaf?"/mt_journal_bad.%u":"/mc_journal_bad.%u",attempt);
+                     meshtastic?"/mt_journal_bad.%u":"/mc_journal_bad.%u",attempt);
         }
         if(!SPIFFS.exists(archived)){archive_available=true;break;}
     }

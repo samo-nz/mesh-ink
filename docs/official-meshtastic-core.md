@@ -1,24 +1,9 @@
-# Official Meshtastic core integration: mesh-agnostic
+# Dual official protocol cores — development integration
 
-**Current status: official source and in-process PhoneAPI transport staged, NOT a working radio node.**
+The `mesh-agnostic` branch keeps MeshInk's existing reboot-to-switch protocol slots. MeshCore uses the pinned `lib/MeshCore` source. Meshtastic source is pinned to official `meshtastic/firmware` tag `v2.8.1.8e6a88d` in `lib/Meshtastic`.
 
-## Three layers
+The third-party Leaf dependency and its old 1,736-line helper and custom wire codec have been removed. `meshtastic/Crypto` remains selected for official Meshtastic's XEdDSA, Curve25519 and AES. No Leaf data migration is required: the previous data is backed up.
 
-- MeshInk owns SX1262 arbitration, GPS, RTC, screen, keyboard, storage policy and power.
-- Meshtastic helper translates protocol-native state to MeshInk's shared UI/backend.
-- Official Meshtastic owns routing, NodeDB, encryption, channels, ACKs and network protocol behaviour.
+The new `src/protocol/meshtastic_protocol.cpp` uses official ToRadio/FromRadio protobufs and the in-process `PhoneAPI` subclass in `meshtastic_official_phoneapi.cpp`. It registers the second MeshInk protocol slot. The native runtime still needs its upstream NodeDB/Router/MeshService/CryptoEngine lifecycle and a MeshInk SX1262 RadioInterface; compilation and radio operation must be established through development CI and device testing. No special release gates or warning UI are added; use the normal development cycle.
 
-`lib/Meshtastic` pins upstream `meshtastic/firmware` at `v2.8.1.8e6a88d` (`8e6a88d06f44cad26f1e8d7cd402939ccacb9b4c`), just like the existing `lib/MeshCore` submodule. Never modify upstream files in place; adapter/glue belongs in MeshInk.
-
-`src/protocol/meshtastic_official_phoneapi.cpp` subclasses the official PhoneAPI for in-process ToRadio/FromRadio commands. **It does not initialize MeshService, NodeDB, Router or the radio**, and is intentionally omitted from the current firmware source filter.
-
-## Official core replacement gates
-
-1. Prove the official core source can compile/link with MeshInk's toolchain. Meshtastic upstream uses a newer PIOArduino/ESP-IDF combination; any toolchain change must preserve MeshInk's PSRAM and hardware behaviour.
-2. Extract official NodeDB, routing, encryption, channels, MeshService and scheduling into one MeshInk-owned lifecycle (no second setup/loop).
-3. Implement MeshInk `RadioInterface` RX/TX and status callbacks for SX1262 without concurrent MeshCore ownership. Wire GPS/RTC, power and storage to existing services.
-4. Connect ToRadio/FromRadio and native features through the Meshtastic helper and UiDataProvider; test preservation/migration of saved Meshtastic data.
-5. Pass unified firmware link/6MiB OTA size checks and **hardware** RX/TX, direct PKI, channel encryption, ACK/routing, deep sleep and protocol switching tests.
-6. Remove `libmeshtastic-leaf` and its old backend as part of the official-runtime switch, as soon as official RX/TX and protocol operation have been demonstrated. Leaf has no compatibility or preservation requirement. **Retain `meshtastic/Crypto`**: official CryptoEngine uses AES/CTR, Curve25519 and XEdDSA.
-
-The active firmware still runs Leaf and the existing working MeshCore backend only because the native official router/radio integration is not implemented yet. There is no safe-to-flash official-core binary yet. Do not keep Leaf merely to protect its implementation; avoid destructive storage migration, and remove Leaf promptly once the official replacement works.
+MeshInk continues to own e-paper UI, input, GPS, RTC, radio electrical details, storage, battery, and reboot-based protocol selection. Neither protocol's network implementation should be copied into shared UI code.

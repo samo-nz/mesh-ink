@@ -1189,7 +1189,7 @@ assert "STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessag
 assert "migrate_legacy" not in message_store_source and "migrate_legacy" not in message_store_header, "legacy message migration code is removed"
 assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "legacy v1/v2 record formats are removed"
 assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
-assert 'CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak"' in message_store_source and 'LEAF_INVALID_PATH[]="/meshtastic_messages.bad"' in message_store_source, "each protocol journal has an SPIFFS-compatible recovery backup"
+assert 'CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak"' in message_store_source and 'MESHTASTIC_INVALID_PATH[]="/meshtastic_messages.bad"' in message_store_source, "each protocol journal has an SPIFFS-compatible recovery backup"
 assert 'copy_legacy_meshcore_journal()' in message_store_source and 'memcmp(left,right,wanted)==0' in message_store_source, "original MeshCore journal is byte-verified and retained"
 assert 'mesh_protocol_descriptor().id==2?meshtastic_journal:meshcore_journal' in message_store_source, "each protocol uses a separate message journal"
 assert "existing journal invalid" in message_store_source and "preserving before recreate" in message_store_source, "existing invalid journal handling remains explicit and non-destructive"
@@ -1810,7 +1810,7 @@ assert "SD.end();" in storage_mount, "SD remount retains existing explicit unmou
 
 # 2.1.1-test.17: Meshtastic first-use journal recovery must not get stuck
 # on a filename that exceeds SPIFFS_OBJ_NAME_LEN (32 including NUL).
-assert 'static_assert(sizeof(LEAF_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in message_store_source, "Meshtastic recovery archive name is bounded at compile time"
+assert 'static_assert(sizeof(MESHTASTIC_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in message_store_source, "Meshtastic recovery archive name is bounded at compile time"
 assert 'static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in message_store_source, "MeshCore recovery archive name remains valid"
 assert '"/meshtastic_messages.bad"' in message_store_source, "corrupt first-use Meshtastic journal has a short recovery path"
 assert 'if(!SPIFFS.exists(archived)){archive_available=true;break;}' in message_store_source, "journal recovery never replaces a previous archived copy"

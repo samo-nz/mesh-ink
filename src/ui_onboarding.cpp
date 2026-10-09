@@ -734,7 +734,7 @@ static bool apply_selected_preset() {
 
 
 // The same setup screens serve both protocols. Protocol one maps its existing
-// radio presets into short regional lists; Leaf enumerates its native regions.
+// radio presets into short regional lists; Meshtastic enumerates its native regions.
 // Region and preset filtering are supplied by the selected protocol helper.
 static size_t setup_region_count(){return mesh_protocol_setup_region_count();}
 static const char* setup_region_label(size_t index){
@@ -779,7 +779,7 @@ static void setup_initialize_draft(){
     setup_freq[0]=0;setup_power[0]=0;
     setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
     setup_edit_field=0;
-    // Leaf's ANZ value is not assumed to be index zero in its region listing.
+    // Meshtastic's ANZ region is not assumed to be index zero.
     if(!setup_is_meshcore())
         for(size_t i=0;i<setup_region_count();++i)
             if(!strcmp(setup_region_label(i),"ANZ")){setup_region=(uint8_t)i;break;}
@@ -1851,7 +1851,7 @@ static void draw_channels() {
     draw_bottom_nav(1);
 }
 
-// Channel management stays protocol-neutral; Leaf exposes a safe UI preview.
+// Channel management stays protocol-neutral.
 static void draw_channel_manage() {
     draw_app_header("MANAGE CHANNELS",true,"ADD");
     if(!ui_data){ui_centred("CHANNELS UNAVAILABLE",ui_y(310),3,0,true);return;}
@@ -1888,7 +1888,7 @@ static void draw_channel_create() {
                 channel_form_key_field&&keyboard_visible?0xFF:0,true);
     ui_centred("LEAVE KEY BLANK FOR A NEW PRIVATE KEY",ui_y(417),2,0,false);
     if(ui_data&&!ui_data->channel_management_available())
-        ui_centred("MESHTASTIC: COMING SOON",ui_y(465),2,0,true);
+        ui_centred("MESHTASTIC",ui_y(465),2,0,true);
     if(keyboard_visible)draw_keyboard();
     else ui_action_button("SHOW KEYBOARD",ui_rect(55,520,430,70),false);
 }
@@ -2833,7 +2833,7 @@ static void draw_setup_radio(){
         char hops[24]{};
         snprintf(hops,sizeof(hops),"%u HOPS  /  TAP TO CHANGE",(unsigned)setup_hops);
         settings_row("HOP LIMIT",hops,436);
-        ui_draw_wrapped("Meshtastic custom modem values require Leaf support; use a supported preset for this build.",
+        ui_draw_wrapped("Select a supported modem preset.",
             ui_x(34),ui_y(620),ui_w(470),2,0,false,4);
         setup_footer();
         return;
@@ -5347,7 +5347,7 @@ static void enter_standby(const char* reason){
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
     draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
-    // Leaf does not yet support retained RX wake. Honour the saved choice
+    // Some protocols cannot use retained RX wake. Honour the saved choice
     // on supported backends, but fall back to normal standby without retries.
     deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();
     if(deep_sleep_pending&&setup_complete){
