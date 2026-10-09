@@ -58,3 +58,8 @@ The build PRE script also applies one fail-closed *temporary checkout* guard
 to `Power.h` so its unused IDF5 ADC declarations don't break MeshInk's IDF4
 toolchain; the upstream Git submodule reference and protocol implementations
 stay untouched. This guard can be removed if the target framework upgrades.
+
+The unified build explicitly selects C++17 for Meshtastic's native
+`std::optional` and digit separators, and pins upstream's `ErriezCRC32`
+dependency for NodeDB. Both protocol cores compile against the same C++
+standard within the firmware; no changes to hardware abstraction.
