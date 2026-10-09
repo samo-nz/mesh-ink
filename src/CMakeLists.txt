@@ -11,6 +11,7 @@ idf_component_register(
         "protocol/mesh_protocol.cpp"
         "protocol/meshcore_protocol.cpp"
         "protocol/meshtastic_protocol.cpp"
+        "protocol/meshtastic_ui_data.cpp"
         "protocol/meshtastic_official_phoneapi.cpp"
         "message_store.cpp"
         "backup_restore.cpp"
