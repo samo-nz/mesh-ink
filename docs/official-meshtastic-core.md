@@ -73,3 +73,13 @@ serial, displays, battery telemetry, alert hardware) and optional standalone
 Paxcounter, StoreForward and sensor/demo modules are disabled at the build
 boundary. This avoids pulling extra device-firmware dependencies into the
 protocol core; network protocol formats remain upstream.
+
+### Text-message UI ownership
+
+Meshtastic's upstream TextMessageModule also includes its standalone buzzer,
+OLED renderer and PowerFSM wake behaviour. The MeshInk build uses an idempotent,
+fail-closed compatibility guard in its temporary upstream checkout, compiling
+the **unchanged official message handling and observer notifications** while
+excluding the separate Meshtastic display/alert/wake block. MeshInk's own
+FromRadio provider drives the e-paper UI. The pinned upstream module remains
+version-controlled and unmodified.
