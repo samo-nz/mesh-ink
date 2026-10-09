@@ -10,24 +10,79 @@
 #include "../../include/meshtastic_official_version.h"
 #include "../ui_onboarding.h"
 #include "../hardware/storage.h"
+#include "../hardware/board.h"
+#include "../hardware/gps.h"
 #include <cstring>
 
 // MeshInk handles the UI; all routing, channel crypto and network
 // retransmissions remain in the pinned official Meshtastic core.
 namespace {
 bool ready=false;
+bool gps_stable_fix=false,gps_candidate_fix=false;
+uint32_t gps_candidate_since=0,gps_next_status=0;
+void update_shared_gps_status(){
+#if ENV_INCLUDE_GPS == 1
+    const uint32_t now=millis();
+    if((int32_t)(now-gps_next_status)<0)return;
+    gps_next_status=now+(ui_is_standby()?10000UL:1000UL);
+    const bool enabled=meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;
+    const MeshInkGpsStatus status=enabled?meshink_gps_read_status():MeshInkGpsStatus{};
+    const bool valid=enabled&&status.error==MeshInkGpsError::None&&status.valid;
+    if(!enabled||status.error!=MeshInkGpsError::None){
+        gps_stable_fix=false;gps_candidate_fix=false;gps_candidate_since=now;
+    }else{
+        if(gps_candidate_fix!=valid){
+            gps_candidate_fix=valid;gps_candidate_since=now;
+        }
+        if(valid==gps_stable_fix||now-gps_candidate_since>=3000U)
+            gps_stable_fix=valid;
+    }
+    ui_status_set_gps(enabled,gps_stable_fix,
+        gps_stable_fix?status.satellites:0,
+        gps_stable_fix?status.latitude:0,
+        gps_stable_fix?status.longitude:0,
+        gps_stable_fix?status.timestamp:0,status.error);
+#endif
+}
+void shared_gps_mode_changed(MeshInkGpsConstellationMode mode){
+#if ENV_INCLUDE_GPS == 1
+    meshink_gps_set_provider_enabled(mode!=MeshInkGpsConstellationMode::None);
+    gps_stable_fix=false;gps_candidate_fix=false;
+    gps_candidate_since=millis();gps_next_status=0;
+    update_shared_gps_status();
+#else
+    (void)mode;
+#endif
+}
+bool shared_my_location(long& latitude,long& longitude){
+#if ENV_INCLUDE_GPS == 1
+    const MeshInkGpsStatus status=meshink_gps_read_status();
+    if(status.valid&&status.error==MeshInkGpsError::None){
+        latitude=status.latitude;longitude=status.longitude;return true;
+    }
+#endif
+    latitude=longitude=0;return false;
+}
 void start(){
     // Follow MeshCore's shared storage-first startup ordering. The selected
     // protocol owns no board filesystems or data partitions itself.
     const bool storage_ready=meshink_storage_mount_internal_safe();
     if(!storage_ready)ui_show_storage_initializing();
+    // Same board-owned power/SPI settling boundary as MeshCore's local boot.
+    // The official Meshtastic SX1262 driver initializes AFTER this handoff.
+    meshink_board_begin_local();
     meshink_meshtastic_ui_begin();
     ui_use_data_provider(meshink_meshtastic_ui_provider());
     // Native Router, NodeDB and MeshService must initialize before PhoneAPI.
     // This seam does not initialize a second firmware application.
     ready=meshink_official_phoneapi_open(1);
+#if ENV_INCLUDE_GPS == 1
+    meshink_gps_service_begin();
+    gps_next_status=0;update_shared_gps_status();
+#endif
 }
 void poll(){
+    update_shared_gps_status();
     if(!ready)return;
     uint8_t bytes[meshtastic_FromRadio_size]{};
     for(unsigned i=0;i<12&&meshink_official_phoneapi_has_data();++i){
@@ -76,6 +131,8 @@ const MeshInkProtocolBackend& backend(){
     value.radio_summary=meshink_meshtastic_ui_radio_summary;
     value.settings_count=meshink_meshtastic_ui_settings_count;
     value.settings_item=meshink_meshtastic_ui_settings_item;
+    value.gps_mode_changed=shared_gps_mode_changed;
+    value.my_location=shared_my_location;
     value.setup_region_count=meshink_meshtastic_ui_region_count;
     value.setup_region_name=meshink_meshtastic_ui_region_name;
     value.setup_preset_count_for_region=meshink_meshtastic_ui_preset_count;
