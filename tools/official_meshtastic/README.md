@@ -10,7 +10,7 @@ The official Meshtastic H752-01 board supports the same SX1262 GPIOs, 2.4 V TCXO
 2. Run: python tools/official_meshtastic/prepare_headless.py official-meshtastic
 3. Run: cd official-meshtastic && pio run -e meshink-h752-headless
 
-Only the new board-variant files are created in the temporary clone. The upstream source is otherwise unchanged.
+The preparation script creates the new board-variant files in the temporary clone. It also makes one narrow, guarded compatibility change in upstream `src/modules/Telemetry/Sensor/TelemetrySensor.h`: its declaration guard must include power telemetry because upstream `MAX17048Sensor` inherits `TelemetrySensor` even when environmental and air-quality sensors are excluded. The patch is idempotent and rejects an unexpected upstream guard. No MeshInk device storage or installed firmware is modified.
 
 **DO NOT FLASH THE RESULTING BINARY.** The standalone official build uses its own 16 MB flash partitions, not MeshInk's existing two 6 MB OTA partitions. Flashing it over MeshInk could destroy messages, protocol journals, maps, settings and backup data. The workflow only compiles and reports size.
 
