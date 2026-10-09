@@ -23,6 +23,12 @@ jobs:
         run: |
           python -m pip install "platformio==6.1.19"
           pio --version
+          # PIOArduino creates a *second* Python environment at ~/.platformio/penv
+          # for its hybrid ESP-IDF -> Arduino build. Its unconstrained uv install
+          # otherwise selects pioarduino 6.2.0, replacing SCons 4.8.1 with 4.11.1
+          # between build phases (SCons.Tool.FortranCommon import failure).
+          printf '%s\n' 'pioarduino==6.1.19' > "$RUNNER_TEMP/meshink-uv-constraints.txt"
+          echo "UV_CONSTRAINT=$RUNNER_TEMP/meshink-uv-constraints.txt" >> "$GITHUB_ENV"
       - name: Fetch pinned official Meshtastic 2.8.1
         run: git clone --depth 1 --branch v2.8.1.8e6a88d https://github.com/meshtastic/firmware.git official-meshtastic
       - name: Prepare screenless H752-01
