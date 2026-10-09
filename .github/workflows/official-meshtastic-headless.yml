@@ -15,8 +15,14 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Install PlatformIO
-        run: python -m pip install platformio
+      # Core 6.2.0 expects SCons 4.11.1, but the pinned PIOArduino
+      # platform requires tool-scons 4.8.1 and removes the newer package
+      # during ESP-IDF configuration (SCons.Tool.FortranCommon import error).
+      # Keep this experiment reproducible until the platform fixes the mismatch.
+      - name: Install compatible PlatformIO Core
+        run: |
+          python -m pip install "platformio==6.1.19"
+          pio --version
       - name: Fetch pinned official Meshtastic 2.8.1
         run: git clone --depth 1 --branch v2.8.1.8e6a88d https://github.com/meshtastic/firmware.git official-meshtastic
       - name: Prepare screenless H752-01
