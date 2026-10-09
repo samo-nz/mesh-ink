@@ -116,11 +116,68 @@ void earlyInitVariant() {
 void lateInitVariant() {}
 """
 
+CLIENT_HEADER = """#pragma once
+#include <stddef.h>
+#include <stdint.h>
+// In-process variant of the same official ToRadio/FromRadio client protocol
+// used by Meshtastic phone apps. No BLE, UART or extra ESP32 is required.
+// Call begin ONLY after the official MeshService and NodeDB have initialized.
+extern "C" bool meshink_phoneapi_begin(uint32_t config_nonce);
+extern "C" bool meshink_phoneapi_send(const uint8_t *data, size_t length);
+extern "C" size_t meshink_phoneapi_receive(uint8_t *buffer, size_t capacity);
+extern "C" bool meshink_phoneapi_pending();
+"""
+
+CLIENT_CPP = """#include "meshink_phoneapi.h"
+#include "mesh/PhoneAPI.h"
+#include <pb_encode.h>
+#include <new>
+
+// Use official API state machine and packet types rather than reimplementing
+// NodeDB synchronization, config handling, RF queues and message events.
+class MeshInkLocalPhoneAPI final : public PhoneAPI {
+  protected:
+    bool checkIsConnected() override { return true; }
+  public:
+    MeshInkLocalPhoneAPI() { api_type=TYPE_PACKET; }
+};
+
+static MeshInkLocalPhoneAPI* local_api=nullptr;
+
+extern "C" bool meshink_phoneapi_begin(uint32_t nonce) {
+    if(!local_api){
+        local_api=new(std::nothrow) MeshInkLocalPhoneAPI();
+        if(!local_api)return false;
+    }
+    meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
+    request.which_payload_variant=meshtastic_ToRadio_want_config_id_tag;
+    request.want_config_id=nonce;
+    uint8_t encoded[meshtastic_ToRadio_size];
+    pb_ostream_t stream=pb_ostream_from_buffer(encoded,sizeof(encoded));
+    return pb_encode(&stream,meshtastic_ToRadio_fields,&request)&&
+           local_api->handleToRadio(encoded,stream.bytes_written);
+}
+extern "C" bool meshink_phoneapi_send(const uint8_t* data,size_t length) {
+    return local_api&&data&&length&&length<=MAX_TO_FROM_RADIO_SIZE&&
+           local_api->handleToRadio(data,length);
+}
+extern "C" size_t meshink_phoneapi_receive(uint8_t* buffer,size_t capacity) {
+    if(!local_api||!buffer||capacity<MAX_TO_FROM_RADIO_SIZE||!local_api->available())
+        return 0;
+    return local_api->getFromRadio(buffer);
+}
+extern "C" bool meshink_phoneapi_pending() {
+    return local_api&&local_api->available();
+}
+"""
+
 FILES = {
     "platformio.ini": PLATFORMIO,
     "pins_arduino.h": PINS,
     "variant.h": BOARD,
     "variant.cpp": EARLY,
+    "meshink_phoneapi.h": CLIENT_HEADER,
+    "meshink_phoneapi.cpp": CLIENT_CPP,
 }
 
 def prepare(root: Path):
