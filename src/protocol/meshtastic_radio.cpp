@@ -11,6 +11,34 @@ namespace {
 // RadioLib's HAL is borrowed by the official native radio instance and must
 // outlive it. This exists only when the Meshtastic protocol starts.
 std::unique_ptr<LockingArduinoHal> native_hal;
+
+// The T5 RF switch must be enabled AFTER SX1262 begin(), as in MeshCore's
+// proven LilyGO post-init sequence. Keep upstream RF modem/IRQ logic intact.
+// Board capabilities are supplied by the MeshInk generic radio descriptor,
+// never hardcoded to a GPIO or chip frequency in a protocol helper.
+class MeshInkNativeSX1262 final : public SX1262Interface {
+    bool dio2_switch_;
+    bool apply_board_rf_switch() {
+        if(!dio2_switch_)return true;
+        const int16_t result=lora.setDio2AsRfSwitch(true);
+        if(result!=RADIOLIB_ERR_NONE)
+            Serial.printf("[MeshInk/MT] DIO2 RF switch error %d\\n",(int)result);
+        return result==RADIOLIB_ERR_NONE;
+    }
+public:
+    MeshInkNativeSX1262(LockingArduinoHal* hal,RADIOLIB_PIN_TYPE cs,
+                        RADIOLIB_PIN_TYPE irq,RADIOLIB_PIN_TYPE rst,
+                        RADIOLIB_PIN_TYPE busy,bool dio2)
+        : SX1262Interface(hal,cs,irq,rst,busy),dio2_switch_(dio2){}
+    bool init() override {
+        if(!SX1262Interface::init())return false;
+        return apply_board_rf_switch();
+    }
+    bool reconfigure() override {
+        if(!SX1262Interface::reconfigure())return false;
+        return apply_board_rf_switch();
+    }
+};
 }
 
 std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
@@ -33,10 +61,10 @@ std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
             SPISettings(4000000,MSBFIRST,SPI_MODE0)));
         if(!native_hal)return nullptr;
     }
-    std::unique_ptr<SX1262Interface> radio(new(std::nothrow) SX1262Interface(
+    std::unique_ptr<MeshInkNativeSX1262> radio(new(std::nothrow) MeshInkNativeSX1262(
         native_hal.get(),(RADIOLIB_PIN_TYPE)hw.chip_select,
         (RADIOLIB_PIN_TYPE)hw.dio1,(RADIOLIB_PIN_TYPE)hw.reset,
-        (RADIOLIB_PIN_TYPE)hw.busy));
+        (RADIOLIB_PIN_TYPE)hw.busy,hw.dio2_rf_switch));
     if(!radio)return nullptr;
     radio->setTCXOVoltage(hw.tcxo_voltage);
     // Upstream init() configures and arms native IRQ-driven RX, and applies

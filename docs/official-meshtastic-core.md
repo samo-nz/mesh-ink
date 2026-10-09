@@ -91,8 +91,10 @@ version-controlled and unmodified.
 module descriptor, 2.4 V T5 TCXO supplied by board code, and the official
 `LockingArduinoHal`. It calls native `init()` and transfers the radio's
 ownership to `Router::addInterface()`, following the same boot-exclusive
-ownership as MeshCore. For this T5 target `SX126X_DIO2_AS_RF_SWITCH` is
-set as a hardware feature. No SX1262 packet code is duplicated in MeshInk.
+ownership as MeshCore. The T5 board descriptor enables DIO2 RF switching through a small
+MeshInk subclass **after upstream SX1262 initialization**, matching the
+existing MeshCore/LilyGO post-init order without changing upstream code or
+globally changing the MeshCore build flags. No SX1262 packet code is duplicated in MeshInk.
 
 **Lifecycle integration remains:** official `NodeDB`, crypto, SPI locking,
 router, and service must be initialized before
