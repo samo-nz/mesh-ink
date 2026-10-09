@@ -154,8 +154,11 @@ extern "C" bool meshink_phoneapi_begin(uint32_t nonce) {
     request.want_config_id=nonce;
     uint8_t encoded[meshtastic_ToRadio_size];
     pb_ostream_t stream=pb_ostream_from_buffer(encoded,sizeof(encoded));
-    return pb_encode(&stream,meshtastic_ToRadio_fields,&request)&&
-           local_api->handleToRadio(encoded,stream.bytes_written);
+    if(!pb_encode(&stream,meshtastic_ToRadio_fields,&request))return false;
+    // PhoneAPI::handleToRadio returns "packet queued", not "request handled".
+    // A successful configuration handshake normally queues no RF packet.
+    local_api->handleToRadio(encoded,stream.bytes_written);
+    return local_api->isConnected();
 }
 extern "C" bool meshink_phoneapi_send(const uint8_t* data,size_t length) {
     return local_api&&data&&length&&length<=MAX_TO_FROM_RADIO_SIZE&&
