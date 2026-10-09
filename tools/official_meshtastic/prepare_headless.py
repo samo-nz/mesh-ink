@@ -56,7 +56,8 @@ lib_deps =
     https://github.com/mverch67/BQ27220/archive/07d92be846abd8a0258a50c23198dac0858b22ed.zip
 """
 
-PINS = """#pragma once
+PINS = """#ifndef Pins_Arduino_h
+#define Pins_Arduino_h
 #include <stdint.h>
 #define USB_VID 0x303a
 #define USB_PID 0x1001
@@ -70,6 +71,7 @@ static const uint8_t SCK = 14;
 #define SPI_SCK 14
 #define SPI_MISO 21
 #define SPI_CS 12
+#endif // Pins_Arduino_h
 """
 
 BOARD = """#pragma once
@@ -104,8 +106,8 @@ BOARD = """#pragma once
 #define SX126X_DIO3_TCXO_VOLTAGE 2.4
 """
 
-EARLY = """#include "Arduino.h"
-#include "variant.h"
+EARLY = """#include "variant.h"
+#include "Arduino.h"
 // Upstream T5 InkHUD and touch startup are intentionally excluded.
 void earlyInitVariant() {
     pinMode(LORA_CS, OUTPUT);
