@@ -24,7 +24,6 @@ unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
 protocol_source = (root / "src" / "protocol" / "mesh_protocol.cpp").read_text(encoding="utf-8")
 protocol_header_source = (root / "src" / "protocol" / "mesh_protocol.h").read_text(encoding="utf-8")
 meshcore_protocol_source = (root / "src" / "protocol" / "meshcore_protocol.cpp").read_text(encoding="utf-8")
-meshtastic_protocol_source = (root / "src" / "protocol" / "meshtastic_protocol.cpp").read_text(encoding="utf-8")
 standalone_source = (root / "src" / "ui_standalone_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
@@ -1712,7 +1711,6 @@ assert 'static const char* active_radio_label()' in source and 'mesh_protocol_ra
 assert 'draw_app_header("SELECT PROTOCOL",true);' in source and "mesh_protocol_available_count()" in source, "protocol selection lists compiled backends"
 assert "if(!mesh_protocol_restart_into(protocol->id)){" in source, "choosing a different protocol performs one verified persist-and-restart transaction"
 assert "mesh_protocol_supports_radio_presets()" in source, "legacy MeshInk radio preset picker appears only for helpers that support it"
-assert '"REGION"' in meshtastic_protocol_source and '"MODEM PRESET"' in meshtastic_protocol_source and '"HOP LIMIT"' in meshtastic_protocol_source, "Leaf helper contributes its own radio settings"
 assert '"AUTO ADD CONTACTS"' in meshcore_protocol_source and '"PACKET REPEATING"' in meshcore_protocol_source, "MeshCore helper contributes its privacy/repeating settings"
 assert 'return mesh_protocol_radio_summary();' in source and '"%.3f / SF%u / BW%.1f / CR%u"' in runtime_source, "unmatched radio settings use compact raw numbers without a CUSTOM prefix"
 assert 'NMEA OUTPUT' not in source and 'RMC + GGA (AUTOMATIC)' not in source, "non-actionable NMEA output row is removed"
@@ -1745,10 +1743,6 @@ firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platfor
 ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
 assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"
 
-# Channel-management protections: never treat Leaf's one receive channel as a
-# selectable replacement, and never delete an existing channel on row tap.
-assert "leaf.setDefaultChannel();" in meshtastic_protocol_source, "Leaf still starts with the public default channel"
-assert "select_channel_profile" not in meshtastic_protocol_source, "Leaf channel switching stays postponed"
 assert "channel_management_available()const override{return true;}" in runtime_source, "MeshCore channel management is enabled"
 assert "channel_removable(size_t index)const override" in runtime_source, "MeshCore identifies protected public channels"
 assert "if(slot==0)return false;" in runtime_source, "MeshCore cannot delete public slot zero"
@@ -1785,7 +1779,7 @@ assert 'device_settings_snapshot.cpp' in component_cmake_source, "unified firmwa
 assert '+<device_settings_snapshot.cpp>' in platformio_source, "PlatformIO builds device snapshot"
 assert 'constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","PROTOCOL SETTINGS","DEVICE SETTINGS"};' in source, "four category checkboxes are rendered"
 assert 'MESHCORE' not in device_settings_source and 'MESHTASTIC' not in device_settings_source, "device preference snapshot has no protocol dependency"
-assert 'deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();' in source, "unsupported Leaf deep sleep falls back without retry"
+assert 'deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();' in source, "unsupported protocol deep sleep falls back without retry"
 assert 'active_backend().enter_deep_sleep_standby != nullptr' in (root/"src"/"protocol"/"mesh_protocol.cpp").read_text(), "deep sleep ability is a backend capability"
 
 # 2.1.1-test.15: backup paths, deferred NVS, failed PMTiles and menu moves.
@@ -1839,81 +1833,6 @@ new_journal=message_store_source.split("bool MeshInkMessageStore::create_empty()
 assert "const bool verified=verify&&verify.size()==expected_bytes" in new_journal, "newly created journal size and header checked"
 assert "removing incomplete new file" in new_journal, "partial first-use initialization is cleaned up so it can retry"
 
-# 2.1.1-test.19: Meshtastic handheld Leaf feature rollout.
-wire=(root/"src"/"protocol"/"meshtastic_wire.h").read_text(encoding="utf-8")
-tests=(root/"tests"/"test_meshtastic_wire.cpp").read_text(encoding="utf-8")
-assert 'leaf.setDefaultChannel();' in meshtastic_protocol_source, "public primary channel remains the only enabled channel"
-assert "select_channel_profile" not in meshtastic_protocol_source, "secondary channel support is deliberately deferred"
-assert 'position_interval_min=0' in meshtastic_protocol_source and 'telemetry_interval_min=0' in meshtastic_protocol_source, "position and telemetry transmissions default OFF"
-assert 'gps.valid' in meshtastic_protocol_source and 'position_precision' in meshtastic_protocol_source, "position broadcasting requires fix and honours privacy precision"
-assert 'MESHTASTIC_SETTING_APPLY_RESTART' not in meshtastic_protocol_source or 'MT_APPLY' in meshtastic_protocol_source, "radio changes retain explicit apply/reboot"
-assert 'out.gps_from_reply=true' in meshtastic_protocol_source, "position packets render as GPS markers"
-assert 'bool open_map_node(size_t)override{return false;}' in meshtastic_protocol_source, "shared marker-tap navigation remains deferred"
-assert 'load_positions();' in meshtastic_protocol_source and 'POSITIONS_STAGE' in meshtastic_protocol_source, "position snapshot survives reboot independently of legacy node record layout"
-assert 'UiMessageState::Sending,packet_id' in meshtastic_protocol_source, "Leaf acceptance is not prematurely marked sent"
-assert 'leaf.isTransmitting()' in meshtastic_protocol_source and 'UiMessageState::Sent' in meshtastic_protocol_source, "RF completion advances outgoing message state"
-assert 'mark_delivered_by_ack(' in meshtastic_protocol_source and 'last_message_packet_id==request_id' in meshtastic_protocol_source, "genuine ACK cannot be downgraded by TX status update"
-assert 'meshink_power_read_battery_mv(mv)' in meshtastic_protocol_source and 'meshtastic_PortNum_TELEMETRY_APP' in meshtastic_protocol_source, "battery telemetry is standard Meshtastic payload"
-assert 'meshtastic_PortNum_POSITION_APP' in meshtastic_protocol_source and 'decode_position' in wire, "standard Meshtastic position packet reception"
-assert 'max_power=min(22,' in meshtastic_protocol_source, "manual TX power obeys regional and radio caps"
-assert 'MESHINK_PROTOCOL_CAP_DIAGNOSTICS' in meshtastic_protocol_source, "Meshtastic diagnostics are available in More"
-assert 'decode_device_telemetry' in wire and 'decode_position' in tests, "host tests cover position and telemetry wire formats"
 
-# 2.1.1-test.20: On first-use Meshtastic boots, a missing position snapshot
-# is normal, not a corrupt journal. Never clear or overwrite a bad snapshot.
-position_loader=meshtastic_protocol_source.split("void load_positions(){",1)[1].split("\npublic:\n    void receive_telemetry(",1)[0]
-assert 'if(!SPIFFS.exists(POSITIONS_PATH))return;' in position_loader, "no warning or read for missing first-use position cache"
-assert position_loader.index('if(!SPIFFS.exists(POSITIONS_PATH))')<position_loader.index('File f=SPIFFS.open(POSITIONS_PATH,"r");'), "position existence verified before opening"
-assert "PositionRecord parsed[MAX_NODES]{};" in position_loader, "snapshot fully validated before exposing any marker"
-assert "SPIFFS.rename(POSITIONS_PATH,archive)" in position_loader and 'SPIFFS.exists(archive)' in position_loader, "invalid snapshot preserved without overwriting previous archives"
-assert 'SPIFFS.remove(POSITIONS_PATH)' not in position_loader, "position loader never erases original"
-assert "header_bytes=%u" in position_loader and "expected_record=%u" in position_loader, "invalid snapshot reports enough metadata to diagnose cause"
-assert "if(position_snapshot_write_blocked_)return false;" in meshtastic_protocol_source, "a damaged map snapshot cannot be overwritten when preservation fails"
-assert "position_snapshot_write_blocked_=true;" in position_loader, "archive failures lock the existing position snapshot"
-
-# 2.1.1-test.21: Meshtastic and MeshCore share one physical GNSS provider.
-# Leaf must explicitly enable its NMEA parser and publish real fix/search state.
-mt_start=meshtastic_protocol_source.split("static void setup() {",1)[1].split("static void handle_packet(",1)[0]
-mt_loop=meshtastic_protocol_source.split("static void loop() {",1)[1].split("static UiDataProvider* data_provider()",1)[0]
-mt_mode=meshtastic_protocol_source.split("static void meshtastic_gps_mode_changed(",1)[1].split("static void meshtastic_update_gps_ui()",1)[0]
-mt_status=meshtastic_protocol_source.split("static void meshtastic_update_gps_ui()",1)[1].split("static uint8_t my_public_key",1)[0]
-assert 'meshink_gps_service_begin();' in mt_start and 'gps_provider_active=gps_mode!=MeshInkGpsConstellationMode::None;' in mt_start and 'meshink_gps_set_provider_enabled(gps_provider_active);' in mt_start, "Meshtastic activates the shared GPS parser on startup"
-assert mt_start.index('meshink_gps_service_begin();') < mt_start.index('meshink_gps_set_provider_enabled(gps_provider_active);'), "GPS manager begins before activation"
-assert 'meshink_gps_set_provider_enabled(enabled);' in mt_mode and 'ui_status_set_gps(enabled,false,0,0,0,0,' in mt_mode, "constellation changes update GPS service and icon immediately"
-assert 'b.gps_mode_changed=meshtastic_gps_mode_changed;' in meshtastic_protocol_source, "shared constellation selector invokes Meshtastic GPS callback"
-assert 'meshink_gps_service_loop();' in mt_loop and 'meshtastic_update_gps_ui();' in mt_loop, "Meshtastic loops GNSS parser and GPS status"
-assert mt_loop.index('meshink_gps_service_loop();') < mt_loop.index('meshtastic_update_gps_ui();'), "parse fresh NMEA before publishing GPS state"
-assert 'const MeshInkGpsStatus status=enabled?meshink_gps_read_status():MeshInkGpsStatus{};' in mt_status, "Meshtastic reads board GPS instead of default-off UI state"
-assert 'ui_status_set_gps(enabled,gps_stable_fix,' in mt_status, "Meshtastic reports shared enabled/search/fix status"
-assert 'gps_stable_fix=raw_fix;' in mt_status and 'now-gps_candidate_since>=3000UL' in mt_status, "GPS fix/search display is debounced"
-assert 'ui_is_standby()?10000UL:1000UL' in mt_status, "e-paper GPS update cadence is slower in standby"
-assert 'if(enabled==gps_provider_active){' in mt_mode, "constellation changes preserve active GPS parser and hot fix"
-assert 'gps_provider_active=enabled;' in mt_mode, "Meshtastic remembers GPS provider state after actual ON/OFF transitions"
-
-# 2.1.1-test.22: Outgoing Meshtastic bubbles must display delivery status
-# rather than the protocol name. Incoming RF metadata remains available.
-mt_message=meshtastic_protocol_source.split("const UiMessage& active_message(size_t index)const override{",1)[1].split("uint16_t direct_unread_total()",1)[0]
-assert 'active_message_view_.entry.state=(UiMessageState)message.state;' in mt_message, "Meshtastic delivery state is loaded from the journal"
-assert 'if(!active_message_view_.entry.outgoing){' in mt_message, "only incoming messages get Meshtastic network metadata"
-incoming_branch=mt_message.split('if(!active_message_view_.entry.outgoing){',1)[1]
-assert 'else strcpy(active_message_view_.network,"MESHTASTIC");' in incoming_branch, "incoming Meshtastic label is retained"
-assert 'active_message_view_=MessageView{};' in mt_message, "outgoing metadata resets to empty before rendering"
-footer=source.split("static void message_footer_text(",1)[1].split("struct MessageBubbleGeometry",1)[0]
-assert 'if(!state[0]&&message.outgoing)' in footer, "shared chat UI uses delivery status when outgoing metadata is empty"
-assert 'case UiMessageState::Sending:state="SENDING";' in footer, "pending messages show SENDING"
-assert 'case UiMessageState::Sent:state="SENT";' in footer, "RF-complete messages show SENT"
-assert 'case UiMessageState::Delivered:state="DELIVERED";' in footer, "acknowledged direct messages show DELIVERED"
-assert 'case UiMessageState::Failed:state="FAILED";' in footer, "failed messages show FAILED"
-
-# 2.1.1-test.23: Legacy (MAC-ID, unsigned) public-channel NodeInfo
-# may supply DISPLAY names, never authenticated PKI keys.
-mt_nodeinfo=meshtastic_protocol_source.split("bool learn_node_info(const MeshPacket& packet) {",1)[1].split("void receive_text(const MeshPacket& packet) {",1)[0]
-assert 'if(packet.hasSignature){' in mt_nodeinfo, "signed NodeInfo must be validated, never downgraded to unsigned"
-assert 'if(!verified)' in mt_nodeinfo and 'rejected invalid signed NodeInfo' in mt_nodeinfo, "invalid signed NodeInfo rejected"
-assert 'MeshCryptoPKI::verifyPayload(' in mt_nodeinfo and 'MeshNodeId::nodeNumFromPublicKey(' in mt_nodeinfo, "verified identity still checks key binding and signature"
-assert 'if(item->has_public_key){' in mt_nodeinfo and 'if(!verified||memcmp(item->public_key,user.public_key.bytes,32)!=0)' in mt_nodeinfo, "unsigned identity claims cannot overwrite signed names or keys"
-assert 'if(verified){' in mt_nodeinfo and 'memcpy(item->public_key,user.public_key.bytes,32);' in mt_nodeinfo, "only signed key material is saved for direct PKI"
-assert 'const char* name=long_name?user.long_name:user.short_name;' in mt_nodeinfo and 'strncpy(item->long_name,name,sizeof(item->long_name)-1);' in mt_nodeinfo, "legacy NodeInfo supplies user-visible name"
-assert 'if(durable_change){' in mt_nodeinfo and 'save_nodes()' in mt_nodeinfo, "learned name survives protocol switching and reboot"
-assert 'NAME UNVERIFIED' in meshtastic_protocol_source, "unsigned legacy NodeInfo names clearly identified as unverified"
-assert 'nodeinfo_verified_count' in meshtastic_protocol_source and 'nodeinfo_legacy_count' in meshtastic_protocol_source and 'nodeinfo_rejected_count' in meshtastic_protocol_source, "NodeInfo diagnostics separate signed, unsigned and invalid packets"
+# Upstream-only replacement: do not reintroduce the discarded Leaf dependency.
+assert "libmeshtastic-leaf.git" not in platformio_source, "Leaf must be removed"

@@ -27,8 +27,8 @@ def check():
         raise SystemExit("The Meshtastic Crypto fork is required for XEdDSA/PKI")
     if "${meshink-crypto-meshtastic.lib_deps}" not in ini:
         raise SystemExit("Shared crypto is not Meshtastic's selected provider")
-    if "+<protocol/meshtastic_official_phoneapi.cpp>" in ini:
-        raise SystemExit("Unintegrated PhoneAPI cannot be enabled in flashable firmware")
+    if "libmeshtastic-leaf.git" in ini:
+        raise SystemExit("Obsolete Leaf dependency must be removed")
     official = ROOT / "lib/Meshtastic/src/mesh/PhoneAPI.h"
     if official.is_file() and "class PhoneAPI" not in official.read_text():
         raise SystemExit("Official PhoneAPI header missing")

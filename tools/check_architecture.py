@@ -116,12 +116,11 @@ if "meshink_protocol_backend_slot_1" not in meshcore_helper:
 meshtastic_helper=(SRC/"protocol/meshtastic_protocol.cpp").read_text(encoding="utf-8")
 if "meshink_protocol_backend_slot_2" not in meshtastic_helper:
     errors.append("src/protocol/meshtastic_protocol.cpp: Meshtastic helper is not registered in backend slot 2")
+if "libmeshtastic_leaf" in meshtastic_helper:
+    errors.append("src/protocol/meshtastic_protocol.cpp: removed Leaf code remains")
 for token in ("P_LORA_", "CustomSX1262", "T5RadioHal", "radio_spi"):
     if token in meshtastic_helper:
-        errors.append(
-            "src/protocol/meshtastic_protocol.cpp: board-specific radio detail "
-            f"{token!r} bypasses hardware/radio.h"
-        )
+        errors.append(f"src/protocol/meshtastic_protocol.cpp: board-specific {token!r} bypasses hardware/radio.h")
 
 for rel in (
     "src/ui_onboarding.cpp",
@@ -145,6 +144,8 @@ if "-DMESHINK_DEVICE_SERVICES_ENABLED=1" not in unified_env:
 if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must register the Meshtastic backend")
 meshtastic_crypto_pin="Crypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
+if "libmeshtastic-leaf.git" in platformio:
+    errors.append("Leaf dependency must not be linked")
 if meshtastic_crypto_pin not in platformio:
     errors.append("platformio.ini: pinned Meshtastic Crypto provider is missing")
 if "rweather/Crypto @ ^0.4.0" not in platformio:
