@@ -45,6 +45,8 @@ void ui_apply_initial_radio_preset(); // sync first-time setup radio before show
 void ui_mesh_ready();
 void ui_use_data_provider(UiDataProvider* provider);
 bool ui_is_standby();
+// Read-only hint for protocol-to-UI event batching. Never blocks radio work.
+bool ui_is_message_composing();
 bool ui_chat_is_visible(bool channel); // true only for the currently displayed chat type
 void ui_show_radio_failure(MeshInkRadioFailureClass failure);
 bool ui_save_screenshot(char* path_out,size_t path_len);
