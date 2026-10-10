@@ -93,6 +93,9 @@ public:
                     bool has_rx=false,int8_t snr_q4=0,
                     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN,
                     bool unread=false,uint8_t protocol_id=0);
+    // Erase all direct-message records for a Meshtastic node, leaving channel history intact.
+    // Zeroed records remain harmless holes in the bounded v3 ring until overwritten.
+    bool erase_direct_peer(uint32_t node_id,uint8_t protocol_id);
     bool update_state(uint32_t sequence,UiMessageState state);
     bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
                            uint8_t protocol_id=0);
