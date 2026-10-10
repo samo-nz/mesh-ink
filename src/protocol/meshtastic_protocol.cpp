@@ -116,6 +116,24 @@ void poll(){
                 case meshtastic_FromRadio_config_complete_id_tag:
                     Serial.printf("[MT-TEST] PhoneAPI config_complete nonce=%lu\n",
                                   (unsigned long)data.config_complete_id);break;
+                case meshtastic_FromRadio_config_tag:
+                    if(data.config.which_payload_variant==meshtastic_Config_lora_tag){
+                        const auto& lc=data.config.payload_variant.lora;
+                        Serial.printf("[MT-TEST] PhoneAPI LoRa config region=%u preset=%u use_preset=%u tx=%u hop=%u\n",
+                                      (unsigned)lc.region,(unsigned)lc.modem_preset,
+                                      lc.use_preset?1U:0U,lc.tx_enabled?1U:0U,
+                                      (unsigned)lc.hop_limit);
+                    }
+                    break;
+                case meshtastic_FromRadio_channel_tag:
+                    Serial.printf("[MT-TEST] PhoneAPI channel slot=%d role=%u has_settings=%u\n",
+                                  (int)data.channel.index,(unsigned)data.channel.role,
+                                  data.channel.has_settings?1U:0U);break;
+                case meshtastic_FromRadio_queueStatus_tag:
+                    Serial.printf("[MT-TEST] PhoneAPI queue_status packet=%08lx result=%ld free=%u/%u\n",
+                                  (unsigned long)data.queueStatus.mesh_packet_id,
+                                  (long)data.queueStatus.res,(unsigned)data.queueStatus.free,
+                                  (unsigned)data.queueStatus.maxlen);break;
                 case meshtastic_FromRadio_packet_tag:
                     Serial.printf("[MT-TEST] FromRadio packet id=%08lx from=!%08lx to=!%08lx ch=%u port=%u request=%08lx\n",
                                   (unsigned long)data.packet.id,(unsigned long)data.packet.from,

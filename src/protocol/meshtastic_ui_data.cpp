@@ -335,6 +335,22 @@ void note_config(const meshtastic_Config& config){
              state->region_text,state->preset_text,l.tx_enabled?"ON":"OFF");
     changed();
 }
+// A PhoneAPI acceptance only says the packet entered the official service.
+// The subsequent official queue-status result can still reject it (e.g. region
+// unset or airtime exhausted); surface that instead of showing a false send.
+void note_queue_status(const meshtastic_QueueStatus& queue){
+    if(!state||!queue.mesh_packet_id||queue.res==0)return;
+    for(size_t i=0;i<state->message_count;++i){
+        Message& m=state->messages[i];
+        if(m.packet_id!=queue.mesh_packet_id||!m.row.outgoing)continue;
+        if(m.row.state==UiMessageState::Sending||m.row.state==UiMessageState::Sent){
+            m.row.state=UiMessageState::Failed;
+            if(journal_ready&&m.journal_sequence)
+                meshink_message_store().update_state(m.journal_sequence,m.row.state);
+            changed();
+        }
+    }
+}
 void note_routing(const meshtastic_MeshPacket& packet){
     const uint32_t ref=packet.decoded.request_id;
     if(!state||!ref)return;
@@ -648,6 +664,8 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         note_config(response.config);break;
       case meshtastic_FromRadio_packet_tag:
         note_packet(response.packet);break;
+      case meshtastic_FromRadio_queueStatus_tag:
+        note_queue_status(response.queueStatus);break;
       case meshtastic_FromRadio_region_presets_tag:
         state->region_map=response.region_presets;
         state->region_map_received=true;
