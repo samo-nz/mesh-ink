@@ -188,6 +188,12 @@ for required in ('+<modules/PositionModule.cpp>', '+<gps/GeoCoord.cpp>'):
     if required not in native_library:
         errors.append(f"Official position networking dependency missing {required}")
 shared_position_patch=(ROOT/"tools/prepare_meshtastic_library.py").read_text(encoding="utf-8")
+for phrase in ("Safe /prefs SPIFFS replace", "Recovered interrupted preference save",
+               "Preference rename/rollback failed", 'backup += ".mbak"'):
+    if phrase not in shared_position_patch:
+        errors.append(f"Meshtastic SPIFFS safe preference save or recovery missing: {phrase}")
+
+
 for token in ("MESHINK_MESHTASTIC_EXTERNAL_POSITION", "native tracker sleep suppressed", "positionModule = new PositionModule"):
     if token not in shared_position_patch:
         errors.append(f"Build-only position adapter missing {token}")

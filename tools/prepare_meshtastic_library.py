@@ -143,6 +143,70 @@ if safe_format not in fs_source:
     fs_cpp.write_text(fs_source.replace(unsafe_format, safe_format, 1), encoding="utf-8")
     print("[MeshInk] Blocked partition-wide format of shared SPIFFS")
 
+# SPIFFS cannot replace an existing destination via rename as LittleFS can.
+# Preserve the original preference as a sidecar during the already-verified
+# SafeFile .tmp commit; recover interrupted saves before loading NodeDB.
+# This operates ONLY on Meshtastic /prefs files on MeshInk's existing SPIFFS.
+fs_atomic_path = upstream / "src" / "FSCommon.cpp"
+fs_atomic = fs_atomic_path.read_text(encoding="utf-8")
+old_rename = """    bool result = FSCom.rename(pathFrom, pathTo);
+    spiLock->unlock();
+    return result;"""
+new_rename = """    bool result = FSCom.rename(pathFrom, pathTo);
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    if (!result && FSCom.exists(pathFrom) && FSCom.exists(pathTo)) {
+        // SafeFile already verified the complete temporary file by readback.
+        String backup(pathTo); backup += ".mbak";
+        if (FSCom.exists(backup.c_str()) && !FSCom.remove(backup.c_str())) {
+            LOG_ERROR("Cannot remove obsolete preference backup");
+        } else if (FSCom.rename(pathTo, backup.c_str())) {
+            if (FSCom.rename(pathFrom, pathTo)) {
+                if (!FSCom.remove(backup.c_str()))
+                    LOG_WARN("Old preference backup remains; recover on boot");
+                result = true;
+            } else if (!FSCom.rename(backup.c_str(), pathTo)) {
+                LOG_ERROR("Preference rename/rollback failed; boot recovery needed");
+            }
+        }
+    }
+#endif
+    spiLock->unlock();
+    return result;"""
+if new_rename not in fs_atomic:
+    if fs_atomic.count(old_rename) != 1:
+        raise RuntimeError("Official renameFile changed; inspect shared SPIFFS safety")
+    fs_atomic = fs_atomic.replace(old_rename, new_rename, 1)
+
+old_after_mount = """        // assert(0); This auto-formats the partition, so no need to fail here.
+    }
+#if defined(ARCH_ESP32)"""
+new_after_mount = """        // assert(0); This auto-formats the partition, so no need to fail here.
+    }
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    const char* const meshinkPrefs[] = {
+        "/prefs/nodes.proto", "/prefs/device.proto", "/prefs/config.proto",
+        "/prefs/module.proto", "/prefs/channels.proto", "/prefs/uiconfig.proto"
+    };
+    for (const char* primary : meshinkPrefs) {
+        String backup(primary); backup += ".mbak";
+        if (!FSCom.exists(backup.c_str())) continue;
+        if (!FSCom.exists(primary)) {
+            if (FSCom.rename(backup.c_str(), primary))
+                LOG_WARN("Recovered interrupted preference save: %s", primary);
+            else LOG_ERROR("Cannot restore preference backup: %s", primary);
+        } else if (!FSCom.remove(backup.c_str())) {
+            LOG_WARN("Could not clear obsolete preference backup: %s", primary);
+        }
+    }
+#endif
+#if defined(ARCH_ESP32)"""
+if new_after_mount not in fs_atomic:
+    if fs_atomic.count(old_after_mount) != 1:
+        raise RuntimeError("Official fsInit mount changed; inspect backup recovery")
+    fs_atomic = fs_atomic.replace(old_after_mount, new_after_mount, 1)
+fs_atomic_path.write_text(fs_atomic, encoding="utf-8")
+print("[MeshInk] Safe /prefs SPIFFS replace with rollback and startup recovery")
+
 # Stock Meshtastic LOG_* macros always dereference its SerialConsole.
 # MeshInk owns USB CDC and does not construct a competing PhoneAPI/console.
 # Keep genuine RedirectablePrint with a MeshInk-owned Serial destination.
