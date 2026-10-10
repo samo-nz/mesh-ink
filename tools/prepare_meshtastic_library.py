@@ -182,8 +182,8 @@ for before in (
 # No official status LED task may manipulate MeshInk-controlled lights/pins.
 # In headless mode it is not needed for packet processing.
 led_before = "    statusLEDModule = new StatusLEDModule();"
-led_after = ('#if !defined(MESHINK_MESHTASTIC_EXTERNAL_UI)\\n'
-             + led_before + '\\n'
+led_after = ('#if !defined(MESHINK_MESHTASTIC_EXTERNAL_UI)\n'
+             + led_before + '\n'
              '#endif')
 if led_after not in modules_data:
     if modules_data.count(led_before) != 1:
