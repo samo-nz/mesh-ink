@@ -122,8 +122,8 @@ bool meshink_meshtastic_native_begin(){
     if(!native_ready)Serial.println("[MeshInk/MT] Native radio initialization failed");
     else {
         Serial.println("[MeshInk/MT] Native Meshtastic node initialized");
+        nodeDB->notifyObservers(true); // Match official startup; independent of debug mode.
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
-        nodeDB->notifyObservers(true); // Match official boot: publish initial status after radio attach.
         Serial.printf("[MT-TEST] engine READY heap=%u free_psram=%u stack_watermark_words=%u\n",
                       (unsigned)ESP.getFreeHeap(),(unsigned)ESP.getFreePsram(),
                       (unsigned)uxTaskGetStackHighWaterMark(nullptr));

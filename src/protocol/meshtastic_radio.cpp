@@ -42,6 +42,14 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
         startReceive();
         return true;
     }
+  protected:
+    // Upstream's chip recovery re-runs begin(), clearing DIO2 switching.
+    // Reapply the board electrical settings on recovery too, without changing
+    // the initial begin-before-DIO2 ordering shared with working MeshCore.
+    bool recoverChipStateLoss() override {
+        if(!SX1262Interface::recoverChipStateLoss())return false;
+        return apply_board_settings();
+    }
 public:
     void report() const {
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
