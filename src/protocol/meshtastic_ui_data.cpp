@@ -83,6 +83,7 @@ struct State {
     uint8_t location_interval=0;
     uint32_t location_private_precision[kMaxChannels]{};
     uint32_t location_last_admin_ms=0;
+    uint32_t location_apply_after_ms=0;
     meshtastic_Config_PositionConfig position_config{};
     bool region_map_received=false;
     meshtastic_LoRaRegionPresetMap region_map{};
@@ -580,6 +581,10 @@ void reconcile_sharing(){
 }
 void apply_pending_location_sharing(){
     if(!state||!state->config_complete)return;
+    // User-requested configuration must not be injected into the radio while
+    // its e-paper touch handler is still painting the confirmation frame.
+    if(state->location_apply_after_ms&&
+       (int32_t)(millis()-state->location_apply_after_ms)<0)return;
     // Explicit user changes only. Boot-time PhoneAPI config replay must
     // NEVER queue unsolicited channel Admin commands: these trigger radio
     // reconfiguration and flash writes while the e-paper UI is starting.
@@ -1114,7 +1119,11 @@ bool meshink_meshtastic_ui_location_set(bool enabled,bool public_approximate,uin
     state->location_explicit=true;
     remember_location_settings();
     reconcile_sharing();
-    apply_pending_location_sharing();
+    // Allow the touch-driven EPD refresh to finish before the official
+    // AdminModule reconfigures the radio and writes channel settings.
+    // Disabling sharing is urgent: apply that immediately instead.
+    state->location_apply_after_ms=enabled?millis()+3000UL:0;
+    if(!enabled)apply_pending_location_sharing();
     // The touch handler draws this settings screen immediately. Do not
     // request a second, full-screen e-paper refresh for the same action.
     ++state->revision;
