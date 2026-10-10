@@ -47,7 +47,10 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
     // Reapply the board electrical settings on recovery too, without changing
     // the initial begin-before-DIO2 ordering shared with working MeshCore.
     bool recoverChipStateLoss() override {
-        if(!SX1262Interface::recoverChipStateLoss())return false;
+        // Upstream's private chip-recovery helper cannot be called from a
+        // board subclass. Its public reconfigure() has the same guarded
+        // standby -> modem-params -> full-reinit fallback used by recovery.
+        if(!SX1262Interface::reconfigure())return false;
         return apply_board_settings();
     }
 public:
