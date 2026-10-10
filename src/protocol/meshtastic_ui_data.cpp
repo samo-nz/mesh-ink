@@ -580,8 +580,11 @@ void reconcile_sharing(){
 }
 void apply_pending_location_sharing(){
     if(!state||!state->config_complete)return;
+    // Explicit user changes only. Boot-time PhoneAPI config replay must
+    // NEVER queue unsolicited channel Admin commands: these trigger radio
+    // reconfiguration and flash writes while the e-paper UI is starting.
     if(state->location_last_admin_ms&&
-       (uint32_t)(millis()-state->location_last_admin_ms)<600UL)return;
+       (uint32_t)(millis()-state->location_last_admin_ms)<8000UL)return;
     for(unsigned i=0;i<kMaxChannels;++i){
         Channel& c=state->channels[i];
         if(!c.pending_share||!c.enabled||!c.have_wire||!c.wire.has_settings)continue;
@@ -622,7 +625,10 @@ void note_channel(const meshtastic_Channel& input){
             state->location_private_precision[input.index]=precision;
             remember_location_settings();
         }
-        reconcile_sharing();
+        // This is an observation of native configuration, not a new user
+        // request. Do NOT reconcile or submit an Admin set-channel here.
+        // Preserve any *in-session* user-requested pending command until it
+        // has been submitted (but never create pending commands on reboot).
     }
     changed();
 }
@@ -1109,7 +1115,9 @@ bool meshink_meshtastic_ui_location_set(bool enabled,bool public_approximate,uin
     remember_location_settings();
     reconcile_sharing();
     apply_pending_location_sharing();
-    changed();
+    // The touch handler draws this settings screen immediately. Do not
+    // request a second, full-screen e-paper refresh for the same action.
+    ++state->revision;
     return true;
 }
 bool meshink_meshtastic_ui_destination(uint32_t& node,uint8_t& channel){
@@ -1189,7 +1197,11 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         changed();break;
       case meshtastic_FromRadio_config_complete_id_tag:
         state->config_complete=true;
-        reconcile_sharing();
+        // No write-back on PhoneAPI replay. Native channels are authoritative
+        // at boot; explicit UI edits are the only source of Admin writes.
+        Serial.printf("[MT-LOC] boot: master=%u public=%u native_primary_precision=%lu (no config write)\n",
+                      state->location_share?1u:0u,state->location_public?1u:0u,
+                      (unsigned long)channel_precision(state->channels[0].wire));
         changed();break;
       default:break;
     }
