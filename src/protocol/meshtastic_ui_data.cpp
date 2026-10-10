@@ -69,7 +69,7 @@ struct State {
     bool local_user_ready=false;
     bool name_tx_seen=false,name_attempt_seen=false;
     uint32_t last_name_tx_ms=0,last_name_attempt_ms=0;
-    uint32_t selected_node=0;
+    uint32_t selected_node=0,deleted_node=0;
     uint8_t selected_channel=0;
     bool selected_is_channel=true;
     bool config_received=false;
@@ -354,11 +354,12 @@ Node* node_for(uint32_t number){
     if(Node* n=find_node(number))return n;
     if(state->node_count>=kMaxNodes)return nullptr;
     Node& n=state->nodes[state->node_count++];
+    n=Node{};
     n.number=number;
     snprintf(n.identity,sizeof(n.identity),"!%08lx",(unsigned long)number);
     // Distinguish an unknown name from an actual callsign. The unmodified
     // identity remains available in node details and for radio addressing.
-    snprintf(n.name,sizeof(n.name),"[%s]",n.identity);
+    snprintf(n.name,sizeof(n.name),"unknown (%s)",n.identity);
     snprintf(n.role_label,sizeof(n.role_label),"CLIENT");
     snprintf(n.subtitle,sizeof(n.subtitle),"MESHTASTIC NODE");
     n.role=UiNodeRole::Client;
@@ -486,6 +487,7 @@ void update_node_user(Node& n,const meshtastic_User& user){
     node_store_dirty();
 }
 void note_node(const meshtastic_NodeInfo& info){
+    if(state&&info.num==state->deleted_node)return;
     // Save the local User protobuf from the trusted PhoneAPI handshake for
     // standard NODEINFO_APP requests, as the Android app does. Never pull
     // mutable NodeDB globals across the worker/UI core boundary.
@@ -835,7 +837,43 @@ public:
         out=details_;return true;
     }
     bool add_active_node()override{return false;}
-    bool remove_active_contact()override{return false;}
+    bool remove_active_contact()override{
+        if(!state||state->selected_is_channel||!state->selected_node||
+           state->selected_node==state->me||!journal_ready)return false;
+        const uint32_t victim=state->selected_node;
+        // Request official local NodeDB removal. Channel history is untouched.
+        if(!meshink_meshtastic_submit_remove_node(victim))return false;
+        if(!meshink_message_store().erase_direct_peer(victim,kProtocolId))
+            return false;
+        size_t kept=0;
+        for(size_t i=0;i<state->message_count;++i){
+            const Message& m=state->messages[i];
+            if(!m.broadcast&&m.peer==victim)continue;
+            if(kept!=i)state->messages[kept]=m;
+            ++kept;
+        }
+        state->message_count=kept;
+        for(size_t i=0;i<state->node_count;++i){
+            if(state->nodes[i].number!=victim)continue;
+            for(size_t j=i+1;j<state->node_count;++j)
+                state->nodes[j-1]=state->nodes[j];
+            --state->node_count;
+            for(size_t j=i;j<state->node_count;++j){
+                Node& n=state->nodes[j];
+                n.row={n.name,n.subtitle,n.heard_text,0,n.role};
+            }
+            break;
+        }
+        state->deleted_node=victim;
+        state->selected_node=0;
+        state->selected_is_channel=true;
+        state->selected_channel=0;
+        node_store_dirty();
+        const bool persisted=flush_node_snapshot(true);
+        update_unread();
+        changed();
+        return persisted;
+    }
     bool request_active_node_info(UiNodeInfoRequest)override{return false;}
     bool login_active_node(const char*,bool)override{return false;}
     bool active_node_saved_password(char*,size_t)const override{return false;}
@@ -945,6 +983,12 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         note_config(response.config);break;
       case meshtastic_FromRadio_packet_tag: {
         const auto& p=response.packet;
+        // PhoneAPI replays historical position packets at startup. Only
+        // a newly received RF packet may rediscover an explicitly removed node.
+        if(p.from&&p.from==state->deleted_node){
+            if(!p.has_rx_rssi&&!p.has_rx_snr)break;
+            state->deleted_node=0;
+        }
         // The mesh packet itself is the discovery event. NodeInfo snapshots
         // and restored old messages do not trigger any over-the-air request.
         const bool incoming=p.from&&p.from!=state->me;
