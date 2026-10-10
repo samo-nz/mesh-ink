@@ -244,6 +244,43 @@ void poll(){
             Serial.printf("[MeshInk/MT] ERROR: FromRadio protobuf decode failed, len=%u\n",(unsigned)n);
         }
     }
+    // Send at most one identity request after processing incoming PhoneAPI
+    // events; RF scheduling, encryption, retransmission and airtime limits
+    // remain owned by the unchanged official Meshtastic worker/Router.
+    uint32_t name_target=0;
+    uint8_t name_channel=0;
+    meshtastic_User own_user=meshtastic_User_init_zero;
+    if(meshink_meshtastic_ui_next_name_request(name_target,name_channel,own_user)){
+        auto scratch=psram_scratch<PhoneTxScratch>();
+        bool queued=false;
+        if(scratch){
+            auto& req=scratch->request;
+            req.which_payload_variant=meshtastic_ToRadio_packet_tag;
+            req.packet.to=name_target;
+            req.packet.channel=name_channel;
+            req.packet.id=esp_random();
+            if(!req.packet.id)req.packet.id=1;
+            req.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
+            req.packet.decoded.portnum=meshtastic_PortNum_NODEINFO_APP;
+            req.packet.decoded.want_response=true;
+            pb_ostream_t inner=pb_ostream_from_buffer(
+                req.packet.decoded.payload.bytes,sizeof(req.packet.decoded.payload.bytes));
+            if(pb_encode(&inner,meshtastic_User_fields,&own_user)){
+                req.packet.decoded.payload.size=inner.bytes_written;
+                pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
+                if(pb_encode(&outer,meshtastic_ToRadio_fields,&req)){
+                    queued=meshink_meshtastic_worker_submit(
+                        scratch->wire,outer.bytes_written,req.packet.id);
+                }
+            }
+        }
+        meshink_meshtastic_ui_name_request_result(name_target,queued);
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.printf("[MT-TEST] NodeInfo request to=!%08lx channel=%u queued=%u\n",
+                      (unsigned long)name_target,(unsigned)name_channel,
+                      queued?1U:0U);
+#endif
+    }
 }
 bool send(const char* text){
     if(!ready||!text||!*text)return false;
