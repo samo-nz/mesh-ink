@@ -3023,10 +3023,15 @@ static void draw_protocol_select() {
                     layout.section_margin,ui_y(760),layout.section_width,2,0,false,4);
 }
 
-enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,Backend,AdvertZero,AdvertFlood};
+enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,RadioSetup,Backend,AdvertZero,AdvertFlood};
 
 static size_t protocol_settings_total_count(){
-    return 1+(mesh_protocol_supports_radio_presets()?1:0)+mesh_protocol_setting_count()+
+    // A configured MeshInk setup flag must not hide native Meshtastic radio
+    // setup if an older/incompatible protocol config was discarded.
+    const bool has_native_region_setup=!mesh_protocol_supports_radio_presets()&&
+        mesh_protocol_setup_region_count()>0;
+    return 1+(mesh_protocol_supports_radio_presets()?1:0)+(has_native_region_setup?1:0)+
+           mesh_protocol_setting_count()+
            (mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)?2:0);
 }
 
@@ -3044,6 +3049,14 @@ static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
         if(index==cursor){
             kind=ProtocolSettingsRowKind::RadioPreset;
             title="RADIO PRESET";value=active_radio_label();
+            return true;
+        }
+        ++cursor;
+    }
+    if(!mesh_protocol_supports_radio_presets()&&mesh_protocol_setup_region_count()>0){
+        if(index==cursor){
+            kind=ProtocolSettingsRowKind::RadioSetup;
+            title="CONFIGURE LORA";value=mesh_protocol_radio_summary();
             return true;
         }
         ++cursor;
@@ -5100,6 +5113,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     screen=Screen::Presets;
                     preset_page=selected_preset/PRESETS_PER_PAGE;
                     draw_screen();refresh(MeshInkRefreshMode::FastGray16);
+                    return true;
+                }
+                if(kind==ProtocolSettingsRowKind::RadioSetup){
+                    // Reuse the already-reviewed region/preset legality wizard;
+                    // no filesystem erase or custom native radio writer.
+                    setup_initialize_draft();
+                    setup_enter(Screen::SetupRegion);
                     return true;
                 }
                 const auto result=mesh_protocol_activate_setting(backend_id);

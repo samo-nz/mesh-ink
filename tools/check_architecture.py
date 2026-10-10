@@ -156,6 +156,15 @@ for rel in (
     if "hardware/performance.h" not in text:
         errors.append(f"{rel}: CPU policy must use generic hardware/performance.h")
 
+# Incompatible legacy Meshtastic preferences may reset the native LoRa
+# region without resetting MeshInk's first-run flag. Reconfiguration must
+# remain available directly in the shared protocol-settings UI.
+ui_source=(SRC/"ui_onboarding.cpp").read_text(encoding="utf-8")
+for token in ("ProtocolSettingsRowKind::RadioSetup", 'title="CONFIGURE LORA"',
+              "setup_enter(Screen::SetupRegion);"):
+    if token not in ui_source:
+        errors.append(f"Native region reconfiguration path missing: {token}")
+
 platformio=(ROOT/"platformio.ini").read_text(encoding="utf-8")
 warning_env=platformio[platformio.index("[env:t5-unified-cache64-warnings]"):platformio.index("; Generic portability",platformio.index("[env:t5-unified-cache64-warnings]"))]
 if "build_src_flags =" not in warning_env or "-Wall" not in warning_env or "-Wextra" not in warning_env:
