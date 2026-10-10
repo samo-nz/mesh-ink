@@ -199,6 +199,15 @@ if after not in position_data:
     if position_data.count(before) != 1:
         raise RuntimeError("Meshtastic PositionModule entry guard changed upstream")
     position_data = position_data.replace(before, after, 1)
+# The stock module includes the hardware GPS receiver header unconditionally,
+# despite only using it in the !EXCLUDE_GPS branch. Suppress that include in
+# MeshInk's receiver-free networking build; leave the upstream tree untouched.
+gps_include = '#include "GPS.h"'
+gps_guarded = '#if !MESHTASTIC_EXCLUDE_GPS\\n#include "GPS.h"\\n#endif'
+if gps_guarded not in position_data:
+    if position_data.count(gps_include) != 1:
+        raise RuntimeError("Meshtastic PositionModule GPS include changed upstream")
+    position_data = position_data.replace(gps_include, gps_guarded, 1)
 # MeshInk must remain the exclusive arbiter of standby/deep-sleep (including
 # for Meshtastic TRACKER roles with power-saving enabled).
 sleep_before = "        doDeepSleep(nightyNightMs, false, false);"
