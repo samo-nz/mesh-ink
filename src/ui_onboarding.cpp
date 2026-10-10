@@ -218,6 +218,9 @@ static int8_t status_minute = -1;
 // changes are kept separate so the 48 px bar can use a small DU update.
 static bool status_dirty = false;
 static bool status_bar_dirty = false;
+// The shared UI, never a protocol, decides when to redraw a keyboard.
+static bool deferred_data_refresh = false;
+static size_t chat_message_count_last_drawn = 0;
 static int16_t status_bar_painted_minute = -1;
 static int16_t status_bar_painted_slot = -1;
 static bool toast_visible = false;
@@ -2431,6 +2434,7 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
     const size_t count=ui_data?ui_data->active_message_count():0;
+    chat_message_count_last_drawn=count;
     chat_geometry_sync(count);
     const bool keyboard=keyboard_visible&&keyboard_message_mode;
     const auto keyboard_layout=keyboard_metrics(false);
@@ -5927,6 +5931,11 @@ void ui_finish_startup() {
 }
 
 void ui_loop() {
+    // Restore deferred data refreshes only after text entry ends.
+    if(!keyboard_visible&&!keyboard_landscape&&deferred_data_refresh&&!standby_active){
+        deferred_data_refresh=false;
+        status_dirty=true;
+    }
     if(hardware_failure){
 
         delay(100);return;
@@ -6350,10 +6359,19 @@ bool ui_chat_is_visible(bool channel){
 
 void ui_notify_message_received(bool channel){
     const bool visible=ui_chat_is_visible(channel);
-    // The provider has already committed the RX record and synchronized these
-    // totals from its journal-derived counters. Notification code must never
-    // maintain a second unread truth.
-    status_dirty=true;
+    // In either keyboard orientation, unrelated incoming traffic may only
+    // update the unread indicator. If the active conversation grew, permit its
+    // message bubbles to update without discarding the current draft.
+    const bool typing=keyboard_message_mode&&(keyboard_visible||keyboard_landscape);
+    const bool active_message=visible&&ui_data&&
+        ui_data->active_message_count()>chat_message_count_last_drawn;
+    // Counters are journal-derived; do not maintain a second unread truth.
+    if(typing&&!active_message){
+        deferred_data_refresh=true;
+        status_bar_dirty=true;
+    }else{
+        status_dirty=true;
+    }
     if(standby_active){
         if(headless_ui_state){
             // Keep the request latched even while a display-only alert is in
@@ -6392,7 +6410,12 @@ void ui_notify_node_position_unavailable(){
 }
 
 void ui_request_data_refresh(const char* reason){
-    status_dirty=true;T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh queued reason=%s\n",reason?reason:"data");
+    if(keyboard_visible||keyboard_landscape){
+        // Receiving node/status/routing data must never paint over typing.
+        // Message events can still explicitly request the active chat redraw.
+        deferred_data_refresh=true;
+    }else status_dirty=true;
+    T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh queued reason=%s\n",reason?reason:"data");
 }
 
 void ui_apply_initial_radio_preset(){
