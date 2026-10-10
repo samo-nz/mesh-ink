@@ -4,6 +4,7 @@
 #include <pb_decode.h>
 #include <esp_system.h>
 #include <SPIFFS.h>
+#include <Preferences.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -30,6 +31,9 @@ struct Channel {
     char name[16]{};
     char subtitle[28]{};
     UiListEntry row{};
+    meshtastic_Channel wire{};
+    bool have_wire=false,pending_share=false;
+    uint32_t pending_precision=0;
 };
 struct Node {
     uint32_t number=0;
@@ -74,6 +78,12 @@ struct State {
     bool selected_is_channel=true;
     bool config_received=false;
     bool config_complete=false;
+    bool position_config_received=false,location_explicit=false;
+    bool location_share=false,location_public=false;
+    uint8_t location_interval=0;
+    uint32_t location_private_precision[kMaxChannels]{};
+    uint32_t location_last_admin_ms=0;
+    meshtastic_Config_PositionConfig position_config{};
     bool region_map_received=false;
     meshtastic_LoRaRegionPresetMap region_map{};
     meshtastic_Config_LoRaConfig lora{};
@@ -521,17 +531,117 @@ void note_node(const meshtastic_NodeInfo& info){
     }
     changed();
 }
+uint32_t channel_precision(const meshtastic_Channel& c){
+    return c.has_settings&&c.settings.has_module_settings?
+           c.settings.module_settings.position_precision:0;
+}
+void remember_location_settings(){
+    if(!state)return;
+    Preferences pref;
+    if(!pref.begin("mt-location",false))return;
+    pref.putBool("configured",state->location_explicit);
+    pref.putBool("master",state->location_share);
+    pref.putBool("public",state->location_public);
+    pref.putUChar("interval",state->location_interval);
+    for(unsigned i=1;i<kMaxChannels;++i){
+        char key[12];snprintf(key,sizeof(key),"prec%u",i);
+        pref.putUInt(key,state->location_private_precision[i]);
+    }
+    pref.end();
+}
+void restore_location_settings(){
+    if(!state)return;
+    Preferences pref;
+    if(!pref.begin("mt-location",true))return;
+    state->location_explicit=pref.getBool("configured",false);
+    state->location_share=pref.getBool("master",false);
+    state->location_public=pref.getBool("public",false);
+    state->location_interval=std::min((uint8_t)3,pref.getUChar("interval",0));
+    for(unsigned i=1;i<kMaxChannels;++i){
+        char key[12];snprintf(key,sizeof(key),"prec%u",i);
+        state->location_private_precision[i]=pref.getUInt(key,0);
+    }
+    pref.end();
+}
+void reconcile_sharing(){
+    if(!state||!state->config_complete||!state->location_explicit)return;
+    for(unsigned i=0;i<kMaxChannels;++i){
+        Channel& c=state->channels[i];
+        if(!c.enabled||!c.have_wire||!c.wire.has_settings)continue;
+        const uint32_t current=channel_precision(c.wire);
+        const uint32_t target=i==0?
+            (state->location_share&&state->location_public?15u:0u):
+            (state->location_share?state->location_private_precision[i]:0u);
+        if(current!=target){
+            c.pending_share=true;
+            c.pending_precision=target;
+        }else c.pending_share=false;
+    }
+}
+void apply_pending_location_sharing(){
+    if(!state||!state->config_complete)return;
+    if(state->location_last_admin_ms&&
+       (uint32_t)(millis()-state->location_last_admin_ms)<600UL)return;
+    for(unsigned i=0;i<kMaxChannels;++i){
+        Channel& c=state->channels[i];
+        if(!c.pending_share||!c.enabled||!c.have_wire||!c.wire.has_settings)continue;
+        meshtastic_Channel next=c.wire;
+        next.settings.has_module_settings=true;
+        next.settings.module_settings.position_precision=c.pending_precision;
+        state->location_last_admin_ms=millis();
+        if(meshink_meshtastic_submit_channel(next)){
+            // Keep the UI's snapshot in sync while the official worker
+            // processes the command; later PhoneAPI channel updates win.
+            c.wire=next;
+            c.pending_share=false;
+            Serial.printf("[MT-LOC] queued channel=%u precision=%lu\n",
+                          i,(unsigned long)c.pending_precision);
+        }
+        break;
+    }
+}
 void note_channel(const meshtastic_Channel& input){
     if(!state||input.index<0||input.index>=static_cast<int>(kMaxChannels))return;
     Channel& ch=state->channels[input.index];
-    if(input.role==meshtastic_Channel_Role_DISABLED){ch.enabled=false;changed();return;}
+    ch.wire=input;ch.have_wire=true;
+    if(input.role==meshtastic_Channel_Role_DISABLED){ch.enabled=false;ch.pending_share=false;changed();return;}
     setup_channel(ch,(uint8_t)input.index,
                   input.has_settings?input.settings.name:"",
                   input.role==meshtastic_Channel_Role_PRIMARY?"PRIMARY CHANNEL":"SECONDARY CHANNEL");
+    if(!state->location_explicit){
+        // Existing deployments retain whatever native channels were
+        // configured to broadcast prior to adding MeshInk's new page.
+        const bool broadcast=channel_precision(input)>0;
+        if(broadcast)state->location_share=true;
+        if(input.index==0)state->location_public=broadcast;
+        if(input.index>0&&broadcast)
+            state->location_private_precision[input.index]=channel_precision(input);
+    }else{
+        const uint32_t precision=channel_precision(input);
+        if(input.index>0&&state->location_share&&precision>0){
+            state->location_private_precision[input.index]=precision;
+            remember_location_settings();
+        }
+        reconcile_sharing();
+    }
     changed();
 }
 void note_config(const meshtastic_Config& config){
-    if(!state||config.which_payload_variant!=meshtastic_Config_lora_tag)return;
+    if(!state)return;
+    if(config.which_payload_variant==meshtastic_Config_position_tag){
+        state->position_config=config.payload_variant.position;
+        state->position_config_received=true;
+        if(!state->location_explicit){
+            const auto& pos=state->position_config;
+            if(pos.position_broadcast_smart_enabled)state->location_interval=0;
+            else if(pos.position_broadcast_secs>=14400)state->location_interval=3;
+            else if(pos.position_broadcast_secs>=7200)state->location_interval=2;
+            else state->location_interval=1;
+        }
+        changed();
+        return;
+    }
+    if(config.which_payload_variant!=meshtastic_Config_lora_tag)return;
     const auto& l=config.payload_variant.lora;
     state->config_received=true;
     state->lora=l;
@@ -925,6 +1035,7 @@ void meshink_meshtastic_ui_begin(){
     journal_ready=false;
     if(!state)return;
     setup_channel(state->channels[0],0,"PRIMARY","PRIMARY CHANNEL");
+    restore_location_settings();
     // Official NodeDB snapshots are only an update source, not the
     // persistence authority for contacts or historical map markers.
     load_node_snapshot();
@@ -955,8 +1066,52 @@ void meshink_meshtastic_ui_begin(){
     update_unread();
 }
 UiDataProvider* meshink_meshtastic_ui_provider(){return state?&provider:nullptr;}
-void meshink_meshtastic_ui_tick(){flush_node_snapshot();}
+void meshink_meshtastic_ui_tick(){
+    flush_node_snapshot();
+    apply_pending_location_sharing();
+}
 void meshink_meshtastic_ui_flush(){flush_node_snapshot(true);}
+
+bool meshink_meshtastic_ui_location_get(bool& enabled,bool& public_approximate,uint8_t& interval){
+    if(!state)return false;
+    enabled=state->location_share;
+    public_approximate=state->location_public;
+    interval=state->location_interval;
+    return state->config_complete&&state->position_config_received;
+}
+bool meshink_meshtastic_ui_location_set(bool enabled,bool public_approximate,uint8_t interval){
+    if(!state||!state->config_complete||!state->position_config_received||
+       interval>3)return false;
+    const uint32_t seconds[]={3600u,3600u,7200u,14400u};
+    const bool smart=interval==0;
+    if(state->position_config.position_broadcast_smart_enabled!=smart||
+       state->position_config.position_broadcast_secs!=seconds[interval]){
+        meshtastic_Config_PositionConfig next=state->position_config;
+        next.position_broadcast_smart_enabled=smart;
+        next.position_broadcast_secs=seconds[interval];
+        if(!meshink_meshtastic_submit_position_config(next))return false;
+        state->position_config=next;
+    }
+    // Record other channels' sharing preferences before disabling their
+    // effective precision. Re-enable later restores the same private bits.
+    if(!enabled){
+        for(unsigned i=1;i<kMaxChannels;++i){
+            Channel& c=state->channels[i];
+            if(!c.enabled||!c.have_wire)continue;
+            const uint32_t current=channel_precision(c.wire);
+            if(current)state->location_private_precision[i]=current;
+        }
+    }
+    state->location_share=enabled;
+    state->location_public=public_approximate;
+    state->location_interval=interval;
+    state->location_explicit=true;
+    remember_location_settings();
+    reconcile_sharing();
+    apply_pending_location_sharing();
+    changed();
+    return true;
+}
 bool meshink_meshtastic_ui_destination(uint32_t& node,uint8_t& channel){
     if(!state)return false;
     node=state->selected_is_channel?kBroadcast:state->selected_node;
@@ -1034,6 +1189,7 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         changed();break;
       case meshtastic_FromRadio_config_complete_id_tag:
         state->config_complete=true;
+        reconcile_sharing();
         changed();break;
       default:break;
     }
