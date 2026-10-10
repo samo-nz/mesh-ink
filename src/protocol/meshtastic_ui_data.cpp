@@ -849,7 +849,11 @@ public:
         for(size_t i=0;i<state->message_count;++i){
             const Message& m=state->messages[i];
             if(!m.broadcast&&m.peer==victim)continue;
-            if(kept!=i)state->messages[kept]=m;
+            if(kept!=i){
+                state->messages[kept]=m;
+                state->messages[kept].row.text=state->messages[kept].text;
+                state->messages[kept].row.time=state->messages[kept].time;
+            }
             ++kept;
         }
         state->message_count=kept;
@@ -986,7 +990,7 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         // PhoneAPI replays historical position packets at startup. Only
         // a newly received RF packet may rediscover an explicitly removed node.
         if(p.from&&p.from==state->deleted_node){
-            if(!p.has_rx_rssi&&!p.has_rx_snr)break;
+            if(!p.has_rx_rssi)break;
             state->deleted_node=0;
         }
         // The mesh packet itself is the discovery event. NodeInfo snapshots
