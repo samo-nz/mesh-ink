@@ -1801,7 +1801,8 @@ assert 'oldest->bits=(uint8_t*)heap_caps_malloc(TILE_BYTES,' in map_source and '
 # Meshtastic identity requests follow real RF discovery, not timer-only polling.
 mt_ui=(root/"src"/"protocol"/"meshtastic_ui_data.cpp").read_text(encoding="utf-8")
 mt_proto=(root/"src"/"protocol"/"meshtastic_protocol.cpp").read_text(encoding="utf-8")
-assert 'snprintf(n.name,sizeof(n.name),"[%s]",n.identity);' in mt_ui, "unknown Meshtastic contacts display bracketed node IDs"
+assert 'snprintf(n.name,sizeof(n.name),"unknown (%s)",n.identity);' in mt_ui, "unknown Meshtastic contacts identify their permanent node ID"
+assert 'else snprintf(out.name,sizeof(out.name),"(!%06lx)",' in mt_ui, "unknown map labels use a compact six-digit node ID"
 assert 'meshtastic_PortNum_NODEINFO_APP' in mt_ui and 'update_node_user(*n,user)' in mt_ui, "Meshtastic live User announcements update contact names"
 assert 'n->name_request_pending=true;' in mt_ui and 'case meshtastic_FromRadio_packet_tag:' in mt_ui, "discovery only follows actual incoming mesh traffic"
 assert 'kNodeInfoEarlyRetryMs=5UL*60UL*1000UL' in mt_ui and 'n->name_request_count<2' in mt_ui, "a node gets one event-triggered retry after five minutes"
