@@ -12,6 +12,8 @@ namespace {
 // RadioLib's HAL is borrowed by the official native radio instance and must
 // outlive it. This exists only when the Meshtastic protocol starts.
 std::unique_ptr<LockingArduinoHal> native_hal;
+class MeshInkNativeSX1262;
+MeshInkNativeSX1262* active_native_radio=nullptr;
 
 // The T5 RF switch must be enabled AFTER SX1262 begin(), as in MeshCore's
 // proven LilyGO post-init sequence. Keep upstream RF modem/IRQ logic intact.
@@ -41,6 +43,14 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
         return true;
     }
 public:
+    void report() const {
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.printf("[MT-TEST] radio stats rx_ok=%lu rx_bad=%lu tx_ok=%lu tx_relay=%lu tx_drop=%u rx_armed=%u rx_offline=%u recovery_attempts=%u\n",
+                      (unsigned long)rxGood,(unsigned long)rxBad,(unsigned long)txGood,
+                      (unsigned long)txRelay,(unsigned)txDrop,isReceiving?1U:0U,
+                      rxOffline?1U:0U,(unsigned)chipRecoveryFailures);
+#endif
+    }
     MeshInkNativeSX1262(LockingArduinoHal* hal,RADIOLIB_PIN_TYPE cs,
                         RADIOLIB_PIN_TYPE irq,RADIOLIB_PIN_TYPE rst,
                         RADIOLIB_PIN_TYPE busy,float tcxo,bool dio2)
@@ -67,6 +77,11 @@ std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
     }
     meshink_radio_prepare_native_spi_bus();
     const MeshInkSX126xModuleConfig hw=meshink_radio_native_module_config();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] SX1262 board SPI ready cs=%d irq=%d rst=%d busy=%d tcxo=%.1fV dio2_rf=%u heap=%u\n",
+                  hw.chip_select,hw.dio1,hw.reset,hw.busy,(double)hw.tcxo_voltage,
+                  hw.dio2_rf_switch?1U:0U,(unsigned)ESP.getFreeHeap());
+#endif
     if(hw.chip_select<0||hw.dio1<0||hw.reset<0||hw.busy<0||
        hw.tcxo_voltage<=0.0f){
         Serial.println("[MeshInk/MT] Invalid SX1262 hardware description");
@@ -87,9 +102,18 @@ std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
     // Upstream init() configures and arms native IRQ-driven RX, and applies
     // the Meshtastic modem's own synchronisation, CAD and transmission rules.
     if(!radio->init()){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.printf("[MT-TEST] SX1262 initialization failed heap=%u; inspect upstream RadioLib errors\n",
+                      (unsigned)ESP.getFreeHeap());
+#endif
         Serial.println("[MeshInk/MT] Official SX1262 radio init failed");
         return nullptr;
     }
+    active_native_radio=radio.get();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.println("[MT-TEST] SX1262 initialized, post-init TCXO/DIO2 set, native RX re-armed");
+    active_native_radio->report();
+#endif
     return std::unique_ptr<RadioInterface>(std::move(radio));
 }
 
@@ -99,4 +123,10 @@ bool meshink_meshtastic_attach_radio(Router& native_router) {
     native_router.addInterface(std::move(radio));
     Serial.println("[MeshInk/MT] Official SX1262 driver attached to Router");
     return true;
+}
+
+void meshink_meshtastic_radio_report(){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    if(active_native_radio)active_native_radio->report();
+#endif
 }

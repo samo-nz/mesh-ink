@@ -69,6 +69,10 @@ void start(){
     // protocol owns no board filesystems or data partitions itself.
     const bool storage_ready=meshink_storage_mount_internal_safe();
     if(!storage_ready)ui_show_storage_initializing();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] protocol startup storage=%s heap=%u\n",
+                  storage_ready?"mounted":"MOUNT FAILED",(unsigned)ESP.getFreeHeap());
+#endif
     // Same board-owned power/SPI settling boundary as MeshCore's local boot.
     // The official Meshtastic SX1262 driver initializes AFTER this handoff.
     meshink_board_begin_local();
@@ -76,8 +80,14 @@ void start(){
     ui_use_data_provider(meshink_meshtastic_ui_provider());
     // Native Router, NodeDB and MeshService must initialize before PhoneAPI.
     // This seam does not initialize a second firmware application.
-    ready=meshink_meshtastic_native_begin() &&
-          meshink_official_phoneapi_open(1);
+    const bool engine_ready=meshink_meshtastic_native_begin();
+    const bool phone_ready=engine_ready&&meshink_official_phoneapi_open(1);
+    ready=engine_ready&&phone_ready;
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] handoff engine=%u PhoneAPI=%u ready=%u heap=%u\n",
+                  engine_ready?1U:0U,phone_ready?1U:0U,ready?1U:0U,
+                  (unsigned)ESP.getFreeHeap());
+#endif
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_service_begin();
     gps_next_status=0;update_shared_gps_status();
@@ -93,15 +103,46 @@ void poll(){
         if(!n)break;
         meshtastic_FromRadio data=meshtastic_FromRadio_init_zero;
         pb_istream_t input=pb_istream_from_buffer(bytes,n);
-        if(pb_decode(&input,meshtastic_FromRadio_fields,&data))
+        if(pb_decode(&input,meshtastic_FromRadio_fields,&data)){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+            switch(data.which_payload_variant){
+                case meshtastic_FromRadio_my_info_tag:
+                    Serial.printf("[MT-TEST] PhoneAPI my_info node=!%08lx\n",
+                                  (unsigned long)data.my_info.my_node_num);break;
+                case meshtastic_FromRadio_region_presets_tag:
+                    Serial.printf("[MT-TEST] PhoneAPI region presets groups=%u mappings=%u\n",
+                                  (unsigned)data.region_presets.groups_count,
+                                  (unsigned)data.region_presets.region_groups_count);break;
+                case meshtastic_FromRadio_config_complete_id_tag:
+                    Serial.printf("[MT-TEST] PhoneAPI config_complete nonce=%lu\n",
+                                  (unsigned long)data.config_complete_id);break;
+                case meshtastic_FromRadio_packet_tag:
+                    Serial.printf("[MT-TEST] FromRadio packet id=%08lx from=!%08lx to=!%08lx ch=%u port=%u request=%08lx\n",
+                                  (unsigned long)data.packet.id,(unsigned long)data.packet.from,
+                                  (unsigned long)data.packet.to,(unsigned)data.packet.channel,
+                                  (unsigned)(data.packet.which_payload_variant==meshtastic_MeshPacket_decoded_tag?
+                                  data.packet.decoded.portnum:0),
+                                  (unsigned long)(data.packet.which_payload_variant==meshtastic_MeshPacket_decoded_tag?
+                                  data.packet.decoded.request_id:0));break;
+                default:break;
+            }
+#endif
             meshink_meshtastic_ui_receive(data);
+        }else{
+            Serial.printf("[MeshInk/MT] ERROR: FromRadio protobuf decode failed, len=%u\n",(unsigned)n);
+        }
     }
 }
 bool send(const char* text){
     if(!ready||!text||!*text)return false;
     uint32_t dest=0;
     uint8_t channel=0;
-    if(!meshink_meshtastic_ui_destination(dest,channel))return false;
+    if(!meshink_meshtastic_ui_destination(dest,channel)){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.println("[MT-TEST] send rejected: missing active destination");
+#endif
+        return false;
+    }
     meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
     request.which_payload_variant=meshtastic_ToRadio_packet_tag;
     request.packet.to=dest;
@@ -120,6 +161,11 @@ bool send(const char* text){
     if(!pb_encode(&output,meshtastic_ToRadio_fields,&request))return false;
     const bool queued=meshink_official_phoneapi_submit(bytes,output.bytes_written);
     meshink_meshtastic_ui_sent(request.packet.id,text,queued);
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] ToRadio text id=%08lx to=!%08lx channel=%u length=%u want_ack=%u accepted=%u\n",
+                  (unsigned long)request.packet.id,(unsigned long)dest,
+                  (unsigned)channel,(unsigned)n,request.packet.want_ack?1U:0U,queued?1U:0U);
+#endif
     return queued;
 }
 void stop(){

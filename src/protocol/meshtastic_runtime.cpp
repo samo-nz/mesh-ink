@@ -68,6 +68,10 @@ bool ever_started=false;
 bool meshink_meshtastic_native_begin(){
     if(ever_started)return native_ready;
     ever_started=true;
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] engine boot: initial heap=%u psram=%u\n",
+                  (unsigned)ESP.getFreeHeap(),(unsigned)ESP.getFreePsram());
+#endif
     // Mirror the official firmware's initialization order, without running
     // any of its display, phone BLE, USB, GPS or power application startup.
     concurrency::hasBeenSetup=true;
@@ -77,11 +81,21 @@ bool meshink_meshtastic_native_begin(){
     powerMonInit();
     serialSinceMsec=millis();
     fsInit(); // uses MeshInk's already-mounted SPIFFS, no autoformat
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] official SPI lock, power monitor, SPIFFS initialized; heap=%u\n",
+                  (unsigned)ESP.getFreeHeap());
+#endif
     nodeDB=new(std::nothrow) NodeDB();
     if(!nodeDB){
         Serial.println("[MeshInk/MT] NodeDB failed");
         return false;
     }
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] NodeDB ready node=!%08lx region=%u preset=%u tx_enabled=%u heap=%u\n",
+                  (unsigned long)nodeDB->getNodeNum(),(unsigned)config.lora.region,
+                  (unsigned)config.lora.modem_preset,config.lora.tx_enabled?1U:0U,
+                  (unsigned)ESP.getFreeHeap());
+#endif
     TransmitHistory::getInstance()->loadFromDisk();
     if(nodeStatus)nodeStatus->observe(&nodeDB->newStatus);
     router=new(std::nothrow) ReliableRouter();
@@ -99,10 +113,22 @@ bool meshink_meshtastic_native_begin(){
     if(!powerStatus)powerStatus=new(std::nothrow) meshtastic::PowerStatus();
     if(!powerStatus)return false;
     setupModules();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] official Router/MeshService/modules ready; heap=%u psram_free=%u\n",
+                  (unsigned)ESP.getFreeHeap(),(unsigned)ESP.getFreePsram());
+#endif
     PowerFSM_setup(); // official excluded-power-FSM no-op, MeshInk owns sleep
     native_ready=meshink_meshtastic_attach_radio(*router);
     if(!native_ready)Serial.println("[MeshInk/MT] Native radio initialization failed");
-    else Serial.println("[MeshInk/MT] Native Meshtastic node initialized");
+    else {
+        Serial.println("[MeshInk/MT] Native Meshtastic node initialized");
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        nodeDB->notifyObservers(true); // Match official boot: publish initial status after radio attach.
+        Serial.printf("[MT-TEST] engine READY heap=%u free_psram=%u stack_watermark_words=%u\n",
+                      (unsigned)ESP.getFreeHeap(),(unsigned)ESP.getFreePsram(),
+                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+#endif
+    }
     return native_ready;
 }
 
@@ -127,6 +153,20 @@ void meshink_meshtastic_native_loop(){
     service->loop();
     // Run the genuine Meshtastic router/modules without sleeping MeshInk UI.
     concurrency::mainController.runOrDelay();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    static uint32_t lastDiagnostic=0;
+    if(!lastDiagnostic || (uint32_t)(millis()-lastDiagnostic)>=30000UL){
+        lastDiagnostic=millis();
+        const auto queue=router->getQueueStatus();
+        Serial.printf("[MT-TEST] heartbeat uptime=%lus node=!%08lx region=%u tx=%u queue=%u/%u heap=%u psram=%u stack_words=%u\n",
+                      (unsigned long)(millis()/1000UL),(unsigned long)nodeDB->getNodeNum(),
+                      (unsigned)config.lora.region,config.lora.tx_enabled?1U:0U,
+                      (unsigned)queue.free,(unsigned)queue.maxlen,
+                      (unsigned)ESP.getFreeHeap(),(unsigned)ESP.getFreePsram(),
+                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+        meshink_meshtastic_radio_report();
+    }
+#endif
 }
 
 void meshink_meshtastic_native_stop(){
