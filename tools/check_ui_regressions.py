@@ -1798,6 +1798,18 @@ assert 'output=(uint8_t*)map_alloc(wanted);' in pmtiles_source, "PMTiles decompr
 assert 'uint8_t* compressed = (uint8_t*)map_alloc((size_t)size);' in pmtiles_source, "PMTiles compressed directory staging must use PSRAM"
 assert 'Entry* entries = (Entry*)map_alloc(' in pmtiles_source, "PMTiles long-lived index cache must use PSRAM"
 assert 'oldest->bits=(uint8_t*)heap_caps_malloc(TILE_BYTES,' in map_source and 'MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT' in map_source, "decoded map tile cache stays in PSRAM"
+# Meshtastic identity requests follow real RF discovery, not timer-only polling.
+mt_ui=(root/"src"/"protocol"/"meshtastic_ui_data.cpp").read_text(encoding="utf-8")
+mt_proto=(root/"src"/"protocol"/"meshtastic_protocol.cpp").read_text(encoding="utf-8")
+assert 'snprintf(n.name,sizeof(n.name),"[%s]",n.identity);' in mt_ui, "unknown Meshtastic contacts display bracketed node IDs"
+assert 'meshtastic_PortNum_NODEINFO_APP' in mt_ui and 'update_node_user(*n,user)' in mt_ui, "Meshtastic live User announcements update contact names"
+assert 'n->name_request_pending=true;' in mt_ui and 'case meshtastic_FromRadio_packet_tag:' in mt_ui, "discovery only follows actual incoming mesh traffic"
+assert 'kNodeInfoRetryMs=12UL*60UL*60UL*1000UL' in mt_ui, "per-node identity requests respect upstream 12-hour reply suppression"
+assert 'kNodeInfoGlobalSpacingMs=60UL*1000UL' in mt_ui, "identity traffic is globally spaced"
+assert 'name_request_sent=true;' in mt_ui and 'n->name_request_pending=false;' in mt_ui, "successful queue submission clears one pending identity request"
+assert 'p.channel<kMaxChannels?(uint8_t)p.channel:0' in mt_ui, "raw RF channel hashes cannot select invalid channel slots"
+assert 'req.packet.decoded.want_response=true;' in mt_proto and 'req.packet.decoded.portnum=meshtastic_PortNum_NODEINFO_APP;' in mt_proto, "identity query uses official Meshtastic NodeInfo request semantics"
+assert 'meshink_meshtastic_worker_submit(' in mt_proto, "identity query uses existing independent radio worker"
 assert '{"BACKUP / RESTORE","Save or restore data on SD card",MoreAction::Backup}' in source, "More menu replaces Advertise with Backup / Restore"
 assert 'MoreAction::Advertise' not in source and 'Screen::AdvertMenu' not in source, "obsolete Advertise page has been removed"
 assert 'ProtocolSettingsRowKind::AdvertZero' in source and 'ProtocolSettingsRowKind::AdvertFlood' in source, "MeshCore Protocol Settings contains two advert actions"
