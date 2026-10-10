@@ -5,6 +5,9 @@
 const char* meshink_gps_backend_name();
 const char* meshink_gps_tuning_note();
 void meshink_gps_prepare_runtime();
+// Cold-boot board-owned NMEA baud/receiver probe, shared across protocols.
+// Call only after the selected protocol's SX1262 has powered the shared rail.
+void meshink_gps_probe_after_radio(bool radio_ready);
 void meshink_gps_service_begin();
 void meshink_gps_service_loop();
 void meshink_gps_set_provider_enabled(bool enabled);

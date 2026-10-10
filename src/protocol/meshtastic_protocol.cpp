@@ -90,6 +90,9 @@ void start(){
                   (unsigned)ESP.getFreeHeap());
 #endif
 #if ENV_INCLUDE_GPS == 1
+    // Probe the original T5 receiver at both supported UART bauds, using
+    // precisely the same MeshInk board routine as MeshCore cold startup.
+    meshink_gps_probe_after_radio(engine_ready);
     meshink_gps_service_begin();
     // MeshInk GNSS preferences control the sole physical receiver.
     shared_gps_mode_changed(meshink_gps_constellation_mode());
