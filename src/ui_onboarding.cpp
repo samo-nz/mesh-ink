@@ -5913,7 +5913,7 @@ void ui_finish_startup() {
     status_dirty=false;status_bar_dirty=false;
     touch_queue=xQueueCreate(32,sizeof(QueuedTap));
     if(!touch_queue||
-       xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,1,
+       xTaskCreatePinnedToCore(touch_sampler_task,"t5-touch",4096,nullptr,2,
                               &touch_task_handle,0)!=pdPASS)
         Serial.println("[T5-TOUCH] ERROR: sampler could not start");
     T5_DEBUGF(T5_LOG_UI,"[T5-LIGHT] mode=%s timeout=%s brightness=%u%% night=%02u:%02u-%02u:%02u\n",frontlight_mode_name(),frontlight_timeout_name(),frontlight_brightness,night_start_minutes/60,night_start_minutes%60,night_end_minutes/60,night_end_minutes%60);

@@ -7,6 +7,7 @@
 #include "mesh_protocol_backend.h"
 #include "meshtastic_official_phoneapi.h"
 #include "meshtastic_runtime.h"
+#include "meshtastic_worker.h"
 #include "meshtastic_ui_data.h"
 #include "../../include/meshtastic_official_version.h"
 #include "../ui_onboarding.h"
@@ -121,7 +122,6 @@ void start(){
     const bool engine_ready=meshink_meshtastic_native_begin();
     const bool phone_ready=engine_ready&&meshink_official_phoneapi_open(1);
     ready=engine_ready&&phone_ready;
-    if(ready)ui_mesh_ready(); // Existing MeshInk readiness/clock/battery/name lifecycle.
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     Serial.printf("[MT-TEST] handoff engine=%u PhoneAPI=%u ready=%u heap=%u\n",
                   engine_ready?1U:0U,phone_ready?1U:0U,ready?1U:0U,
@@ -139,6 +139,14 @@ void start(){
     Serial.println("[MT-TEST] GPS: MeshInk driver active; native Meshtastic GPS excluded");
 #endif
 #endif
+    if(ready && !meshink_meshtastic_worker_start()){
+        // Never fall back to the original blocking loop on worker failure.
+        ready=false;
+        meshink_official_phoneapi_close();
+        meshink_meshtastic_native_stop();
+        Serial.println("[MeshInk/MT] ERROR: isolated networking unavailable");
+    }
+    if(ready)ui_mesh_ready();
 }
 void poll(){
 #if ENV_INCLUDE_GPS == 1
@@ -149,11 +157,21 @@ void poll(){
     meshink_rtc_tick();
     update_shared_gps_status();
     if(!ready)return;
-    meshink_meshtastic_native_gps_update();
-    meshink_meshtastic_native_loop();
+    // All official Meshtastic engine work is isolated from UI processing.
     if(!phone_rx)return;
-    for(unsigned i=0;i<12&&meshink_official_phoneapi_has_data();++i){
-        const size_t n=meshink_official_phoneapi_receive(phone_rx->wire,sizeof(phone_rx->wire));
+    uint32_t rejected_id=0;
+    for(unsigned i=0;i<4&&meshink_meshtastic_worker_tx_failed(rejected_id);++i){
+        // Reuse the existing PSRAM protobuf, never allocate the large
+        // FromRadio type on Arduino's small main-loop stack.
+        phone_rx->data=meshtastic_FromRadio_init_zero;
+        phone_rx->data.which_payload_variant=meshtastic_FromRadio_queueStatus_tag;
+        phone_rx->data.queueStatus.mesh_packet_id=rejected_id;
+        phone_rx->data.queueStatus.res=
+            static_cast<decltype(phone_rx->data.queueStatus.res)>(1);
+        meshink_meshtastic_ui_receive(phone_rx->data);
+    }
+    for(unsigned i=0;i<4;++i){
+        const size_t n=meshink_meshtastic_worker_receive(phone_rx->wire,sizeof(phone_rx->wire));
         if(!n)break;
         phone_rx->data=meshtastic_FromRadio_init_zero;
         pb_istream_t input=pb_istream_from_buffer(phone_rx->wire,n);
@@ -233,7 +251,7 @@ bool send(const char* text){
     request.packet.decoded.payload.size=n;
     pb_ostream_t output=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
     if(!pb_encode(&output,meshtastic_ToRadio_fields,&request))return false;
-    const bool queued=meshink_official_phoneapi_submit(scratch->wire,output.bytes_written);
+    const bool queued=meshink_meshtastic_worker_submit(scratch->wire,output.bytes_written,request.packet.id);
     meshink_meshtastic_ui_sent(request.packet.id,text,queued);
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     Serial.printf("[MT-TEST] ToRadio text id=%08lx to=!%08lx channel=%u length=%u want_ack=%u accepted=%u\n",
@@ -243,9 +261,13 @@ bool send(const char* text){
     return queued;
 }
 void stop(){
-    meshink_official_phoneapi_close();
-    meshink_meshtastic_native_stop();
-    phone_rx.reset();
+    const bool stopped=meshink_meshtastic_worker_stop();
+    if(stopped&&!ready){
+        // Nothing was handed to a worker (for example, failed startup).
+        meshink_official_phoneapi_close();
+        meshink_meshtastic_native_stop();
+    }
+    if(stopped)phone_rx.reset();
     ready=false;
 }
 bool running(){return ready;}
@@ -299,7 +321,7 @@ bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel){
     request.packet.decoded.payload.size=inner.bytes_written;
     pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
     return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
-           meshink_official_phoneapi_submit(scratch->wire,outer.bytes_written);
+           meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
 }
 
 bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& lora){
@@ -323,5 +345,5 @@ bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& l
     request.packet.decoded.payload.size=inner.bytes_written;
     pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
     return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
-           meshink_official_phoneapi_submit(scratch->wire,outer.bytes_written);
+           meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
 }
