@@ -320,7 +320,7 @@ enum class Screen : uint8_t {
     Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
     Maps, Discovery, More, Diagnostics,
     Settings, ProtocolSelect, ProtocolSettings, BackupOptions, BackupFiles, BackupConfirm, BackupResult,
-    GpsSettings, GpsTuning, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
+    GpsSettings, GpsTuning, LocationSharing, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
 static Screen setup_cancel_from=Screen::SetupName;
@@ -3170,7 +3170,25 @@ static void draw_gps_settings() {
     settings_row("CURRENT STATUS",current_status,238);
     char position[64];if(status_gps_fix){const long alat=abs(status_gps_latitude),alon=abs(status_gps_longitude);snprintf(position,sizeof(position),"%c%ld.%06ld  %c%ld.%06ld",status_gps_latitude<0?'-':'+',alat/1000000,alat%1000000,status_gps_longitude<0?'-':'+',alon/1000000,alon%1000000);}else strcpy(position,"NO VALID POSITION");settings_row("LATITUDE / LONGITUDE",position,356);
     settings_row("DEEP SLEEP POWER SAVE",mesh_protocol_gps_deep_sleep_power_save()?"ON":"OFF",474);
+    if(mesh_protocol_descriptor().id==2)
+        settings_row("LOCATION SHARING","Broadcast options",592);
 }
+static void draw_location_sharing(){
+    draw_app_header("LOCATION SHARING",true);
+    bool share=false,public_approximate=false;
+    uint8_t interval=0;
+    const bool ready=mesh_protocol_location_sharing_get(share,public_approximate,interval);
+    settings_row("SHARE MY LOCATION",ready?(share?"ON":"OFF"):"LOADING...",120);
+    settings_row("PUBLIC CHANNEL",ready?(public_approximate?"APPROXIMATE":"OFF"):"LOADING...",238);
+    const char* labels[]={"SMART (DEFAULT)","1 HOUR","2 HOURS","4 HOURS"};
+    settings_row("BROADCAST INTERVAL",ready?labels[min(interval,(uint8_t)3)]:"LOADING...",356);
+    ui_text("(6hr if stationary)",ui_x(35),ui_y(493),2,0,false);
+    ui_draw_wrapped("Position sharing uses Meshtastic's privacy limits and radio airtime controls. GPS reception stays on even with sharing off.",
+                    ui_x(34),ui_y(580),ui_w(472),2,0,false,5);
+    if(!share)
+        ui_text("SHARING OFF",ui_x(34),ui_y(740),2,0,true);
+}
+
 
 static const char* gps_constellation_state(MeshInkGpsConstellation constellation){
     return meshink_gps_constellation_enabled(
@@ -3775,12 +3793,12 @@ static void draw_screen() {
         case Screen::BackupOptions:draw_backup_options();break;
         case Screen::BackupFiles:draw_backup_files();break;
         case Screen::BackupConfirm:draw_backup_confirm();break;
-        case Screen::BackupResult:draw_backup_result();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;
+        case Screen::BackupResult:draw_backup_result();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;case Screen::LocationSharing:draw_location_sharing();break;
         case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
         case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::BackupOptions||
-        screen==Screen::BackupFiles||screen==Screen::BackupConfirm||screen==Screen::BackupResult||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
+        screen==Screen::BackupFiles||screen==Screen::BackupConfirm||screen==Screen::BackupResult||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::LocationSharing||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
@@ -5195,6 +5213,9 @@ static bool handle_app_tap(int16_t x,int16_t y) {
         }
         case Screen::GpsSettings:
             if(hit_header_back(x,y)){open_screen(Screen::Settings);return true;}
+            if(mesh_protocol_descriptor().id==2&&hit_outer_row(x,y,592)){
+                open_screen(Screen::LocationSharing);return true;
+            }
             if(hit_outer_row(x,y,120)){open_screen(Screen::GpsTuning);return true;}
             if(hit_outer_row(x,y,356)){
                 if(centre_map_on_device())open_screen(Screen::Maps,true);
@@ -5208,6 +5229,28 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 else show_toast("SAVE FAILED");
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }break;
+        case Screen::LocationSharing:{
+            if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
+            bool share=false,public_approximate=false;
+            uint8_t interval=0;
+            if(!mesh_protocol_location_sharing_get(share,public_approximate,interval)){
+                show_toast("MESHTASTIC NOT READY");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            bool changed=false;
+            if(hit_outer_row(x,y,120)){share=!share;changed=true;}
+            else if(hit_outer_row(x,y,238)&&share){
+                public_approximate=!public_approximate;changed=true;
+            }else if(hit_outer_row(x,y,356)&&share){
+                interval=(uint8_t)((interval+1)%4);changed=true;
+            }
+            if(changed){
+                show_toast(mesh_protocol_location_sharing_set(
+                    share,public_approximate,interval)?"SETTING SAVED":"SAVE FAILED");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
+            break;
+        }
         case Screen::GpsTuning:{
             if(hit_header_back(x,y)){open_screen(Screen::GpsSettings);return true;}
             const MeshInkGpsConstellation constellations[]={
