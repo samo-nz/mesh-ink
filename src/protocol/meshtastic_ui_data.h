@@ -10,6 +10,8 @@ void meshink_meshtastic_ui_begin();
 UiDataProvider* meshink_meshtastic_ui_provider();
 void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response);
 bool meshink_meshtastic_ui_destination(uint32_t& node, uint8_t& channel);
+void meshink_meshtastic_ui_tick();
+void meshink_meshtastic_ui_flush();
 void meshink_meshtastic_ui_sent(uint32_t packet_id, const char* text, bool success);
 // Discover unnamed nodes from real incoming traffic; request their official
 // Meshtastic User identity over the same channel with global/per-node throttles.
