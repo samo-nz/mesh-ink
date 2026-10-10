@@ -16,6 +16,10 @@
 #include "../../lib/Meshtastic/src/mesh/RadioLibInterface.h"
 #include "../../lib/Meshtastic/src/mesh/Throttle.h"
 #include "../../lib/Meshtastic/src/modules/Modules.h"
+#include "../../lib/Meshtastic/src/modules/PositionModule.h"
+#include "../../lib/Meshtastic/src/gps/RTC.h"
+#include "../hardware/gps.h"
+#include "../hardware/rtc.h"
 #include "../../lib/Meshtastic/src/mqtt/MQTT.h"
 #include "../../lib/Meshtastic/src/main.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
@@ -130,6 +134,86 @@ bool meshink_meshtastic_native_begin(){
 #endif
     }
     return native_ready;
+}
+
+
+void meshink_meshtastic_native_gps_update(){
+#if ENV_INCLUDE_GPS == 1
+    if(!native_ready||!nodeDB||!service)return;
+
+    // The proven MeshInk RTC owns physical timekeeping. Official Meshtastic's
+    // protocol-only logical clock follows it, never opens an alternate RTC.
+    if(getRTCQuality()==RTCQualityNone && meshink_rtc_valid()){
+        const uint32_t utc=meshink_rtc_current_time();
+        if(utc>=1609459200UL){
+            timeval tv{};tv.tv_sec=utc;
+            perhapsSetRTC(RTCQualityDevice,&tv);
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+            Serial.printf("[MT-TEST] MeshInk RTC -> Meshtastic logical time %lu\n",(unsigned long)utc);
+#endif
+        }
+    }
+
+    static bool had_fix=false;
+    static uint32_t last_ms=0,last_stamp=0;
+    static long last_lat=0,last_lon=0;
+    const MeshInkGpsStatus fix=meshink_gps_read_status();
+    const bool enabled=meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;
+    const bool valid=enabled&&fix.available&&fix.valid&&
+                     fix.error==MeshInkGpsError::None&&
+                     fix.latitude>=-90000000L&&fix.latitude<=90000000L&&
+                     fix.longitude>=-180000000L&&fix.longitude<=180000000L;
+    if(!valid){
+        if(had_fix){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+            Serial.printf("[MT-TEST] MeshInk GPS fix lost/off: enabled=%u available=%u error=%u\n",
+                          enabled?1U:0U,fix.available?1U:0U,(unsigned)fix.error);
+#endif
+        }
+        had_fix=false;
+        return; // Never present a stale fix as new.
+    }
+
+    const uint32_t now=millis();
+    const bool fresh=(!had_fix||last_stamp!=fix.timestamp||
+                      last_lat!=fix.latitude||last_lon!=fix.longitude);
+    if(!fresh || (had_fix&&(uint32_t)(now-last_ms)<5000UL))return;
+    had_fix=true;last_ms=now;last_stamp=fix.timestamp;
+    last_lat=fix.latitude;last_lon=fix.longitude;
+
+    // Meshtastic users can explicitly configure a fixed position. Respect
+    // that protocol preference without changing MeshInk's GNSS hardware.
+    if(config.position.fixed_position){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        static bool fixed_logged=false;
+        if(!fixed_logged){
+            fixed_logged=true;
+            Serial.println("[MT-TEST] MeshInk GPS fix: retaining configured Meshtastic fixed position");
+        }
+#endif
+        return;
+    }
+
+    meshtastic_Position p=meshtastic_Position_init_default;
+    // MeshInk's MicroNMEA reports degrees*1e6; official positions use *1e7.
+    p.latitude_i=static_cast<int32_t>(fix.latitude*10L);
+    p.longitude_i=static_cast<int32_t>(fix.longitude*10L);
+    p.has_latitude_i=true;p.has_longitude_i=true;
+    p.location_source=meshtastic_Position_LocSource_LOC_INTERNAL;
+    p.sats_in_view=fix.satellites>0?(uint32_t)fix.satellites:0U;
+    p.timestamp=fix.timestamp;
+    if(meshink_rtc_valid())p.time=meshink_rtc_current_time();
+
+    // Route ONLY into the genuine native NodeDB and PositionModule. Upstream
+    // handles position precision/privacy, broadcasts and smart-movement rules.
+    nodeDB->updatePosition(nodeDB->getNodeNum(),p,RX_SRC_LOCAL);
+    if(positionModule)positionModule->handleNewPosition();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] MeshInk GPS -> official position sats=%u fix_ts=%lu utc=%lu module=%u\n",
+                  (unsigned)p.sats_in_view,(unsigned long)p.timestamp,
+                  (unsigned long)p.time,positionModule?1U:0U);
+#endif
+#endif
 }
 
 void meshink_meshtastic_native_loop(){
