@@ -1228,6 +1228,67 @@ void meshink_gps_prepare_runtime(){
 #endif
 }
 
+void meshink_gps_probe_after_radio(bool radio_ready){
+#if ENV_INCLUDE_GPS == 1
+    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
+    // ensures power is available before probing GPS. T5 boards carry either
+    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
+    // upstream sensors.begin() owns the UART, without changing radio state.
+    if (radio_ready) {
+        bool found = false;
+        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
+            for (const uint32_t baud : {9600UL, 38400UL}) {
+                Serial1.updateBaudRate(baud);
+                gps_stream.clearValidation();
+                const uint32_t started = millis();
+                while (millis() - started < 1800) {
+                    while (gps_stream.available()) gps_stream.read();
+                    if (gps_stream.hasValidSentence()) { found = true; break; }
+                    delay(5);
+                }
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
+                              (unsigned)(pass+1),(unsigned long)baud,found);
+                if (found) {
+                    detected_gps_baud = baud;
+                    gps_baud_locked = true;
+                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                    gps_error = MeshInkGpsError::None;
+                    gps_retain_identity();
+                    gps_last_byte_at = millis();
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            detected_gps_baud = 9600;
+            gps_baud_locked = false;
+            detected_gps_module = GpsModule::Unknown;
+            gps_error = MeshInkGpsError::ModuleNotIdentified;
+            gps_clear_retained_identity();
+            Serial1.updateBaudRate(detected_gps_baud);
+            gps_stream.clearValidation();
+            Serial.println("[T5-ERROR] gps module not identified: no valid NMEA at supported baud; background retry active");
+        } else {
+            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
+                gps_module_name(),(unsigned long)Serial1.baudRate());
+            // Apply saved mode during the board probe, not only when MeshCore's
+            // provider starts. This keeps explicit GPS MODE=DISABLED parked
+            // correctly after a cold boot and performs defensive mask recovery.
+            gps_load_tuning();
+            gps_apply_tuning();
+        }
+        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
+            gps_module_name(),(unsigned long)Serial1.baudRate(),
+            gps_baud_locked?"":" (NMEA not yet confirmed)");
+        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshInk owns receiver and settings\n",
+                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
+    }
+#endif
+#if ENV_INCLUDE_GPS != 1
+    (void)radio_ready;
+#endif
+}
+
 void meshink_gps_service_begin(){
     sensors.begin();
 }
@@ -1806,61 +1867,7 @@ bool radio_init() {
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
     if(ready)Serial.println("[T5-INIT] radio=SX1262 OK");
     else Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
-#if ENV_INCLUDE_GPS == 1
-    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
-    // ensures power is available before probing GPS. T5 boards carry either
-    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
-    // upstream sensors.begin() owns the UART, without changing radio state.
-    if (ready) {
-        bool found = false;
-        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
-            for (const uint32_t baud : {9600UL, 38400UL}) {
-                Serial1.updateBaudRate(baud);
-                gps_stream.clearValidation();
-                const uint32_t started = millis();
-                while (millis() - started < 1800) {
-                    while (gps_stream.available()) gps_stream.read();
-                    if (gps_stream.hasValidSentence()) { found = true; break; }
-                    delay(5);
-                }
-                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
-                              (unsigned)(pass+1),(unsigned long)baud,found);
-                if (found) {
-                    detected_gps_baud = baud;
-                    gps_baud_locked = true;
-                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
-                    gps_error = MeshInkGpsError::None;
-                    gps_retain_identity();
-                    gps_last_byte_at = millis();
-                    break;
-                }
-            }
-        }
-        if (!found) {
-            detected_gps_baud = 9600;
-            gps_baud_locked = false;
-            detected_gps_module = GpsModule::Unknown;
-            gps_error = MeshInkGpsError::ModuleNotIdentified;
-            gps_clear_retained_identity();
-            Serial1.updateBaudRate(detected_gps_baud);
-            gps_stream.clearValidation();
-            Serial.println("[T5-ERROR] gps module not identified: no valid NMEA at supported baud; background retry active");
-        } else {
-            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
-                gps_module_name(),(unsigned long)Serial1.baudRate());
-            // Apply saved mode during the board probe, not only when MeshCore's
-            // provider starts. This keeps explicit GPS MODE=DISABLED parked
-            // correctly after a cold boot and performs defensive mask recovery.
-            gps_load_tuning();
-            gps_apply_tuning();
-        }
-        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
-            gps_module_name(),(unsigned long)Serial1.baudRate(),
-            gps_baud_locked?"":" (NMEA not yet confirmed)");
-        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
-                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
-    }
-#endif
+    meshink_gps_probe_after_radio(ready);
     return ready;
 }
 
