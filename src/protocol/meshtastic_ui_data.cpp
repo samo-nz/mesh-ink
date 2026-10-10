@@ -371,9 +371,40 @@ void note_routing(const meshtastic_MeshPacket& packet){
         }
     }
 }
+
+void note_position(const meshtastic_MeshPacket& packet){
+    // The official PositionModule decodes/routes the radio packet. This is
+    // only MeshInk's read-only map projection of the official FromRadio copy.
+    if(!state||!packet.from||packet.from==state->me)return;
+    meshtastic_Position position=meshtastic_Position_init_zero;
+    pb_istream_t input=pb_istream_from_buffer(
+        packet.decoded.payload.bytes,packet.decoded.payload.size);
+    if(!pb_decode(&input,meshtastic_Position_fields,&position))return;
+    if(!position.has_latitude_i||!position.has_longitude_i||
+       position.latitude_i<-900000000||position.latitude_i>900000000||
+       position.longitude_i<-1800000000||position.longitude_i>1800000000)
+        return;
+    Node* n=node_for(packet.from);
+    if(!n)return;
+    const bool changed_coords=!n->position_valid||
+        n->latitude!=position.latitude_i||n->longitude!=position.longitude_i;
+    n->position_valid=true;
+    n->latitude=position.latitude_i;n->longitude=position.longitude_i;
+    if(packet.has_rx_time){
+        n->heard=packet.rx_time;
+        format_time(n->heard_text,sizeof(n->heard_text),n->heard);
+    }
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    if(changed_coords)Serial.printf("[MT-TEST] map: position from=!%08lx precision=as-received\n",
+                                    (unsigned long)packet.from);
+#endif
+    if(changed_coords)changed();
+}
+
 void note_packet(const meshtastic_MeshPacket& p){
     if(!state||p.which_payload_variant!=meshtastic_MeshPacket_decoded_tag)return;
     if(p.decoded.portnum==meshtastic_PortNum_ROUTING_APP){note_routing(p);return;}
+    if(p.decoded.portnum==meshtastic_PortNum_POSITION_APP){note_position(p);return;}
     if(p.decoded.portnum!=meshtastic_PortNum_TEXT_MESSAGE_APP)return;
     const bool broadcast=p.to==kBroadcast;
     const bool outgoing=p.from==state->me && state->me!=0;
