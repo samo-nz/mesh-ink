@@ -225,6 +225,11 @@ static bool status_bar_dirty = false;
 static bool unread_status_refresh_pending = false;
 // The shared UI, never a protocol, decides when to redraw a keyboard.
 static bool deferred_data_refresh = false;
+// Meshtastic PhoneAPI can replay dozens of updates at boot. These are UI
+// data notifications, never permission for the protocol to drive EPDiy.
+// Coalesce them on screens actually displaying mesh data.
+static bool mesh_event_refresh_pending=false;
+static uint32_t mesh_event_refresh_due=0,mesh_event_last_draw=0;
 static size_t chat_message_count_last_drawn = 0;
 static int16_t status_bar_painted_minute = -1;
 static int16_t status_bar_painted_slot = -1;
@@ -3820,6 +3825,13 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     (void)requested_mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
+    const uint32_t refresh_started=millis();
+    const uint32_t free_heap=ESP.getFreeHeap();
+    const uint32_t largest_internal=heap_caps_get_largest_free_block(
+        MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    Serial.printf("[T5-EPD] begin mode=%u screen=%u heap=%lu largest_internal=%lu psram=%lu\n",
+                  (unsigned)mode,(unsigned)screen,(unsigned long)free_heap,
+                  (unsigned long)largest_internal,(unsigned long)ESP.getFreePsram());
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err = meshink_display_update_screen(&display,mode,(int)meshink_display_ambient_temperature());
@@ -3827,6 +3839,10 @@ static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
     // synchronous DU waveform completes. Do not reintroduce a powered hold.
     meshink_display_poweroff();
     set_cpu_target(ui_post_render_cpu_target(),"display-complete");
+    Serial.printf("[T5-EPD] complete mode=%u screen=%u elapsed=%lums err=%u heap=%lu\n",
+                  (unsigned)mode,(unsigned)screen,
+                  (unsigned long)(millis()-refresh_started),(unsigned)err,
+                  (unsigned long)ESP.getFreeHeap());
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] refresh=%d waveform=%d requested=%d screen=%d name='%s' preset=%s cpu=%luMHz\n",
         err,(int)mode,(int)requested_mode,(int)screen,node_name,mesh_protocol_radio_preset_at(selected_preset).title,(unsigned long)meshink_performance_cpu_mhz());
 }
@@ -3838,6 +3854,10 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     (void)requested_mode;
     const bool active_map=screen==Screen::Maps&&!standby_active&&!keyboard_landscape;
     if(active_map&&mode==MeshInkRefreshMode::FastGray16)mode=MeshInkRefreshMode::Direct;
+    Serial.printf("[T5-EPD] area-begin mode=%u screen=%u heap=%lu largest_internal=%lu\n",
+                  (unsigned)mode,(unsigned)screen,(unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)heap_caps_get_largest_free_block(
+                      MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     set_cpu_target(UI_RENDER_CPU_MHZ,"display-area-refresh");
     meshink_display_poweron();
     const MeshInkDisplayResult err=meshink_display_update_area(
@@ -3845,6 +3865,8 @@ static void refresh_area(MeshInkRefreshMode mode,MeshInkRect area,bool wake_ligh
     meshink_display_poweroff();
     set_cpu_target(ui_post_render_cpu_target(),"display-area-complete");
     const uint32_t elapsed=millis()-started;
+    Serial.printf("[T5-EPD] area-complete screen=%u elapsed=%lums err=%u\n",
+                  (unsigned)screen,(unsigned long)elapsed,(unsigned)err);
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-LOAD] area-refresh=%lux%lu@%ld,%ld elapsed=%lums err=%d\n",
         (unsigned long)area.width,(unsigned long)area.height,
         (long)area.x,(long)area.y,(unsigned long)elapsed,(int)err);
@@ -6030,6 +6052,25 @@ void ui_finish_startup() {
 }
 
 void ui_loop() {
+    // Rate-limit broad Meshtastic data updates, never the actual touch
+    // interactions, unread alerts, or the deliberate status-bar cadence.
+    if(mesh_event_refresh_pending && !standby_active &&
+       (int32_t)(millis()-mesh_event_refresh_due)>=0 &&
+       (!mesh_event_last_draw||
+        (uint32_t)(millis()-mesh_event_last_draw)>=2500UL)){
+        mesh_event_refresh_pending=false;
+        mesh_event_last_draw=millis();
+        const bool mesh_data_visible=
+            screen==Screen::Contacts||screen==Screen::ContactChat||
+            screen==Screen::ContactDetails||screen==Screen::Channels||
+            screen==Screen::ChannelChat||screen==Screen::ChannelManage||
+            screen==Screen::Maps||screen==Screen::Discovery||
+            screen==Screen::Diagnostics;
+        if(mesh_data_visible){
+            if(keyboard_visible||keyboard_landscape)deferred_data_refresh=true;
+            else status_dirty=true;
+        }
+    }
     // Restore deferred data refreshes only after text entry ends.
     if(!keyboard_visible&&!keyboard_landscape&&deferred_data_refresh&&!standby_active){
         deferred_data_refresh=false;
@@ -6544,6 +6585,23 @@ void ui_notify_node_position_unavailable(){
 }
 
 void ui_request_data_refresh(const char* reason){
+    if(reason&&!strcmp(reason,"meshtastic-native-ui")){
+        // PhoneAPI snapshots and node updates may arrive repeatedly while
+        // the user is on a settings screen. Do not redraw a settings page
+        // for an unrelated radio event; touch handlers redraw their own edits.
+        const bool mesh_data_visible=
+            screen==Screen::Contacts||screen==Screen::ContactChat||
+            screen==Screen::ContactDetails||screen==Screen::Channels||
+            screen==Screen::ChannelChat||screen==Screen::ChannelManage||
+            screen==Screen::Maps||screen==Screen::Discovery||
+            screen==Screen::Diagnostics;
+        if(mesh_data_visible){
+            if(!mesh_event_refresh_pending)
+                mesh_event_refresh_due=millis()+400UL;
+            mesh_event_refresh_pending=true;
+        }
+        return;
+    }
     if(keyboard_visible||keyboard_landscape){
         // Receiving node/status/routing data must never paint over typing.
         // Message events can still explicitly request the active chat redraw.
