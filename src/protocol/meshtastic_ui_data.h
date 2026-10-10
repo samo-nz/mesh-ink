@@ -11,6 +11,12 @@ UiDataProvider* meshink_meshtastic_ui_provider();
 void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response);
 bool meshink_meshtastic_ui_destination(uint32_t& node, uint8_t& channel);
 void meshink_meshtastic_ui_sent(uint32_t packet_id, const char* text, bool success);
+// Discover unnamed nodes from real incoming traffic; request their official
+// Meshtastic User identity over the same channel with global/per-node throttles.
+// The selected protocol sends using its existing official worker.
+bool meshink_meshtastic_ui_next_name_request(uint32_t& node, uint8_t& channel,
+                                             meshtastic_User& local_user);
+void meshink_meshtastic_ui_name_request_result(uint32_t node, bool accepted);
 const char* meshink_meshtastic_ui_radio_summary();
 size_t meshink_meshtastic_ui_settings_count();
 bool meshink_meshtastic_ui_settings_item(size_t index, MeshInkProtocolSettingItem& item);
