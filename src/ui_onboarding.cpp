@@ -316,7 +316,7 @@ static uint32_t message_alert_cooldown_until=0;
 enum class Screen : uint8_t {
     Welcome, SetupName, SetupRegion, SetupPreset, SetupRadio, SetupReview, SetupCancel,
     Presets, CompanionConfirm, ShutdownConfirm,
-    Contacts, ContactChat, ContactDetails,
+    Contacts, ContactChat, ContactDetails, NodeDelete,
     Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
     Maps, Discovery, More, Diagnostics,
     Settings, ProtocolSelect, ProtocolSettings, BackupOptions, BackupFiles, BackupConfirm, BackupResult,
@@ -2504,6 +2504,23 @@ static void draw_message_entry_fast() {
     }
 }
 
+static void draw_node_delete(){
+    draw_app_header("DELETE NODE",true);
+    UiNodeDetails node{};
+    if(!ui_data||!ui_data->active_node_details(node)){
+        ui_centred("NODE UNAVAILABLE",ui_y(300),3,0,true);
+        return;
+    }
+    ui_centred_fit(node.name?node.name:"UNKNOWN NODE",ui_y(190),
+                   portrait_layout().section_width,4,0,true);
+    ui_draw_wrapped("Permanently remove this node, its saved position and all direct messages sent to or received from it.",
+                    ui_x(32),ui_y(310),ui_w(476),3,0,false,6);
+    ui_draw_wrapped("Channel conversations are kept. The node will appear again if heard on the mesh.",
+                    ui_x(32),ui_y(520),ui_w(476),2,0,false,5);
+    ui_action_button("CANCEL",ui_rect(24,735,232,85),false);
+    ui_action_button("DELETE NODE",ui_rect(284,735,232,85),true);
+}
+
 static void draw_contact_details() {
     draw_app_header("NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
@@ -3750,7 +3767,7 @@ static void draw_screen() {
         case Screen::SetupReview:draw_setup_review();break;
         case Screen::SetupCancel:draw_setup_cancel();break;
         case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
-        case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
+        case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;case Screen::NodeDelete:draw_node_delete();break;
         case Screen::Channels:draw_channels();break;case Screen::ChannelChat:draw_chat(true);break;
         case Screen::ChannelManage:draw_channel_manage();break;case Screen::ChannelCreate:draw_channel_create();break;case Screen::ChannelDelete:draw_channel_delete();break;
         case Screen::Maps:draw_maps();break;case Screen::Discovery:draw_discovery();break;case Screen::More:draw_more();break;case Screen::Diagnostics:draw_diagnostics();break;
@@ -4975,9 +4992,24 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 if(page==NodeInfoPage::Overview&&(node.latitude||node.longitude)&&hit(x,y,meshink_node_map_rect(portrait_layout()))){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,meshink_node_map_rect(portrait_layout()))){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))){open_screen(Screen::ContactChat);return true;}
-                if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))){show_toast(ui_data->remove_active_contact()?"CONTACT REMOVED":"REMOVE FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+                if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))){open_screen(Screen::NodeDelete);return true;}
                 if(page==NodeInfoPage::Overview&&!node.saved_contact&&hit(x,y,meshink_node_action_rect(portrait_layout()))){show_toast(ui_data->add_active_node()?"CONTACT ADDED":"ADD FAILED");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             }}break;
+        case Screen::NodeDelete:
+            if(hit_header_back(x,y)||hit(x,y,ui_rect(24,735,232,85))){
+                open_screen(Screen::ContactDetails);return true;
+            }
+            if(hit(x,y,ui_rect(284,735,232,85))){
+                if(ui_data&&ui_data->remove_active_contact()){
+                    show_toast("NODE DELETED");
+                    open_screen(Screen::Contacts);
+                }else{
+                    show_toast("DELETE FAILED");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                }
+                return true;
+            }
+            break;
         case Screen::Maps:
             // Controls take priority over map markers near the right edge.
             if(hit(x,y,meshink_map_control_rect(portrait_layout(),0))){if(map_zoom<meshink_map_gestures::MAX_ZOOM){map_zoom++;open_screen(Screen::Maps);}return true;}
