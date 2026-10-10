@@ -288,16 +288,20 @@ bool duplicate(uint32_t id,uint32_t peer,bool broadcast){
             return true;
     return false;
 }
+void update_node_user(Node& n,const meshtastic_User& user){
+    // Name announcements and PhoneAPI NodeInfo snapshots update the same
+    // contact. Never replace a previously known name with a blank one.
+    const char* name=user.long_name[0]?user.long_name:
+                     (user.short_name[0]?user.short_name:nullptr);
+    if(name)snprintf(n.name,sizeof(n.name),"%s",name);
+    n.role=translate_role(user.role);
+    snprintf(n.role_label,sizeof(n.role_label),"%s",role_name(n.role));
+    n.row.role=n.role;
+}
 void note_node(const meshtastic_NodeInfo& info){
     Node* n=node_for(info.num);
     if(!n)return;
-    if(info.has_user){
-        if(info.user.long_name[0])
-            snprintf(n->name,sizeof(n->name),"%s",info.user.long_name);
-        n->role=translate_role(info.user.role);
-        snprintf(n->role_label,sizeof(n->role_label),"%s",role_name(n->role));
-        n->row.role=n->role;
-    }
+    if(info.has_user)update_node_user(*n,info.user);
     n->heard=info.last_heard;
     format_time(n->heard_text,sizeof(n->heard_text),n->heard);
     if(info.has_position&&info.position.has_latitude_i&&info.position.has_longitude_i){
@@ -403,6 +407,29 @@ void note_position(const meshtastic_MeshPacket& packet){
 
 void note_packet(const meshtastic_MeshPacket& p){
     if(!state||p.which_payload_variant!=meshtastic_MeshPacket_decoded_tag)return;
+    if(p.decoded.portnum==meshtastic_PortNum_NODEINFO_APP){
+        // Official Meshtastic NODEINFO_APP (port 4) carries a User protobuf.
+        // PhoneAPI may surface this received packet separately from the
+        // NodeInfo database snapshot. Both update the same contact view.
+        if(!p.from||p.from==state->me)return;
+        meshtastic_User user=meshtastic_User_init_zero;
+        pb_istream_t input=pb_istream_from_buffer(
+            p.decoded.payload.bytes,p.decoded.payload.size);
+        if(!pb_decode(&input,meshtastic_User_fields,&user))return;
+        Node* n=node_for(p.from);
+        if(!n)return;
+        update_node_user(*n,user);
+        if(p.has_rx_time){
+            n->heard=p.rx_time;
+            format_time(n->heard_text,sizeof(n->heard_text),n->heard);
+        }
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.printf("[MT-TEST] node identity from=!%08lx name=%s\n",
+                      (unsigned long)p.from,n->name);
+#endif
+        changed();
+        return;
+    }
     if(p.decoded.portnum==meshtastic_PortNum_ROUTING_APP){note_routing(p);return;}
     if(p.decoded.portnum==meshtastic_PortNum_POSITION_APP){note_position(p);return;}
     if(p.decoded.portnum!=meshtastic_PortNum_TEXT_MESSAGE_APP)return;
