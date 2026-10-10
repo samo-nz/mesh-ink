@@ -170,6 +170,12 @@ void meshink_meshtastic_native_gps_update(){
                           enabled?1U:0U,fix.available?1U:0U,(unsigned)fix.error);
 #endif
         }
+        // Match the official receiver's lost-lock handoff: do not let the
+        // upstream PositionModule periodically rebroadcast a cached GNSS
+        // location after MeshInk's GPS has been disabled or lost its fix.
+        // A deliberately configured fixed Meshtastic position is unaffected.
+        if(had_fix && !config.position.fixed_position)
+            nodeDB->clearLocalPosition();
         had_fix=false;
         return; // Never present a stale fix as new.
     }

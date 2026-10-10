@@ -188,6 +188,9 @@ for token in ("meshink_gps_service_loop()", "meshink_gps_background_tick()",
 native_runtime=(SRC/"protocol/meshtastic_runtime.cpp").read_text(encoding="utf-8")
 if "nodeDB->updatePosition(nodeDB->getNodeNum(),p,RX_SRC_LOCAL)" not in native_runtime:
     errors.append("Shared GPS bridge must submit to upstream NodeDB, not a second GPS engine")
+if "if(had_fix && !config.position.fixed_position)" not in native_runtime or "nodeDB->clearLocalPosition();" not in native_runtime:
+    errors.append("Shared GPS bridge must clear stale live GNSS position after fix loss/off, preserving fixed-position mode")
+
 # Meshtastic wire coordinates use 1e7 while the established MeshInk map and
 # node-detail UI contracts use 1e6. Protect against a tenfold map displacement.
 native_ui = (SRC/"protocol/meshtastic_ui_data.cpp").read_text(encoding="utf-8")
