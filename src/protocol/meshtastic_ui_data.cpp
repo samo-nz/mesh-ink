@@ -16,6 +16,11 @@
 namespace {
 constexpr size_t kMaxNodes=64, kMaxChannels=8, kMaxMessages=96;
 constexpr uint32_t kBroadcast=0xffffffffu;
+// Upstream NodeInfoModule suppresses repeat responses from the same requester
+// for 12 hours. Retry only following NEW traffic after that window.
+constexpr uint32_t kNodeInfoRetryMs=12UL*60UL*60UL*1000UL;
+constexpr uint32_t kNodeInfoGlobalSpacingMs=60UL*1000UL;
+constexpr uint32_t kNodeInfoFailedQueueRetryMs=5000UL;
 struct Channel {
     uint8_t index=0;
     bool enabled=false;
@@ -35,6 +40,10 @@ struct Node {
     char role_label[24]{};
     char subtitle[48]{};
     char heard_text[16]{};
+    // UI-only discovery state; never change official NodeDB/persisted identity.
+    bool name_known=false,name_request_pending=false,name_request_sent=false;
+    uint32_t last_name_request_ms=0;
+    uint8_t heard_channel=0;
     UiNodeRole role=UiNodeRole::Unknown;
     UiListEntry row{};
 };
@@ -50,6 +59,10 @@ struct Message {
 };
 struct State {
     uint32_t me=0, revision=0;
+    meshtastic_User local_user=meshtastic_User_init_zero;
+    bool local_user_ready=false;
+    bool name_tx_seen=false,name_attempt_seen=false;
+    uint32_t last_name_tx_ms=0,last_name_attempt_ms=0;
     uint32_t selected_node=0;
     uint8_t selected_channel=0;
     bool selected_is_channel=true;
@@ -177,7 +190,9 @@ Node* node_for(uint32_t number){
     Node& n=state->nodes[state->node_count++];
     n.number=number;
     snprintf(n.identity,sizeof(n.identity),"!%08lx",(unsigned long)number);
-    snprintf(n.name,sizeof(n.name),"%s",n.identity);
+    // Distinguish an unknown name from an actual callsign. The unmodified
+    // identity remains available in node details and for radio addressing.
+    snprintf(n.name,sizeof(n.name),"[%s]",n.identity);
     snprintf(n.role_label,sizeof(n.role_label),"CLIENT");
     snprintf(n.subtitle,sizeof(n.subtitle),"MESHTASTIC NODE");
     n.role=UiNodeRole::Client;
@@ -293,12 +308,26 @@ void update_node_user(Node& n,const meshtastic_User& user){
     // contact. Never replace a previously known name with a blank one.
     const char* name=user.long_name[0]?user.long_name:
                      (user.short_name[0]?user.short_name:nullptr);
-    if(name)snprintf(n.name,sizeof(n.name),"%s",name);
+    if(name){
+        snprintf(n.name,sizeof(n.name),"%s",name);
+        n.name_known=true;
+        n.name_request_pending=false;
+    }
     n.role=translate_role(user.role);
     snprintf(n.role_label,sizeof(n.role_label),"%s",role_name(n.role));
     n.row.role=n.role;
 }
 void note_node(const meshtastic_NodeInfo& info){
+    // Save the local User protobuf from the trusted PhoneAPI handshake for
+    // standard NODEINFO_APP requests, as the Android app does. Never pull
+    // mutable NodeDB globals across the worker/UI core boundary.
+    if(state&&info.num==state->me){
+        if(info.has_user){
+            state->local_user=info.user;
+            state->local_user_ready=true;
+        }
+        return;
+    }
     Node* n=node_for(info.num);
     if(!n)return;
     if(info.has_user)update_node_user(*n,info.user);
@@ -723,8 +752,31 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         note_channel(response.channel);break;
       case meshtastic_FromRadio_config_tag:
         note_config(response.config);break;
-      case meshtastic_FromRadio_packet_tag:
-        note_packet(response.packet);break;
+      case meshtastic_FromRadio_packet_tag: {
+        const auto& p=response.packet;
+        // The mesh packet itself is the discovery event. NodeInfo snapshots
+        // and restored old messages do not trigger any over-the-air request.
+        const bool incoming=p.from&&p.from!=state->me;
+        const bool existed=incoming&&find_node(p.from);
+        note_packet(p);
+        if(incoming) {
+            Node* n=node_for(p.from);
+            if(n){
+                if(p.has_rx_time){
+                    n->heard=p.rx_time;
+                    format_time(n->heard_text,sizeof(n->heard_text),n->heard);
+                }
+                if(!existed)changed();
+                if(!n->name_known&&!n->name_request_pending&&
+                   (!n->name_request_sent||
+                    (uint32_t)(millis()-n->last_name_request_ms)>=kNodeInfoRetryMs)){
+                    n->heard_channel=p.channel;
+                    n->name_request_pending=true;
+                }
+            }
+        }
+        break;
+      }
       case meshtastic_FromRadio_queueStatus_tag:
         note_queue_status(response.queueStatus);break;
       case meshtastic_FromRadio_region_presets_tag:
@@ -736,6 +788,38 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         changed();break;
       default:break;
     }
+}
+bool meshink_meshtastic_ui_next_name_request(uint32_t& node,uint8_t& channel,
+                                             meshtastic_User& local_user){
+    if(!state||!state->config_complete||!state->me||!state->local_user_ready)return false;
+    const uint32_t now=millis();
+    if(state->name_tx_seen&&
+       (uint32_t)(now-state->last_name_tx_ms)<kNodeInfoGlobalSpacingMs)return false;
+    if(state->name_attempt_seen&&
+       (uint32_t)(now-state->last_name_attempt_ms)<kNodeInfoFailedQueueRetryMs)return false;
+    for(size_t i=0;i<state->node_count;++i){
+        const Node& n=state->nodes[i];
+        if(!n.name_request_pending||n.name_known)continue;
+        node=n.number;
+        channel=n.heard_channel;
+        local_user=state->local_user;
+        return true;
+    }
+    return false;
+}
+void meshink_meshtastic_ui_name_request_result(uint32_t number,bool accepted){
+    if(!state)return;
+    const uint32_t now=millis();
+    state->name_attempt_seen=true;
+    state->last_name_attempt_ms=now;
+    if(!accepted)return;
+    if(Node* n=find_node(number)){
+        n->name_request_pending=false;
+        n->name_request_sent=true;
+        n->last_name_request_ms=now;
+    }
+    state->name_tx_seen=true;
+    state->last_name_tx_ms=now;
 }
 const char* meshink_meshtastic_ui_radio_summary(){
     return state?state->radio_text:"MESHTASTIC";
