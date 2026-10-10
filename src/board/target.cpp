@@ -671,6 +671,9 @@ static uint32_t gps_last_byte_at = 0;
 #ifndef T5_GPS_FULL_NMEA_DIAGNOSTIC
 #define T5_GPS_FULL_NMEA_DIAGNOSTIC 0
 #endif
+#ifndef T5_GPS_ACQUISITION_DIAG
+#define T5_GPS_ACQUISITION_DIAG 0
+#endif
 static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
 static bool gps_tuning_loaded=false;
 static bool gps_deep_sleep_power_save=false; // default OFF: retain live tracking
@@ -1087,6 +1090,31 @@ public:
             }
         }
         MicroNMEALocationProvider::loop();
+#if T5_GPS_ACQUISITION_DIAG
+        // Receiver/baud success does not mean satellite acquisition. Expose
+        // the actual state at low frequency for hardware field debugging in
+        // BOTH protocols; no new NMEA configuration or writes are performed.
+        static uint32_t last_acquisition_report=0;
+        static bool first_fix_reported=false;
+        if(active&&isValid()&&!first_fix_reported){
+            first_fix_reported=true;
+            Serial.printf("[T5-GPS] FIRST FIX module=%s baud=%lu sats=%ld\n",
+                          gps_module_name(),(unsigned long)Serial1.baudRate(),
+                          (long)satellitesCount());
+        }
+        if(active&&!isValid() &&
+           (uint32_t)(millis()-last_acquisition_report)>=60000UL){
+            last_acquisition_report=millis();
+            Serial.printf("[T5-GPS] SEARCHING module=%s baud=%lu NMEA=%u sats_used=%ld last_rx_age_ms=%lu mode=%u masks_zero=%u\n",
+                          gps_module_name(),(unsigned long)Serial1.baudRate(),
+                          gps_stream.hasValidSentence()?1U:0U,
+                          (long)satellitesCount(),
+                          (unsigned long)(gps_last_byte_at?
+                              millis()-gps_last_byte_at:0UL),
+                          (unsigned)gps_constellation_mode,
+                          gps_receiver_masks_zeroed?1U:0U);
+        }
+#endif
 #if T5_LOG_GPS
         if (gps_wake_started_at && !gps_wake_logged_nmea && gps_stream.hasValidSentence()) {
             gps_wake_logged_nmea=true;

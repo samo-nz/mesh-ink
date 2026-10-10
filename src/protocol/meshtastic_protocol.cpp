@@ -157,6 +157,22 @@ void poll(){
     meshink_rtc_tick();
     update_shared_gps_status();
     if(!ready)return;
+#if ENV_INCLUDE_GPS == 1
+    // Only MeshInk's UI task reads its mutable GNSS provider. A small locked
+    // snapshot feeds official position networking on the other CPU core.
+    static uint32_t next_snapshot_at=0;
+    const uint32_t snapshot_now=millis();
+    if((int32_t)(snapshot_now-next_snapshot_at)>=0){
+        next_snapshot_at=snapshot_now+250UL;
+        MeshInkMeshtasticGpsSnapshot snapshot{};
+        snapshot.fix=meshink_gps_read_status();
+        snapshot.enabled=meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;
+        snapshot.rtc_valid=meshink_rtc_valid();
+        snapshot.gps_authoritative=meshink_rtc_gps_authoritative();
+        snapshot.utc=snapshot.rtc_valid?meshink_rtc_current_time():0;
+        meshink_meshtastic_native_set_gps_snapshot(snapshot);
+    }
+#endif
     // All official Meshtastic engine work is isolated from UI processing.
     if(!phone_rx)return;
     uint32_t rejected_id=0;

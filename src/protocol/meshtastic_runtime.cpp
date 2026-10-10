@@ -67,6 +67,18 @@ meshtastic_DeviceMetadata getDeviceMetadata(){
 namespace {
 bool native_ready=false;
 bool ever_started=false;
+// The receiver is serviced by MeshInk on the UI core. The worker only sees
+// an immutable position/time snapshot, never the live MicroNMEA state.
+portMUX_TYPE gps_snapshot_mutex=portMUX_INITIALIZER_UNLOCKED;
+MeshInkMeshtasticGpsSnapshot gps_snapshot{};
+bool gps_snapshot_received=false;
+}
+
+void meshink_meshtastic_native_set_gps_snapshot(const MeshInkMeshtasticGpsSnapshot& snapshot){
+    portENTER_CRITICAL(&gps_snapshot_mutex);
+    gps_snapshot=snapshot;
+    gps_snapshot_received=true;
+    portEXIT_CRITICAL(&gps_snapshot_mutex);
 }
 
 bool meshink_meshtastic_native_begin(){
@@ -140,11 +152,17 @@ bool meshink_meshtastic_native_begin(){
 void meshink_meshtastic_native_gps_update(){
 #if ENV_INCLUDE_GPS == 1
     if(!native_ready||!nodeDB||!service)return;
+    MeshInkMeshtasticGpsSnapshot snapshot{};
+    portENTER_CRITICAL(&gps_snapshot_mutex);
+    const bool have_snapshot=gps_snapshot_received;
+    snapshot=gps_snapshot;
+    portEXIT_CRITICAL(&gps_snapshot_mutex);
+    if(!have_snapshot)return;
 
     // The proven MeshInk RTC owns physical timekeeping. Official Meshtastic's
-    // protocol-only logical clock follows it, never opens an alternate RTC.
-    if(getRTCQuality()==RTCQualityNone && meshink_rtc_valid()){
-        const uint32_t utc=meshink_rtc_current_time();
+    // protocol-only logical clock follows a snapshot from the owning UI task.
+    if(getRTCQuality()==RTCQualityNone && snapshot.rtc_valid){
+        const uint32_t utc=snapshot.utc;
         if(utc>=1609459200UL){
             timeval tv{};tv.tv_sec=utc;
             perhapsSetRTC(RTCQualityDevice,&tv);
@@ -157,8 +175,8 @@ void meshink_meshtastic_native_gps_update(){
     static bool had_fix=false;
     static uint32_t last_ms=0,last_stamp=0;
     static long last_lat=0,last_lon=0;
-    const MeshInkGpsStatus fix=meshink_gps_read_status();
-    const bool enabled=meshink_gps_constellation_mode()!=MeshInkGpsConstellationMode::None;
+    const MeshInkGpsStatus& fix=snapshot.fix;
+    const bool enabled=snapshot.enabled;
     const bool valid=enabled&&fix.available&&fix.valid&&
                      fix.error==MeshInkGpsError::None&&
                      fix.latitude>=-90000000L&&fix.latitude<=90000000L&&
@@ -183,9 +201,9 @@ void meshink_meshtastic_native_gps_update(){
     // Once MeshInk's board-owned RTC confirms a GPS-authoritative clock,
     // upgrade only the protocol clock-quality metadata. Meshtastic does not
     // operate the GPS receiver or hardware RTC.
-    if(meshink_rtc_gps_authoritative() && meshink_rtc_valid() &&
+    if(snapshot.gps_authoritative && snapshot.rtc_valid &&
        getRTCQuality()<RTCQualityGPS){
-        const uint32_t utc=meshink_rtc_current_time();
+        const uint32_t utc=snapshot.utc;
         if(utc>=1609459200UL){
             timeval tv{};tv.tv_sec=utc;
             perhapsSetRTC(RTCQualityGPS,&tv);
@@ -224,7 +242,7 @@ void meshink_meshtastic_native_gps_update(){
     p.location_source=meshtastic_Position_LocSource_LOC_INTERNAL;
     p.sats_in_view=fix.satellites>0?(uint32_t)fix.satellites:0U;
     p.timestamp=fix.timestamp;
-    if(meshink_rtc_valid())p.time=meshink_rtc_current_time();
+    if(snapshot.rtc_valid)p.time=snapshot.utc;
 
     // Route ONLY into the genuine native NodeDB and PositionModule. Upstream
     // handles position precision/privacy, broadcasts and smart-movement rules.
