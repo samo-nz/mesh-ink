@@ -157,6 +157,7 @@ void poll(){
     meshink_rtc_tick();
     update_shared_gps_status();
     if(!ready)return;
+    meshink_meshtastic_ui_tick();
 #if ENV_INCLUDE_GPS == 1
     // Only MeshInk's UI task reads its mutable GNSS provider. A small locked
     // snapshot feeds official position networking on the other CPU core.
@@ -319,6 +320,7 @@ bool send(const char* text){
     return queued;
 }
 void stop(){
+    meshink_meshtastic_ui_flush();
     const bool stopped=meshink_meshtastic_worker_stop();
     if(stopped&&!ready){
         // Nothing was handed to a worker (for example, failed startup).
