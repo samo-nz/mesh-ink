@@ -128,6 +128,16 @@ if any(token in native_config for token in ("P_LORA_", "T5_", "t5_")):
     errors.append("hardware/radio_types.h: board-specific macros leaked into generic module contract")
 
 meshtastic_helper=(SRC/"protocol/meshtastic_protocol.cpp").read_text(encoding="utf-8")
+if "if(ready)ui_mesh_ready()" not in meshtastic_helper:
+    errors.append("Meshtastic startup must notify MeshInk that the clock/UI is ready")
+if "phone_rx=psram_scratch<PhoneRxScratch>();" not in meshtastic_helper:
+    errors.append("Native PhoneAPI RX buffers must be PSRAM-backed to protect loop stack")
+for token in ("psram_scratch<PhoneTxScratch>()","phone_rx->wire","scratch->wire"):
+    if token not in meshtastic_helper:
+        errors.append(f"Native PhoneAPI TX/RX stack-safety hook missing: {token}")
+ui_meshtastic=(SRC/"protocol/meshtastic_ui_data.cpp").read_text(encoding="utf-8")
+if '"MESHTASTIC"};' in ui_meshtastic:
+    errors.append("Meshtastic message badge must not mask native status (SENT/FAILED/DELIVERED)")
 if "meshink_protocol_backend_slot_2" not in meshtastic_helper:
     errors.append("src/protocol/meshtastic_protocol.cpp: Meshtastic helper is not registered in backend slot 2")
 if "libmeshtastic_leaf" in meshtastic_helper:

@@ -420,7 +420,7 @@ void note_packet(const meshtastic_MeshPacket& p){
     memcpy(msg->text,p.decoded.payload.bytes,copied);msg->text[copied]=0;
     format_time(msg->time,sizeof(msg->time),p.has_rx_time?p.rx_time:(uint32_t)time(nullptr));
     msg->unread=!outgoing&&!active_matches(*msg);
-    msg->row={msg->text,msg->time,outgoing,outgoing?UiMessageState::Sent:UiMessageState::Received,"MESHTASTIC"};
+    msg->row={msg->text,msg->time,outgoing,outgoing?UiMessageState::Sent:UiMessageState::Received,""};
     const uint32_t timestamp=p.has_rx_time?p.rx_time:(uint32_t)time(nullptr);
     const float scaled=p.rx_snr*4.0f;
     const int snr4=std::max(-128,std::min(127,(int)scaled));
@@ -658,7 +658,7 @@ void meshink_meshtastic_ui_begin(){
             format_time(msg->time,sizeof(msg->time),record.timestamp);
             msg->row={msg->text,msg->time,
                 record.state!=(uint8_t)UiMessageState::Received,
-                (UiMessageState)record.state,"MESHTASTIC"};
+                (UiMessageState)record.state,""};
             if(broadcast)channel_by_number(msg->channel);
             else node_for(peer);
         }
@@ -681,7 +681,7 @@ void meshink_meshtastic_ui_sent(uint32_t id,const char* text,bool success){
     m->peer=m->broadcast?0:state->selected_node;
     snprintf(m->text,sizeof(m->text),"%s",text);
     format_time(m->time,sizeof(m->time),(uint32_t)time(nullptr));
-    m->row={m->text,m->time,true,m->broadcast?UiMessageState::Sent:UiMessageState::Sending,"MESHTASTIC"};
+    m->row={m->text,m->time,true,m->broadcast?UiMessageState::Sent:UiMessageState::Sending,""};
     append_to_journal(*m,(uint32_t)time(nullptr),false);
     changed();
 }

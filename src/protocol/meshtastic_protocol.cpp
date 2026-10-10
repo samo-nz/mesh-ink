@@ -15,6 +15,33 @@
 #include "../hardware/gps.h"
 #include "../hardware/rtc.h"
 #include <cstring>
+#include <memory>
+#include <new>
+#include <esp_heap_caps.h>
+
+// Native PhoneAPI protobufs and wire buffers are large. Keep them off
+// the MeshInk loop-task stack and in PSRAM; the UI, RTC and radio still
+// retain their original board-owned initialization and behaviour.
+namespace {
+template<class T> struct PsramFree {
+    void operator()(T* p) const { if(p){p->~T();heap_caps_free(p);} }
+};
+template<class T> using PsramPtr=std::unique_ptr<T,PsramFree<T>>;
+template<class T> PsramPtr<T> psram_scratch(){
+    void* p=heap_caps_malloc(sizeof(T),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    return p?PsramPtr<T>(new(p) T{}):PsramPtr<T>{};
+}
+struct PhoneRxScratch {
+    uint8_t wire[meshtastic_FromRadio_size]{};
+    meshtastic_FromRadio data=meshtastic_FromRadio_init_zero;
+};
+struct PhoneTxScratch {
+    uint8_t wire[meshtastic_ToRadio_size]{};
+    meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
+    meshtastic_AdminMessage admin=meshtastic_AdminMessage_init_zero;
+};
+PsramPtr<PhoneRxScratch> phone_rx;
+}
 
 // MeshInk handles the UI; all routing, channel crypto and network
 // retransmissions remain in the pinned official Meshtastic core.
@@ -79,11 +106,22 @@ void start(){
     meshink_board_begin_local();
     meshink_meshtastic_ui_begin();
     ui_use_data_provider(meshink_meshtastic_ui_provider());
+    // Reserve receive protobuf storage in external RAM, not on the 8KB
+    // Arduino main-loop stack. Fail visibly rather than running unbuffered.
+    phone_rx=psram_scratch<PhoneRxScratch>();
+    if(!phone_rx){
+        Serial.println("[MeshInk/MT] ERROR: PhoneAPI PSRAM receive buffers unavailable");
+        ready=false;return;
+    }
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] PhoneAPI RX scratch=%u bytes in PSRAM\n",(unsigned)sizeof(PhoneRxScratch));
+#endif
     // Native Router, NodeDB and MeshService must initialize before PhoneAPI.
     // This seam does not initialize a second firmware application.
     const bool engine_ready=meshink_meshtastic_native_begin();
     const bool phone_ready=engine_ready&&meshink_official_phoneapi_open(1);
     ready=engine_ready&&phone_ready;
+    if(ready)ui_mesh_ready(); // Existing MeshInk readiness/clock/battery/name lifecycle.
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     Serial.printf("[MT-TEST] handoff engine=%u PhoneAPI=%u ready=%u heap=%u\n",
                   engine_ready?1U:0U,phone_ready?1U:0U,ready?1U:0U,
@@ -113,13 +151,14 @@ void poll(){
     if(!ready)return;
     meshink_meshtastic_native_gps_update();
     meshink_meshtastic_native_loop();
-    uint8_t bytes[meshtastic_FromRadio_size]{};
+    if(!phone_rx)return;
     for(unsigned i=0;i<12&&meshink_official_phoneapi_has_data();++i){
-        const size_t n=meshink_official_phoneapi_receive(bytes,sizeof(bytes));
+        const size_t n=meshink_official_phoneapi_receive(phone_rx->wire,sizeof(phone_rx->wire));
         if(!n)break;
-        meshtastic_FromRadio data=meshtastic_FromRadio_init_zero;
-        pb_istream_t input=pb_istream_from_buffer(bytes,n);
-        if(pb_decode(&input,meshtastic_FromRadio_fields,&data)){
+        phone_rx->data=meshtastic_FromRadio_init_zero;
+        pb_istream_t input=pb_istream_from_buffer(phone_rx->wire,n);
+        if(pb_decode(&input,meshtastic_FromRadio_fields,&phone_rx->data)){
+            const auto& data=phone_rx->data;
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
             switch(data.which_payload_variant){
                 case meshtastic_FromRadio_my_info_tag:
@@ -177,7 +216,9 @@ bool send(const char* text){
 #endif
         return false;
     }
-    meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
+    auto scratch=psram_scratch<PhoneTxScratch>();
+    if(!scratch){Serial.println("[MeshInk/MT] ERROR: message TX PSRAM unavailable");return false;}
+    auto& request=scratch->request;
     request.which_payload_variant=meshtastic_ToRadio_packet_tag;
     request.packet.to=dest;
     request.packet.channel=channel;
@@ -190,10 +231,9 @@ bool send(const char* text){
     if(n>sizeof(request.packet.decoded.payload.bytes))return false;
     memcpy(request.packet.decoded.payload.bytes,text,n);
     request.packet.decoded.payload.size=n;
-    uint8_t bytes[meshtastic_ToRadio_size]{};
-    pb_ostream_t output=pb_ostream_from_buffer(bytes,sizeof(bytes));
+    pb_ostream_t output=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
     if(!pb_encode(&output,meshtastic_ToRadio_fields,&request))return false;
-    const bool queued=meshink_official_phoneapi_submit(bytes,output.bytes_written);
+    const bool queued=meshink_official_phoneapi_submit(scratch->wire,output.bytes_written);
     meshink_meshtastic_ui_sent(request.packet.id,text,queued);
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     Serial.printf("[MT-TEST] ToRadio text id=%08lx to=!%08lx channel=%u length=%u want_ack=%u accepted=%u\n",
@@ -205,6 +245,7 @@ bool send(const char* text){
 void stop(){
     meshink_official_phoneapi_close();
     meshink_meshtastic_native_stop();
+    phone_rx.reset();
     ready=false;
 }
 bool running(){return ready;}
@@ -237,10 +278,12 @@ bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel){
     // Use official AdminModule commands aimed at the current device. Its
     // native handler owns key/channel persistence and configuration changes.
     if(!ready||!meshink_meshtastic_ui_own_node())return false;
-    meshtastic_AdminMessage admin=meshtastic_AdminMessage_init_zero;
+    auto scratch=psram_scratch<PhoneTxScratch>();
+    if(!scratch){Serial.println("[MeshInk/MT] ERROR: admin TX PSRAM unavailable");return false;}
+    auto& admin=scratch->admin;
     admin.which_payload_variant=meshtastic_AdminMessage_set_channel_tag;
     admin.set_channel=channel;
-    meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
+    auto& request=scratch->request;
     request.which_payload_variant=meshtastic_ToRadio_packet_tag;
     request.packet.to=meshink_meshtastic_ui_own_node();
     request.packet.channel=0;
@@ -254,19 +297,20 @@ bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel){
         sizeof(request.packet.decoded.payload.bytes));
     if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
     request.packet.decoded.payload.size=inner.bytes_written;
-    uint8_t encoded[meshtastic_ToRadio_size]{};
-    pb_ostream_t outer=pb_ostream_from_buffer(encoded,sizeof(encoded));
+    pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
     return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
-           meshink_official_phoneapi_submit(encoded,outer.bytes_written);
+           meshink_official_phoneapi_submit(scratch->wire,outer.bytes_written);
 }
 
 bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& lora){
     if(!ready||!meshink_meshtastic_ui_own_node())return false;
-    meshtastic_AdminMessage admin=meshtastic_AdminMessage_init_zero;
+    auto scratch=psram_scratch<PhoneTxScratch>();
+    if(!scratch){Serial.println("[MeshInk/MT] ERROR: admin TX PSRAM unavailable");return false;}
+    auto& admin=scratch->admin;
     admin.which_payload_variant=meshtastic_AdminMessage_set_config_tag;
     admin.set_config.which_payload_variant=meshtastic_Config_lora_tag;
     admin.set_config.payload_variant.lora=lora;
-    meshtastic_ToRadio request=meshtastic_ToRadio_init_zero;
+    auto& request=scratch->request;
     request.which_payload_variant=meshtastic_ToRadio_packet_tag;
     request.packet.to=meshink_meshtastic_ui_own_node();
     request.packet.id=esp_random();if(!request.packet.id)request.packet.id=1;
@@ -277,8 +321,7 @@ bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& l
                                                sizeof(request.packet.decoded.payload.bytes));
     if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
     request.packet.decoded.payload.size=inner.bytes_written;
-    uint8_t wire[meshtastic_ToRadio_size]{};
-    pb_ostream_t outer=pb_ostream_from_buffer(wire,sizeof(wire));
+    pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
     return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
-           meshink_official_phoneapi_submit(wire,outer.bytes_written);
+           meshink_official_phoneapi_submit(scratch->wire,outer.bytes_written);
 }
