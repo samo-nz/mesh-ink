@@ -3,6 +3,7 @@
 #include "../message_store.h"
 #include <pb_decode.h>
 #include <esp_system.h>
+#include <SPIFFS.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -35,6 +36,8 @@ struct Node {
     bool position_valid=false;
     int32_t latitude=0,longitude=0;
     uint32_t heard=0;
+    uint32_t position_received_at=0,position_fix_at=0;
+    char position_time_text[48]{};
     bool has_battery=false;
     uint32_t battery=0;
     char name[40]{};
@@ -83,6 +86,8 @@ struct State {
     Node nodes[kMaxNodes]{};
     Message messages[kMaxMessages]{};
     size_t node_count=0,message_count=0;
+    bool node_store_dirty=false,node_store_slot_b=false;
+    uint32_t node_store_generation=0,node_store_last_save_ms=0;
     char region_text[24]="UNSET";
     char preset_text[28]="LONG FAST";
     char power_text[20]="DEFAULT";
@@ -155,6 +160,163 @@ void changed(){
     ++state->revision;
     ui_request_data_refresh("meshtastic-native-ui");
 }
+// Independent MeshInk-owned node history. Two alternated, validated SPIFFS
+// snapshots ensure a reset during writing cannot destroy the previous copy.
+// The official NodeDB remains untouched by this historical view.
+constexpr uint32_t kNodeStoreMagic=0x4D544E44u; // MTND
+constexpr uint32_t kNodeStoreVersion=1;
+constexpr uint32_t kNodeStoreFlushMs=30000UL;
+constexpr const char* kNodeStoreA="/mt_nodes_a.bin";
+constexpr const char* kNodeStoreB="/mt_nodes_b.bin";
+struct NodeDiskHeader {
+    uint32_t magic=0,version=0,generation=0,count=0,checksum=0;
+};
+struct NodeDiskRecord {
+    uint32_t number=0,heard=0,position_received_at=0,position_fix_at=0;
+    int32_t latitude=0,longitude=0;
+    char name[40]{};
+    uint8_t flags=0,role=0,reserved[2]{};
+};
+static_assert(sizeof(NodeDiskRecord)==68,"node snapshot layout changed: bump version");
+uint32_t disk_checksum(uint32_t hash,const void* data,size_t length){
+    const uint8_t* bytes=(const uint8_t*)data;
+    for(size_t i=0;i<length;++i){hash^=bytes[i];hash*=16777619u;}
+    return hash;
+}
+uint32_t snapshot_checksum_seed(uint32_t generation,uint32_t count){
+    uint32_t checksum=disk_checksum(2166136261u,&generation,sizeof(generation));
+    return disk_checksum(checksum,&count,sizeof(count));
+}
+void node_store_dirty(){
+    if(state)state->node_store_dirty=true;
+}
+void format_position_time(Node& n){
+    n.position_time_text[0]=0;
+    const uint32_t timestamp=n.position_fix_at?n.position_fix_at:n.position_received_at;
+    if(!n.position_valid||!timestamp)return;
+    time_t stamp=(time_t)timestamp;
+    struct tm calendar{};
+    if(localtime_r(&stamp,&calendar))
+        snprintf(n.position_time_text,sizeof(n.position_time_text),
+                 "LAST FIX %02u/%02u/%04u %02u:%02u",
+                 (unsigned)calendar.tm_mday,(unsigned)(calendar.tm_mon+1),
+                 (unsigned)(calendar.tm_year+1900),
+                 (unsigned)calendar.tm_hour,(unsigned)calendar.tm_min);
+}
+NodeDiskRecord node_record(const Node& n){
+    NodeDiskRecord rec{};
+    rec.number=n.number;rec.heard=n.heard;
+    rec.position_received_at=n.position_received_at;
+    rec.position_fix_at=n.position_fix_at;
+    rec.latitude=n.latitude;rec.longitude=n.longitude;
+    if(n.name_known)snprintf(rec.name,sizeof(rec.name),"%s",n.name);
+    rec.flags=(n.position_valid?1u:0u)|(n.name_known?2u:0u);
+    rec.role=(uint8_t)n.role;
+    return rec;
+}
+// Validates the entire file before any state is imported. Never clear a
+// previous snapshot because another slot is absent or partially written.
+bool valid_node_snapshot(const char* path,NodeDiskHeader& header){
+    File file=SPIFFS.open(path,FILE_READ);
+    if(!file)return false;
+    if(file.read((uint8_t*)&header,sizeof(header))!=(int)sizeof(header)||
+       header.magic!=kNodeStoreMagic||header.version!=kNodeStoreVersion||
+       header.count>kMaxNodes||
+       file.size()!=sizeof(header)+header.count*sizeof(NodeDiskRecord)){
+        file.close();return false;
+    }
+    uint32_t checksum=snapshot_checksum_seed(header.generation,header.count);
+    NodeDiskRecord rec{};
+    for(uint32_t i=0;i<header.count;++i){
+        if(file.read((uint8_t*)&rec,sizeof(rec))!=(int)sizeof(rec)||
+           !rec.number){
+            file.close();return false;
+        }
+        checksum=disk_checksum(checksum,&rec,sizeof(rec));
+    }
+    file.close();
+    return checksum==header.checksum;
+}
+void load_node_snapshot(){
+    if(!state)return;
+    NodeDiskHeader a{},b{};
+    const bool valid_a=valid_node_snapshot(kNodeStoreA,a);
+    const bool valid_b=valid_node_snapshot(kNodeStoreB,b);
+    if(!valid_a&&!valid_b)return;
+    const bool use_b=valid_b&&(!valid_a||(int32_t)(b.generation-a.generation)>0);
+    const NodeDiskHeader& header=use_b?b:a;
+    File file=SPIFFS.open(use_b?kNodeStoreB:kNodeStoreA,FILE_READ);
+    if(!file)return;
+    file.seek(sizeof(NodeDiskHeader));
+    NodeDiskRecord rec{};
+    for(uint32_t i=0;i<header.count;++i){
+        if(file.read((uint8_t*)&rec,sizeof(rec))!=(int)sizeof(rec))break;
+        if(!rec.number||rec.number==state->me)continue;
+        Node* n=node_for(rec.number);
+        if(!n)break;
+        n->heard=rec.heard;
+        format_time(n->heard_text,sizeof(n->heard_text),n->heard);
+        n->position_valid=(rec.flags&1u)!=0;
+        n->latitude=rec.latitude;n->longitude=rec.longitude;
+        n->position_received_at=rec.position_received_at;
+        n->position_fix_at=rec.position_fix_at;
+        n->name_known=(rec.flags&2u)!=0;
+        if(n->name_known){
+            rec.name[sizeof(rec.name)-1]=0;
+            snprintf(n->name,sizeof(n->name),"%s",rec.name);
+        }
+        n->role=(UiNodeRole)rec.role;
+        snprintf(n->role_label,sizeof(n->role_label),"%s",role_name(n->role));
+        n->row.role=n->role;
+        format_position_time(*n);
+    }
+    file.close();
+    state->node_store_dirty=false;
+    state->node_store_slot_b=use_b;
+    state->node_store_generation=header.generation;
+    state->node_store_last_save_ms=millis();
+    Serial.printf("[MT-NODES] restored %u nodes from %s generation=%lu\n",
+                  (unsigned)state->node_count,use_b?"B":"A",
+                  (unsigned long)header.generation);
+}
+bool flush_node_snapshot(bool force=false){
+    if(!state||!state->node_store_dirty)return true;
+    const uint32_t now=millis();
+    if(!force&&(uint32_t)(now-state->node_store_last_save_ms)<kNodeStoreFlushMs)
+        return false;
+    const bool next_b=!state->node_store_slot_b;
+    const char* path=next_b?kNodeStoreB:kNodeStoreA;
+    File file=SPIFFS.open(path,FILE_WRITE);
+    if(!file)return false;
+    NodeDiskHeader header{};
+    header.magic=kNodeStoreMagic;header.version=kNodeStoreVersion;
+    header.generation=state->node_store_generation+1;
+    header.count=state->node_count;
+    header.checksum=snapshot_checksum_seed(header.generation,header.count);
+    for(size_t i=0;i<state->node_count;++i){
+        const auto record=node_record(state->nodes[i]);
+        header.checksum=disk_checksum(header.checksum,&record,sizeof(record));
+    }
+    bool ok=file.write((const uint8_t*)&header,sizeof(header))==sizeof(header);
+    for(size_t i=0;ok&&i<state->node_count;++i){
+        const auto record=node_record(state->nodes[i]);
+        ok=file.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
+    }
+    file.flush();file.close();
+    NodeDiskHeader verify{};
+    if(!ok||!valid_node_snapshot(path,verify)||
+       verify.generation!=header.generation){
+        Serial.println("[MT-NODES] snapshot verification failed; older slot preserved");
+        return false;
+    }
+    state->node_store_slot_b=next_b;
+    state->node_store_generation=header.generation;
+    state->node_store_dirty=false;
+    state->node_store_last_save_ms=now;
+    Serial.printf("[MT-NODES] saved %u node records generation=%lu\n",
+                  (unsigned)header.count,(unsigned long)header.generation);
+    return true;
+}
 void setup_channel(Channel& c,uint8_t number,const char* name,const char* subtitle){
     c.index=number;c.enabled=true;
     snprintf(c.name,sizeof(c.name),"%s",name&&*name?name:"DEFAULT");
@@ -200,6 +362,7 @@ Node* node_for(uint32_t number){
     snprintf(n.subtitle,sizeof(n.subtitle),"MESHTASTIC NODE");
     n.role=UiNodeRole::Client;
     n.row={n.name,n.subtitle,n.heard_text,0,n.role};
+    node_store_dirty();
     return &n;
 }
 bool has_messages_for(uint32_t node){
@@ -319,6 +482,7 @@ void update_node_user(Node& n,const meshtastic_User& user){
     n.role=translate_role(user.role);
     snprintf(n.role_label,sizeof(n.role_label),"%s",role_name(n.role));
     n.row.role=n.role;
+    node_store_dirty();
 }
 void note_node(const meshtastic_NodeInfo& info){
     // Save the local User protobuf from the trusted PhoneAPI handshake for
@@ -334,11 +498,20 @@ void note_node(const meshtastic_NodeInfo& info){
     Node* n=node_for(info.num);
     if(!n)return;
     if(info.has_user)update_node_user(*n,info.user);
-    n->heard=info.last_heard;
-    format_time(n->heard_text,sizeof(n->heard_text),n->heard);
-    if(info.has_position&&info.position.has_latitude_i&&info.position.has_longitude_i){
+    if(info.last_heard>n->heard){
+        n->heard=info.last_heard;
+        format_time(n->heard_text,sizeof(n->heard_text),n->heard);
+        node_store_dirty();
+    }
+    if(info.has_position&&info.position.has_latitude_i&&info.position.has_longitude_i&&
+       (!n->position_fix_at||!info.position.time||
+        info.position.time>=n->position_fix_at)){
         n->position_valid=true;
         n->latitude=info.position.latitude_i;n->longitude=info.position.longitude_i;
+        if(info.position.time)n->position_fix_at=info.position.time;
+        if(info.last_heard)n->position_received_at=info.last_heard;
+        format_position_time(*n);
+        node_store_dirty();
     }
     if(info.has_device_metrics&&info.device_metrics.has_battery_level){
         n->has_battery=true;n->battery=info.device_metrics.battery_level;
@@ -424,12 +597,20 @@ void note_position(const meshtastic_MeshPacket& packet){
     if(!n)return;
     const bool changed_coords=!n->position_valid||
         n->latitude!=position.latitude_i||n->longitude!=position.longitude_i;
+    // PhoneAPI also replays disk positions at startup. A replay with an
+    // older GPS timestamp must not roll back our more recent saved fix.
+    if(position.time&&n->position_fix_at&&position.time<n->position_fix_at)return;
     n->position_valid=true;
     n->latitude=position.latitude_i;n->longitude=position.longitude_i;
-    if(packet.has_rx_time){
+    if(position.time)n->position_fix_at=position.time;
+    const uint32_t received=packet.has_rx_time?packet.rx_time:(uint32_t)time(nullptr);
+    if(received>n->position_received_at)n->position_received_at=received;
+    if(packet.has_rx_time&&packet.rx_time>n->heard){
         n->heard=packet.rx_time;
         format_time(n->heard_text,sizeof(n->heard_text),n->heard);
     }
+    format_position_time(*n);
+    node_store_dirty();
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     if(changed_coords)Serial.printf("[MT-TEST] map: position from=!%08lx precision=as-received\n",
                                     (unsigned long)packet.from);
@@ -637,6 +818,7 @@ public:
         details_.role_label=n->role_label;details_.route=n->subtitle;
         details_.capabilities=0;
         details_.saved_contact=true;
+        details_.position_source=n->position_time_text;
         if(n->position_valid){
             snprintf(state->location_text,sizeof(state->location_text),
                      "%.5f, %.5f",n->latitude/1e7,n->longitude/1e7);
@@ -698,12 +880,15 @@ void meshink_meshtastic_ui_begin(){
     journal_ready=false;
     if(!state)return;
     setup_channel(state->channels[0],0,"PRIMARY","PRIMARY CHANNEL");
+    // Official NodeDB snapshots are only an update source, not the
+    // persistence authority for contacts or historical map markers.
+    load_node_snapshot();
     journal_ready=meshink_message_store().begin();
     if(journal_ready){
         MeshInkMessageStore& store=meshink_message_store();
         for(size_t i=0;i<store.count();++i){
             MeshInkStoredMessage record{};
-            if(!store.read(i,record)||meshink_message_protocol(record)!=kProtocolId)continue;
+            if(!store.read(i,record)||!record.sequence||meshink_message_protocol(record)!=kProtocolId)continue;
             const bool broadcast=record.kind==(uint8_t)MeshInkMessageKind::Channel;
             uint32_t peer=0;
             if(!broadcast)for(unsigned b=0;b<4;++b)peer|=(uint32_t)record.key[b]<<(8*b);
@@ -725,6 +910,8 @@ void meshink_meshtastic_ui_begin(){
     update_unread();
 }
 UiDataProvider* meshink_meshtastic_ui_provider(){return state?&provider:nullptr;}
+void meshink_meshtastic_ui_tick(){flush_node_snapshot();}
+void meshink_meshtastic_ui_flush(){flush_node_snapshot(true);}
 bool meshink_meshtastic_ui_destination(uint32_t& node,uint8_t& channel){
     if(!state)return false;
     node=state->selected_is_channel?kBroadcast:state->selected_node;
@@ -765,9 +952,10 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
         if(incoming) {
             Node* n=node_for(p.from);
             if(n){
-                if(p.has_rx_time){
+                if(p.has_rx_time&&p.rx_time>n->heard){
                     n->heard=p.rx_time;
                     format_time(n->heard_text,sizeof(n->heard_text),n->heard);
+                    node_store_dirty();
                 }
                 if(!existed)changed();
                 const uint32_t now=millis();
