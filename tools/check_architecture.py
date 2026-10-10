@@ -188,6 +188,14 @@ for token in ("meshink_gps_service_loop()", "meshink_gps_background_tick()",
 native_runtime=(SRC/"protocol/meshtastic_runtime.cpp").read_text(encoding="utf-8")
 if "nodeDB->updatePosition(nodeDB->getNodeNum(),p,RX_SRC_LOCAL)" not in native_runtime:
     errors.append("Shared GPS bridge must submit to upstream NodeDB, not a second GPS engine")
+# Meshtastic wire coordinates use 1e7 while the established MeshInk map and
+# node-detail UI contracts use 1e6. Protect against a tenfold map displacement.
+native_ui = (SRC/"protocol/meshtastic_ui_data.cpp").read_text(encoding="utf-8")
+for token in ("out.latitude=n.latitude/10;out.longitude=n.longitude/10;",
+              "details_.latitude=n->latitude/10;details_.longitude=n->longitude/10;"):
+    if token not in native_ui:
+        errors.append("Meshtastic position UI coordinates must convert native 1e7 to MeshInk 1e6: " + token)
+
 
 if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must register the Meshtastic backend")

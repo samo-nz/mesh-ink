@@ -504,7 +504,9 @@ public:
             if(index--!=0)continue;
             out={};snprintf(out.name,sizeof(out.name),"%s",n.name);
             for(unsigned b=0;b<4;++b)out.key[b]=(uint8_t)(n.number>>(8*b));
-            out.latitude=n.latitude;out.longitude=n.longitude;
+            // Official Meshtastic stores degrees * 1e7; shared MeshInk maps
+            // consume degrees * 1e6, just like the tested MeshCore view.
+            out.latitude=n.latitude/10;out.longitude=n.longitude/10;
             out.role=n.role;out.advertised_at=n.heard;return true;
         }
         return false;
@@ -580,7 +582,8 @@ public:
             snprintf(state->location_text,sizeof(state->location_text),
                      "%.5f, %.5f",n->latitude/1e7,n->longitude/1e7);
             details_.position=state->location_text;
-            details_.latitude=n->latitude;details_.longitude=n->longitude;
+            // Node-details map actions use the same MeshInk microdegree contract.
+            details_.latitude=n->latitude/10;details_.longitude=n->longitude/10;
         }
         if(n->has_battery){
             snprintf(state->telemetry_text,sizeof(state->telemetry_text),
