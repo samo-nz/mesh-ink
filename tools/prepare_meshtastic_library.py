@@ -208,6 +208,14 @@ if gps_guarded not in position_data:
     if position_data.count(gps_include) != 1:
         raise RuntimeError("Meshtastic PositionModule GPS include changed upstream")
     position_data = position_data.replace(gps_include, gps_guarded, 1)
+# The upstream PositionModule checks for an official physical I2C RTC,
+# rtc_found, which MeshInk intentionally never probes or instantiates. Our
+# bridge already seeds Meshtastic's logical clock from the tested MeshInk RTC.
+# Preserve upstream RTC-quality-based packet policy without a second I2C scan.
+rtc_expression = "rtc_found.address != ScanI2C::ADDRESS_NONE.address"
+if position_data.count(rtc_expression) != 3:
+    raise RuntimeError("Official PositionModule RTC checks changed; review hardware ownership")
+position_data = position_data.replace(rtc_expression, "getRTCQuality() >= RTCQualityDevice")
 # MeshInk must remain the exclusive arbiter of standby/deep-sleep (including
 # for Meshtastic TRACKER roles with power-saving enabled).
 sleep_before = "        doDeepSleep(nightyNightMs, false, false);"
