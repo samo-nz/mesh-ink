@@ -176,7 +176,9 @@ void poll(){
     // All official Meshtastic engine work is isolated from UI processing.
     if(!phone_rx)return;
     uint32_t rejected_id=0;
-    for(unsigned i=0;i<4&&meshink_meshtastic_worker_tx_failed(rejected_id);++i){
+    const unsigned ui_event_limit=ui_is_message_composing()?1U:4U;
+    const uint32_t ui_handoff_started=millis();
+    for(unsigned i=0;i<ui_event_limit&&meshink_meshtastic_worker_tx_failed(rejected_id);++i){
         // Reuse the existing PSRAM protobuf, never allocate the large
         // FromRadio type on Arduino's small main-loop stack.
         phone_rx->data=meshtastic_FromRadio_init_zero;
@@ -186,7 +188,10 @@ void poll(){
             static_cast<decltype(phone_rx->data.queueStatus.res)>(1);
         meshink_meshtastic_ui_receive(phone_rx->data);
     }
-    for(unsigned i=0;i<4;++i){
+    for(unsigned i=0;i<ui_event_limit;++i){
+        // Durable message-journal writes can take time on the UI core.
+        // Bound event bursts without changing the independent radio scheduler.
+        if(i&&millis()-ui_handoff_started>=12UL)break;
         const size_t n=meshink_meshtastic_worker_receive(phone_rx->wire,sizeof(phone_rx->wire));
         if(!n)break;
         phone_rx->data=meshtastic_FromRadio_init_zero;
