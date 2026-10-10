@@ -10,6 +10,8 @@
 #include "../../lib/Meshtastic/src/airtime.h"
 #include "../../lib/Meshtastic/src/concurrency/OSThread.h"
 #include "../../lib/Meshtastic/src/mesh/NodeDB.h"
+#include "../../lib/Meshtastic/src/mesh/Channels.h"
+#include <Preferences.h>
 #include "../../lib/Meshtastic/src/mesh/ReliableRouter.h"
 #include "../../lib/Meshtastic/src/mesh/MeshService.h"
 #include "../../lib/Meshtastic/src/mesh/CryptoEngine.h"
@@ -112,6 +114,38 @@ bool meshink_meshtastic_native_begin(){
                   (unsigned)config.lora.modem_preset,config.lora.tx_enabled?1U:0U,
                   (unsigned)ESP.getFreeHeap());
 #endif
+    // Privacy fail-closed: if the user explicitly disabled sharing, clear
+    // any stale native on-wire channel precision BEFORE the radio is attached.
+    // A power loss during an earlier setting change must never re-enable
+    // location transmissions on the next boot. Perform this only when needed,
+    // before the UI/radio service runs, rather than an asynchronous Admin
+    // reconfiguration after startup. Do not alter an enabled user's channels.
+    {
+        Preferences location_prefs;
+        if(location_prefs.begin("mt-location",true)){
+            const bool configured=location_prefs.getBool("configured",false);
+            const bool share=location_prefs.getBool("master",false);
+            location_prefs.end();
+            if(configured&&!share){
+                unsigned disabled=0;
+                for(unsigned i=0;i<channels.getNumChannels();++i){
+                    auto& channel=channels.getByIndex(i);
+                    if(channel.role==meshtastic_Channel_Role_DISABLED||
+                       !channel.has_settings||!channel.settings.has_module_settings)
+                        continue;
+                    if(channel.settings.module_settings.position_precision){
+                        channel.settings.module_settings.position_precision=0;
+                        ++disabled;
+                    }
+                }
+                if(disabled){
+                    const bool persisted=nodeDB->saveToDisk(SEGMENT_CHANNELS);
+                    Serial.printf("[MT-LOC] cold-start privacy guard: disabled %u channels; saved=%u\n",
+                                  disabled,persisted?1u:0u);
+                }
+            }
+        }
+    }
     // Never let a position restored from the official NodeDB act as a fresh
     // GNSS fix after reboot. MeshInk keeps the historical map location in
     // its own separate NVS record; upstream RF positions require a new fix.
