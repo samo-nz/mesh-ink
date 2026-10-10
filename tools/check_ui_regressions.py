@@ -1803,6 +1803,10 @@ mt_ui=(root/"src"/"protocol"/"meshtastic_ui_data.cpp").read_text(encoding="utf-8
 mt_proto=(root/"src"/"protocol"/"meshtastic_protocol.cpp").read_text(encoding="utf-8")
 assert 'snprintf(n.name,sizeof(n.name),"unknown (%s)",n.identity);' in mt_ui, "unknown Meshtastic contacts identify their permanent node ID"
 assert 'else snprintf(out.name,sizeof(out.name),"(!%06lx)",' in mt_ui, "unknown map labels use a compact six-digit node ID"
+assert 'state->config_complete=true;\n        // No write-back on PhoneAPI replay.' in mt_ui, "PhoneAPI startup must not reconfigure Meshtastic channels"
+assert 'state->config_complete=true;\n        reconcile_sharing();' not in mt_ui, "never reconcile channel settings on config-complete"
+assert '        reconcile_sharing();\n    }\n    changed();' not in mt_ui, "never write native channel configuration from a replayed channel snapshot"
+assert 'apply_pending_location_sharing();\n    // The touch handler draws' in mt_ui, "settings edit must not cause a redundant EPD refresh"
 assert 'meshtastic_PortNum_NODEINFO_APP' in mt_ui and 'update_node_user(*n,user)' in mt_ui, "Meshtastic live User announcements update contact names"
 assert 'n->name_request_pending=true;' in mt_ui and 'case meshtastic_FromRadio_packet_tag:' in mt_ui, "discovery only follows actual incoming mesh traffic"
 assert 'kNodeInfoEarlyRetryMs=5UL*60UL*1000UL' in mt_ui and 'n->name_request_count<2' in mt_ui, "a node gets one event-triggered retry after five minutes"
