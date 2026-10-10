@@ -770,7 +770,9 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
                 if(!n->name_known&&!n->name_request_pending&&
                    (!n->name_request_sent||
                     (uint32_t)(millis()-n->last_name_request_ms)>=kNodeInfoRetryMs)){
-                    n->heard_channel=p.channel;
+                    // PhoneAPI uses channel slots 0..7; encrypted/raw RF
+                    // headers may still carry a channel hash instead.
+                    n->heard_channel=p.channel<kMaxChannels?(uint8_t)p.channel:0;
                     n->name_request_pending=true;
                 }
             }
