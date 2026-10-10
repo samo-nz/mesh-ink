@@ -206,10 +206,24 @@ for phrase in ("Safe /prefs SPIFFS replace", "Recovered interrupted preference s
 for token in ("MESHINK_MESHTASTIC_EXTERNAL_POSITION", "native tracker sleep suppressed", "positionModule = new PositionModule"):
     if token not in shared_position_patch:
         errors.append(f"Build-only position adapter missing {token}")
+# MeshInk owns the physical GPS/RTC services. The native position bridge
+# runs on the lower-priority Meshtastic worker, not on the UI loop.
 for token in ("meshink_gps_service_loop()", "meshink_gps_background_tick()",
-              "meshink_rtc_tick()", "meshink_meshtastic_native_gps_update()"):
+              "meshink_rtc_tick()"):
     if token not in meshtastic_helper:
         errors.append(f"Meshtastic mode bypasses existing MeshInk GPS/RTC service: {token}")
+native_worker=(SRC/"protocol/meshtastic_worker.cpp").read_text(encoding="utf-8")
+for token in ("xTaskCreatePinnedToCore(network_task", "meshink_meshtastic_native_loop()",
+              "meshink_meshtastic_native_gps_update()",
+              "meshink_official_phoneapi_submit(", "meshink_official_phoneapi_receive("):
+    if token not in native_worker:
+        errors.append(f"Meshtastic worker missing engine/PhoneAPI operation: {token}")
+for token in ("meshink_meshtastic_native_loop()", "meshink_meshtastic_native_gps_update()",
+              "meshink_official_phoneapi_submit("):
+    if token in meshtastic_helper:
+        errors.append(f"Meshtastic UI thread directly runs native engine operation: {token}")
+if "+<protocol/meshtastic_worker.cpp>" not in platformio:
+    errors.append("Meshtastic worker missing from firmware source filter")
 native_runtime=(SRC/"protocol/meshtastic_runtime.cpp").read_text(encoding="utf-8")
 if "nodeDB->updatePosition(nodeDB->getNodeNum(),p,RX_SRC_LOCAL)" not in native_runtime:
     errors.append("Shared GPS bridge must submit to upstream NodeDB, not a second GPS engine")
