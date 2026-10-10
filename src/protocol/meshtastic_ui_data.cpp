@@ -745,7 +745,9 @@ public:
         for(size_t i=0;i<state->node_count;++i){
             const Node& n=state->nodes[i];if(!n.position_valid)continue;
             if(index--!=0)continue;
-            out={};snprintf(out.name,sizeof(out.name),"%s",n.name);
+            out={};
+            if(n.name_known)snprintf(out.name,sizeof(out.name),"%s",n.name);
+            else snprintf(out.name,sizeof(out.name),"(!%06lx)",(unsigned long)(n.number&0xFFFFFFu));
             for(unsigned b=0;b<4;++b)out.key[b]=(uint8_t)(n.number>>(8*b));
             // Official Meshtastic stores degrees * 1e7; shared MeshInk maps
             // consume degrees * 1e6, just like the tested MeshCore view.
