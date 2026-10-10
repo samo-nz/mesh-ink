@@ -16,8 +16,10 @@
 namespace {
 constexpr size_t kMaxNodes=64, kMaxChannels=8, kMaxMessages=96;
 constexpr uint32_t kBroadcast=0xffffffffu;
-// Upstream NodeInfoModule suppresses repeat responses from the same requester
-// for 12 hours. Retry only following NEW traffic after that window.
+// First request on discovery; allow ONE subsequent radio-triggered retry
+// after five minutes for mobile/weak links. Then back off for a full 12h
+// window (upstream NodeInfoModule may suppress recent repeat responses).
+constexpr uint32_t kNodeInfoEarlyRetryMs=5UL*60UL*1000UL;
 constexpr uint32_t kNodeInfoRetryMs=12UL*60UL*60UL*1000UL;
 constexpr uint32_t kNodeInfoGlobalSpacingMs=60UL*1000UL;
 constexpr uint32_t kNodeInfoFailedQueueRetryMs=5000UL;
@@ -42,7 +44,8 @@ struct Node {
     char heard_text[16]{};
     // UI-only discovery state; never change official NodeDB/persisted identity.
     bool name_known=false,name_request_pending=false,name_request_sent=false;
-    uint32_t last_name_request_ms=0;
+    uint8_t name_request_count=0; // two sends maximum per 12-hour window
+    uint32_t first_name_request_ms=0,last_name_request_ms=0;
     uint8_t heard_channel=0;
     UiNodeRole role=UiNodeRole::Unknown;
     UiListEntry row{};
@@ -767,9 +770,14 @@ void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
                     format_time(n->heard_text,sizeof(n->heard_text),n->heard);
                 }
                 if(!existed)changed();
+                const uint32_t now=millis();
+                const bool next_window=n->name_request_sent&&
+                    (uint32_t)(now-n->first_name_request_ms)>=kNodeInfoRetryMs;
+                const bool early_retry=n->name_request_sent&&
+                    n->name_request_count<2&&
+                    (uint32_t)(now-n->last_name_request_ms)>=kNodeInfoEarlyRetryMs;
                 if(!n->name_known&&!n->name_request_pending&&
-                   (!n->name_request_sent||
-                    (uint32_t)(millis()-n->last_name_request_ms)>=kNodeInfoRetryMs)){
+                   (!n->name_request_sent||next_window||early_retry)){
                     // PhoneAPI uses channel slots 0..7; encrypted/raw RF
                     // headers may still carry a channel hash instead.
                     n->heard_channel=p.channel<kMaxChannels?(uint8_t)p.channel:0;
@@ -816,8 +824,16 @@ void meshink_meshtastic_ui_name_request_result(uint32_t number,bool accepted){
     state->last_name_attempt_ms=now;
     if(!accepted)return;
     if(Node* n=find_node(number)){
+        // The second request is only eligible after fresh traffic from this
+        // node, not after a timer. Restart the two-attempt budget after 12h.
+        if(!n->name_request_sent||
+           (uint32_t)(now-n->first_name_request_ms)>=kNodeInfoRetryMs){
+            n->first_name_request_ms=now;
+            n->name_request_count=0;
+        }
         n->name_request_pending=false;
         n->name_request_sent=true;
+        if(n->name_request_count<2)++n->name_request_count;
         n->last_name_request_ms=now;
     }
     state->name_tx_seen=true;
