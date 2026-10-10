@@ -121,13 +121,17 @@ int main() {
     pmtiles_end_frame();
     pmtiles_reset();
     assert_range("/maps/gzip.pmtiles",1,1,0); // directory rebuilt after remount
-    // Simulated internal pressure still decodes gzip via PSRAM output.
+    // All compressed metadata, inflated directories, cached index entries,
+    // and ROM-compatible decoder state work with ZERO internal heap available.
+    // This must hold globally for both protocol modes.
     pmtiles_reset();
-    mock_internal_total_free=16000; // less than the 16 KiB safety reserve
+    mock_internal_total_free=0;
+    mock_internal_largest_free=0;
     const size_t before=mock_spiram_allocations;
     assert_range("/maps/gzip.pmtiles",1,1,0);
-    assert(mock_spiram_allocations>before);
+    assert(mock_spiram_allocations>=before+6); // root and leaf input/state/output
     mock_internal_total_free=1U*1024U*1024U;
+    mock_internal_largest_free=1U*1024U*1024U;
     // Invalid/corrupt gzip directory is disabled once, not retried at zoom.
     Bytes broken=make_archive(true,true);
     broken[127]=0x00; // root gzip header
