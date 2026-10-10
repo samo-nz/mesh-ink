@@ -208,6 +208,7 @@ static uint32_t status_gps_timestamp = 0;
 // reboots. Never mistake placeholder (0,0) or "no fix" for a new location.
 static bool map_has_last_gps_position=false;
 static long map_last_gps_latitude=0,map_last_gps_longitude=0;
+static uint32_t map_last_gps_timestamp=0,map_saved_gps_timestamp=0;
 static bool map_last_gps_saved=false;
 static long map_saved_gps_latitude=0,map_saved_gps_longitude=0;
 static uint32_t map_last_gps_save_ms=0;
@@ -5804,12 +5805,14 @@ static void ui_load_persistent_state() {
     map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
     map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
     map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
+    map_last_gps_timestamp=prefs.getUInt("map_fix_ts",0);
     map_has_last_gps_position=map_has_last_gps_position &&
         map_last_gps_latitude>=-85051100L&&map_last_gps_latitude<=85051100L &&
         map_last_gps_longitude>=-180000000L&&map_last_gps_longitude<=180000000L;
     map_last_gps_saved=map_has_last_gps_position;
     map_saved_gps_latitude=map_last_gps_latitude;
     map_saved_gps_longitude=map_last_gps_longitude;
+    map_saved_gps_timestamp=map_last_gps_timestamp;
     frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);
     frontlight_timeout_index=prefs.getUChar("light_timeout",2);
     frontlight_brightness=prefs.getUChar("light_level",30);
@@ -6388,6 +6391,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
        longitude>=-180000000L&&longitude<=180000000L){
         map_has_last_gps_position=true;
         map_last_gps_latitude=latitude;map_last_gps_longitude=longitude;
+        if(timestamp)map_last_gps_timestamp=timestamp;
         update_auto_timezone_from_gps(latitude,longitude);
         const uint32_t gps_now=millis();
         // Limit NVS writes: store the first fix, then only changed positions
@@ -6396,18 +6400,25 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         const bool differs=!map_last_gps_saved ||
             labs(latitude-map_saved_gps_latitude)>=5000L ||
             labs(longitude-map_saved_gps_longitude)>=5000L;
-        if(differs&&(!map_last_gps_save_ms||
+        // Even when stationary, retain a recent verified fix time so the
+        // historical own-position marker is honestly dated after reboot.
+        const bool timestamp_due=map_last_gps_timestamp&&
+            (!map_saved_gps_timestamp||
+             map_last_gps_timestamp-map_saved_gps_timestamp>=21600UL);
+        if((differs||timestamp_due)&&(!map_last_gps_save_ms||
             gps_now-map_last_gps_save_ms>=1800000UL)){
             Preferences location_store;
             if(location_store.begin("t5-ui",false)){
                 const bool ok=location_store.putLong("map_fix_lat",latitude)>0 &&
                     location_store.putLong("map_fix_lon",longitude)>0 &&
+                    location_store.putUInt("map_fix_ts",map_last_gps_timestamp)>0 &&
                     location_store.putBool("map_fix_saved",true)>0;
                 location_store.end();
                 if(ok){
                     map_last_gps_saved=true;
                     map_saved_gps_latitude=latitude;
                     map_saved_gps_longitude=longitude;
+                    map_saved_gps_timestamp=map_last_gps_timestamp;
                     map_last_gps_save_ms=gps_now?gps_now:1;
                 }
             }
