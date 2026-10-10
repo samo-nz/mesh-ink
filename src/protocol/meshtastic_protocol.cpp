@@ -407,3 +407,50 @@ bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& l
     return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
            meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
 }
+
+bool meshink_meshtastic_submit_remove_node(uint32_t node_id){
+    if(!ready||!node_id||node_id==meshink_meshtastic_ui_own_node())return false;
+    auto scratch=psram_scratch<PhoneTxScratch>();
+    if(!scratch)return false;
+    auto& admin=scratch->admin;
+    admin.which_payload_variant=meshtastic_AdminMessage_remove_by_nodenum_tag;
+    admin.remove_by_nodenum=node_id;
+    auto& request=scratch->request;
+    request.which_payload_variant=meshtastic_ToRadio_packet_tag;
+    request.packet.to=meshink_meshtastic_ui_own_node();
+    request.packet.id=esp_random();if(!request.packet.id)request.packet.id=1;
+    request.packet.want_ack=true;
+    request.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
+    request.packet.decoded.portnum=meshtastic_PortNum_ADMIN_APP;
+    pb_ostream_t inner=pb_ostream_from_buffer(
+        request.packet.decoded.payload.bytes,sizeof(request.packet.decoded.payload.bytes));
+    if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
+    request.packet.decoded.payload.size=inner.bytes_written;
+    pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
+    return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
+           meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
+}
+
+bool meshink_meshtastic_submit_position_config(const meshtastic_Config_PositionConfig& position){
+    if(!ready||!meshink_meshtastic_ui_own_node())return false;
+    auto scratch=psram_scratch<PhoneTxScratch>();
+    if(!scratch)return false;
+    auto& admin=scratch->admin;
+    admin.which_payload_variant=meshtastic_AdminMessage_set_config_tag;
+    admin.set_config.which_payload_variant=meshtastic_Config_position_tag;
+    admin.set_config.payload_variant.position=position;
+    auto& request=scratch->request;
+    request.which_payload_variant=meshtastic_ToRadio_packet_tag;
+    request.packet.to=meshink_meshtastic_ui_own_node();
+    request.packet.id=esp_random();if(!request.packet.id)request.packet.id=1;
+    request.packet.want_ack=true;
+    request.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
+    request.packet.decoded.portnum=meshtastic_PortNum_ADMIN_APP;
+    pb_ostream_t inner=pb_ostream_from_buffer(
+        request.packet.decoded.payload.bytes,sizeof(request.packet.decoded.payload.bytes));
+    if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
+    request.packet.decoded.payload.size=inner.bytes_written;
+    pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
+    return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
+           meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
+}
