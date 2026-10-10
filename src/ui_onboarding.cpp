@@ -13,6 +13,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <atomic>
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
 #include "channel_key.h"
@@ -218,6 +219,9 @@ static int8_t status_minute = -1;
 // changes are kept separate so the 48 px bar can use a small DU update.
 static bool status_dirty = false;
 static bool status_bar_dirty = false;
+// While composing, only a changed unread indicator may request a bar paint.
+// Clock, battery and GPS status remain pending until text entry ends.
+static bool unread_status_refresh_pending = false;
 // The shared UI, never a protocol, decides when to redraw a keyboard.
 static bool deferred_data_refresh = false;
 static size_t chat_message_count_last_drawn = 0;
@@ -282,6 +286,8 @@ static uint32_t frontlight_deadline=0;
 static uint8_t night_edit_field=0;
 static QueueHandle_t touch_queue=nullptr;
 static TaskHandle_t touch_task_handle=nullptr;
+// Cross-core diagnostic only: the touch task increments this on a full queue.
+static std::atomic<uint32_t> touch_queue_drops{0};
 static bool text_refresh_pending=false;
 static uint32_t text_refresh_after=0;
 static uint32_t text_refresh_queued_at=0;
@@ -671,6 +677,14 @@ struct QueuedTap{
     QueuedTap(int16_t px,int16_t py,int16_t pdx,int16_t pdy,bool is_home):
         x(px),y(py),dx(pdx),dy(pdy),home(is_home),queued_at_ms(millis()) {}
 };
+
+// Preserve the 32-entry queue and existing touch-up semantics. Report real
+// saturation instead of concealing it with a larger queue.
+static bool queue_touch_event(const QueuedTap& tap){
+    if(touch_queue&&xQueueSend(touch_queue,&tap,0)==pdTRUE)return true;
+    touch_queue_drops.fetch_add(1,std::memory_order_relaxed);
+    return false;
+}
 
 struct MapTapSequence{
     uint8_t count=0;
@@ -4071,7 +4085,7 @@ static void touch_sampler_task(void*){
             const int16_t x1=contacts.points[1].x,y1=contacts.points[1].y;
             const bool home=contacts.home;
             if(home) {
-                if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+                if(!home_held){QueuedTap tap{0,0,0,0,true};queue_touch_event(tap);}
                 home_held=true;held=false;map_multi=false;
             } else if(home_held) {
                 if(count==0)home_held=false; // no phantom tap on Home release
@@ -4111,14 +4125,14 @@ static void touch_sampler_task(void*){
                         initial_distance,final_distance):0;
                 // Even a stationary two-finger gesture must cancel a pending
                 // single/double tap, without triggering a phantom pan.
-                xQueueSend(touch_queue,&tap,0);
+                queue_touch_event(tap);
             } else if(held) {
                 held=false;
                 QueuedTap tap{last_x,last_y,
                     (int16_t)(last_x-start_x),(int16_t)(last_y-start_y),false};
                 tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                 tap.map_sampled=1;
-                xQueueSend(touch_queue,&tap,0);
+                queue_touch_event(tap);
             }
         } else {
             // Non-Maps keeps the legacy single-contact semantics supplied by the touch
@@ -4138,7 +4152,7 @@ static void touch_sampler_task(void*){
                 held=false;home_held=false;quick_slider_dragging=false;display_slider_dragging=false;
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
             }else if(home){
-                if(!home_held){QueuedTap tap{0,0,0,0,true};xQueueSend(touch_queue,&tap,0);}
+                if(!home_held){QueuedTap tap{0,0,0,0,true};queue_touch_event(tap);}
                 home_held=true;
                 held=false;quick_slider_dragging=false;display_slider_dragging=false;
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
@@ -4182,7 +4196,7 @@ static void touch_sampler_task(void*){
                 if(keyboard_delete_hold&&!quick_panel_active&&
                    (int32_t)(millis()-keyboard_delete_repeat_at)>=0){
                     QueuedTap repeat{start_x,start_y,0,0,false};
-                    if(xQueueSend(touch_queue,&repeat,0)==pdTRUE)
+                    if(queue_touch_event(repeat))
                         keyboard_delete_repeated=true;
                     keyboard_delete_repeat_at=millis()+45;
                 }
@@ -4208,7 +4222,7 @@ static void touch_sampler_task(void*){
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
                 if(!suppress_release){
                     QueuedTap tap{event_x,event_y,dx,dy,false};
-                    xQueueSend(touch_queue,&tap,0);
+                    queue_touch_event(tap);
                 }
             }
         }
@@ -5970,7 +5984,14 @@ void ui_loop() {
     if(setup_complete&&!setup_is_screen(screen)&&!standby_active&&standby_timeout&&
        millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
     QueuedTap tap{};
+    // Measure time between sampled release and UI dispatch. A high value
+    // means the UI is busy even if the touchscreen task stays responsive.
+    static uint32_t worst_touch_delay_ms=0,last_touch_diag_ms=0;
     while(!standby_active&&touch_queue&&xQueueReceive(touch_queue,&tap,0)==pdTRUE){
+        if(tap.queued_at_ms){
+            const uint32_t age=millis()-tap.queued_at_ms;
+            if(age>worst_touch_delay_ms)worst_touch_delay_ms=age;
+        }
         // Only ordinary portrait page navigation uses this stale-event fence.
         // Keyboard input, Quick Settings and Maps keep their existing queue /
         // gesture semantics and are never discarded by this rule.
@@ -6144,6 +6165,17 @@ void ui_loop() {
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MeshInkRefreshMode::FastGray16);
         }else handle_tap(tap.x,tap.y);
     }
+    const uint32_t touch_diag_now=millis();
+    if(touch_diag_now-last_touch_diag_ms>=5000UL){
+        last_touch_diag_ms=touch_diag_now;
+        const uint32_t drops=touch_queue_drops.exchange(0,std::memory_order_relaxed);
+        if(drops||worst_touch_delay_ms>=250UL)
+            Serial.printf("[T5-TOUCH] queue_drops=%lu worst_dispatch_ms=%lu pending=%u/32 composing=%u\n",
+                (unsigned long)drops,(unsigned long)worst_touch_delay_ms,
+                touch_queue?(unsigned)uxQueueMessagesWaiting(touch_queue):0U,
+                (unsigned)(keyboard_message_mode&&(keyboard_visible||keyboard_landscape)));
+        worst_touch_delay_ms=0;
+    }
     // Charger plug/unplug is user-visible state and should not wait for the
     // deliberately slow 60 s standby status poll. A one-byte PMIC read once
     // per second is cheap; refresh only the 48 px status bar and only when the
@@ -6175,6 +6207,8 @@ void ui_loop() {
             :(status_wall_minute>=0&&status_wall_minute!=status_bar_painted_minute);
         if(aligned_status_due)status_bar_dirty=true;
     }
+    const bool composing=keyboard_message_mode&&(keyboard_visible||keyboard_landscape);
+    const bool show_status_during_compose=!composing||unread_status_refresh_pending;
     const bool text_refresh_due=text_refresh_pending&&(int32_t)(millis()-text_refresh_after)>=0;
     if(status_dirty&&!message_alert_active){
         // Content changes retain the ordinary screen redraw. Refresh the
@@ -6185,14 +6219,16 @@ void ui_loop() {
         }
         const bool wake=status_wake_light&&!standby_active;
         status_dirty=false;status_bar_dirty=false;status_wake_light=false;
+        unread_status_refresh_pending=false;
         draw_screen();refresh(MeshInkRefreshMode::Direct,wake);
     }else if(text_refresh_due){
         text_refresh_pending=false;
-        if(status_bar_dirty&&!quick_panel_active&&!keyboard_landscape){
+        if(status_bar_dirty&&show_status_during_compose&&!quick_panel_active&&!keyboard_landscape){
             // Coalesce a pending bar change into an update that is already
             // required for text rather than performing two panel operations.
             update_status_hardware();
             status_bar_dirty=false;status_wake_light=false;
+            unread_status_refresh_pending=false;
             draw_screen();
         }else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
            keyboard_visible&&keyboard_message_mode&&!keyboard_landscape)
@@ -6202,12 +6238,13 @@ void ui_loop() {
         else
             draw_screen();
         refresh(MeshInkRefreshMode::Direct);
-    }else if(status_bar_dirty&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
+    }else if(status_bar_dirty&&show_status_during_compose&&!message_alert_active&&!quick_panel_active&&!keyboard_landscape){
         // Event-driven updates still sample and display the exact clock and
         // battery, but they never move the next :00/:05/:10... periodic boundary.
         update_status_hardware();
         const bool wake=status_wake_light&&!standby_active;
         status_bar_dirty=false;status_wake_light=false;
+        unread_status_refresh_pending=false;
         draw_status_bar();
         refresh_area(MeshInkRefreshMode::Direct,
             {0,0,portrait_layout().width,portrait_layout().status_height},wake);
@@ -6223,6 +6260,7 @@ void ui_loop() {
 }
 
 bool ui_is_standby(){return standby_active;}
+bool ui_is_message_composing(){return keyboard_message_mode&&(keyboard_visible||keyboard_landscape);}
 
 void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     hardware_failure=true;keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;text_refresh_pending=false;
@@ -6250,11 +6288,11 @@ void ui_show_radio_failure(MeshInkRadioFailureClass failure){
     Serial.printf("[T5-ERROR] persistent radio failure screen displayed; class=%u; UI and touch stopped\n",(unsigned)failure);
 }
 void ui_status_set_unread(uint16_t count) {
-    if(status_unread!=count){status_unread=count;status_bar_dirty=true;}
+    if(status_unread!=count){status_unread=count;status_bar_dirty=true;unread_status_refresh_pending=true;}
 }
 
 void ui_status_set_channel_unread(uint16_t count) {
-    if(status_channel_unread!=count){status_channel_unread=count;status_bar_dirty=true;}
+    if(status_channel_unread!=count){status_channel_unread=count;status_bar_dirty=true;unread_status_refresh_pending=true;}
 }
 
 void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,long longitude,uint32_t timestamp,MeshInkGpsError error) {
@@ -6369,6 +6407,7 @@ void ui_notify_message_received(bool channel){
     if(typing&&!active_message){
         deferred_data_refresh=true;
         status_bar_dirty=true;
+        unread_status_refresh_pending=true;
     }else{
         status_dirty=true;
     }
@@ -6399,7 +6438,9 @@ bool ui_restore_failed_compose(const char* text){
 
 void ui_notify_advert_result(bool flood,bool ok){
     show_toast(ok?(flood?"FLOOD ADVERT SENT":"ZERO HOP ADVERT SENT"):"ADVERT FAILED");
-    status_dirty=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] advert result flood=%d ok=%d\n",flood,ok);
+    if(keyboard_message_mode&&(keyboard_visible||keyboard_landscape))
+        deferred_data_refresh=true;
+    else status_dirty=true;T5_DEBUGF(T5_LOG_MESH,"[T5-UI] advert result flood=%d ok=%d\n",flood,ok);
 }
 
 void ui_notify_node_position_unavailable(){
