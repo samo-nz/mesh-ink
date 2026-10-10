@@ -162,3 +162,45 @@ if debug_meshink not in debug_source:
         raise RuntimeError("Upstream debug sink declaration changed")
     debug_path.write_text(debug_source.replace(debug_original, debug_meshink, 1), encoding="utf-8")
     print("[MeshInk] Routed native Meshtastic diagnostics through existing MeshInk Serial")
+
+# Meshtastic's built-in GPS receiver is explicitly disabled: one physical
+# UART/receiver, powered and parsed only by MeshInk's tested board backend.
+# Retain upstream PositionModule routing, privacy and rate-limiting independently
+# of native receiver startup, using reviewed build-only source guard changes.
+modules_file = upstream / "src" / "modules" / "Modules.cpp"
+modules_data = modules_file.read_text(encoding="utf-8")
+guard = "#if !MESHTASTIC_EXCLUDE_GPS || defined(MESHINK_MESHTASTIC_EXTERNAL_POSITION)"
+for before in (
+    '#if !MESHTASTIC_EXCLUDE_GPS\n#include "modules/PositionModule.h"',
+    '#if !MESHTASTIC_EXCLUDE_GPS\n    positionModule = new PositionModule();',
+):
+    after = before.replace("#if !MESHTASTIC_EXCLUDE_GPS", guard, 1)
+    if after not in modules_data:
+        if modules_data.count(before) != 1:
+            raise RuntimeError("Meshtastic position registration changed upstream")
+        modules_data = modules_data.replace(before, after, 1)
+modules_file.write_text(modules_data, encoding="utf-8")
+
+position_file = upstream / "src" / "modules" / "PositionModule.cpp"
+position_data = position_file.read_text(encoding="utf-8")
+before = '#if !MESHTASTIC_EXCLUDE_GPS\n#include "PositionModule.h"'
+after = before.replace("#if !MESHTASTIC_EXCLUDE_GPS", guard, 1)
+if after not in position_data:
+    if position_data.count(before) != 1:
+        raise RuntimeError("Meshtastic PositionModule entry guard changed upstream")
+    position_data = position_data.replace(before, after, 1)
+# MeshInk must remain the exclusive arbiter of standby/deep-sleep (including
+# for Meshtastic TRACKER roles with power-saving enabled).
+sleep_before = "        doDeepSleep(nightyNightMs, false, false);"
+sleep_after = ('#if defined(MESHINK_MESHTASTIC_EXTERNAL_POSITION)\n'
+               '        LOG_DEBUG("MeshInk controls standby; native tracker sleep suppressed");\n'
+               '        (void)nightyNightMs;\n'
+               '#else\n'
+               + sleep_before + '\n'
+               '#endif')
+if sleep_after not in position_data:
+    if position_data.count(sleep_before) != 1:
+        raise RuntimeError("Meshtastic position sleep policy changed upstream")
+    position_data = position_data.replace(sleep_before, sleep_after, 1)
+position_file.write_text(position_data, encoding="utf-8")
+print("[MeshInk] Official PositionModule enabled; physical GPS and sleep remain MeshInk-owned")
