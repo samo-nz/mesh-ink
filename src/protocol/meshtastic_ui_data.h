@@ -36,3 +36,5 @@ const char* meshink_meshtastic_ui_preset_name(size_t region,size_t preset);
 int meshink_meshtastic_ui_preset_index(size_t region,size_t preset);
 bool meshink_meshtastic_ui_commit_radio(size_t region,size_t preset,uint8_t hops);
 bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& lora);
+bool meshink_meshtastic_submit_remove_node(uint32_t node_id);
+bool meshink_meshtastic_submit_position_config(const meshtastic_Config_PositionConfig& position);
