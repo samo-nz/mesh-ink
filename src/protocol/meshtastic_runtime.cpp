@@ -112,6 +112,12 @@ bool meshink_meshtastic_native_begin(){
                   (unsigned)config.lora.modem_preset,config.lora.tx_enabled?1U:0U,
                   (unsigned)ESP.getFreeHeap());
 #endif
+    // Never let a position restored from the official NodeDB act as a fresh
+    // GNSS fix after reboot. MeshInk keeps the historical map location in
+    // its own separate NVS record; upstream RF positions require a new fix.
+    // An intentional user-configured fixed position is not a GNSS fix.
+    if(!config.position.fixed_position)
+        nodeDB->clearLocalPosition();
     TransmitHistory::getInstance()->loadFromDisk();
     if(nodeStatus)nodeStatus->observe(&nodeDB->newStatus);
     router=new(std::nothrow) ReliableRouter();
