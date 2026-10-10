@@ -155,6 +155,40 @@ if "build_unflags =" in warning_env:
 unified_env=platformio[platformio.index("[env:t5-unified]"):platformio.index("[env:t5-unified-cache64]")]
 if "-DMESHINK_DEVICE_SERVICES_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must enable MeshInk-owned GPS/RTC device services")
+# Enforce hardware-ownership boundaries in every future Meshtastic build.
+# The official PositionModule is a network feature; a second GNSS receiver,
+# GPS UART, sleep engine, screen, or physical radio pin mapping is forbidden.
+required_headless_flags=(
+    "-DMESHTASTIC_EXCLUDE_GPS=1",
+    "-DMESHINK_MESHTASTIC_EXTERNAL_POSITION=1",
+    "-DMESHTASTIC_EXCLUDE_POWER_FSM=1",
+    "-DMESHTASTIC_EXCLUDE_BLUETOOTH=1",
+    "-DMESHTASTIC_EXCLUDE_WIFI=1",
+    "-DMESHTASTIC_EXCLUDE_I2C=1",
+    "-DMESHTASTIC_EXCLUDE_INPUTBROKER=1",
+)
+for flag in required_headless_flags:
+    if flag not in unified_env:
+        errors.append(f"Meshtastic native subsystem boundary missing {flag}")
+native_library=(ROOT/"tools/official_meshtastic_library.json").read_text(encoding="utf-8")
+for prohibited in ('+<gps/GPS.cpp>', '+<main.cpp>', '+<Power.cpp>', '+<graphics/', '+<mesh/Bluetooth', '+<mesh/wifi/'):
+    if prohibited in native_library:
+        errors.append(f"Official source filter must not compile hardware/application source {prohibited}")
+for required in ('+<modules/PositionModule.cpp>', '+<gps/GeoCoord.cpp>'):
+    if required not in native_library:
+        errors.append(f"Official position networking dependency missing {required}")
+shared_position_patch=(ROOT/"tools/prepare_meshtastic_library.py").read_text(encoding="utf-8")
+for token in ("MESHINK_MESHTASTIC_EXTERNAL_POSITION", "native tracker sleep suppressed", "positionModule = new PositionModule"):
+    if token not in shared_position_patch:
+        errors.append(f"Build-only position adapter missing {token}")
+for token in ("meshink_gps_service_loop()", "meshink_gps_background_tick()",
+              "meshink_rtc_tick()", "meshink_meshtastic_native_gps_update()"):
+    if token not in meshtastic_helper:
+        errors.append(f"Meshtastic mode bypasses existing MeshInk GPS/RTC service: {token}")
+native_runtime=(SRC/"protocol/meshtastic_runtime.cpp").read_text(encoding="utf-8")
+if "nodeDB->updatePosition(nodeDB->getNodeNum(),p,RX_SRC_LOCAL)" not in native_runtime:
+    errors.append("Shared GPS bridge must submit to upstream NodeDB, not a second GPS engine")
+
 if "-DMESHINK_PROTOCOL_SLOT_2_ENABLED=1" not in unified_env:
     errors.append("platformio.ini: full firmware must register the Meshtastic backend")
 meshtastic_crypto_pin="Crypto=https://github.com/meshtastic/Crypto/archive/591ff9a690e8168ccb7a36abde8d7783e448d395.zip"
