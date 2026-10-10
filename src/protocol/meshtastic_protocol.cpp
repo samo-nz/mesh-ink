@@ -13,6 +13,7 @@
 #include "../hardware/storage.h"
 #include "../hardware/board.h"
 #include "../hardware/gps.h"
+#include "../hardware/rtc.h"
 #include <cstring>
 
 // MeshInk handles the UI; all routing, channel crypto and network
@@ -90,12 +91,24 @@ void start(){
 #endif
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_service_begin();
+    // MeshInk GNSS preferences control the sole physical receiver.
+    shared_gps_mode_changed(meshink_gps_constellation_mode());
     gps_next_status=0;update_shared_gps_status();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.println("[MT-TEST] GPS: MeshInk driver active; native Meshtastic GPS excluded");
+#endif
 #endif
 }
 void poll(){
+#if ENV_INCLUDE_GPS == 1
+    // Same proven physical GNSS parser and OFF-state UART drain as MeshCore.
+    meshink_gps_service_loop();
+    meshink_gps_background_tick();
+#endif
+    meshink_rtc_tick();
     update_shared_gps_status();
     if(!ready)return;
+    meshink_meshtastic_native_gps_update();
     meshink_meshtastic_native_loop();
     uint8_t bytes[meshtastic_FromRadio_size]{};
     for(unsigned i=0;i<12&&meshink_official_phoneapi_has_data();++i){
