@@ -188,32 +188,23 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     if (pos >= in_size - 8) return false;
     output_size = little32(in + in_size - 4);
     if (!output_size || output_size > MAX_DIRECTORY_BYTES) return false;
-    // Small directory output stays in internal RAM; larger directories
-    // use bounded PSRAM. Always use the ROM-compatible decoder state below.
+    // All variable-sized PMTiles metadata buffers and the ROM-compatible
+    // decompressor state belong in PSRAM on BOTH protocol backends.
+    // Keep the ESP32-S3 ROM layout (not the smaller library miniz layout)
+    // and the existing output canary/CRC checks unchanged.
     constexpr size_t OUTPUT_GUARD = 32;
-    constexpr size_t INTERNAL_DECODE_LIMIT = 16 * 1024;
     if (output_size > SIZE_MAX - OUTPUT_GUARD) return false;
-    // Reserve mandatory ROM-compatible scratch FIRST; output allocation must
-    // leave internal heap headroom for the decoder and other UI services.
-    tinfl_decompressor* decoder = (tinfl_decompressor*)heap_caps_malloc(
-        sizeof(tinfl_decompressor), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    tinfl_decompressor* decoder = (tinfl_decompressor*)map_alloc(sizeof(tinfl_decompressor));
     if (!decoder) {
-        Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes) internal_free=%u largest_internal=%u psram_free=%u\n",
+        Serial.printf("[T5-PMT] gzip PSRAM scratch allocation failed (%u bytes) psram_free=%u\n",
                       (unsigned)sizeof(tinfl_decompressor),
-                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
-                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
         return false;
     }
-    constexpr size_t INTERNAL_HEADROOM=16*1024;
     const size_t wanted=output_size+OUTPUT_GUARD;
-    if (output_size<=INTERNAL_DECODE_LIMIT &&
-        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)>=wanted &&
-        heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)>=wanted+INTERNAL_HEADROOM)
-        output=(uint8_t*)heap_caps_malloc(wanted,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
-    if (!output)output=(uint8_t*)map_alloc(wanted);
+    output=(uint8_t*)map_alloc(wanted);
     if (!output) {
-        Serial.printf("[T5-PMT] gzip output allocation failed (%u bytes)\n",
+        Serial.printf("[T5-PMT] gzip PSRAM output allocation failed (%u bytes)\n",
                       (unsigned)output_size);
         free(decoder);
         return false;
@@ -249,14 +240,9 @@ bool parse_directory(MeshInkStorageFile& file, uint64_t start, uint64_t size,
     clear_directory(output);
     if (!size || size > MAX_DIRECTORY_BYTES ||
         !within(start, size, archive.file_size)) return false;
-    // Keep ordinary compressed directories (including this map's 5,769 B
-    // leaf) in internal RAM to isolate SD reads from PSRAM heap writes.
-    // Larger directories retain the existing bounded PSRAM fallback.
-    uint8_t* compressed = size <= 8192
-        ? (uint8_t*)heap_caps_malloc((size_t)size,
-                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
-        : nullptr;
-    if (!compressed) compressed = (uint8_t*)map_alloc((size_t)size);
+    // Stage SD I/O through read_at()'s aligned 256-byte internal buffer,
+    // but retain the entire compressed directory in PSRAM.
+    uint8_t* compressed = (uint8_t*)map_alloc((size_t)size);
     if (!compressed) return false;
     if (!read_at(file, start, compressed, (size_t)size)) {
         free(compressed);
