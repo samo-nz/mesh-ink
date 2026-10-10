@@ -198,8 +198,11 @@ bool expand_gzip(const uint8_t* in, size_t in_size, uint8_t*& output,
     tinfl_decompressor* decoder = (tinfl_decompressor*)heap_caps_malloc(
         sizeof(tinfl_decompressor), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!decoder) {
-        Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes)\n",
-                      (unsigned)sizeof(tinfl_decompressor));
+        Serial.printf("[T5-PMT] gzip internal scratch allocation failed (%u bytes) internal_free=%u largest_internal=%u psram_free=%u\n",
+                      (unsigned)sizeof(tinfl_decompressor),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
         return false;
     }
     constexpr size_t INTERNAL_HEADROOM=16*1024;
