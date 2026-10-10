@@ -237,6 +237,7 @@ bool valid_node_snapshot(const char* path,NodeDiskHeader& header){
     file.close();
     return checksum==header.checksum;
 }
+Node* node_for(uint32_t number);
 void load_node_snapshot(){
     if(!state)return;
     NodeDiskHeader a{},b{};
