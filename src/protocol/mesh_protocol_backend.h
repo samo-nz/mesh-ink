@@ -96,6 +96,9 @@ struct MeshInkProtocolBackend {
     // synchronizes protocol state when the shared receiver mode changes, and
     // exposes protocol-specific position publication policy/scheduling.
     void (*gps_mode_changed)(MeshInkGpsConstellationMode mode) = nullptr;
+    // Meshtastic-specific location publication UI; not the physical GPS.
+    bool (*location_sharing_get)(bool& enabled,bool& public_approximate,uint8_t& interval) = nullptr;
+    bool (*location_sharing_set)(bool enabled,bool public_approximate,uint8_t interval) = nullptr;
     uint32_t (*gps_interval)() = nullptr;
     bool (*gps_advert_location)() = nullptr;
     bool (*my_location)(long& latitude, long& longitude) = nullptr;
