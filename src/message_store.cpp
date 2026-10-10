@@ -439,6 +439,29 @@ uint32_t MeshInkMessageStore::append(
     return item.sequence;
 }
 
+bool MeshInkMessageStore::erase_direct_peer(uint32_t node_id,uint8_t protocol_id){
+    if(!initialized_||!file_||!node_id)return false;
+    const uint8_t key[4]={(uint8_t)node_id,(uint8_t)(node_id>>8),
+                          (uint8_t)(node_id>>16),(uint8_t)(node_id>>24)};
+    // Explicit user deletion. Never modify shared-channel history or
+    // messages owned by a different protocol.
+    StoreCpuBoostScope cpu_boost;
+    MeshInkStoredMessage item{};
+    for(size_t n=0;n<header_.count;++n){
+        const uint16_t p=(header_.head+n)%MESHINK_MESSAGE_CAPACITY;
+        if(records_)item=records_[p];
+        else if(!read_record(file_,p,item))return false;
+        if(!item.sequence||item.kind!=(uint8_t)MeshInkMessageKind::Direct||
+           meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
+           memcmp(item.key,key,sizeof(key))!=0)continue;
+        // Synchronously overwrite the complete physical record, including
+        // old message text. The store mirror only changes after flash succeeds.
+        if(!write_record(p,MeshInkStoredMessage{}))return false;
+    }
+    file_.flush();
+    return true;
+}
+
 bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     uint16_t p;
     if(!find_physical(sequence,p)||!file_){
