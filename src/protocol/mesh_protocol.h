@@ -71,6 +71,8 @@ uint8_t mesh_protocol_setup_current_tx_power();
 void mesh_protocol_cycle_path_hash();
 uint8_t mesh_protocol_path_hash_mode();
 
+bool mesh_protocol_location_sharing_get(bool& enabled,bool& public_approximate,uint8_t& interval);
+bool mesh_protocol_location_sharing_set(bool enabled,bool public_approximate,uint8_t interval);
 void mesh_protocol_apply_gps(bool enabled);
 bool mesh_protocol_gps_enabled();
 bool mesh_protocol_gps_fix();
