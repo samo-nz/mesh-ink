@@ -380,6 +380,15 @@ void mesh_protocol_apply_gps(bool enabled) {
 #endif
 }
 
+bool mesh_protocol_location_sharing_get(bool& enabled,bool& public_approximate,uint8_t& interval){
+    return active_backend().location_sharing_get &&
+           active_backend().location_sharing_get(enabled,public_approximate,interval);
+}
+bool mesh_protocol_location_sharing_set(bool enabled,bool public_approximate,uint8_t interval){
+    return active_backend().location_sharing_set &&
+           active_backend().location_sharing_set(enabled,public_approximate,interval);
+}
+
 bool mesh_protocol_gps_enabled() {
 #if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
     return meshink_gps_constellation_mode() != MeshInkGpsConstellationMode::None;
