@@ -179,6 +179,16 @@ for before in (
         if modules_data.count(before) != 1:
             raise RuntimeError("Meshtastic position registration changed upstream")
         modules_data = modules_data.replace(before, after, 1)
+# No official status LED task may manipulate MeshInk-controlled lights/pins.
+# In headless mode it is not needed for packet processing.
+led_before = "    statusLEDModule = new StatusLEDModule();"
+led_after = ('#if !defined(MESHINK_MESHTASTIC_EXTERNAL_UI)\\n'
+             + led_before + '\\n'
+             '#endif')
+if led_after not in modules_data:
+    if modules_data.count(led_before) != 1:
+        raise RuntimeError("Official status LED startup moved; review hardware ownership")
+    modules_data = modules_data.replace(led_before, led_after, 1)
 modules_file.write_text(modules_data, encoding="utf-8")
 
 position_file = upstream / "src" / "modules" / "PositionModule.cpp"
