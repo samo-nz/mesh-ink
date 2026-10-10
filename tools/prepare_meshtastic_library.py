@@ -213,9 +213,13 @@ if gps_guarded not in position_data:
 # bridge already seeds Meshtastic's logical clock from the tested MeshInk RTC.
 # Preserve upstream RTC-quality-based packet policy without a second I2C scan.
 rtc_expression = "rtc_found.address != ScanI2C::ADDRESS_NONE.address"
-if position_data.count(rtc_expression) != 3:
+rtc_replacement = "getRTCQuality() >= RTCQualityDevice"
+if position_data.count(rtc_expression) == 3:
+    position_data = position_data.replace(rtc_expression, rtc_replacement)
+elif position_data.count(rtc_expression) != 0 or position_data.count(rtc_replacement) != 3:
     raise RuntimeError("Official PositionModule RTC checks changed; review hardware ownership")
-position_data = position_data.replace(rtc_expression, "getRTCQuality() >= RTCQualityDevice")
+# The warnings-audit build runs after the production build in the same
+# workspace. This rewrite must be idempotent when sources are already patched.
 # MeshInk must remain the exclusive arbiter of standby/deep-sleep (including
 # for Meshtastic TRACKER roles with power-saving enabled).
 sleep_before = "        doDeepSleep(nightyNightMs, false, false);"
