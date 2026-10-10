@@ -224,6 +224,9 @@ for token in ("meshink_meshtastic_native_loop()", "meshink_meshtastic_native_gps
         errors.append(f"Meshtastic UI thread directly runs native engine operation: {token}")
 if "+<protocol/meshtastic_worker.cpp>" not in platformio:
     errors.append("Meshtastic worker missing from firmware source filter")
+cmake=(SRC/"CMakeLists.txt").read_text(encoding="utf-8")
+if \'"protocol/meshtastic_worker.cpp"\' not in cmake:
+    errors.append("Meshtastic worker missing from the ESP-IDF/CMake production source list")
 native_runtime=(SRC/"protocol/meshtastic_runtime.cpp").read_text(encoding="utf-8")
 if "nodeDB->updatePosition(nodeDB->getNodeNum(),p,RX_SRC_LOCAL)" not in native_runtime:
     errors.append("Shared GPS bridge must submit to upstream NodeDB, not a second GPS engine")
