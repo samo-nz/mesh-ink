@@ -174,6 +174,22 @@ void meshink_meshtastic_native_gps_update(){
         return; // Never present a stale fix as new.
     }
 
+    // Once MeshInk's board-owned RTC confirms a GPS-authoritative clock,
+    // upgrade only the protocol clock-quality metadata. Meshtastic does not
+    // operate the GPS receiver or hardware RTC.
+    if(meshink_rtc_gps_authoritative() && meshink_rtc_valid() &&
+       getRTCQuality()<RTCQualityGPS){
+        const uint32_t utc=meshink_rtc_current_time();
+        if(utc>=1609459200UL){
+            timeval tv{};tv.tv_sec=utc;
+            perhapsSetRTC(RTCQualityGPS,&tv);
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+            Serial.printf("[MT-TEST] MeshInk GPS-time authority -> Meshtastic logical clock %lu\n",
+                          (unsigned long)utc);
+#endif
+        }
+    }
+
     const uint32_t now=millis();
     const bool fresh=(!had_fix||last_stamp!=fix.timestamp||
                       last_lat!=fix.latitude||last_lon!=fix.longitude);
