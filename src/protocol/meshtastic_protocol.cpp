@@ -342,6 +342,8 @@ const MeshInkProtocolBackend& backend(){
     value.settings_count=meshink_meshtastic_ui_settings_count;
     value.settings_item=meshink_meshtastic_ui_settings_item;
     value.gps_mode_changed=shared_gps_mode_changed;
+    value.location_sharing_get=meshink_meshtastic_ui_location_get;
+    value.location_sharing_set=meshink_meshtastic_ui_location_set;
     value.my_location=shared_my_location;
     value.setup_region_count=meshink_meshtastic_ui_region_count;
     value.setup_region_name=meshink_meshtastic_ui_region_name;
