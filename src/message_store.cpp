@@ -450,6 +450,15 @@ uint32_t MeshInkMessageStore::append(
         const char* text,uint32_t timestamp,UiMessageState state,
         uint32_t ack,MeshInkMessageOrigin origin,
         bool has_rx,int8_t snr_q4,uint8_t path_len,bool unread,uint8_t protocol_id){
+    // Reject oversized text rather than silently truncating the record. Core
+    // retains its 160-byte v3 limit; Meshtastic v4 holds all 233 payload bytes.
+    const size_t max_text=expanded_records_?MESHINK_MESHTASTIC_MESSAGE_TEXT_MAX
+                                           :MESHINK_MESSAGE_TEXT_MAX;
+    if(text && strnlen(text,max_text+2)>max_text){
+        Serial.printf("[T5-STORE] ERROR text exceeds %u-byte journal limit\n",
+                      (unsigned)max_text);
+        return 0;
+    }
     if(!initialized_&&!begin())return 0;
 
     uint16_t physical;
