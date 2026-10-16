@@ -3467,9 +3467,9 @@ static void draw_timezone(){
         const MeshInkUiRect row=timezone_row_rect(TIMEZONE_EXTERNAL);
         rounded_box(row,max(ui_w(10),ui_h(10)),true);
         ui_text_fit("CUSTOM TIMEZONE",layout.content_text_x,row.y+ui_h(8),
-                    row.width-ui_w(28),2,0,true);
+                    row.width-ui_w(28),2,0xFF,true);
         ui_text_fit(external_timezone_rule,layout.content_text_x,row.y+ui_h(40),
-                    row.width-ui_w(28),2,0,false);
+                    row.width-ui_w(28),2,0xFF,false);
     }
 }
 static MeshInkUiRect custom_timezone_step_rect(bool plus){
