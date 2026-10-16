@@ -111,6 +111,7 @@ bool meshink_saved_timezone(char (&out)[65]){
     if(!v2)index=index<7?index+1:8;
     const int minutes=constrain(pref.getInt("custom_tz_min",0),-720,840);
     String automatic=pref.getString("auto_tz_rule","UTC0");
+    String external=pref.getString("mt_tz_rule","");
     pref.end();
     static constexpr const char* standard[]={
         nullptr, "NZST-12NZDT,M9.5.0,M4.1.0/3", "UTC0",
@@ -128,6 +129,13 @@ bool meshink_saved_timezone(char (&out)[65]){
         if(minutes==0)snprintf(out,sizeof(out),"UTC0");
         else snprintf(out,sizeof(out),"UTC%c%d:%02d",minutes>0?'-':'+',
                       abs(minutes)/60,abs(minutes)%60);
+    }else if(index==9){
+        // All native POSIX TZ rules (up to the 64-byte Meshtastic limit)
+        // remain lossless when the Android app selected a zone not found in
+        // MeshInk's preset picker. Empty means native timezone unset.
+        if(external.length()>64)return false;
+        snprintf(out,sizeof(out),"%s",external.c_str());
+        return true;
     }else return false;
     return out[0]!=0;
 }
@@ -155,12 +163,18 @@ void bridge_ui_preferences_after_nodedb(){
     }
 
     int changed=0;
-    if(!config.device.tzdef[0]){
+    // Entering headless companion: MeshInk's last chosen timezone wins.
+    // On ordinary UI boot, only initialize a never-configured native zone.
+    // While companion is running, Android changes are copied in the opposite
+    // direction into the UI's NVS before return/reboot.
+    if(meshink_meshtastic_companion_active() || !config.device.tzdef[0]){
         char rule[65]{};
-        if(meshink_saved_timezone(rule)){
+        if(meshink_saved_timezone(rule) &&
+           strcmp(config.device.tzdef,rule)!=0){
             snprintf(config.device.tzdef,sizeof(config.device.tzdef),"%s",rule);
             changed|=SEGMENT_CONFIG;
-            Serial.printf("[MT-BRIDGE] native timezone=%s\\n",config.device.tzdef);
+            Serial.printf("[MT-BRIDGE] native timezone synced from UI: %s\n",
+                          config.device.tzdef);
         }
     }
 #if ENV_INCLUDE_GPS == 1
