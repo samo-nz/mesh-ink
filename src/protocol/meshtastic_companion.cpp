@@ -6,6 +6,9 @@
 #include "../../lib/Meshtastic/src/target_specific.h"
 #include "../../lib/Meshtastic/src/mesh/PhoneAPI.h"
 #include "../../lib/Meshtastic/src/mesh/NodeDB.h"
+#include "../../lib/Meshtastic/src/modules/TextMessageModule.h"
+#include "../../lib/Meshtastic/src/Observer.h"
+#include "../../lib/Meshtastic/src/mesh/NodeInfo.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
 #include "../companion_notice.h"
 #include "../backup_restore.h"
@@ -34,6 +37,8 @@
 #include <new>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <ctime>
 
 namespace {
 // Preserve the same one-shot, reboot-to-UI contract as MeshCore companion.
@@ -69,6 +74,117 @@ uint32_t next_gps_snapshot = 0;
 char ble_name[30]{}; // 29-byte maximum scan-response name (incl. AD overhead)
 char last_native_timezone[65]{};
 uint32_t next_timezone_check=0;
+bool journal_ready=false;
+
+// Record live Meshtastic text messages in MeshInk's existing v3 journal.
+//
+// This observer runs on the headless Meshtastic router loop (not in the BLE
+// GATT task). Unlike PhoneAPI's FromRadio stream, it also receives messages
+// when the Android phone is disconnected. Crucially, no history is sent back
+// to the Android app: this path writes only to MeshInk's flash journal.
+constexpr uint8_t kJournalProtocolId = 2;
+constexpr uint32_t kNoWallClock = 1577836800U; // ignore boot-relative "time"
+constexpr uint32_t kBroadcastNode = 0xFFFFFFFFU;
+
+uint32_t journal_timestamp(uint32_t packet_time=0) {
+    if(packet_time >= kNoWallClock) return packet_time;
+    if(meshink_rtc_valid()) return meshink_rtc_current_time();
+    const time_t now=time(nullptr);
+    return now >= (time_t)kNoWallClock ? (uint32_t)now : 0;
+}
+
+bool journal_text_packet(const meshtastic_MeshPacket& p, bool outgoing) {
+    if(!journal_ready ||
+       p.which_payload_variant!=meshtastic_MeshPacket_decoded_tag ||
+       p.decoded.portnum!=meshtastic_PortNum_TEXT_MESSAGE_APP ||
+       p.decoded.payload.size==0) return false;
+    // The phone's locally originated text is observed at ToRadio acceptance,
+    // while the upstream TextMessageModule observes authenticated RX traffic.
+    // Do not record our local loopback as an additional received message.
+    if(!outgoing && (!p.from || (nodeDB && p.from==nodeDB->getNodeNum())))
+        return false;
+
+    const bool channel=p.to==kBroadcastNode;
+    const uint32_t peer=outgoing?p.to:p.from;
+    if(!channel && (!peer || peer==kBroadcastNode))return false;
+    if(channel && p.channel>=MAX_GROUP_CHANNELS)return false;
+
+    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
+    const size_t len=std::min((size_t)p.decoded.payload.size,sizeof(text)-1);
+    memcpy(text,p.decoded.payload.bytes,len);
+    // The journal/UI store C-string text, not binary payloads.
+    if(!text[0])return false;
+
+    uint8_t key[7]{};
+    const size_t key_size=channel?1:4;
+    if(channel)key[0]=p.channel;
+    else for(unsigned n=0;n<4;++n)key[n]=(uint8_t)(peer>>(n*8));
+
+    // Both BLE retransmissions and LoRa repeats can deliver the same packet
+    // multiple times. Persist at most one record per packet ID, direction and
+    // conversation, including across a Companion Mode reboot. The original
+    // journal is limited to 250 records, so no second index or file is needed.
+    auto& journal=meshink_message_store();
+    if(p.id) {
+        MeshInkStoredMessage earlier{};
+        for(size_t n=journal.count();n>0;--n) {
+            if(!journal.read(n-1,earlier) || !earlier.sequence)continue;
+            if(meshink_message_protocol(earlier)!=kJournalProtocolId ||
+               earlier.ack!=p.id ||
+               earlier.kind!=(uint8_t)(channel?MeshInkMessageKind::Channel:MeshInkMessageKind::Direct) ||
+               memcmp(earlier.key,key,key_size) ||
+               strncmp(earlier.text,text,sizeof(earlier.text)))continue;
+            const bool prior_outgoing=earlier.state!=(uint8_t)UiMessageState::Received;
+            if(prior_outgoing==outgoing)return false;
+        }
+    }
+
+    const uint32_t timestamp=journal_timestamp(p.has_rx_time?p.rx_time:0);
+    const float snr=p.rx_snr*4.0f;
+    const int snr_int=std::max(-128,std::min(127,(int)snr));
+    const uint32_t sequence=journal.append(
+        channel?MeshInkMessageKind::Channel:MeshInkMessageKind::Direct,
+        key,key_size,text,timestamp,
+        outgoing?UiMessageState::Sent:UiMessageState::Received,
+        p.id,MeshInkMessageOrigin::CompanionApp,
+        !outgoing,(int8_t)snr_int,
+        MESHINK_MESSAGE_PATH_UNKNOWN,!outgoing,kJournalProtocolId);
+    if(!sequence) {
+        Serial.println("[MT-JOURNAL] ERROR writing companion message");
+        return false;
+    }
+    Serial.printf("[MT-JOURNAL] %s %s seq=%lu id=%08lx\n",
+                  outgoing?"TX":"RX",channel?"channel":"direct",
+                  (unsigned long)sequence,(unsigned long)p.id);
+    return true;
+}
+
+class CompanionMessageObserver final
+    : public Observer<const meshtastic_MeshPacket *> {
+  protected:
+    int onNotify(const meshtastic_MeshPacket* p) override {
+        if(active && p) journal_text_packet(*p,false);
+        return 0; // Never consume/interfere with Meshtastic's other observers
+    }
+};
+CompanionMessageObserver message_observer;
+bool observing_text=false;
+
+void stop_journal_observer() {
+    if(observing_text && textMessageModule)
+        message_observer.unobserve(textMessageModule);
+    observing_text=false;
+}
+
+// Incoming texts are captured independently of phone availability. A phone
+// ToRadio text is captured only after official PhoneAPI accepts the frame.
+void journal_accepted_phone_message(const uint8_t* bytes,size_t size) {
+    meshtastic_ToRadio frame=meshtastic_ToRadio_init_zero;
+    pb_istream_t stream=pb_istream_from_buffer(bytes,size);
+    if(!pb_decode(&stream,meshtastic_ToRadio_fields,&frame))return;
+    if(frame.which_payload_variant!=meshtastic_ToRadio_packet_tag)return;
+    journal_text_packet(frame.packet,true);
+}
 
 class CompanionPhoneAPI final : public PhoneAPI {
   public:
@@ -282,8 +398,10 @@ void service_phone() {
     // Do not let any BLE callback enter NodeDB, MeshService or PhoneAPI.
     ToRadioFrame input{};
     for (unsigned i=0; i<kToRadioQueueDepth &&
-                       xQueueReceive(to_radio, &input, 0) == pdTRUE; ++i)
-        api->handleToRadio(input.data, input.size);
+                       xQueueReceive(to_radio, &input, 0) == pdTRUE; ++i) {
+        if(api->handleToRadio(input.data, input.size))
+            journal_accepted_phone_message(input.data, input.size);
+    }
     if (read_requested.exchange(false, std::memory_order_acq_rel)) {
         FromRadioFrame output{};
         output.size = static_cast<uint16_t>(api->getFromRadio(output.data));
@@ -313,6 +431,13 @@ void sync_native_timezone_to_meshink(bool immediate=false) {
     if (!meshink_timezone::import_from_meshtastic(rule)) {
         Serial.println("[MT-TZ] ERROR: unable to import phone timezone");
         return;
+    }
+    if(journal_ready && textMessageModule) {
+        message_observer.observe(textMessageModule);
+        observing_text=true;
+        Serial.println("[MT-JOURNAL] observing native Meshtastic text messages");
+    } else if(!textMessageModule) {
+        Serial.println("[MT-JOURNAL] ERROR: native text observer unavailable");
     }
     snprintf(last_native_timezone,sizeof(last_native_timezone),"%s",rule);
     Serial.printf("[MT-TZ] Meshtastic updated shared timezone: %s\n",rule);
@@ -372,8 +497,9 @@ void meshink_meshtastic_companion_setup() {
         Serial.println("[MT-BLE] storage unavailable or interrupted restore; refusing headless start");
         return;
     }
-    if (!meshink_message_store().begin())
-        Serial.println("[MT-BLE] MeshInk message journal unavailable");
+    journal_ready=meshink_message_store().begin();
+    if(!journal_ready)
+        Serial.println("[MT-BLE] ERROR: MeshInk message journal unavailable");
     if (!meshink_meshtastic_native_begin()) {
         Serial.println("[MT-BLE] native Meshtastic radio failed");
         return;
@@ -439,6 +565,7 @@ void meshink_meshtastic_companion_prepare_exit() {
     server = nullptr;
     connected.store(false, std::memory_order_release);
     if (api) { api->close(); api.reset(); }
+    stop_journal_observer();
     meshink_meshtastic_native_stop();
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_shutdown();
