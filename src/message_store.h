@@ -6,6 +6,11 @@
 #include "ui_data.h"
 #include "message_limits.h"
 
+// Meshtastic can carry 233 bytes in its native Data payload. Keep a separate
+// on-flash journal record format while retaining MeshCore v3 unmodified.
+constexpr size_t MESHINK_MESHTASTIC_MESSAGE_TEXT_MAX=233;
+constexpr size_t MESHINK_MESHTASTIC_MESSAGE_TEXT_BYTES=MESHINK_MESHTASTIC_MESSAGE_TEXT_MAX+1;
+
 constexpr size_t MESHINK_MESSAGE_CAPACITY=250;
 constexpr uint8_t MESHINK_MESSAGE_PATH_UNKNOWN=0xFF;
 
@@ -32,7 +37,7 @@ struct MeshInkStoredMessage {
     uint8_t kind=0;
     uint8_t state=0;
     uint8_t key[7]{};
-    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
+    char text[MESHINK_MESHTASTIC_MESSAGE_TEXT_BYTES]{};
     int8_t snr_q4=0;
     int8_t repeat_snr_q4=0;
     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
@@ -69,6 +74,11 @@ class MeshInkMessageStore {
     bool initialized_=false;
     const char* path_;
     const char* invalid_path_;
+    bool expanded_records_=false;
+    const char* active_path_; // may point at a durable per-protocol recovery journal
+    const char* recovery_path() const;
+    size_t disk_record_size() const;
+    uint16_t disk_version() const;
 
     bool ensure_cache();
     bool load_cache(File& source);
@@ -78,9 +88,11 @@ class MeshInkMessageStore {
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
-    MeshInkMessageStore(const char* path,const char* invalid_path)
-        : path_(path),invalid_path_(invalid_path) {}
+    MeshInkMessageStore(const char* path,const char* invalid_path,bool expanded_records=false)
+        : path_(path),invalid_path_(invalid_path),expanded_records_(expanded_records),
+          active_path_(path) {}
     bool begin();
+    const char* active_path() const { return active_path_; }
     void prepare_for_restore();
     size_t count() const { return initialized_?header_.count:0; }
     uint32_t revision() const { return initialized_?header_.sequence:0; }

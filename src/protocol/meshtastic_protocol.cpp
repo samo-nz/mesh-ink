@@ -8,6 +8,7 @@
 #include "mesh_protocol_backend.h"
 #include "meshtastic_official_phoneapi.h"
 #include "meshtastic_runtime.h"
+#include "meshtastic_companion.h"
 #include "meshtastic_worker.h"
 #include "meshtastic_ui_data.h"
 #include "../../include/meshtastic_official_version.h"
@@ -396,9 +397,14 @@ bool running(){return ready;}
 const MeshInkProtocolBackend& backend(){
   static const MeshInkProtocolBackend b=[](){
     MeshInkProtocolBackend value{};
-    value.descriptor={2,"MESHTASTIC","Meshtastic",MESHINK_OFFICIAL_MESHTASTIC_TAG,0};
+    value.descriptor={2,"MESHTASTIC","Meshtastic",MESHINK_OFFICIAL_MESHTASTIC_TAG,MESHINK_PROTOCOL_CAP_COMPANION};
     value.setup=start;value.loop=poll;value.is_running=running;
     value.prepare_shutdown=stop;value.provider=meshink_meshtastic_ui_provider;
+    value.request_companion_mode=meshink_meshtastic_request_companion;
+    value.consume_companion_request=meshink_meshtastic_consume_companion_request;
+    value.companion_setup=meshink_meshtastic_companion_setup;
+    value.companion_loop=meshink_meshtastic_companion_loop;
+    value.companion_prepare_exit=meshink_meshtastic_companion_prepare_exit;
     value.refresh_ui_data=poll;value.send_active=send;
     value.radio_summary=meshink_meshtastic_ui_radio_summary;
     value.settings_count=meshink_meshtastic_ui_settings_count;
@@ -444,8 +450,10 @@ bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel){
     if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
     request.packet.decoded.payload.size=inner.bytes_written;
     pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
-    return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
+    const bool accepted=pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
            meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
+    if(accepted)meshink_meshtastic_worker_refresh_channels();
+    return accepted;
 }
 
 bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& lora){

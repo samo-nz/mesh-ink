@@ -491,7 +491,11 @@ contains("const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.sect
 contains("next_y=max(ui_y(360),path_text_y+path_lines*ui_text_line_step(3)+ui_h(10));", "trace heading moves down when the discovered path uses all three lines")
 contains("const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));", "trace results reserve their actual wrapped height")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
-contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
+contains('page==NodeInfoPage::Telemetry&&', "telemetry action touch follows the selected protocol")
+contains('mesh_protocol_descriptor().id==2?', "Meshtastic telemetry has its own two-action layout")
+contains('hit(x,y,meshink_node_left_action_rect(portrait_layout()))||', "Meshtastic telemetry left action uses shared geometry")
+contains('hit(x,y,meshink_node_right_action_rect(portrait_layout()))):', "Meshtastic telemetry right action uses shared geometry")
+contains('hit(x,y,meshink_node_action_rect(portrait_layout())))){', "MeshCore telemetry retains the original full-width action")
 contains('can_path&&can_trace&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry when both actions are available")
 contains('can_path&&can_trace&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))', "trace touch follows shared right-action geometry when both actions are available")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
@@ -531,8 +535,10 @@ contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reach
 assert "if(map_zoom>8)" not in source, "stale Maps minimum zoom 8 must not return"
 contains("if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)", "automatic map recenter")
 contains("open_screen(Screen::Maps,true);", "explicit node position preserved")
-contains('prefs.getBool("map_fix_saved",false)', "reload last known position")
-contains('location_store.putBool("map_fix_saved",true)', "persist verified last known position")
+contains('prefs.getBytesLength("map_fix_v2")', "reload checksummed last-known GPS record")
+contains('map_gps_record_valid(stored)', "reject corrupt saved GPS records")
+contains('location_store.putBytes("map_fix_v2",&record,sizeof(record))', "persist checksummed last-known GPS record")
+contains('map_gps_record_valid(verify)', "verify saved GPS record before accepting it")
 contains("if(enabled&&has_fix&&latitude>=-85051100L", "never replace last fix with disabled/no-fix coordinates")
 contains("centre_map_on_device();", "current or stale position recenter")
 contains('(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
@@ -630,7 +636,7 @@ assert "parent-edge=%u parent-full=%u parent-px=%lu" in map_source, "map logs wh
 assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timing"
 assert "preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu" in map_source, "map separates PMTiles sequential preload timing"
 assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map retains callback range timing for preload fallback"
-assert "png.openRAM(pmt_png_buffer" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
+assert "png->openRAM(pmt_png_buffer" in map_source and "pmt_preloaded" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
 assert "meshink_display_blit_gray4_dithered(target,blit);" in map_source, "Maps delegates packed framebuffer composition to display backend"
 assert "physical_width" not in map_source and "physical_height" not in map_source, "Maps must not know physical panel geometry"
 assert "EPD_ROT_" not in map_source and "Epd" not in map_source, "Maps must not depend on EPDiy types"
@@ -679,7 +685,7 @@ print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, la
 compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
 assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
 assert "alignas(16) static uint16_t pixels[TILE_SIZE];" in map_source, "SIMD RGB565 destination row is 16-byte aligned"
-assert "alignas(16) PNG png;" in map_source, "PNG decoder object is 16-byte aligned for zero-copy SIMD source rows"
+assert "heap_caps_aligned_alloc(16,sizeof(PNG),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)" in map_source and "png=new(memory) PNG();" in map_source, "PNG decoder is 16-byte aligned in PSRAM for zero-copy SIMD source rows"
 assert "alignas(16) static uint8_t simd_source[TILE_SIZE*4];" in map_source, "misaligned PNG RGBA rows have an aligned SIMD staging buffer"
 assert "source_mod!=0U" in map_source and "[T5-PNG-SIMD] src-mod16=%u dst-mod16=%u staged=%u" in map_source, "cache64 logs and stages misaligned SIMD input rows"
 assert "if(zoom<=12)draw_cached_epdiy(*tile,draw);" not in map_source, "failed low-zoom compositor A/B removed"
@@ -1094,7 +1100,8 @@ assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_cen
 
 # Test44b: unread state is journal authority without growing the v3 record.
 assert "MESHINK_MESSAGE_UNREAD" in message_store_header and "MESHINK_MESSAGE_READ_THROUGH" in message_store_header, "v3 record flags persist unread arrival and read-through boundary"
-assert "static_assert(sizeof(MeshInkStoredMessage)==188" in message_store_source, "persistent unread reuses existing flags without growing the record cache"
+assert "static_assert(sizeof(MeshInkStoredMessageV3)==188" in message_store_source, "MeshCore v3 unread storage retains its original 188-byte physical record"
+assert "static_assert(sizeof(MeshInkStoredMessage)==264" in message_store_source, "Meshtastic v4 record preserves 233 message bytes without changing the MeshCore file"
 assert "if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;" in message_store_source, "incoming unread state is committed in the same append transaction"
 assert "MeshInkMessageStore::mark_read_through" in message_store_source and "MESHINK_MESSAGE_READ_THROUGH" in message_store_source, "opening a conversation persists a single read-through marker"
 assert "rebuild_unread_from_journal()" in runtime_source and "unread restored direct=" in runtime_source, "RAM unread counters are derived from journal state at startup"
@@ -1118,7 +1125,7 @@ assert "if(sequence&&journal_full)rebuild_unread_from_journal();" in runtime_sou
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
 assert "const char* network" in data_source, "message model exposes network metadata"
-assert "STORE_VERSION=3" in message_store_source, "message journal uses the 160-byte-text v3 format"
+assert "CORE_STORE_VERSION=3" in message_store_source and "MESHTASTIC_STORE_VERSION=4" in message_store_source, "MeshCore journal remains 160-byte v3; Meshtastic uses full-length v4"
 assert "int8_t snr_q4=0;" in message_store_header and "uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;" in message_store_header, "received SNR/path metadata lives in the persistent record"
 assert "uint8_t repeats=0;" in message_store_header and "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_header, "repeat and route metadata lives in the persistent record"
 assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
@@ -1189,7 +1196,7 @@ assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinat
 # modes. The one-off pre-release v1/v2 migration path has been retired.
 assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
 assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk keeps the validated shared message editor/storage cap"
-assert "STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "current v3 fixed-record layout is pinned"
+assert "CORE_STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessageV3)==188" in message_store_source, "MeshCore v3 physical layout remains pinned independently of Meshtastic v4"
 assert "migrate_legacy" not in message_store_source and "migrate_legacy" not in message_store_header, "legacy message migration code is removed"
 assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "legacy v1/v2 record formats are removed"
 assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
@@ -1459,7 +1466,7 @@ assert "const int status_scale=ui_text_max_line_width(node.status,3)<=layout.sec
 assert "ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2" in source, "dense telemetry shrinks only when needed to keep its allotted four lines"
 assert "layout.section_width,2,0,true,9" in source, "Trace Route uses the safe extra vertical room for two more lines"
 assert "overview_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "two-line Overview position reserves explicit space before its source label"
-assert "overview_source_y+ui_text_height(2)+ui_h(18)" in source, "Overview source label keeps breathing room before Last Heard"
+assert "overview_source_y+ui_text_height(3)+ui_h(18)" in source, "Overview source label keeps breathing room before Last Heard at scale 3"
 assert "telemetry_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "Telemetry position reserves explicit space before provenance"
 assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
@@ -1647,7 +1654,7 @@ assert "MESHINK_MESSAGE_READ_THROUGH" not in message_store_source[message_store_
 assert "if(queued==len)mark_synced_message_read(src,len);" in companion_source, "BLE sync responses clear unread only after the frame is accepted for transmit"
 assert companion_source.count("MESHINK_MESSAGE_PATH_UNKNOWN,true);")>=2 and "pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);" in companion_source, "companion receives start unread"
 assert '"TELEMETRY POSITION %s"' in runtime_source, "requested location is labelled as telemetry position rather than a verified live fix"
-assert 'ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);' in source, "telemetry page names the coordinate source explicitly"
+assert 'ui_text(meshtastic_node_ui?"LAST KNOWN POSITION":"TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);' in source, "telemetry page identifies Meshtastic last-known versus MeshCore telemetry positions"
 assert "const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);" in runtime_source, "successful repeater/room login immediately requests status"
 assert "auto-status=%u" in runtime_source, "automatic post-login status request is diagnosable"
 assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_get_retained_ui_tab" in power_backend_header and "meshink_power_clear_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
@@ -1843,20 +1850,25 @@ assert 'static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in messag
 assert '"/meshtastic_messages.bad"' in message_store_source, "corrupt first-use Meshtastic journal has a short recovery path"
 assert 'if(!SPIFFS.exists(archived)){archive_available=true;break;}' in message_store_source, "journal recovery never replaces a previous archived copy"
 assert 'SPIFFS.remove(invalid_path_);' not in message_store_source, "existing recovery archive is never removed"
-assert 'if(!SPIFFS.rename(path_,archived))' in message_store_source, "unsupported journal is preserved before replacement"
-assert 'if(!SPIFFS.rename(archived,path_))' in message_store_source, "failed initialization attempts to roll back the original"
+assert 'if(!SPIFFS.rename(active_path_,archived))' in message_store_source, "unsupported journal is preserved using its selected active path"
+assert 'if(!SPIFFS.rename(archived,active_path_))' in message_store_source, "failed initialization rolls back whichever journal path was active"
 
 # 2.1.1-test.18: First-use Meshtastic journal must be created when missing,
 # not routed into invalid-file preservation. An inaccessible existing journal
 # must not be overwritten, and incomplete fresh creations are not retained.
 journal_begin=message_store_source.split("bool MeshInkMessageStore::begin()",1)[1].split("bool MeshInkMessageStore::read(",1)[0]
-assert 'if(!SPIFFS.exists(path_)){' in journal_begin, "explicit missing-file check before attempting journal open"
-assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index('File f=SPIFFS.open(path_,"r");'), "check existence before opening existing journal"
-absent_branch=journal_begin.split("if(!SPIFFS.exists(path_)){",1)[1].split('File f=SPIFFS.open(path_,"r");',1)[0]
-assert "const bool ok=create_empty();" in absent_branch and "return ok;" in absent_branch, "missing journal is initialized without archival"
-assert "SPIFFS.rename" not in absent_branch and "SPIFFS.remove" not in absent_branch, "missing journal must never be archived or removed"
-assert "ERROR existing journal cannot be opened" in journal_begin and "return false;" in journal_begin, "inaccessible existing journal is preserved"
-assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index("existing journal invalid"), "invalid-file recovery is only reachable for an existing file"
+assert 'active_path_=SPIFFS.exists(recovery_path())?recovery_path():path_;' in journal_begin, "each protocol selects its durable recovery journal on boot"
+assert 'if(!SPIFFS.exists(active_path_)){' in journal_begin, "explicit active-file existence check before journal open"
+assert journal_begin.index("if(!SPIFFS.exists(active_path_))") < journal_begin.index('File f=SPIFFS.open(active_path_,"r");'), "existence check precedes any active journal open"
+absent_branch=journal_begin.split("if(!SPIFFS.exists(active_path_)){",1)[1].split('File f=SPIFFS.open(active_path_,"r");',1)[0]
+assert "const bool ok=create_empty();" in absent_branch and "return ok;" in absent_branch, "missing active journal initializes without archival"
+assert "SPIFFS.rename" not in absent_branch and "SPIFFS.remove" not in absent_branch, "missing journal must not be archived or removed"
+assert "unreadable primary" in journal_begin and "active_path_=recovery_path();" in journal_begin, "unreadable primary switches to a separate recovery file without truncation"
+assert journal_begin.index("if(!SPIFFS.exists(active_path_))") < journal_begin.index("existing journal invalid"), "invalid-file recovery is only reachable for an existing file"
+assert 'if(active_path_==path_&&!SPIFFS.exists(recovery_path()))' in journal_begin, "rename failure enables recovery only when the fallback is not already occupied"
+assert 'constexpr char CORE_RECOVERY_PATH[]="/mc_messages_recovery.bin";' in message_store_source, "MeshCore has its own persistent fallback journal"
+assert 'constexpr char MESHTASTIC_RECOVERY_PATH[]="/mt_messages_recovery.bin";' in message_store_source, "Meshtastic has a separate persistent fallback journal"
+assert 'LEGACY_CORE_RECOVERY_PATH[]="/ui_messages.recovery.bin"' in message_store_source, "legacy main hotfix recovery journal is migrated when present"
 new_journal=message_store_source.split("bool MeshInkMessageStore::create_empty()",1)[1].split("void MeshInkMessageStore::write_header()",1)[0]
 assert "const bool verified=verify&&verify.size()==expected_bytes" in new_journal, "newly created journal size and header checked"
 assert "removing incomplete new file" in new_journal, "partial first-use initialization is cleaned up so it can retry"

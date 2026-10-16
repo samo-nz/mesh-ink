@@ -12,6 +12,7 @@ idf_component_register(
         "protocol/mesh_protocol.cpp"
         "protocol/meshcore_protocol.cpp"
         "protocol/meshtastic_protocol.cpp"
+        "protocol/meshtastic_companion.cpp"
         "protocol/meshtastic_ui_data.cpp"
         "protocol/meshtastic_official_phoneapi.cpp"
         "protocol/meshtastic_radio.cpp"

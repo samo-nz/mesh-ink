@@ -40,6 +40,7 @@ SemaphoreHandle_t worker_exited=nullptr;
 TaskHandle_t worker_task=nullptr;
 RxFrame* rx_pool[kRxFrames]{};
 std::atomic<bool> stop_requested{false};
+std::atomic<bool> config_refresh_requested{false};
 bool running=false;
 
 void release_resources(){
@@ -61,6 +62,7 @@ void release_resources(){
 void network_task(void*){
     const TickType_t pause=pdMS_TO_TICKS(5)?pdMS_TO_TICKS(5):1;
     uint32_t last_gps=0,last_slow_report=0;
+    uint32_t refresh_at=0;
     while(!stop_requested.load(std::memory_order_acquire)){
         const uint32_t started=millis();
 
@@ -81,11 +83,24 @@ void network_task(void*){
         }
 
         const uint32_t now=millis();
+        if(config_refresh_requested.exchange(false,std::memory_order_acq_rel))
+            refresh_at=now+800UL;
         if(!last_gps || (uint32_t)(now-last_gps)>=250){
             last_gps=now;
             meshink_meshtastic_native_gps_update();
         }
         meshink_meshtastic_native_loop();
+
+        // Local channel add/remove is submitted through upstream AdminModule.
+        // Only after the official router has applied the write, re-request the
+        // complete native PhoneAPI snapshot. Never optimistically discard a
+        // channel that may have been rejected.
+        if(refresh_at && (int32_t)(millis()-refresh_at)>=0){
+            refresh_at=0;
+            const bool accepted=meshink_official_phoneapi_open(1);
+            Serial.printf("[MT-WORKER] channel config refresh %s\\n",
+                          accepted?"queued":"FAILED");
+        }
 
         // Reserve a free slot BEFORE removing anything from PhoneAPI.
         // A slow e-paper update backpressures the UI handoff rather than
@@ -144,6 +159,7 @@ bool meshink_meshtastic_worker_start(){
         }
     }
     stop_requested.store(false,std::memory_order_release);
+    config_refresh_requested.store(false,std::memory_order_release);
     if(xTaskCreatePinnedToCore(network_task,"mt-network",kNetworkStackBytes,
                                nullptr,kNetworkPriority,&worker_task,
                                kNetworkCore)!=pdPASS){
@@ -171,6 +187,10 @@ bool meshink_meshtastic_worker_submit(const uint8_t* bytes,size_t size,uint32_t 
         return false;
     }
     return true;
+}
+
+void meshink_meshtastic_worker_refresh_channels(){
+    if(running)config_refresh_requested.store(true,std::memory_order_release);
 }
 
 size_t meshink_meshtastic_worker_receive(uint8_t* bytes,size_t capacity){
