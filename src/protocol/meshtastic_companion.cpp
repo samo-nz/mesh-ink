@@ -66,6 +66,8 @@ bool active = false;
 bool ready = false;
 uint32_t next_gps_snapshot = 0;
 char ble_name[30]{}; // 29-byte maximum scan-response name (incl. AD overhead)
+char last_native_timezone[65]{};
+uint32_t next_timezone_check=0;
 
 class CompanionPhoneAPI final : public PhoneAPI {
   public:
@@ -291,6 +293,55 @@ void service_phone() {
     }
 }
 
+// Track app edits to Meshtastic's authoritative device.tzdef without
+// starting any MeshInk UI services. NVS is updated immediately on change,
+// not only on a graceful BOOT exit, so ordinary power-cycle/reboot also
+// restores the right local timezone. No writes during the steady state.
+void sync_native_timezone_to_meshink(bool immediate=false) {
+    if (!active || !nodeDB) return;
+    const uint32_t now=millis();
+    if (!immediate && (int32_t)(now-next_timezone_check)<0)return;
+    next_timezone_check=now+500UL;
+    char rule[65]{};
+    snprintf(rule,sizeof(rule),"%s",config.device.tzdef);
+    if (!strcmp(rule,last_native_timezone))return;
+
+    // Map exact supported presets back to their native MeshInk selection.
+    // Any other POSIX string is losslessly preserved as the phone-app mode
+    // (timezone index 9) instead of approximating or discarding DST rules.
+    static constexpr const char* preset[]={
+        nullptr,"NZST-12NZDT,M9.5.0,M4.1.0/3","UTC0",
+        "AEST-10AEDT,M10.1.0,M4.1.0/3",
+        "GMT0BST,M3.5.0/1,M10.5.0",
+        "CET-1CEST,M3.5.0,M10.5.0/3",
+        "PST8PDT,M3.2.0,M11.1.0",
+        "EST5EDT,M3.2.0,M11.1.0"
+    };
+    uint8_t index=9;
+    for(uint8_t i=1;i<sizeof(preset)/sizeof(preset[0]);++i)
+        if(!strcmp(rule,preset[i])){index=i;break;}
+    Preferences prefs;
+    if(!prefs.begin("t5-ui",false)){
+        Serial.println("[MT-TZ] ERROR: unable to open MeshInk preferences");
+        return;
+    }
+    // Store the raw string before activating the imported selection.
+    // This allows the UI to apply even rules not included in its picker.
+    const bool stored_raw=rule[0]
+        ?prefs.putString("mt_tz_rule",rule)==strlen(rule)
+        :prefs.putString("mt_tz_rule",rule)==0;
+    const bool stored_v2=prefs.putBool("tz_v2",true)==1;
+    const bool stored_index=prefs.putUChar("timezone",index)==1;
+    prefs.end();
+    if(!stored_raw||!stored_v2||!stored_index){
+        Serial.println("[MT-TZ] ERROR: timezone sync persistence failed");
+        return;
+    }
+    snprintf(last_native_timezone,sizeof(last_native_timezone),"%s",rule);
+    Serial.printf("[MT-TZ] phone -> MeshInk: index=%u rule=%s\\n",
+                  (unsigned)index,rule);
+}
+
 void snapshot_gps() {
 #if ENV_INCLUDE_GPS == 1
     const uint32_t now = millis();
@@ -351,6 +402,9 @@ void meshink_meshtastic_companion_setup() {
         Serial.println("[MT-BLE] native Meshtastic radio failed");
         return;
     }
+    snprintf(last_native_timezone,sizeof(last_native_timezone),"%s",
+             config.device.tzdef);
+    next_timezone_check=millis()+500UL;
 
     to_radio = xQueueCreate(kToRadioQueueDepth, sizeof(ToRadioFrame));
     from_radio = xQueueCreate(1, sizeof(FromRadioFrame));
@@ -384,6 +438,7 @@ void meshink_meshtastic_companion_loop() {
     meshink_rtc_tick();
     snapshot_gps();
     meshink_meshtastic_native_loop();
+    sync_native_timezone_to_meshink();
     // Official AdminModule schedules a reboot through this timestamp. The
     // upstream standalone main loop is intentionally absent from MeshInk.
     extern uint32_t rebootAtMsec;
@@ -395,6 +450,8 @@ void meshink_meshtastic_companion_loop() {
 }
 
 void meshink_meshtastic_companion_prepare_exit() {
+    // Final sync also covers a timezone change immediately before BOOT.
+    sync_native_timezone_to_meshink(true);
     shutting_down.store(true, std::memory_order_release);
     read_requested.store(false, std::memory_order_release);
     if (server && connected.load(std::memory_order_acquire))
