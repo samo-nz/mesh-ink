@@ -11,6 +11,11 @@ constexpr uint32_t STORE_MAGIC=0x354D3554; // T5M5
 constexpr uint16_t STORE_VERSION=3;
 constexpr char STORE_PATH[]="/ui_messages.bin";
 constexpr char STORE_INVALID_PATH[]="/ui_messages.invalid.bak";
+constexpr char STORE_RECOVERY_PATH[]="/ui_messages.recovery.bin";
+static_assert(sizeof(STORE_RECOVERY_PATH)<=32,"SPIFFS recovery filename is too long");
+// The recovery journal takes precedence across reboots when the invalid
+// original could not be renamed. Never truncate the original to recover.
+const char* active_store_path=STORE_PATH;
 
 static_assert(sizeof(MeshInkMessageStoreHeader)==16,
               "journal header layout changed; bump store version explicitly");
@@ -102,7 +107,7 @@ bool MeshInkMessageStore::load_cache(File& source){
 bool MeshInkMessageStore::create_empty(){
     StoreCpuBoostScope cpu_boost;
     header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
-    File f=SPIFFS.open(STORE_PATH,"w");
+    File f=SPIFFS.open(active_store_path,"w");
     if(!f)return false;
     const size_t hw=f.write((const uint8_t*)&header_,sizeof(header_));
     MeshInkStoredMessage blank{};
@@ -114,7 +119,7 @@ bool MeshInkMessageStore::create_empty(){
         Serial.println("[T5-STORE] ERROR creating v3 message journal");
         return false;
     }
-    file_=SPIFFS.open(STORE_PATH,"r+");
+    file_=SPIFFS.open(active_store_path,"r+");
     if(!file_){
         Serial.println("[T5-STORE] ERROR reopening new message journal");
         return false;
@@ -160,8 +165,22 @@ bool MeshInkMessageStore::begin(){
     if(initialized_)return true;
     StoreCpuBoostScope cpu_boost;
 
-    File f=SPIFFS.open(STORE_PATH,"r");
-    if(!f){const bool ok=create_empty();initialized_=ok;return ok;}
+    // Once recovery has started, keep using its journal on subsequent boots.
+    active_store_path=SPIFFS.exists(STORE_RECOVERY_PATH)?STORE_RECOVERY_PATH:STORE_PATH;
+    File f=SPIFFS.open(active_store_path,"r");
+    if(!f){
+        // Failure to open an EXISTING journal is not permission to erase it.
+        // Use a fresh path instead, preserving the original for inspection.
+        if(SPIFFS.exists(active_store_path)){
+            if(active_store_path!=STORE_PATH||SPIFFS.exists(STORE_RECOVERY_PATH)){
+                Serial.println("[T5-STORE] ERROR existing recovery journal unreadable; preserving it");
+                return false;
+            }
+            active_store_path=STORE_RECOVERY_PATH;
+            Serial.println("[T5-STORE] primary journal unreadable; starting separate recovery journal");
+        }
+        const bool ok=create_empty();initialized_=ok;return ok;
+    }
 
     MeshInkMessageStoreHeader disk{};
     const bool header_ok=f.read((uint8_t*)&disk,sizeof(disk))==sizeof(disk);
@@ -173,10 +192,10 @@ bool MeshInkMessageStore::begin(){
        disk.capacity==MESHINK_MESSAGE_CAPACITY&&disk.head<MESHINK_MESSAGE_CAPACITY&&
        disk.count<=MESHINK_MESSAGE_CAPACITY&&file_size==expected_v3){
         header_=disk;
-        File cache_source=SPIFFS.open(STORE_PATH,"r");
+        File cache_source=SPIFFS.open(active_store_path,"r");
         const bool cache_loaded=cache_source&&load_cache(cache_source);
         if(cache_source)cache_source.close();
-        file_=SPIFFS.open(STORE_PATH,"r+");if(!file_)return false;initialized_=true;
+        file_=SPIFFS.open(active_store_path,"r+");if(!file_)return false;initialized_=true;
 
         // No in-flight direct-send runtime survives a reboot. Any journal
         // record still in a transient sending/retry state is therefore stale
@@ -205,15 +224,33 @@ bool MeshInkMessageStore::begin(){
 
     Serial.printf("[T5-STORE] journal unsupported magic=%08lx version=%u capacity=%u; preserving before recreate\n",
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
-    SPIFFS.remove(STORE_INVALID_PATH);
-    if(!SPIFFS.rename(STORE_PATH,STORE_INVALID_PATH)){
-        Serial.println("[T5-STORE] ERROR preserving unsupported message journal");
+    // Retain older invalid copies instead of removing a possibly valuable
+    // backup. SPIFFS filenames must be shorter than 32 bytes.
+    char archived[32]{};
+    bool archive_available=false;
+    for(unsigned slot=0;slot<=9;++slot){
+        if(slot==0)snprintf(archived,sizeof(archived),"%s",STORE_INVALID_PATH);
+        else snprintf(archived,sizeof(archived),"/ui_messages.bad.%u",slot);
+        if(!SPIFFS.exists(archived)){archive_available=true;break;}
+    }
+    if(!archive_available||!SPIFFS.rename(active_store_path,archived)){
+        if(active_store_path==STORE_PATH&&!SPIFFS.exists(STORE_RECOVERY_PATH)){
+            // A zeroed/truncated journal must not permanently disable messages
+            // just because SPIFFS refuses its rename. Leave it untouched.
+            active_store_path=STORE_RECOVERY_PATH;
+            Serial.println("[T5-STORE] original journal retained; starting separate recovery journal");
+            const bool recovered=create_empty();
+            initialized_=recovered;
+            return recovered;
+        }
+        Serial.println("[T5-STORE] ERROR cannot preserve invalid recovery journal; original retained");
         return false;
     }
     const bool ok=create_empty();
     if(!ok){
-        SPIFFS.remove(STORE_PATH);
-        SPIFFS.rename(STORE_INVALID_PATH,STORE_PATH);
+        SPIFFS.remove(active_store_path); // only the new incomplete file
+        if(!SPIFFS.rename(archived,active_store_path))
+            Serial.println("[T5-STORE] ERROR restoring archived journal; archive retained");
         return false;
     }
     initialized_=true;
@@ -450,7 +487,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
     file_.flush();
     file_.close();
 
-    File verify=SPIFFS.open(STORE_PATH,"r");
+    File verify=SPIFFS.open(active_store_path,"r");
     MeshInkMessageStoreHeader disk{};
     bool header_ok=false;
     bool tail_ok=true;
@@ -477,7 +514,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
     disk_count=header_ok?disk.count:0;
 
     // Keep the journal usable if board-level sleep is refused after this check.
-    file_=SPIFFS.open(STORE_PATH,"r+");
+    file_=SPIFFS.open(active_store_path,"r+");
     const bool reopen_ok=(bool)file_;
 
     const bool header_matches=

@@ -1147,6 +1147,13 @@ assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessa
 assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
 assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
 assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
+# A failed rename must keep messaging usable without deleting the old journal.
+assert 'STORE_RECOVERY_PATH[]="/ui_messages.recovery.bin"' in message_store_source, "journal recovery has a persistent alternative SPIFFS file"
+assert 'active_store_path=SPIFFS.exists(STORE_RECOVERY_PATH)?STORE_RECOVERY_PATH:STORE_PATH;' in message_store_source, "reboot selects the previously active recovery journal"
+assert 'if(active_store_path==STORE_PATH&&!SPIFFS.exists(STORE_RECOVERY_PATH))' in message_store_source, "failed backup rename switches to recovery only when the fallback is unused"
+assert 'const bool recovered=create_empty();' in message_store_source and 'initialized_=recovered;' in message_store_source, "fallback journal is initialized after recovery"
+assert 'SPIFFS.remove(STORE_INVALID_PATH);' not in message_store_source, "recovery never deletes a previous invalid-journal backup"
+assert 'SPIFFS.open(STORE_PATH,' not in message_store_source, "all journal reopen and verification paths honor the selected recovery file"
 assert "static bool incomplete_direct_state(uint8_t state)" in message_store_source, "boot recovery identifies stale in-flight direct states"
 assert "item.kind!=(uint8_t)MeshInkMessageKind::Direct" in message_store_source, "boot recovery never rewrites channel sends"
 assert "write_record(physical,item)" in message_store_source, "stale in-flight direct sends are durably failed before history loads"
