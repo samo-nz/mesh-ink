@@ -19,11 +19,16 @@ constexpr char MESHTASTIC_STORE_PATH[]="/meshtastic_messages.bin";
 // "/meshtastic_messages.invalid.bak" is 32 visible bytes and cannot be
 // created, leaving a first-use partial journal stuck in recovery forever.
 constexpr char MESHTASTIC_INVALID_PATH[]="/meshtastic_messages.bad";
+constexpr char CORE_RECOVERY_PATH[]="/mc_messages_recovery.bin";
+constexpr char MESHTASTIC_RECOVERY_PATH[]="/mt_messages_recovery.bin";
+constexpr char LEGACY_CORE_RECOVERY_PATH[]="/ui_messages.recovery.bin";
 constexpr size_t SPIFFS_PATH_CAPACITY=32;
 static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
               "MeshCore recovery filename exceeds SPIFFS name limit");
 static_assert(sizeof(MESHTASTIC_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
               "Meshtastic recovery filename exceeds SPIFFS name limit");
+static_assert(sizeof(CORE_RECOVERY_PATH)<=SPIFFS_PATH_CAPACITY,"MeshCore recovery filename too long");
+static_assert(sizeof(MESHTASTIC_RECOVERY_PATH)<=SPIFFS_PATH_CAPACITY,"Meshtastic recovery filename too long");
 
 static_assert(sizeof(MeshInkMessageStoreHeader)==16,
               "journal header layout changed; bump store version explicitly");
@@ -80,10 +85,13 @@ MeshInkMessageStore meshcore_journal(CORE_STORE_PATH,CORE_INVALID_PATH);
 MeshInkMessageStore meshtastic_journal(MESHTASTIC_STORE_PATH,MESHTASTIC_INVALID_PATH,true);
 // Old single-protocol installations wrote only the MeshCore journal here.
 static bool copy_legacy_meshcore_journal(){
-    if(SPIFFS.exists(CORE_STORE_PATH)||!SPIFFS.exists(LEGACY_STORE_PATH))return true;
+    const char* source_path=SPIFFS.exists(LEGACY_CORE_RECOVERY_PATH)
+        ?LEGACY_CORE_RECOVERY_PATH:LEGACY_STORE_PATH;
+    if(SPIFFS.exists(CORE_STORE_PATH)||SPIFFS.exists(CORE_RECOVERY_PATH)||
+       !SPIFFS.exists(source_path))return true;
     constexpr char STAGING[]="/mc_migrate.tmp";
     SPIFFS.remove(STAGING);
-    File source=SPIFFS.open(LEGACY_STORE_PATH,"r");
+    File source=SPIFFS.open(source_path,"r");
     File target=SPIFFS.open(STAGING,"w");
     if(!source||!target){
         if(source)source.close();if(target)target.close();
@@ -99,7 +107,7 @@ static bool copy_legacy_meshcore_journal(){
     }
     target.flush();source.close();target.close();
     if(!ok||copied!=expected){SPIFFS.remove(STAGING);return false;}
-    File from=SPIFFS.open(LEGACY_STORE_PATH,"r");
+    File from=SPIFFS.open(source_path,"r");
     File to=SPIFFS.open(STAGING,"r");
     ok=from&&to&&from.size()==expected&&to.size()==expected;
     uint8_t left[512],right[512];size_t verified=0;
@@ -114,7 +122,8 @@ static bool copy_legacy_meshcore_journal(){
     if(!SPIFFS.rename(STAGING,CORE_STORE_PATH)){
         SPIFFS.remove(STAGING);return false;
     }
-    Serial.printf("[T5-STORE] legacy journal migrated and verified %u bytes; original retained\n",(unsigned)expected);
+    Serial.printf("[T5-STORE] legacy journal migrated and verified %u bytes from %s; original retained\n",
+                  (unsigned)expected,source_path);
     return true;
 }
 
@@ -157,6 +166,9 @@ static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage
 }
 }
 
+const char* MeshInkMessageStore::recovery_path() const {
+    return expanded_records_?MESHTASTIC_RECOVERY_PATH:CORE_RECOVERY_PATH;
+}
 size_t MeshInkMessageStore::disk_record_size() const {
     return expanded_records_?sizeof(MeshInkStoredMessage):sizeof(MeshInkStoredMessageV3);
 }
@@ -209,7 +221,7 @@ bool MeshInkMessageStore::load_cache(File& source){
 bool MeshInkMessageStore::create_empty(){
     StoreCpuBoostScope cpu_boost;
     header_={STORE_MAGIC,disk_version(),(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
-    File f=SPIFFS.open(path_,"w");
+    File f=SPIFFS.open(active_path_,"w");
     if(!f){
         Serial.printf("[T5-STORE] ERROR cannot create new journal path=%s\n",path_);
         return false;
@@ -223,13 +235,13 @@ bool MeshInkMessageStore::create_empty(){
     if(!ok){
         Serial.printf("[T5-STORE] ERROR creating v%u journal path=%s; removing incomplete new file\n",
                       (unsigned)disk_version(),path_);
-        SPIFFS.remove(path_); // Only reached after opening this path for a NEW journal.
+        SPIFFS.remove(active_path_); // Only reached after opening this path for a NEW journal.
         return false;
     }
     // Check the newly created file after closing it, not just the write counts.
     // Incomplete first-use creation must never look like a previous journal.
     const size_t expected_bytes=sizeof(header_)+MESHINK_MESSAGE_CAPACITY*disk_record_size();
-    File verify=SPIFFS.open(path_,"r");
+    File verify=SPIFFS.open(active_path_,"r");
     MeshInkMessageStoreHeader written{};
     const bool verified=verify&&verify.size()==expected_bytes&&
         verify.read((uint8_t*)&written,sizeof(written))==sizeof(written)&&
@@ -238,10 +250,10 @@ bool MeshInkMessageStore::create_empty(){
     if(!verified){
         Serial.printf("[T5-STORE] ERROR verifying newly created journal path=%s; removing incomplete new file\n",
                       path_);
-        SPIFFS.remove(path_);
+        SPIFFS.remove(active_path_);
         return false;
     }
-    file_=SPIFFS.open(path_,"r+");
+    file_=SPIFFS.open(active_path_,"r+");
     if(!file_){
         Serial.printf("[T5-STORE] ERROR reopening newly created journal path=%s; will retry on next start\n",
                       path_);
@@ -292,6 +304,11 @@ void MeshInkMessageStore::prepare_for_restore(){
 bool MeshInkMessageStore::begin(){
     if(initialized_)return true;
     StoreCpuBoostScope cpu_boost;
+    // Once a protocol moves to recovery, the recovery journal takes
+    // precedence on all later boots. Never reopen a damaged primary.
+    active_path_=SPIFFS.exists(recovery_path())?recovery_path():path_;
+    Serial.printf("[T5-STORE] protocol=%s active journal=%s\n",
+                  expanded_records_?"Meshtastic":"MeshCore",active_path_);
     // Import the complete, old MeshCore-only physical journal, without
     // decoding or altering any records, and retain the source as a fallback.
     if(path_==CORE_STORE_PATH&&!copy_legacy_meshcore_journal()){
@@ -304,17 +321,26 @@ bool MeshInkMessageStore::begin(){
     // Do not treat an absent Meshtastic journal as a corrupt legacy file.
     // An open failure is NOT evidence the file does not exist: never
     // overwrite a journal that the filesystem reports as present.
-    if(!SPIFFS.exists(path_)){
+    if(!SPIFFS.exists(active_path_)){
         Serial.printf("[T5-STORE] journal absent path=%s; creating fresh v%u journal\n",
-                      path_,(unsigned)disk_version());
+                      active_path_,(unsigned)disk_version());
         const bool ok=create_empty();
         initialized_=ok;
         return ok;
     }
-    File f=SPIFFS.open(path_,"r");
+    File f=SPIFFS.open(active_path_,"r");
     if(!f){
-        Serial.printf("[T5-STORE] ERROR existing journal cannot be opened path=%s; original retained\n",
-                      path_);
+        if(active_path_==path_&&!SPIFFS.exists(recovery_path())){
+            // Match the main-branch hotfix: never truncate an unreadable
+            // existing journal. Establish a durable alternative path.
+            Serial.printf("[T5-STORE] unreadable primary %s retained; creating separate recovery journal\n",path_);
+            active_path_=recovery_path();
+            const bool ok=create_empty();
+            initialized_=ok;
+            return ok;
+        }
+        Serial.printf("[T5-STORE] ERROR recovery journal %s unreadable; original retained\n",
+                      active_path_);
         return false;
     }
 
@@ -333,7 +359,7 @@ bool MeshInkMessageStore::begin(){
        disk.version==CORE_STORE_VERSION&&disk.capacity==MESHINK_MESSAGE_CAPACITY&&
        file_size==old_size){
         Serial.println("[MT-JOURNAL] discarding development v3 history for new v4");
-        if(!SPIFFS.remove(path_))return false;
+        if(!SPIFFS.remove(active_path_))return false;
         const bool ok=create_empty();
         initialized_=ok;
         return ok;
@@ -342,10 +368,10 @@ bool MeshInkMessageStore::begin(){
        disk.capacity==MESHINK_MESSAGE_CAPACITY&&disk.head<MESHINK_MESSAGE_CAPACITY&&
        disk.count<=MESHINK_MESSAGE_CAPACITY&&file_size==expected_size){
         header_=disk;
-        File cache_source=SPIFFS.open(path_,"r");
+        File cache_source=SPIFFS.open(active_path_,"r");
         const bool cache_loaded=cache_source&&load_cache(cache_source);
         if(cache_source)cache_source.close();
-        file_=SPIFFS.open(path_,"r+");if(!file_)return false;initialized_=true;
+        file_=SPIFFS.open(active_path_,"r+");if(!file_)return false;initialized_=true;
 
         // No in-flight direct-send runtime survives a reboot. Any journal
         // record still in a transient sending/retry state is therefore stale
@@ -393,9 +419,20 @@ bool MeshInkMessageStore::begin(){
         Serial.println("[T5-STORE] ERROR no unused recovery filename; original retained");
         return false;
     }
-    if(!SPIFFS.rename(path_,archived)){
-        Serial.printf("[T5-STORE] ERROR preserving unsupported message journal as %s; original retained\n",
-                      archived);
+    if(!SPIFFS.rename(active_path_,archived)){
+        // Main-branch journal hotfix, applied to BOTH independent journals:
+        // If SPIFFS refuses to rename the damaged primary, keep it untouched
+        // and start an alternative journal, then prefer that path at reboot.
+        if(active_path_==path_&&!SPIFFS.exists(recovery_path())){
+            Serial.printf("[T5-STORE] rename failed for %s; primary retained, starting %s\n",
+                          path_,recovery_path());
+            active_path_=recovery_path();
+            const bool recovered=create_empty();
+            initialized_=recovered;
+            return recovered;
+        }
+        Serial.printf("[T5-STORE] ERROR cannot preserve invalid recovery journal %s; original retained\n",
+                      active_path_);
         return false;
     }
     Serial.printf("[T5-STORE] unsupported journal preserved at %s; initializing fresh v%u journal\n",
@@ -403,7 +440,7 @@ bool MeshInkMessageStore::begin(){
     const bool ok=create_empty();
     if(!ok){
         SPIFFS.remove(path_); // only an incomplete newly created file
-        if(!SPIFFS.rename(archived,path_))
+        if(!SPIFFS.rename(archived,active_path_))
             Serial.printf("[T5-STORE] ERROR restoring preserved journal %s; archive retained\n",
                           archived);
         return false;
@@ -679,7 +716,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
     file_.flush();
     file_.close();
 
-    File verify=SPIFFS.open(path_,"r");
+    File verify=SPIFFS.open(active_path_,"r");
     MeshInkMessageStoreHeader disk{};
     bool header_ok=false;
     bool tail_ok=true;
@@ -706,7 +743,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
     disk_count=header_ok?disk.count:0;
 
     // Keep the journal usable if board-level sleep is refused after this check.
-    file_=SPIFFS.open(path_,"r+");
+    file_=SPIFFS.open(active_path_,"r+");
     const bool reopen_ok=(bool)file_;
 
     const bool header_matches=
