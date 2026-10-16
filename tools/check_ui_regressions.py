@@ -491,7 +491,11 @@ contains("const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.sect
 contains("next_y=max(ui_y(360),path_text_y+path_lines*ui_text_line_step(3)+ui_h(10));", "trace heading moves down when the discovered path uses all three lines")
 contains("const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));", "trace results reserve their actual wrapped height")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
-contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
+contains('page==NodeInfoPage::Telemetry&&', "telemetry action touch follows the selected protocol")
+contains('mesh_protocol_descriptor().id==2?', "Meshtastic telemetry has its own two-action layout")
+contains('hit(x,y,meshink_node_left_action_rect(portrait_layout()))||', "Meshtastic telemetry left action uses shared geometry")
+contains('hit(x,y,meshink_node_right_action_rect(portrait_layout()))):', "Meshtastic telemetry right action uses shared geometry")
+contains('hit(x,y,meshink_node_action_rect(portrait_layout())))){', "MeshCore telemetry retains the original full-width action")
 contains('can_path&&can_trace&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry when both actions are available")
 contains('can_path&&can_trace&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))', "trace touch follows shared right-action geometry when both actions are available")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
