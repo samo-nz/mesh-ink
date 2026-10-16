@@ -7,6 +7,9 @@
 #include "t5_logging.h"
 #include "meshcore_version.h"
 #include "meshink_logo_bitmap.h"
+#include "meshcore_protocol_logo.h"
+#include "meshtastic_protocol_logo.h"
+#include "protocol/mesh_protocol.h"
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.0.0"
@@ -92,10 +95,39 @@ static void notice_meshink_logo(int top, uint8_t* fb) {
     }
 }
 
+// The companion splash uses the same delta-RLE protocol artwork as the
+// startup, standby and About pages, without initializing any interactive UI.
+static void notice_protocol_logo(int top, int target_height, uint8_t* fb) {
+    const bool meshtastic=mesh_protocol_descriptor().id==2;
+    const uint8_t* data=meshtastic?MESHTASTIC_RLE:MESHCORE_RLE;
+    const int source_width=meshtastic?MESHTASTIC_WIDTH:MESHCORE_WIDTH;
+    const int source_height=meshtastic?MESHTASTIC_HEIGHT:MESHCORE_HEIGHT;
+    const int out_width=(source_width*target_height+source_height/2)/source_height;
+    const int left=(meshink_display_logical_width()-out_width)/2;
+    size_t offset=0;
+    for(int y=0;y<source_height;++y){
+        const unsigned count=data[offset++];
+        int previous=0;
+        int span_start=0;
+        for(unsigned edge=0;edge<count;++edge){
+            const uint8_t first=data[offset++];
+            const int delta=(first&0x80)?((first&0x7f)*128+data[offset++]):first;
+            previous+=delta;
+            if(!(edge&1)){span_start=previous;continue;}
+            const int x0=left+(span_start*out_width)/source_width;
+            const int x1=left+(previous*out_width+source_width-1)/source_width;
+            const int y0=top+(y*target_height)/source_height;
+            const int y1=top+((y+1)*target_height+source_height-1)/source_height;
+            if(x1>x0&&y1>y0)
+                meshink_display_fill_rect({x0,y0,x1-x0,y1-y0},0,fb);
+        }
+    }
+}
+
 void meshink_show_companion_notice() {
     meshink_power_frontlight_begin();
     meshink_power_frontlight_set(100);
-    T5_TRACE("board: begin; frontlight on; display notice before MeshCore I2C\n");
+    T5_TRACE("board: begin; frontlight on; display protocol companion notice before radio/I2C startup\n");
     T5_TRACE("notice: epd_init, internal heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
     meshink_display_init();
     T5_TRACE("notice: panel initialized\n");
@@ -106,6 +138,9 @@ void meshink_show_companion_notice() {
     if (fb) {
         meshink_display_set_all_white(&display);
         notice_meshink_logo(160, fb);
+        // The MeshInk logo ends around y=384 on the 540x960 T5 display.
+        // Place the active protocol artwork beneath it, above the mode label.
+        notice_protocol_logo(418, 90, fb);
         notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);
         char hold_button[32];
         snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());
@@ -131,10 +166,10 @@ void meshink_show_companion_notice() {
     meshink_display_release_state(&display);
     T5_TRACE("notice: framebuffers reclaimed\n");
     // LCD data lines overlap the SX1262 SPI pins: release every display
-    // peripheral before upstream MeshCore calls radio_init().
+    // peripheral before the selected protocol initializes its SX1262.
     meshink_display_deinit();
     T5_TRACE("notice: display deinitialized, heap=%u, psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
     meshink_power_frontlight_set(0);
-    T5_TRACE("board: display rendered; frontlight off; handing control to MeshCore\n");
+    T5_TRACE("board: display rendered; frontlight off; handing control to selected protocol\n");
 }
 
