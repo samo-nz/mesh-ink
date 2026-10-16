@@ -219,35 +219,28 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION's headline feature is reliable deep-sleep standby
-          designed to maximise battery life while keeping the mesh useful.
+          This is a focused bug-fix update to MeshInk 2.1.0, without changes
+          to the journal format or the device's radio protocol.
 
-          Highlights:
-          - reliable deep-sleep standby retains the MeshCore/SX1262 receive runtime
-            and can wake headlessly for radio traffic without starting the interactive UI,
-            dramatically reducing the time the display/UI and higher-power services need to run
-          - long-BOOT promotion attaches the UI to the retained MeshCore runtime
-            without restarting the radio, while restored tabs fully replace the
-            persistent standby image on e-paper
-          - PCF8563 RTC handling now respects the shared I2C lifecycle: headless
-            contact-time bootstrap is deferred until I2C is available, avoiding
-            invalid early hardware transactions
-          - message persistence, unread/read handoff, retry state, delivery-path
-            reporting and history paging are hardened across local and companion use
-          - Maps has improved node-label placement with bounded collision avoidance,
-            priority ordering, leader lines, zoom-dependent density reduction, and
-            protection for node markers, map controls and the own-location bullseye
-          - repeaters are visually distinct with a bold radio-tower marker on Maps
-            and role icon in Contacts/Discovery; room servers use a house role icon
-          - map label leader lines are heavier for better e-paper legibility
-          - larger primary UI text uses bundled smooth Inter raster fonts while
-            compact/status text keeps the established small-font treatment
-          - status, standby, keyboard, touch, power, GPS and map rendering refinements
-            from the hardware-tested release-candidate series are included
+          Fixes:
+          - repair the invalid-message-journal recovery path that could
+            prevent newly received messages from appearing when SPIFFS
+            refused to rename the damaged journal
+          - preserve the original damaged journal and older backups
+            instead of deleting them during recovery
+          - keep using the alternative recovery journal after reboot so
+            messages received following recovery remain visible
 
           The update image does not intentionally erase existing MeshCore
           settings, contacts, current-format message history, saved Maps data,
-          or saved MeshInk credentials.
+          or saved MeshInk credentials. If an existing journal is unreadable,
+          its original file is retained for possible later recovery.
+
+          Current firmware already supports initial timezone configuration
+          under More > Settings > Location & GPS > GPS Power Saving > Timezone.
+
+          A larger MeshInk update with multi-protocol support and a cleaner,
+          reorganized Settings interface is being developed separately.
 
           Inter font raster data is distributed under the SIL Open Font License
           included as INTER_LICENSE.txt.
