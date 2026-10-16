@@ -1850,20 +1850,25 @@ assert 'static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in messag
 assert '"/meshtastic_messages.bad"' in message_store_source, "corrupt first-use Meshtastic journal has a short recovery path"
 assert 'if(!SPIFFS.exists(archived)){archive_available=true;break;}' in message_store_source, "journal recovery never replaces a previous archived copy"
 assert 'SPIFFS.remove(invalid_path_);' not in message_store_source, "existing recovery archive is never removed"
-assert 'if(!SPIFFS.rename(path_,archived))' in message_store_source, "unsupported journal is preserved before replacement"
-assert 'if(!SPIFFS.rename(archived,path_))' in message_store_source, "failed initialization attempts to roll back the original"
+assert 'if(!SPIFFS.rename(active_path_,archived))' in message_store_source, "unsupported journal is preserved using its selected active path"
+assert 'if(!SPIFFS.rename(archived,active_path_))' in message_store_source, "failed initialization rolls back whichever journal path was active"
 
 # 2.1.1-test.18: First-use Meshtastic journal must be created when missing,
 # not routed into invalid-file preservation. An inaccessible existing journal
 # must not be overwritten, and incomplete fresh creations are not retained.
 journal_begin=message_store_source.split("bool MeshInkMessageStore::begin()",1)[1].split("bool MeshInkMessageStore::read(",1)[0]
-assert 'if(!SPIFFS.exists(path_)){' in journal_begin, "explicit missing-file check before attempting journal open"
-assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index('File f=SPIFFS.open(path_,"r");'), "check existence before opening existing journal"
-absent_branch=journal_begin.split("if(!SPIFFS.exists(path_)){",1)[1].split('File f=SPIFFS.open(path_,"r");',1)[0]
-assert "const bool ok=create_empty();" in absent_branch and "return ok;" in absent_branch, "missing journal is initialized without archival"
-assert "SPIFFS.rename" not in absent_branch and "SPIFFS.remove" not in absent_branch, "missing journal must never be archived or removed"
-assert "ERROR existing journal cannot be opened" in journal_begin and "return false;" in journal_begin, "inaccessible existing journal is preserved"
-assert journal_begin.index("if(!SPIFFS.exists(path_))") < journal_begin.index("existing journal invalid"), "invalid-file recovery is only reachable for an existing file"
+assert 'active_path_=SPIFFS.exists(recovery_path())?recovery_path():path_;' in journal_begin, "each protocol selects its durable recovery journal on boot"
+assert 'if(!SPIFFS.exists(active_path_)){' in journal_begin, "explicit active-file existence check before journal open"
+assert journal_begin.index("if(!SPIFFS.exists(active_path_))") < journal_begin.index('File f=SPIFFS.open(active_path_,"r");'), "existence check precedes any active journal open"
+absent_branch=journal_begin.split("if(!SPIFFS.exists(active_path_)){",1)[1].split('File f=SPIFFS.open(active_path_,"r");',1)[0]
+assert "const bool ok=create_empty();" in absent_branch and "return ok;" in absent_branch, "missing active journal initializes without archival"
+assert "SPIFFS.rename" not in absent_branch and "SPIFFS.remove" not in absent_branch, "missing journal must not be archived or removed"
+assert "unreadable primary" in journal_begin and "active_path_=recovery_path();" in journal_begin, "unreadable primary switches to a separate recovery file without truncation"
+assert journal_begin.index("if(!SPIFFS.exists(active_path_))") < journal_begin.index("existing journal invalid"), "invalid-file recovery is only reachable for an existing file"
+assert 'if(active_path_==path_&&!SPIFFS.exists(recovery_path()))' in journal_begin, "rename failure enables recovery only when the fallback is not already occupied"
+assert 'constexpr char CORE_RECOVERY_PATH[]="/mc_messages_recovery.bin";' in message_store_source, "MeshCore has its own persistent fallback journal"
+assert 'constexpr char MESHTASTIC_RECOVERY_PATH[]="/mt_messages_recovery.bin";' in message_store_source, "Meshtastic has a separate persistent fallback journal"
+assert 'LEGACY_CORE_RECOVERY_PATH[]="/ui_messages.recovery.bin"' in message_store_source, "legacy main hotfix recovery journal is migrated when present"
 new_journal=message_store_source.split("bool MeshInkMessageStore::create_empty()",1)[1].split("void MeshInkMessageStore::write_header()",1)[0]
 assert "const bool verified=verify&&verify.size()==expected_bytes" in new_journal, "newly created journal size and header checked"
 assert "removing incomplete new file" in new_journal, "partial first-use initialization is cleaned up so it can retry"
