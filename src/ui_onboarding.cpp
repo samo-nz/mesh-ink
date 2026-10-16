@@ -306,6 +306,10 @@ static uint8_t timezone_index = 1;
 static int16_t custom_timezone_minutes=0;
 static char auto_timezone_label[28]="UTC";
 static char auto_timezone_rule[80]="UTC0";
+// Preserve all phone-app POSIX timezone rules, including non-preset DST
+// transitions, verbatim. Selecting any MeshInk preset overrides this mode.
+static constexpr uint8_t TIMEZONE_EXTERNAL=9;
+static char external_timezone_rule[65]="UTC0";
 static uint16_t manual_time_year=2026;
 static uint8_t manual_time_month=1;
 static uint8_t manual_time_day=1;
@@ -618,6 +622,7 @@ static void resolve_gps_timezone(long latitude,long longitude,char* label,size_t
 }
 static const char* active_timezone_rule(){
     if(timezone_index==TIMEZONE_AUTO)return auto_timezone_rule;
+    if(timezone_index==TIMEZONE_EXTERNAL)return external_timezone_rule;
     static char custom_rule[32]{};
     if(timezone_index==TIMEZONE_CUSTOM){
         char ignored[24]{};
@@ -657,7 +662,10 @@ static void update_auto_timezone_from_gps(long latitude,long longitude){
 }
 static void seed_auto_timezone_from_selection(uint8_t previous){
     if(previous==TIMEZONE_AUTO)return;
-    if(previous==TIMEZONE_CUSTOM){
+    if(previous==TIMEZONE_EXTERNAL){
+        snprintf(auto_timezone_label,sizeof(auto_timezone_label),"PHONE APP");
+        snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"%s",external_timezone_rule);
+    }else if(previous==TIMEZONE_CUSTOM){
         char label[24]{};
         fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),auto_timezone_rule,sizeof(auto_timezone_rule));
         snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",label);
@@ -670,6 +678,8 @@ static void seed_auto_timezone_from_selection(uint8_t previous){
 static void timezone_display_label(char* out,size_t len){
     if(!out||!len)return;
     if(timezone_index==TIMEZONE_AUTO)snprintf(out,len,"AUTO (%s)",auto_timezone_label);
+    else if(timezone_index==TIMEZONE_EXTERNAL)
+        snprintf(out,len,"PHONE APP (%s)",external_timezone_rule[0]?external_timezone_rule:"UTC");
     else if(timezone_index==TIMEZONE_CUSTOM){
         char label[24]{},rule[32]{};
         fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),rule,sizeof(rule));
@@ -3439,6 +3449,14 @@ static void draw_timezone(){
         ui_text_fit(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(8),row.width-ui_w(28),2,c,true);
         ui_text_fit(detail,layout.content_text_x,row.y+ui_h(40),row.width-ui_w(28),2,c,false);
     }
+    // The phone app can specify any POSIX TZ/DST rule, beyond these presets.
+    // Show that imported rule while active; tapping a preset replaces it.
+    if(timezone_index==TIMEZONE_EXTERNAL){
+        ui_text_fit("ACTIVE FROM PHONE APP",layout.content_text_x,ui_y(856),
+                    layout.section_width,2,0,true);
+        ui_text_fit(external_timezone_rule[0]?external_timezone_rule:"UTC",
+                    layout.content_text_x,ui_y(884),layout.section_width,2,0,false);
+    }
 }
 static MeshInkUiRect custom_timezone_step_rect(bool plus){
     const MeshInkUiLayout& layout=portrait_layout();const int gap=ui_w(18),width=(layout.section_width-gap)/2;
@@ -5939,8 +5957,10 @@ static void ui_load_persistent_state() {
     custom_timezone_minutes=(int16_t)constrain((int)prefs.getInt("custom_tz_min",0),-12*60,14*60);
     const String saved_auto_timezone_label=prefs.getString("auto_tz_label","UTC");
     const String saved_auto_timezone_rule=prefs.getString("auto_tz_rule","UTC0");
+    const String saved_external_timezone_rule=prefs.getString("mt_tz_rule","UTC0");
     snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",saved_auto_timezone_label.c_str());
     snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"%s",saved_auto_timezone_rule.c_str());
+    snprintf(external_timezone_rule,sizeof(external_timezone_rule),"%s",saved_external_timezone_rule.c_str());
     // Unread truth is reconstructed from the message journal. Do not touch
     // it while loading ordinary UI preferences: on the first retained-RX
     // alert this function runs after journal replay and must preserve the
@@ -5997,7 +6017,8 @@ static void ui_load_persistent_state() {
     if(night_start_minutes>=1440)night_start_minutes=20*60;
     if(night_end_minutes>=1440)night_end_minutes=7*60;
     if(selected_preset>=mesh_protocol_radio_preset_count())selected_preset=17;
-    if(timezone_index>=TIMEZONE_COUNT)timezone_index=1;
+    if(timezone_index>=TIMEZONE_COUNT && timezone_index!=TIMEZONE_EXTERNAL)
+        timezone_index=1;
     if(!auto_timezone_rule[0])snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"UTC0");
     if(!auto_timezone_label[0])snprintf(auto_timezone_label,sizeof(auto_timezone_label),"UTC");
     apply_timezone();
