@@ -22,6 +22,7 @@
 #include "../../lib/Meshtastic/src/modules/PositionModule.h"
 #include "../../lib/Meshtastic/src/gps/RTC.h"
 #include "../hardware/gps.h"
+#include "../timezone_service.h"
 #include "../hardware/board.h"
 #include "../hardware/io_coordinator.h"
 #include "../hardware/rtc.h"
@@ -101,44 +102,6 @@ void make_short_name(const char* long_name,char (&out)[5]){
     }
     out[count]=0;
 }
-// Mirrors the POSIX TZ rules in ui_onboarding.cpp, but derives them directly
-// from saved NVS before the interactive UI exists (BLE companion boot).
-bool meshink_saved_timezone(char (&out)[65]){
-    Preferences pref;
-    if(!pref.begin("t5-ui",true))return false;
-    const bool v2=pref.getBool("tz_v2",false);
-    unsigned index=pref.getUChar("timezone",0);
-    if(!v2)index=index<7?index+1:8;
-    const int minutes=constrain(pref.getInt("custom_tz_min",0),-720,840);
-    String automatic=pref.getString("auto_tz_rule","UTC0");
-    String external=pref.getString("mt_tz_rule","");
-    pref.end();
-    static constexpr const char* standard[]={
-        nullptr, "NZST-12NZDT,M9.5.0,M4.1.0/3", "UTC0",
-        "AEST-10AEDT,M10.1.0,M4.1.0/3",
-        "GMT0BST,M3.5.0/1,M10.5.0",
-        "CET-1CEST,M3.5.0,M10.5.0/3",
-        "PST8PDT,M3.2.0,M11.1.0",
-        "EST5EDT,M3.2.0,M11.1.0"
-    };
-    if(index==0)
-        snprintf(out,sizeof(out),"%s",automatic.length()?automatic.c_str():"UTC0");
-    else if(index<sizeof(standard)/sizeof(standard[0]))
-        snprintf(out,sizeof(out),"%s",standard[index]);
-    else if(index==8){
-        if(minutes==0)snprintf(out,sizeof(out),"UTC0");
-        else snprintf(out,sizeof(out),"UTC%c%d:%02d",minutes>0?'-':'+',
-                      abs(minutes)/60,abs(minutes)%60);
-    }else if(index==9){
-        // All native POSIX TZ rules (up to the 64-byte Meshtastic limit)
-        // remain lossless when the Android app selected a zone not found in
-        // MeshInk's preset picker. Empty means native timezone unset.
-        if(external.length()>64)return false;
-        snprintf(out,sizeof(out),"%s",external.c_str());
-        return true;
-    }else return false;
-    return out[0]!=0;
-}
 void bridge_ui_preferences_after_nodedb(){
     Preferences pref;
     String name;
@@ -163,19 +126,16 @@ void bridge_ui_preferences_after_nodedb(){
     }
 
     int changed=0;
-    // Entering headless companion: MeshInk's last chosen timezone wins.
-    // On ordinary UI boot, only initialize a never-configured native zone.
-    // While companion is running, Android changes are copied in the opposite
-    // direction into the UI's NVS before return/reboot.
-    if(meshink_meshtastic_companion_active() || !config.device.tzdef[0]){
-        char rule[65]{};
-        if(meshink_saved_timezone(rule) &&
-           strcmp(config.device.tzdef,rule)!=0){
-            snprintf(config.device.tzdef,sizeof(config.device.tzdef),"%s",rule);
-            changed|=SEGMENT_CONFIG;
-            Serial.printf("[MT-BRIDGE] native timezone synced from UI: %s\n",
-                          config.device.tzdef);
-        }
+    // One shared POSIX rule is authoritative for MeshCore, MeshInk and
+    // Meshtastic. Meshtastic's config.device.tzdef is a protocol-facing view,
+    // updated from that rule on every startup, not a second timezone store.
+    char rule[65]{};
+    if(meshink_timezone::read(rule) &&
+       strcmp(config.device.tzdef,rule)!=0){
+        snprintf(config.device.tzdef,sizeof(config.device.tzdef),"%s",rule);
+        changed|=SEGMENT_CONFIG;
+        Serial.printf("[MT-BRIDGE] shared timezone applied to Meshtastic: %s\n",
+                      config.device.tzdef);
     }
 #if ENV_INCLUDE_GPS == 1
     // MeshInk owns the real L76K UART, even though Meshtastic's *second*
