@@ -539,7 +539,7 @@ uint32_t MeshInkMessageStore::append(
 
     if(!file_)return 0;
     StoreCpuBoostScope cpu_boost;
-    const bool record_ok=write_record_to(file_,physical,item);
+    const bool record_ok=write_record_to(file_,physical,item,expanded_records_);
     bool header_ok=false;
     if(record_ok){
         const bool header_seek_ok=file_.seek(0);
