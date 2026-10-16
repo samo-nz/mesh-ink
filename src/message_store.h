@@ -75,6 +75,8 @@ class MeshInkMessageStore {
     const char* path_;
     const char* invalid_path_;
     bool expanded_records_=false;
+    const char* active_path_; // may point at a durable per-protocol recovery journal
+    const char* recovery_path() const;
     size_t disk_record_size() const;
     uint16_t disk_version() const;
 
@@ -87,8 +89,10 @@ class MeshInkMessageStore {
 
 public:
     MeshInkMessageStore(const char* path,const char* invalid_path,bool expanded_records=false)
-        : path_(path),invalid_path_(invalid_path),expanded_records_(expanded_records) {}
+        : path_(path),invalid_path_(invalid_path),expanded_records_(expanded_records),
+          active_path_(path) {}
     bool begin();
+    const char* active_path() const { return active_path_; }
     void prepare_for_restore();
     size_t count() const { return initialized_?header_.count:0; }
     uint32_t revision() const { return initialized_?header_.sequence:0; }
