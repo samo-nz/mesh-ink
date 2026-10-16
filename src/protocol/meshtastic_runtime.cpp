@@ -1,4 +1,5 @@
 #include "meshtastic_runtime.h"
+#include "meshtastic_companion.h"
 #include "meshtastic_platform.cpp" // headless service definitions (single TU)
 #include "meshtastic_radio.h"
 #include "../../lib/Meshtastic/src/FSCommon.h"
@@ -60,7 +61,7 @@ meshtastic_DeviceMetadata getDeviceMetadata(){
     meta.firmware_version[sizeof(meta.firmware_version)-1]=0;
     meta.role=config.device.role;
     meta.hw_model=owner.hw_model;
-    meta.hasBluetooth=false;
+    meta.hasBluetooth=meshink_meshtastic_companion_active();
     meta.hasWifi=false;
     meta.hasEthernet=false;
     meta.hasPKC=true;
