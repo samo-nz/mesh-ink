@@ -110,7 +110,11 @@ bool journal_text_packet(const meshtastic_MeshPacket& p, bool outgoing) {
     if(channel && p.channel>=MAX_GROUP_CHANNELS)return false;
 
     char text[MESHINK_MESSAGE_TEXT_BYTES]{};
-    const size_t len=std::min((size_t)p.decoded.payload.size,sizeof(text)-1);
+    size_t len=std::min((size_t)p.decoded.payload.size,sizeof(text)-1);
+    // Preserve valid UTF-8 when the source exceeds MeshInk's 160-byte
+    // journal field. Never leave half an emoji/accent at the end.
+    if(len < (size_t)p.decoded.payload.size)
+        while(len && (p.decoded.payload.bytes[len] & 0xC0)==0x80) --len;
     memcpy(text,p.decoded.payload.bytes,len);
     // The journal/UI store C-string text, not binary payloads.
     if(!text[0])return false;
