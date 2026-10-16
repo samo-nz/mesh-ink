@@ -1,5 +1,6 @@
 #include "meshtastic_companion.h"
 #include "meshtastic_runtime.h"
+#include "../timezone_service.h"
 #include "mesh_protocol.h"
 #include "../../lib/Meshtastic/src/BluetoothCommon.h"
 #include "../../lib/Meshtastic/src/target_specific.h"
@@ -306,40 +307,15 @@ void sync_native_timezone_to_meshink(bool immediate=false) {
     snprintf(rule,sizeof(rule),"%s",config.device.tzdef);
     if (!strcmp(rule,last_native_timezone))return;
 
-    // Map exact supported presets back to their native MeshInk selection.
-    // Any other POSIX string is losslessly preserved as the phone-app mode
-    // (timezone index 9) instead of approximating or discarding DST rules.
-    static constexpr const char* preset[]={
-        nullptr,"NZST-12NZDT,M9.5.0,M4.1.0/3","UTC0",
-        "AEST-10AEDT,M10.1.0,M4.1.0/3",
-        "GMT0BST,M3.5.0/1,M10.5.0",
-        "CET-1CEST,M3.5.0,M10.5.0/3",
-        "PST8PDT,M3.2.0,M11.1.0",
-        "EST5EDT,M3.2.0,M11.1.0"
-    };
-    uint8_t index=9;
-    for(uint8_t i=1;i<sizeof(preset)/sizeof(preset[0]);++i)
-        if(!strcmp(rule,preset[i])){index=i;break;}
-    Preferences prefs;
-    if(!prefs.begin("t5-ui",false)){
-        Serial.println("[MT-TZ] ERROR: unable to open MeshInk preferences");
-        return;
-    }
-    // Store the raw string before activating the imported selection.
-    // This allows the UI to apply even rules not included in its picker.
-    const bool stored_raw=rule[0]
-        ?prefs.putString("mt_tz_rule",rule)==strlen(rule)
-        :prefs.putString("mt_tz_rule",rule)==0;
-    const bool stored_v2=prefs.putBool("tz_v2",true)==1;
-    const bool stored_index=prefs.putUChar("timezone",index)==1;
-    prefs.end();
-    if(!stored_raw||!stored_v2||!stored_index){
-        Serial.println("[MT-TZ] ERROR: timezone sync persistence failed");
+    // Persist into the same POSIX rule used by MeshCore and MeshInk.
+    // Exact known presets become their normal selected rows; all other
+    // supported POSIX definitions remain lossless custom timezone rules.
+    if (!meshink_timezone::import_from_meshtastic(rule)) {
+        Serial.println("[MT-TZ] ERROR: unable to import phone timezone");
         return;
     }
     snprintf(last_native_timezone,sizeof(last_native_timezone),"%s",rule);
-    Serial.printf("[MT-TZ] phone -> MeshInk: index=%u rule=%s\\n",
-                  (unsigned)index,rule);
+    Serial.printf("[MT-TZ] Meshtastic updated shared timezone: %s\n",rule);
 }
 
 void snapshot_gps() {
