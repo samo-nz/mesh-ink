@@ -38,7 +38,8 @@ namespace {
 // Preserve the same one-shot, reboot-to-UI contract as MeshCore companion.
 constexpr char kBootNamespace[] = "t5-boot";
 constexpr char kCompanionRequest[] = "companion_once";
-constexpr uint32_t kBleReadTimeoutMs = 3000;
+// Upstream NimBLE tolerates slow initial config reads for up to ~20s.
+constexpr uint32_t kBleReadTimeoutMs = 20000;
 constexpr unsigned kToRadioQueueDepth = 5;
 
 // The ESP32 Arduino 2.x build already uses Bluedroid for MeshCore. Reuse that
@@ -64,7 +65,7 @@ std::atomic<bool> shutting_down{false};
 bool active = false;
 bool ready = false;
 uint32_t next_gps_snapshot = 0;
-char ble_name[24]{};
+char ble_name[30]{}; // 29-byte maximum scan-response name (incl. AD overhead)
 
 class CompanionPhoneAPI final : public PhoneAPI {
   public:
@@ -90,10 +91,14 @@ std::unique_ptr<CompanionPhoneAPI> api;
 
 class ServerCallbacks final : public BLEServerCallbacks {
     void onConnect(BLEServer*) override {
+        Serial.printf("[MT-BLE] GATT connected uptime=%lus heap=%u\n",
+                      (unsigned long)(millis()/1000), (unsigned)ESP.getFreeHeap());
         connected.store(true, std::memory_order_release);
         disconnect_pending.store(false, std::memory_order_release);
     }
     void onDisconnect(BLEServer*) override {
+        Serial.printf("[MT-BLE] GATT disconnected uptime=%lus\n",
+                      (unsigned long)(millis()/1000));
         connected.store(false, std::memory_order_release);
         disconnect_pending.store(true, std::memory_order_release);
         // Only the companion loop may touch PhoneAPI; this callback is a
@@ -110,6 +115,8 @@ class ToRadioCallbacks final : public BLECharacteristicCallbacks {
         memcpy(frame.data, value.data(), frame.size);
         if (xQueueSend(to_radio, &frame, 0) != pdTRUE)
             Serial.println("[MT-BLE] ToRadio queue full: frame rejected");
+        else
+            Serial.printf("[MT-BLE] ToRadio write received %u bytes\n", (unsigned)frame.size);
     }
 };
 class FromRadioCallbacks final : public BLECharacteristicCallbacks {
@@ -119,13 +126,17 @@ class FromRadioCallbacks final : public BLECharacteristicCallbacks {
             ch->setValue(static_cast<uint8_t*>(nullptr), 0);
             return;
         }
+        Serial.println("[MT-BLE] FromRadio GATT read requested");
         read_requested.store(true, std::memory_order_release);
         FromRadioFrame frame{};
         // The Bluetooth task never calls PhoneAPI. The headless protocol loop
         // handles ToRadio first, then supplies this read. This preserves the
         // official write-then-read configuration handshake ordering.
-        if (xQueueReceive(from_radio, &frame, pdMS_TO_TICKS(kBleReadTimeoutMs)) == pdTRUE)
+        if (xQueueReceive(from_radio, &frame, pdMS_TO_TICKS(kBleReadTimeoutMs)) == pdTRUE) {
             ch->setValue(frame.data, frame.size);
+            Serial.printf("[MT-BLE] FromRadio GATT read supplied %u bytes\n",
+                          (unsigned)frame.size);
+        }
         else {
             read_requested.store(false, std::memory_order_release);
             ch->setValue(static_cast<uint8_t*>(nullptr), 0);
@@ -133,9 +144,37 @@ class FromRadioCallbacks final : public BLECharacteristicCallbacks {
         }
     }
 };
+// Arduino's ESP32 Bluedroid security callback is optional, but reporting
+// actual SMP results makes a phone connection failure diagnosable without
+// logging any secret passkeys or message contents.
+class PairingCallbacks final : public BLESecurityCallbacks {
+  public:
+    uint32_t onPassKeyRequest() override {
+        Serial.println("[MT-BLE] Pairing: passkey requested");
+        return config.bluetooth.fixed_pin;
+    }
+    void onPassKeyNotify(uint32_t) override {
+        Serial.println("[MT-BLE] Pairing: enter configured fixed PIN on phone");
+    }
+    bool onSecurityRequest() override {
+        Serial.println("[MT-BLE] Pairing: security request accepted");
+        return true;
+    }
+    void onAuthenticationComplete(esp_ble_auth_cmpl_t result) override {
+        Serial.printf("[MT-BLE] Pairing: authentication %s reason=%u\n",
+                      result.success?"OK":"FAILED", (unsigned)result.fail_reason);
+    }
+    bool onConfirmPIN(uint32_t) override {
+        // No dynamic code display or user confirmation exists in this
+        // deliberately headless mode. Reject numeric comparison.
+        Serial.println("[MT-BLE] Pairing: numeric comparison unavailable");
+        return false;
+    }
+};
 ServerCallbacks server_callbacks;
 ToRadioCallbacks to_radio_callbacks;
 FromRadioCallbacks from_radio_callbacks;
+PairingCallbacks pairing_callbacks;
 BLE2902 from_num_cccd;
 
 bool start_ble() {
@@ -148,12 +187,27 @@ bool start_ble() {
     }
     uint8_t mac[6]{};
     getMacAddr(mac);
-    char default_short[5]{};
-    snprintf(default_short, sizeof(default_short), "%02x%02x", mac[4], mac[5]);
-    if (owner.short_name[0] && strcmp(owner.short_name, default_short) != 0)
-        snprintf(ble_name, sizeof(ble_name), "%s_%02x%02x", owner.short_name, mac[4], mac[5]);
-    else
-        snprintf(ble_name, sizeof(ble_name), "Meshtastic_%02x%02x", mac[4], mac[5]);
+    // The native Meshtastic owner wins after the Android app has customized
+    // it. Until then use MeshInk's configured node name instead of advertising
+    // Meshtastic_xxxx when the original on-device setup already named us.
+    // This changes only the BLE alias, not Meshtastic's stored owner fields.
+    const unsigned default_suffix = nodeDB ? (nodeDB->getNodeNum() & 0xffffU) : 0U;
+    char default_owner[40]{};
+    snprintf(default_owner, sizeof(default_owner), "Meshtastic %04x", default_suffix);
+    const bool native_name_custom = owner.long_name[0] &&
+        strcmp(owner.long_name, default_owner) != 0;
+    Preferences ui_prefs;
+    String meshink_name;
+    if (ui_prefs.begin("t5-ui", true)) {
+        meshink_name = ui_prefs.getString("name", "");
+        ui_prefs.end();
+    }
+    const char* source = native_name_custom ? "native" :
+                         meshink_name.length() ? "MeshInk" : "default";
+    const char* desired = native_name_custom ? owner.long_name :
+                          meshink_name.length() ? meshink_name.c_str() : default_owner;
+    snprintf(ble_name, sizeof(ble_name), "%.29s", desired);
+    Serial.printf("[MT-BLE] advertised name=%s source=%s\n", ble_name, source);
 
     BLEDevice::init(ble_name);
     BLEDevice::setMTU(517);
@@ -161,11 +215,15 @@ bool start_ble() {
         config.bluetooth.mode != meshtastic_Config_BluetoothConfig_PairingMode_NO_PIN;
     if (pin_required) {
         BLESecurity security;
+        // ESP32 Arduino's setStaticPIN() internally changes authentication
+        // mode to SC_ONLY. Install the PIN *first*, then restore MITM+bonding.
+        // Otherwise the encrypted-MITM GATT permissions can never be met.
+        security.setStaticPIN(config.bluetooth.fixed_pin);
         security.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
         security.setCapability(ESP_IO_CAP_OUT);
-        security.setStaticPIN(config.bluetooth.fixed_pin);
         security.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
         security.setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+        BLEDevice::setSecurityCallbacks(&pairing_callbacks);
     }
     server = BLEDevice::createServer();
     if (!server) return false;
@@ -210,6 +268,7 @@ bool start_ble() {
 void service_phone() {
     if (!api) return;
     if (disconnect_pending.exchange(false, std::memory_order_acq_rel)) {
+        Serial.println("[MT-BLE] closing PhoneAPI after disconnect; restart advertising");
         api->close();
         xQueueReset(to_radio);
         xQueueReset(from_radio);
@@ -225,6 +284,8 @@ void service_phone() {
     if (read_requested.exchange(false, std::memory_order_acq_rel)) {
         FromRadioFrame output{};
         output.size = static_cast<uint16_t>(api->getFromRadio(output.data));
+        Serial.printf("[MT-BLE] PhoneAPI FromRadio generated %u bytes\n",
+                      (unsigned)output.size);
         if (xQueueSend(from_radio, &output, 0) != pdTRUE)
             Serial.println("[MT-BLE] FromRadio handoff full");
     }
