@@ -161,7 +161,7 @@ static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage
     if(!f.seek(record_offset(physical,extended)))return false;
     if(extended)return f.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
     const MeshInkStoredMessageV3 old=shrink_v3(record);
-    return f.write((const uint8_t*)&old,sizeof(old))==sizeof(old;
+    return f.write((const uint8_t*)&old,sizeof(old))==sizeof(old);
 
 }
 }
