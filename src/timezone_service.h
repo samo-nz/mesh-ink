@@ -35,7 +35,7 @@ inline bool valid_rule(const char* rule) {
     if (!rule || !rule[0]) return false;
     size_t n = 0;
     for (const unsigned char* c = (const unsigned char*)rule; *c; ++c) {
-        if (*c < 33 || *c > 126 || ++n > kMaxRuleBytes) return false;
+        if (*c < 32 || *c > 126 || ++n > kMaxRuleBytes) return false;
     }
     return true;
 }
