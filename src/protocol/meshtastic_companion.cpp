@@ -1,5 +1,6 @@
 #include "meshtastic_companion.h"
 #include "meshtastic_runtime.h"
+#include "mesh_protocol.h"
 #include "../../lib/Meshtastic/src/BluetoothCommon.h"
 #include "../../lib/Meshtastic/src/mesh/PhoneAPI.h"
 #include "../../lib/Meshtastic/src/mesh/NodeDB.h"
@@ -251,8 +252,9 @@ void meshink_meshtastic_request_companion() {
     const bool written = prefs.putBool(kCompanionRequest, true) == 1;
     prefs.end();
     if (!written) return;
-    // The native worker must finish its deferred flash saves before reboot.
-    meshink_meshtastic_native_stop();
+    // Stop via the selected backend: it drains the network worker and native
+    // flash saves on their owning task before we switch boot modes.
+    mesh_protocol_prepare_shutdown();
     delay(100);
     ESP.restart();
 }
