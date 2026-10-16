@@ -535,8 +535,10 @@ contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reach
 assert "if(map_zoom>8)" not in source, "stale Maps minimum zoom 8 must not return"
 contains("if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)", "automatic map recenter")
 contains("open_screen(Screen::Maps,true);", "explicit node position preserved")
-contains('prefs.getBool("map_fix_saved",false)', "reload last known position")
-contains('location_store.putBool("map_fix_saved",true)', "persist verified last known position")
+contains('prefs.getBytesLength("map_fix_v2")', "reload checksummed last-known GPS record")
+contains('map_gps_record_valid(stored)', "reject corrupt saved GPS records")
+contains('location_store.putBytes("map_fix_v2",&record,sizeof(record))', "persist checksummed last-known GPS record")
+contains('map_gps_record_valid(verify)', "verify saved GPS record before accepting it")
 contains("if(enabled&&has_fix&&latitude>=-85051100L", "never replace last fix with disabled/no-fix coordinates")
 contains("centre_map_on_device();", "current or stale position recenter")
 contains('(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
