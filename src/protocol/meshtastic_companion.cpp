@@ -2,6 +2,7 @@
 #include "meshtastic_runtime.h"
 #include "mesh_protocol.h"
 #include "../../lib/Meshtastic/src/BluetoothCommon.h"
+#include "../../lib/Meshtastic/src/target_specific.h"
 #include "../../lib/Meshtastic/src/mesh/PhoneAPI.h"
 #include "../../lib/Meshtastic/src/mesh/NodeDB.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
@@ -172,18 +173,20 @@ bool start_ble() {
     BLEService* service = server->createService(MESH_SERVICE_UUID);
     if (!service) return false;
 
-    const uint32_t auth_write = pin_required ?
-        (BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_ENC |
-         BLECharacteristic::PROPERTY_WRITE_AUTHEN) : BLECharacteristic::PROPERTY_WRITE;
-    const uint32_t auth_read = pin_required ?
-        (BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_READ_ENC |
-         BLECharacteristic::PROPERTY_READ_AUTHEN) : BLECharacteristic::PROPERTY_READ;
-
-    BLECharacteristic* write_ch = service->createCharacteristic(TORADIO_UUID, auth_write);
-    BLECharacteristic* read_ch = service->createCharacteristic(FROMRADIO_UUID, auth_read);
+    // Bluedroid uses plain GATT characteristic properties and separate
+    // access permissions. The *_ENC and *_AUTHEN properties are NimBLE-only.
+    BLECharacteristic* write_ch =
+        service->createCharacteristic(TORADIO_UUID, BLECharacteristic::PROPERTY_WRITE);
+    BLECharacteristic* read_ch =
+        service->createCharacteristic(FROMRADIO_UUID, BLECharacteristic::PROPERTY_READ);
     from_num = service->createCharacteristic(FROMNUM_UUID,
-        auth_read | BLECharacteristic::PROPERTY_NOTIFY);
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     if (!write_ch || !read_ch || !from_num) return false;
+    if (pin_required) {
+        write_ch->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+        read_ch->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+        from_num->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+    }
     write_ch->setCallbacks(&to_radio_callbacks);
     read_ch->setCallbacks(&from_radio_callbacks);
     from_num->addDescriptor(&from_num_cccd);
