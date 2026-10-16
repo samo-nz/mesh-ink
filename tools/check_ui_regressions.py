@@ -636,7 +636,7 @@ assert "parent-edge=%u parent-full=%u parent-px=%lu" in map_source, "map logs wh
 assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timing"
 assert "preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu" in map_source, "map separates PMTiles sequential preload timing"
 assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map retains callback range timing for preload fallback"
-assert "png.openRAM(pmt_png_buffer" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
+assert "png->openRAM(pmt_png_buffer" in map_source and "pmt_preloaded" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
 assert "meshink_display_blit_gray4_dithered(target,blit);" in map_source, "Maps delegates packed framebuffer composition to display backend"
 assert "physical_width" not in map_source and "physical_height" not in map_source, "Maps must not know physical panel geometry"
 assert "EPD_ROT_" not in map_source and "Epd" not in map_source, "Maps must not depend on EPDiy types"
