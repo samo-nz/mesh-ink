@@ -399,7 +399,7 @@ bool MeshInkMessageStore::begin(){
     }
 
     Serial.printf("[T5-STORE] existing journal invalid path=%s size=%u expected=%u header=%u magic=%08lx version=%u capacity=%u; preserving before recreate\n",
-                  path_,(unsigned)file_size,(unsigned)expected_size,header_ok?1U:0U,
+                  active_path_,(unsigned)file_size,(unsigned)expected_size,header_ok?1U:0U,
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
     // Never delete a previous recovery copy; it may be the user's only
     // copy of older messages. Use numbered short paths for subsequent faults.
@@ -416,6 +416,17 @@ bool MeshInkMessageStore::begin(){
         if(!SPIFFS.exists(archived)){archive_available=true;break;}
     }
     if(!archive_available){
+        // Like a failed rename, an exhausted archive directory must not
+        // disable either protocol's messaging. Keep the original untouched
+        // and put fresh messages in a separately named recovery journal.
+        if(active_path_==path_&&!SPIFFS.exists(recovery_path())){
+            Serial.printf("[T5-STORE] no archive slot for %s; starting recovery journal %s\n",
+                          path_,recovery_path());
+            active_path_=recovery_path();
+            const bool recovered=create_empty();
+            initialized_=recovered;
+            return recovered;
+        }
         Serial.println("[T5-STORE] ERROR no unused recovery filename; original retained");
         return false;
     }
@@ -439,7 +450,7 @@ bool MeshInkMessageStore::begin(){
                   archived,(unsigned)disk_version());
     const bool ok=create_empty();
     if(!ok){
-        SPIFFS.remove(path_); // only an incomplete newly created file
+        SPIFFS.remove(active_path_); // only an incomplete newly created file
         if(!SPIFFS.rename(archived,active_path_))
             Serial.printf("[T5-STORE] ERROR restoring preserved journal %s; archive retained\n",
                           archived);
