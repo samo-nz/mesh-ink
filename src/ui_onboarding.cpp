@@ -26,6 +26,7 @@
 #include "keyboard_geometry.h"
 #include "message_limits.h"
 #include "message_store.h"
+#include "timezone_service.h"
 #include "backup_restore.h"
 #include "fonts/inter_15_regular.h"
 #include "fonts/inter_20_regular.h"
@@ -552,13 +553,13 @@ static constexpr uint8_t TIMEZONE_AUTO=0;
 static constexpr uint8_t TIMEZONE_CUSTOM=8;
 static constexpr TimezoneChoice TIMEZONES[] = {
  {"AUTO (GPS-DERIVED)","USES LAST RESOLVED ZONE UNTIL NEXT FIX",nullptr},
- {"NEW ZEALAND","NZST / NZDT AUTOMATIC","NZST-12NZDT,M9.5.0,M4.1.0/3"},
- {"UTC","COORDINATED UNIVERSAL TIME","UTC0"},
- {"AUSTRALIA EAST","AEST / AEDT AUTOMATIC","AEST-10AEDT,M10.1.0,M4.1.0/3"},
- {"UNITED KINGDOM","GMT / BST AUTOMATIC","GMT0BST,M3.5.0/1,M10.5.0"},
- {"CENTRAL EUROPE","CET / CEST AUTOMATIC","CET-1CEST,M3.5.0,M10.5.0/3"},
- {"US PACIFIC","PST / PDT AUTOMATIC","PST8PDT,M3.2.0,M11.1.0"},
- {"US EASTERN","EST / EDT AUTOMATIC","EST5EDT,M3.2.0,M11.1.0"},
+ {"NEW ZEALAND","NZST / NZDT AUTOMATIC",meshink_timezone::kPresetRule[1]},
+ {"UTC","COORDINATED UNIVERSAL TIME",meshink_timezone::kPresetRule[2]},
+ {"AUSTRALIA EAST","AEST / AEDT AUTOMATIC",meshink_timezone::kPresetRule[3]},
+ {"UNITED KINGDOM","GMT / BST AUTOMATIC",meshink_timezone::kPresetRule[4]},
+ {"CENTRAL EUROPE","CET / CEST AUTOMATIC",meshink_timezone::kPresetRule[5]},
+ {"US PACIFIC","PST / PDT AUTOMATIC",meshink_timezone::kPresetRule[6]},
+ {"US EASTERN","EST / EDT AUTOMATIC",meshink_timezone::kPresetRule[7]},
  {"CUSTOM UTC OFFSET","FIXED OFFSET - NO DST",nullptr},
 };
 static constexpr uint8_t TIMEZONE_COUNT=sizeof(TIMEZONES)/sizeof(TIMEZONES[0]);
@@ -637,9 +638,15 @@ static void apply_timezone(){
     T5_DEBUGF(T5_LOG_UI,"[T5-TIME] display timezone index=%u rule=%s\n",(unsigned)timezone_index,rule?rule:"UTC0");
 }
 static void persist_timezone_selection(){
-    Preferences zone;if(zone.begin("t5-ui",false)){
-        zone.putUChar("timezone",timezone_index);zone.putBool("tz_v2",true);
-        zone.putInt("custom_tz_min",(int32_t)custom_timezone_minutes);zone.end();
+    // One canonical TZ setting for either protocol; UI keeps its selection
+    // index only to present familiar presets and custom-offset controls.
+    const char* rule=active_timezone_rule();
+    if(!meshink_timezone::save(rule,timezone_index))
+        Serial.println("[T5-TIME] ERROR: unable to persist shared timezone");
+    Preferences zone;
+    if(zone.begin("t5-ui",false)){
+        zone.putInt("custom_tz_min",(int32_t)custom_timezone_minutes);
+        zone.end();
     }
 }
 static void persist_auto_timezone(){
@@ -647,6 +654,10 @@ static void persist_auto_timezone(){
         zone.putString("auto_tz_label",auto_timezone_label);
         zone.putString("auto_tz_rule",auto_timezone_rule);zone.end();
     }
+    // A new GPS-derived rule is a timezone change only while AUTO is active.
+    if(timezone_index==TIMEZONE_AUTO)
+        if(!meshink_timezone::save(auto_timezone_rule,TIMEZONE_AUTO))
+            Serial.println("[T5-TIME] ERROR: unable to update shared GPS timezone");
 }
 static void update_auto_timezone_from_gps(long latitude,long longitude){
     char label[sizeof(auto_timezone_label)]{},rule[sizeof(auto_timezone_rule)]{};
@@ -679,7 +690,7 @@ static void timezone_display_label(char* out,size_t len){
     if(!out||!len)return;
     if(timezone_index==TIMEZONE_AUTO)snprintf(out,len,"AUTO (%s)",auto_timezone_label);
     else if(timezone_index==TIMEZONE_EXTERNAL)
-        snprintf(out,len,"PHONE APP (%s)",external_timezone_rule[0]?external_timezone_rule:"UTC");
+        snprintf(out,len,"CUSTOM TIMEZONE");
     else if(timezone_index==TIMEZONE_CUSTOM){
         char label[24]{},rule[32]{};
         fixed_timezone_text(custom_timezone_minutes,label,sizeof(label),rule,sizeof(rule));
@@ -3449,13 +3460,16 @@ static void draw_timezone(){
         ui_text_fit(TIMEZONES[i].label,layout.content_text_x,row.y+ui_h(8),row.width-ui_w(28),2,c,true);
         ui_text_fit(detail,layout.content_text_x,row.y+ui_h(40),row.width-ui_w(28),2,c,false);
     }
-    // The phone app can specify any POSIX TZ/DST rule, beyond these presets.
-    // Show that imported rule while active; tapping a preset replaces it.
+    // Show the active, complete POSIX timezone from Meshtastic as another
+    // selected row, never mislabel it as an existing geographical preset.
+    // The rule stays byte-for-byte intact, including custom DST transitions.
     if(timezone_index==TIMEZONE_EXTERNAL){
-        ui_text_fit("ACTIVE FROM PHONE APP",layout.content_text_x,ui_y(856),
-                    layout.section_width,2,0,true);
-        ui_text_fit(external_timezone_rule[0]?external_timezone_rule:"UTC",
-                    layout.content_text_x,ui_y(884),layout.section_width,2,0,false);
+        const MeshInkUiRect row=timezone_row_rect(TIMEZONE_EXTERNAL);
+        rounded_box(row,max(ui_w(10),ui_h(10)),true);
+        ui_text_fit("CUSTOM TIMEZONE",layout.content_text_x,row.y+ui_h(8),
+                    row.width-ui_w(28),2,0,true);
+        ui_text_fit(external_timezone_rule,layout.content_text_x,row.y+ui_h(40),
+                    row.width-ui_w(28),2,0,false);
     }
 }
 static MeshInkUiRect custom_timezone_step_rect(bool plus){
@@ -5961,6 +5975,12 @@ static void ui_load_persistent_state() {
     snprintf(auto_timezone_label,sizeof(auto_timezone_label),"%s",saved_auto_timezone_label.c_str());
     snprintf(auto_timezone_rule,sizeof(auto_timezone_rule),"%s",saved_auto_timezone_rule.c_str());
     snprintf(external_timezone_rule,sizeof(external_timezone_rule),"%s",saved_external_timezone_rule.c_str());
+    // tz_rule is the canonical store. Legacy selectors remain only a view.
+    // On old installations the shared service resolves the previous NVS
+    // selection without resetting or translating its DST semantics.
+    char canonical_timezone[65]{};
+    if(meshink_timezone::read(canonical_timezone) && timezone_index==TIMEZONE_EXTERNAL)
+        snprintf(external_timezone_rule,sizeof(external_timezone_rule),"%s",canonical_timezone);
     // Unread truth is reconstructed from the message journal. Do not touch
     // it while loading ordinary UI preferences: on the first retained-RX
     // alert this function runs after journal replay and must preserve the
