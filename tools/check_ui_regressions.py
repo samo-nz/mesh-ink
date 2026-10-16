@@ -1100,7 +1100,8 @@ assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_cen
 
 # Test44b: unread state is journal authority without growing the v3 record.
 assert "MESHINK_MESSAGE_UNREAD" in message_store_header and "MESHINK_MESSAGE_READ_THROUGH" in message_store_header, "v3 record flags persist unread arrival and read-through boundary"
-assert "static_assert(sizeof(MeshInkStoredMessage)==188" in message_store_source, "persistent unread reuses existing flags without growing the record cache"
+assert "static_assert(sizeof(MeshInkStoredMessageV3)==188" in message_store_source, "MeshCore v3 unread storage retains its original 188-byte physical record"
+assert "static_assert(sizeof(MeshInkStoredMessage)==264" in message_store_source, "Meshtastic v4 record preserves 233 message bytes without changing the MeshCore file"
 assert "if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;" in message_store_source, "incoming unread state is committed in the same append transaction"
 assert "MeshInkMessageStore::mark_read_through" in message_store_source and "MESHINK_MESSAGE_READ_THROUGH" in message_store_source, "opening a conversation persists a single read-through marker"
 assert "rebuild_unread_from_journal()" in runtime_source and "unread restored direct=" in runtime_source, "RAM unread counters are derived from journal state at startup"
@@ -1124,7 +1125,7 @@ assert "if(sequence&&journal_full)rebuild_unread_from_journal();" in runtime_sou
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
 assert "const char* network" in data_source, "message model exposes network metadata"
-assert "STORE_VERSION=3" in message_store_source, "message journal uses the 160-byte-text v3 format"
+assert "CORE_STORE_VERSION=3" in message_store_source and "MESHTASTIC_STORE_VERSION=4" in message_store_source, "MeshCore journal remains 160-byte v3; Meshtastic uses full-length v4"
 assert "int8_t snr_q4=0;" in message_store_header and "uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;" in message_store_header, "received SNR/path metadata lives in the persistent record"
 assert "uint8_t repeats=0;" in message_store_header and "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_header, "repeat and route metadata lives in the persistent record"
 assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
