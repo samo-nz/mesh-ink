@@ -450,8 +450,10 @@ bool meshink_meshtastic_submit_channel(const meshtastic_Channel& channel){
     if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
     request.packet.decoded.payload.size=inner.bytes_written;
     pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
-    return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
+    const bool accepted=pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
            meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
+    if(accepted)meshink_meshtastic_worker_refresh_channels();
+    return accepted;
 }
 
 bool meshink_meshtastic_submit_lora_config(const meshtastic_Config_LoRaConfig& lora){
