@@ -8,7 +8,6 @@
 #include "../../lib/Meshtastic/src/mesh/NodeDB.h"
 #include "../../lib/Meshtastic/src/modules/TextMessageModule.h"
 #include "../../lib/Meshtastic/src/Observer.h"
-#include "../../lib/Meshtastic/src/mesh/NodeInfo.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
 #include "../companion_notice.h"
 #include "../backup_restore.h"
