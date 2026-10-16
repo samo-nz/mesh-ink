@@ -36,6 +36,7 @@
 #include <new>
 #include <cstdio>
 #include <cstring>
+#include <pb_decode.h>
 #include <algorithm>
 #include <ctime>
 
