@@ -76,7 +76,7 @@ char last_native_timezone[65]{};
 uint32_t next_timezone_check=0;
 bool journal_ready=false;
 
-// Record live Meshtastic text messages in MeshInk's existing v3 journal.
+// Record live Meshtastic text messages in MeshInk's Meshtastic v4 journal.
 //
 // This observer runs on the headless Meshtastic router loop (not in the BLE
 // GATT task). Unlike PhoneAPI's FromRadio stream, it also receives messages
@@ -109,13 +109,15 @@ bool journal_text_packet(const meshtastic_MeshPacket& p, bool outgoing) {
     if(!channel && (!peer || peer==kBroadcastNode))return false;
     if(channel && p.channel>=MAX_GROUP_CHANNELS)return false;
 
-    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
-    size_t len=std::min((size_t)p.decoded.payload.size,sizeof(text)-1);
-    // Preserve valid UTF-8 when the source exceeds MeshInk's 160-byte
-    // journal field. Never leave half an emoji/accent at the end.
-    if(len < (size_t)p.decoded.payload.size)
-        while(len && (p.decoded.payload.bytes[len] & 0xC0)==0x80) --len;
-    memcpy(text,p.decoded.payload.bytes,len);
+    // The native Meshtastic data payload can contain at most 233 text bytes.
+    // No truncation and no packet splitting: one complete radio message maps
+    // to one durable v4 Meshtastic journal record.
+    if(p.decoded.payload.size>MESHINK_MESHTASTIC_MESSAGE_TEXT_MAX){
+        Serial.println("[MT-JOURNAL] ERROR received text exceeds full journal payload limit");
+        return false;
+    }
+    char text[MESHINK_MESHTASTIC_MESSAGE_TEXT_BYTES]{};
+    memcpy(text,p.decoded.payload.bytes,p.decoded.payload.size);
     // The journal/UI store C-string text, not binary payloads.
     if(!text[0])return false;
 
