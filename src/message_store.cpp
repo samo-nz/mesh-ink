@@ -9,7 +9,8 @@
 
 namespace {
 constexpr uint32_t STORE_MAGIC=0x354D3554; // T5M5
-constexpr uint16_t STORE_VERSION=3;
+constexpr uint16_t CORE_STORE_VERSION=3;
+constexpr uint16_t MESHTASTIC_STORE_VERSION=4;
 constexpr char LEGACY_STORE_PATH[]="/ui_messages.bin";
 constexpr char CORE_STORE_PATH[]="/meshcore_messages.bin";
 constexpr char CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak";
@@ -26,8 +27,37 @@ static_assert(sizeof(MESHTASTIC_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
 
 static_assert(sizeof(MeshInkMessageStoreHeader)==16,
               "journal header layout changed; bump store version explicitly");
-static_assert(sizeof(MeshInkStoredMessage)==188,
-              "message record layout changed; bump store version explicitly");
+// Legacy disk records remain exactly 188 bytes for existing MeshCore users.
+struct MeshInkStoredMessageV3 {
+    uint32_t sequence=0,timestamp=0,ack=0;
+    uint8_t kind=0,state=0,key[7]{};
+    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
+    int8_t snr_q4=0,repeat_snr_q4=0;
+    uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN,repeats=0,flags=0,origin=0;
+};
+static_assert(sizeof(MeshInkStoredMessageV3)==188,"MeshCore v3 disk format changed");
+static_assert(sizeof(MeshInkStoredMessage)==264,"Meshtastic v4 disk format changed");
+
+MeshInkStoredMessage expand_v3(const MeshInkStoredMessageV3& old){
+    MeshInkStoredMessage v{};
+    v.sequence=old.sequence;v.timestamp=old.timestamp;v.ack=old.ack;
+    v.kind=old.kind;v.state=old.state;
+    memcpy(v.key,old.key,sizeof(v.key));memcpy(v.text,old.text,sizeof(old.text));
+    v.snr_q4=old.snr_q4;v.repeat_snr_q4=old.repeat_snr_q4;
+    v.path_len=old.path_len;v.repeats=old.repeats;
+    v.flags=old.flags;v.origin=old.origin;
+    return v;
+}
+MeshInkStoredMessageV3 shrink_v3(const MeshInkStoredMessage& v){
+    MeshInkStoredMessageV3 old{};
+    old.sequence=v.sequence;old.timestamp=v.timestamp;old.ack=v.ack;
+    old.kind=v.kind;old.state=v.state;
+    memcpy(old.key,v.key,sizeof(old.key));memcpy(old.text,v.text,sizeof(old.text));
+    old.snr_q4=v.snr_q4;old.repeat_snr_q4=v.repeat_snr_q4;
+    old.path_len=v.path_len;old.repeats=v.repeats;
+    old.flags=v.flags;old.origin=v.origin;
+    return old;
+}
 
 constexpr uint32_t STORE_FLASH_CPU_MHZ=240;
 
@@ -47,7 +77,7 @@ struct StoreCpuBoostScope {
 };
 
 MeshInkMessageStore meshcore_journal(CORE_STORE_PATH,CORE_INVALID_PATH);
-MeshInkMessageStore meshtastic_journal(MESHTASTIC_STORE_PATH,MESHTASTIC_INVALID_PATH);
+MeshInkMessageStore meshtastic_journal(MESHTASTIC_STORE_PATH,MESHTASTIC_INVALID_PATH,true);
 // Old single-protocol installations wrote only the MeshCore journal here.
 static bool copy_legacy_meshcore_journal(){
     if(SPIFFS.exists(CORE_STORE_PATH)||!SPIFFS.exists(LEGACY_STORE_PATH))return true;
@@ -88,14 +118,18 @@ static bool copy_legacy_meshcore_journal(){
     return true;
 }
 
-static size_t record_offset(uint16_t physical){
+static size_t record_offset(uint16_t physical,bool extended){
     return sizeof(MeshInkMessageStoreHeader)+
-           (size_t)physical*sizeof(MeshInkStoredMessage);
+           (size_t)physical*(extended?sizeof(MeshInkStoredMessage)
+                                     :sizeof(MeshInkStoredMessageV3));
 }
-
-static bool read_record(File& f,uint16_t physical,MeshInkStoredMessage& out){
-    if(!f.seek(record_offset(physical)))return false;
-    return f.read((uint8_t*)&out,sizeof(out))==sizeof(out);
+static bool read_record(File& f,uint16_t physical,MeshInkStoredMessage& out,bool extended){
+    if(!f.seek(record_offset(physical,extended)))return false;
+    if(extended)return f.read((uint8_t*)&out,sizeof(out))==sizeof(out);
+    MeshInkStoredMessageV3 old{};
+    if(f.read((uint8_t*)&old,sizeof(old))!=sizeof(old))return false;
+    out=expand_v3(old);
+    return true;
 }
 
 static bool incomplete_direct_state(uint8_t state){
@@ -113,12 +147,21 @@ static bool incomplete_direct_state(uint8_t state){
     }
 }
 
-static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record){
-    const bool seek_ok=f.seek(record_offset(physical));
-    if(!seek_ok)return false;
-    const bool ok=f.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
-    return ok;
+static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage& record,
+                            bool extended){
+    if(!f.seek(record_offset(physical,extended)))return false;
+    if(extended)return f.write((const uint8_t*)&record,sizeof(record))==sizeof(record);
+    const MeshInkStoredMessageV3 old=shrink_v3(record);
+    return f.write((const uint8_t*)&old,sizeof(old))==sizeof(old;
+
 }
+}
+
+size_t MeshInkMessageStore::disk_record_size() const {
+    return expanded_records_?sizeof(MeshInkStoredMessage):sizeof(MeshInkStoredMessageV3);
+}
+uint16_t MeshInkMessageStore::disk_version() const {
+    return expanded_records_?MESHTASTIC_STORE_VERSION:CORE_STORE_VERSION;
 }
 
 MeshInkMessageStore& meshink_message_store(){
@@ -145,10 +188,18 @@ bool MeshInkMessageStore::ensure_cache(){
 bool MeshInkMessageStore::load_cache(File& source){
     if(!ensure_cache())return false;
     StoreCpuBoostScope cpu_boost;
-    const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
-    if(!source.seek(sizeof(MeshInkMessageStoreHeader)))return false;
-    const size_t got=source.read((uint8_t*)records_,bytes);
-    if(got!=bytes){
+    bool ok=source.seek(sizeof(MeshInkMessageStoreHeader));
+    if(expanded_records_){
+        const size_t bytes=MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+        ok=ok&&source.read((uint8_t*)records_,bytes)==bytes;
+    }else{
+        for(size_t i=0;ok&&i<MESHINK_MESSAGE_CAPACITY;++i){
+            MeshInkStoredMessageV3 v3{};
+            ok=source.read((uint8_t*)&v3,sizeof(v3))==sizeof(v3);
+            if(ok)records_[i]=expand_v3(v3);
+        }
+    }
+    if(!ok){
         heap_caps_free(records_);records_=nullptr;cache_in_psram_=false;
         return false;
     }
@@ -157,7 +208,7 @@ bool MeshInkMessageStore::load_cache(File& source){
 
 bool MeshInkMessageStore::create_empty(){
     StoreCpuBoostScope cpu_boost;
-    header_={STORE_MAGIC,STORE_VERSION,(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
+    header_={STORE_MAGIC,disk_version(),(uint16_t)MESHINK_MESSAGE_CAPACITY,0,0,0};
     File f=SPIFFS.open(path_,"w");
     if(!f){
         Serial.printf("[T5-STORE] ERROR cannot create new journal path=%s\n",path_);
@@ -167,18 +218,17 @@ bool MeshInkMessageStore::create_empty(){
     MeshInkStoredMessage blank{};
     bool ok=hw==sizeof(header_);
     for(size_t i=0;ok&&i<MESHINK_MESSAGE_CAPACITY;++i)
-        ok=f.write((const uint8_t*)&blank,sizeof(blank))==sizeof(blank);
+        ok=write_record_to(f,(uint16_t)i,blank,expanded_records_);
     f.close();
     if(!ok){
-        Serial.printf("[T5-STORE] ERROR creating v3 journal path=%s; removing incomplete new file\n",
-                      path_);
+        Serial.printf("[T5-STORE] ERROR creating v%u journal path=%s; removing incomplete new file\n",
+                      (unsigned)disk_version(),path_);
         SPIFFS.remove(path_); // Only reached after opening this path for a NEW journal.
         return false;
     }
     // Check the newly created file after closing it, not just the write counts.
     // Incomplete first-use creation must never look like a previous journal.
-    const size_t expected_bytes=sizeof(header_)+
-                                MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
+    const size_t expected_bytes=sizeof(header_)+MESHINK_MESSAGE_CAPACITY*disk_record_size();
     File verify=SPIFFS.open(path_,"r");
     MeshInkMessageStoreHeader written{};
     const bool verified=verify&&verify.size()==expected_bytes&&
@@ -200,10 +250,9 @@ bool MeshInkMessageStore::create_empty(){
     if(ensure_cache())
         for(size_t i=0;i<MESHINK_MESSAGE_CAPACITY;++i)
             records_[i]=MeshInkStoredMessage{};
-    Serial.printf("[T5-STORE] created flash-backed v3 journal: %u messages, %u bytes cache=%s\n",
-                  (unsigned)MESHINK_MESSAGE_CAPACITY,
-                  (unsigned)(sizeof(header_)+
-                    MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage)),
+    Serial.printf("[T5-STORE] created flash-backed v%u journal: %u messages, %u bytes cache=%s\n",
+                  (unsigned)disk_version(),(unsigned)MESHINK_MESSAGE_CAPACITY,
+                  (unsigned)(sizeof(header_)+MESHINK_MESSAGE_CAPACITY*disk_record_size()),
                   records_?(cache_in_psram_?"PSRAM":"RAM"):"NONE");
     return true;
 }
@@ -222,7 +271,7 @@ void MeshInkMessageStore::write_header(){
 bool MeshInkMessageStore::write_record(uint16_t physical,const MeshInkStoredMessage& record){
     if(!initialized_||!file_||physical>=MESHINK_MESSAGE_CAPACITY)return false;
     StoreCpuBoostScope cpu_boost;
-    const bool ok=write_record_to(file_,physical,record);
+    const bool ok=write_record_to(file_,physical,record,expanded_records_);
     if(ok){
         file_.flush();
     }
@@ -256,8 +305,8 @@ bool MeshInkMessageStore::begin(){
     // An open failure is NOT evidence the file does not exist: never
     // overwrite a journal that the filesystem reports as present.
     if(!SPIFFS.exists(path_)){
-        Serial.printf("[T5-STORE] journal absent path=%s; creating fresh v3 journal\n",
-                      path_);
+        Serial.printf("[T5-STORE] journal absent path=%s; creating fresh v%u journal\n",
+                      path_,(unsigned)disk_version());
         const bool ok=create_empty();
         initialized_=ok;
         return ok;
@@ -273,11 +322,25 @@ bool MeshInkMessageStore::begin(){
     const bool header_ok=f.read((uint8_t*)&disk,sizeof(disk))==sizeof(disk);
     const size_t file_size=f.size();f.close();
 
-    const size_t expected_v3=sizeof(MeshInkMessageStoreHeader)+
-                             MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessage);
-    if(header_ok&&disk.magic==STORE_MAGIC&&disk.version==STORE_VERSION&&
+    const size_t expected_size=sizeof(MeshInkMessageStoreHeader)+
+                               MESHINK_MESSAGE_CAPACITY*disk_record_size();
+    // The previous Meshtastic journal contains development-only test messages.
+    // Discard ONLY an identified 188-byte Meshtastic v3 file. Never wipe the
+    // independent MeshCore journal or unknown files.
+    const size_t old_size=sizeof(MeshInkMessageStoreHeader)+
+                          MESHINK_MESSAGE_CAPACITY*sizeof(MeshInkStoredMessageV3);
+    if(expanded_records_&&header_ok&&disk.magic==STORE_MAGIC&&
+       disk.version==CORE_STORE_VERSION&&disk.capacity==MESHINK_MESSAGE_CAPACITY&&
+       file_size==old_size){
+        Serial.println("[MT-JOURNAL] discarding development v3 history for new v4");
+        if(!SPIFFS.remove(path_))return false;
+        const bool ok=create_empty();
+        initialized_=ok;
+        return ok;
+    }
+    if(header_ok&&disk.magic==STORE_MAGIC&&disk.version==disk_version()&&
        disk.capacity==MESHINK_MESSAGE_CAPACITY&&disk.head<MESHINK_MESSAGE_CAPACITY&&
-       disk.count<=MESHINK_MESSAGE_CAPACITY&&file_size==expected_v3){
+       disk.count<=MESHINK_MESSAGE_CAPACITY&&file_size==expected_size){
         header_=disk;
         File cache_source=SPIFFS.open(path_,"r");
         const bool cache_loaded=cache_source&&load_cache(cache_source);
@@ -293,7 +356,7 @@ bool MeshInkMessageStore::begin(){
             const uint16_t physical=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
             MeshInkStoredMessage item{};
             if(records_)item=records_[physical];
-            else if(!read_record(file_,physical,item)){++recovery_errors;continue;}
+            else if(!read_record(file_,physical,item,expanded_records_)){++recovery_errors;continue;}
             if(item.kind!=(uint8_t)MeshInkMessageKind::Direct||
                !incomplete_direct_state(item.state))continue;
             item.state=(uint8_t)UiMessageState::Failed;
@@ -301,8 +364,8 @@ bool MeshInkMessageStore::begin(){
             else ++recovery_errors;
         }
 
-        Serial.printf("[T5-STORE] loaded flash-backed v3 journal %u/%u messages; record-cache=%s header=%uB recovered-failed=%u errors=%u\n",
-                      (unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
+        Serial.printf("[T5-STORE] loaded flash-backed v%u journal %u/%u messages; record-cache=%s header=%uB recovered-failed=%u errors=%u\n",
+                      (unsigned)disk_version(),(unsigned)header_.count,(unsigned)MESHINK_MESSAGE_CAPACITY,
                       cache_loaded?(cache_in_psram_?"PSRAM":"RAM"):"NONE",
                       (unsigned)sizeof(header_),(unsigned)recovered_failed,
                       (unsigned)recovery_errors);
@@ -310,7 +373,7 @@ bool MeshInkMessageStore::begin(){
     }
 
     Serial.printf("[T5-STORE] existing journal invalid path=%s size=%u expected=%u header=%u magic=%08lx version=%u capacity=%u; preserving before recreate\n",
-                  path_,(unsigned)file_size,(unsigned)expected_v3,header_ok?1U:0U,
+                  path_,(unsigned)file_size,(unsigned)expected_size,header_ok?1U:0U,
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
     // Never delete a previous recovery copy; it may be the user's only
     // copy of older messages. Use numbered short paths for subsequent faults.
@@ -335,8 +398,8 @@ bool MeshInkMessageStore::begin(){
                       archived);
         return false;
     }
-    Serial.printf("[T5-STORE] unsupported journal preserved at %s; initializing fresh v3 journal\n",
-                  archived);
+    Serial.printf("[T5-STORE] unsupported journal preserved at %s; initializing fresh v%u journal\n",
+                  archived,(unsigned)disk_version());
     const bool ok=create_empty();
     if(!ok){
         SPIFFS.remove(path_); // only an incomplete newly created file
@@ -358,7 +421,7 @@ bool MeshInkMessageStore::read(size_t logical,MeshInkStoredMessage& out) const{
     }
     if(!file_)return false;
     StoreCpuBoostScope cpu_boost;
-    const bool ok=read_record(file_,physical,out);
+    const bool ok=read_record(file_,physical,out,expanded_records_);
     return ok;
 }
 
@@ -376,7 +439,7 @@ bool MeshInkMessageStore::find_physical(uint32_t sequence,uint16_t& physical) co
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(!read_record(file_,p,item,expanded_records_))break;
         if(item.sequence==sequence){physical=p;return true;}
     }
     return false;
@@ -450,7 +513,7 @@ bool MeshInkMessageStore::erase_direct_peer(uint32_t node_id,uint8_t protocol_id
     for(size_t n=0;n<header_.count;++n){
         const uint16_t p=(header_.head+n)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
-        else if(!read_record(file_,p,item))return false;
+        else if(!read_record(file_,p,item,expanded_records_))return false;
         if(!item.sequence||item.kind!=(uint8_t)MeshInkMessageKind::Direct||
            meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
            memcmp(item.key,key,sizeof(key))!=0)continue;
@@ -471,7 +534,7 @@ bool MeshInkMessageStore::update_state(uint32_t sequence,UiMessageState state){
     }
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return false;
+    else if(!read_record(file_,p,item,expanded_records_))return false;
     if(item.state==(uint8_t)state)return true;
     item.state=(uint8_t)state;
     return write_record(p,item);
@@ -489,7 +552,7 @@ bool MeshInkMessageStore::mark_read_through(
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+(uint16_t)n-1)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
-        else if(!read_record(file_,p,item))return false;
+        else if(!read_record(file_,p,item,expanded_records_))return false;
         if(item.kind!=(uint8_t)kind||
            meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
            memcmp(item.key,key,key_len))continue;
@@ -517,7 +580,7 @@ bool MeshInkMessageStore::mark_matching_received_read(
     for(size_t logical=0;logical<header_.count;++logical){
         const uint16_t p=(header_.head+(uint16_t)logical)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
-        else if(!read_record(file_,p,item))return false;
+        else if(!read_record(file_,p,item,expanded_records_))return false;
         if(item.sequence==0||
            meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
            item.kind!=(uint8_t)kind||
@@ -536,7 +599,7 @@ void MeshInkMessageStore::update_ack(uint32_t sequence,uint32_t ack){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
+    else if(!read_record(file_,p,item,expanded_records_))return;
     if(item.ack==ack)return;
     item.ack=ack;write_record(p,item);
 }
@@ -545,7 +608,7 @@ void MeshInkMessageStore::update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
+    else if(!read_record(file_,p,item,expanded_records_))return;
     if(item.snr_q4==snr_q4&&item.path_len==path_len&&(item.flags&MESHINK_MESSAGE_HAS_RX))return;
     item.snr_q4=snr_q4;item.path_len=path_len;item.flags|=MESHINK_MESSAGE_HAS_RX;
     write_record(p,item);
@@ -555,7 +618,7 @@ void MeshInkMessageStore::update_route(uint32_t sequence,bool flood){
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
+    else if(!read_record(file_,p,item,expanded_records_))return;
     const uint8_t before=item.flags;
     item.flags|=MESHINK_MESSAGE_ROUTE_KNOWN;
     if(flood)item.flags|=MESHINK_MESSAGE_ROUTE_FLOOD;
@@ -568,7 +631,7 @@ void MeshInkMessageStore::update_repeat(uint32_t sequence,uint8_t repeats,int8_t
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
+    else if(!read_record(file_,p,item,expanded_records_))return;
     if(item.repeats==repeats&&item.repeat_snr_q4==snr_q4)return;
     item.repeats=repeats;item.repeat_snr_q4=snr_q4;write_record(p,item);
 }
@@ -578,7 +641,7 @@ void MeshInkMessageStore::update_outgoing(
     uint16_t p;if(!find_physical(sequence,p)||!file_)return;
     MeshInkStoredMessage item{};
     if(records_)item=records_[p];
-    else if(!read_record(file_,p,item))return;
+    else if(!read_record(file_,p,item,expanded_records_))return;
     const MeshInkStoredMessage before=item;
     item.state=(uint8_t)state;
     item.ack=ack;
@@ -616,7 +679,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
     if(verify){
         header_ok=verify.read((uint8_t*)&disk,sizeof(disk))==sizeof(disk) &&
                   disk.magic==STORE_MAGIC &&
-                  disk.version==STORE_VERSION &&
+                  disk.version==disk_version() &&
                   disk.capacity==MESHINK_MESSAGE_CAPACITY &&
                   disk.head<MESHINK_MESSAGE_CAPACITY &&
                   disk.count<=MESHINK_MESSAGE_CAPACITY;
@@ -624,7 +687,7 @@ bool MeshInkMessageStore::sync_and_verify_for_deep_sleep(
             const uint16_t physical=
                 (uint16_t)((disk.head+disk.count-1)%MESHINK_MESSAGE_CAPACITY);
             MeshInkStoredMessage tail{};
-            tail_ok=read_record(verify,physical,tail);
+            tail_ok=read_record(verify,physical,tail,expanded_records_);
             if(tail_ok)tail_sequence=tail.sequence;
         }
         verify.close();
@@ -669,7 +732,7 @@ bool MeshInkMessageStore::mark_delivered_by_ack(uint32_t ack,uint8_t protocol_id
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
         if(records_)item=records_[p];
-        else if(!read_record(file_,p,item))break;
+        else if(!read_record(file_,p,item,expanded_records_))break;
         if(meshink_message_protocol(item)==(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)&&
            item.ack==ack&&item.state!=(uint8_t)UiMessageState::Received){
             if(item.state==(uint8_t)UiMessageState::Delivered)delivered=true;
@@ -703,7 +766,7 @@ uint32_t MeshInkMessageStore::find_matching_outgoing(
     MeshInkStoredMessage item{};
     for(size_t n=header_.count;n>0;--n){
         const uint16_t p=(header_.head+n-1)%MESHINK_MESSAGE_CAPACITY;
-        if(!read_record(file_,p,item))break;
+        if(!read_record(file_,p,item,expanded_records_))break;
         if(meshink_message_protocol(item)!=(protocol_id&MESHINK_MESSAGE_PROTOCOL_MASK)||
            item.kind!=(uint8_t)kind||item.state==(uint8_t)UiMessageState::Received||
            item.timestamp!=timestamp||memcmp(item.key,key,min(key_len,sizeof(item.key)))||
