@@ -3028,7 +3028,8 @@ static void draw_backup_options(){
     ui_centred(label,ui_y(122),3,0,true);
     if(backup_restore_mode)
         ui_text_fit(backup_filename,ui_x(24),ui_y(182),ui_w(492),2,0,false);
-    else ui_centred("SELECT BACKUP CATEGORIES",ui_y(182),2,0,false);
+    else ui_centred(mesh_protocol_descriptor().id==2?
+        "FULL MESHTASTIC BACKUP":"SELECT BACKUP CATEGORIES",ui_y(182),2,0,false);
     constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","PROTOCOL SETTINGS","DEVICE SETTINGS"};
     constexpr uint8_t flags[]={1,2,4,8};
     for(int i=0;i<4;++i){
@@ -4775,7 +4776,8 @@ static bool handle_backup_tap(int16_t x,int16_t y){
         }
         constexpr uint8_t flags[]={1,2,4,8};
         for(int i=0;i<4;++i)if(hit(x,y,ui_rect(24,231+i*103,492,91))){
-            if(backup_available&flags[i])backup_flags^=flags[i];
+            if(mesh_protocol_descriptor().id==1&&(backup_available&flags[i]))
+                backup_flags^=flags[i];
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
         }
         if(hit(x,y,ui_rect(24,811,232,80))){
@@ -4785,12 +4787,13 @@ static bool handle_backup_tap(int16_t x,int16_t y){
             if(!backup_flags){show_toast("SELECT A CATEGORY");return true;}
             if(backup_restore_mode){open_screen(Screen::BackupConfirm);return true;}
             char saved[32]{};
-            if(meshink_backup_create(mesh_protocol_descriptor().id,backup_flags,
-                                     saved,sizeof(saved))){
-                char result[84]{};
-                snprintf(result,sizeof(result),"BACKUP VERIFIED: %s",saved);
-                backup_show_result(result);
-            }else backup_show_result(meshink_backup_error());
+            const uint8_t protocol=mesh_protocol_descriptor().id;
+            if(!meshink_backup_schedule(protocol,backup_flags,false))
+                backup_show_result(meshink_backup_error());
+            else if(!mesh_protocol_restart_into(protocol)){
+                meshink_backup_cancel_request();
+                backup_show_result("BACKUP CANCELLED: UNABLE TO SHUT DOWN PROTOCOL");
+            }
             return true;
         }
         return true;
@@ -4800,12 +4803,13 @@ static bool handle_backup_tap(int16_t x,int16_t y){
             open_screen(Screen::BackupOptions);return true;
         }
         if(hit(x,y,ui_rect(284,735,232,85))){
-            if(meshink_backup_restore(mesh_protocol_descriptor().id,
-                                       backup_filename,backup_flags))
-                mesh_protocol_restart_after_restore();
-            else if(meshink_backup_restore_requires_restart())
-                mesh_protocol_restart_after_restore();
-            else backup_show_result(meshink_backup_error());
+            const uint8_t protocol=mesh_protocol_descriptor().id;
+            if(!meshink_backup_schedule(protocol,backup_flags,true,backup_filename))
+                backup_show_result(meshink_backup_error());
+            else if(!mesh_protocol_restart_into(protocol)){
+                meshink_backup_cancel_request();
+                backup_show_result("RESTORE CANCELLED: UNABLE TO SHUT DOWN PROTOCOL");
+            }
         }
         return true;
     }
@@ -6172,7 +6176,16 @@ void ui_show_storage_initializing() {
 
 void ui_finish_startup() {
     if(hardware_failure)return;
-    if(!setup_complete&&backup_restore_pending){
+    char restored_operation[84]{};
+    const bool has_backup_result=meshink_backup_take_boot_result(
+        restored_operation,sizeof(restored_operation));
+    if(has_backup_result){
+        snprintf(backup_result_message,sizeof(backup_result_message),"%s",restored_operation);
+        backup_return_screen=setup_complete?Screen::More:Screen::Welcome;
+        backup_from_setup=!setup_complete;
+        screen=Screen::BackupResult;
+    }
+    if(!has_backup_result&&!setup_complete&&backup_restore_pending){
         Preferences p;
         if(p.begin("t5-ui",false)){p.putBool("restore_pending",false);p.end();}
         backup_restore_pending=false;

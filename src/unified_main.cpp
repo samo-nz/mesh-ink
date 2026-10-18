@@ -2,6 +2,7 @@
 #include <string.h>
 #include "ui_onboarding.h"
 #include "protocol/mesh_protocol.h"
+#include "backup_restore.h"
 #include "map_tiles.h"
 #include "hardware/wireless.h"
 #include "hardware/buttons.h"
@@ -289,6 +290,12 @@ void setup() {
     if(boot_check==MeshInkPowerSleepCheck::Critical)
         ui_minimal_low_battery_shutdown(boot_power,"cold-boot");
 
+    // One-shot maintenance runs BEFORE any core, journal writer or shared UI
+    // state initializes. A failed rollback/mount never boots a live radio.
+    if(!meshink_backup_run_pending_on_boot()){
+        Serial.println("[T5-BOOT] FATAL: backup storage recovery unsafe; protocol startup blocked");
+        return;
+    }
     companion_mode = mesh_protocol_consume_companion_request();
     Serial.printf("[T5-BOOT] MeshInk %s board=%s protocol=%s mode=%s\n",
                   T5_FIRMWARE_VERSION,meshink_board_name(),mesh_protocol_name(),
