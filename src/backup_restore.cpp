@@ -731,8 +731,10 @@ bool meshink_backup_recover_pending(){
            !memchr(stage.previous,0,sizeof(stage.previous))||
            !(stage.category==1||stage.category==2||stage.category==4||stage.category==8)||
            (stage.path[0]!='@'&&stage.path[0]!='/')||
-           strncmp(stage.staged,"/rst",4)||
-           strncmp(stage.previous,"/rst",4))
+           (strncmp(stage.staged,"/rst",4)&&
+            strncmp(stage.staged,"/r2s",4))||
+           (strncmp(stage.previous,"/rst",4)&&
+            strncmp(stage.previous,"/r2s",4)))
             return fail("Unsafe restore recovery entry");
     }
     if(!rollback_transaction(count))
@@ -1159,12 +1161,22 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         return fail("Not enough free flash to stage restore without data loss");
     // A former restore may have left the sole salvage copy as /rstXX.old.
     // Do not silently overwrite it; the user must preserve it first.
+    unsigned legacy_salvage=0;
     for(unsigned i=0;i<MAX_ENTRIES;++i){
-        char old_path[20]{};
-        snprintf(old_path,sizeof(old_path),"/rst%02u.old",i);
-        if(SPIFFS.exists(old_path))
+        char legacy[20]{},old_path[20]{},staged_path[20]{};
+        snprintf(legacy,sizeof(legacy),"/rst%02u.old",i);
+        if(SPIFFS.exists(legacy))++legacy_salvage;
+        // Test.61 left legacy NVS rollback files after successful rollback.
+        // Leave those copies completely untouched. All future transactions
+        // use isolated /r2sXX paths; never overwrite an existing /r2s copy.
+        snprintf(old_path,sizeof(old_path),"/r2s%02u.old",i);
+        snprintf(staged_path,sizeof(staged_path),"/r2s%02u.tmp",i);
+        if(SPIFFS.exists(old_path)||SPIFFS.exists(staged_path))
             return fail("Existing restore salvage files; refusing overwrite");
     }
+    if(legacy_salvage)
+        Serial.printf("[T5-RESTORE] preserving %u legacy salvage snapshots; using isolated /r2s stages\n",
+                      legacy_salvage);
     char backup_path[80]{};snprintf(backup_path,sizeof(backup_path),"/%s",filename);
     File input=meshink_storage_open(backup_path);
     if(!input)return fail("Cannot reopen verified backup");
@@ -1184,8 +1196,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         Stage& stage=stages[count];stage=Stage{};
         strncpy(stage.path,part.path,sizeof(stage.path)-1);
         stage.category=part.category;
-        snprintf(stage.staged,sizeof(stage.staged),"/rst%02u.tmp",(unsigned)count);
-        snprintf(stage.previous,sizeof(stage.previous),"/rst%02u.old",(unsigned)count);
+        snprintf(stage.staged,sizeof(stage.staged),"/r2s%02u.tmp",(unsigned)count);
+        snprintf(stage.previous,sizeof(stage.previous),"/r2s%02u.old",(unsigned)count);
         SPIFFS.remove(stage.staged);
         File dest=SPIFFS.open(stage.staged,"w");
         if(!dest){ok=false;break;}
@@ -1242,8 +1254,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         Stage& entry=stages[count];
         entry=Stage{};
         snprintf(entry.path,sizeof(entry.path),"%s",path);
-        snprintf(entry.staged,sizeof(entry.staged),"/rst%02u.tmp",(unsigned)count);
-        snprintf(entry.previous,sizeof(entry.previous),"/rst%02u.old",(unsigned)count);
+        snprintf(entry.staged,sizeof(entry.staged),"/r2s%02u.tmp",(unsigned)count);
+        snprintf(entry.previous,sizeof(entry.previous),"/r2s%02u.old",(unsigned)count);
         entry.category=category;
         entry.deleting=true;
         ++count;
@@ -1294,8 +1306,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
                         Stage& stage=stages[count];
                         stage=Stage{};
                         snprintf(stage.path,sizeof(stage.path),"%s",name.c_str());
-                        snprintf(stage.staged,sizeof(stage.staged),"/rst%02u.tmp",(unsigned)count);
-                        snprintf(stage.previous,sizeof(stage.previous),"/rst%02u.old",(unsigned)count);
+                        snprintf(stage.staged,sizeof(stage.staged),"/r2s%02u.tmp",(unsigned)count);
+                        snprintf(stage.previous,sizeof(stage.previous),"/r2s%02u.old",(unsigned)count);
                         stage.category=MESHINK_BACKUP_NODES;stage.deleting=true;
                         ++count;
                     }
@@ -1320,8 +1332,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         if(count>=MAX_ENTRIES)return fail("Not enough recovery slots for device settings");
         Stage& stage=stages[count];stage=Stage{};
         snprintf(stage.path,sizeof(stage.path),"%s",DEVICE_NVS);
-        snprintf(stage.staged,sizeof(stage.staged),"/rst%02u.tmp",(unsigned)count);
-        snprintf(stage.previous,sizeof(stage.previous),"/rst%02u.old",(unsigned)count);
+        snprintf(stage.staged,sizeof(stage.staged),"/r2s%02u.tmp",(unsigned)count);
+        snprintf(stage.previous,sizeof(stage.previous),"/r2s%02u.old",(unsigned)count);
         stage.category=MESHINK_BACKUP_DEVICE_SETTINGS;
         ++count;
     }
