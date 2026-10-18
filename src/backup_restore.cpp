@@ -573,7 +573,17 @@ static bool snapshot_previous_nvs(Stage& stage){
     if(!backup)return false;
     const bool ok=backup.write(data,size)==size;
     backup.flush();backup.close();
-    return ok;
+    if(!ok)return false;
+    File verify=SPIFFS.open(stage.previous,"r");
+    bool matched=verify&&verify.size()==size;
+    size_t checked=0;
+    while(matched&&checked<size){
+        const size_t n=min(sizeof(io),size-checked);
+        matched=verify.read(io,n)==n&&memcmp(io,data+checked,n)==0;
+        checked+=n;
+    }
+    if(verify)verify.close();
+    return matched;
 }
 static bool restore_mt_location(const char* path){
     File f=SPIFFS.open(path,"r");
@@ -645,6 +655,19 @@ static bool save_transaction(size_t count){
         f.write((const uint8_t*)stages,count*sizeof(Stage))==count*sizeof(Stage);
     f.flush();f.close();
     if(!ok){SPIFFS.remove(RESTORE_TXN_TEMP);return false;}
+    // Read back the exact undo transaction before publishing its filename.
+    // An invalid record must never be installed as the boot recovery authority.
+    File verify=SPIFFS.open(RESTORE_TXN_TEMP,"r");
+    RestoreHeader check{};
+    bool valid=verify&&verify.size()==sizeof(header)+count*sizeof(Stage)&&
+        verify.read((uint8_t*)&check,sizeof(check))==sizeof(check)&&
+        memcmp(&check,&header,sizeof(header))==0;
+    Stage item{};
+    for(size_t i=0;valid&&i<count;++i)
+        valid=verify.read((uint8_t*)&item,sizeof(item))==sizeof(item)&&
+              memcmp(&item,&stages[i],sizeof(item))==0;
+    if(verify)verify.close();
+    if(!valid){SPIFFS.remove(RESTORE_TXN_TEMP);return false;}
     if(!SPIFFS.rename(RESTORE_TXN_TEMP,RESTORE_TXN))return false;
     return true;
 }
@@ -1068,6 +1091,26 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     Header hdr{};
     if(!inspect(filename,protocol,hdr,parts.entries,true))return false;
     if((categories&hdr.categories)!=categories)return fail("Category not present in backup");
+    // Confirm the complete staging set fits WITHOUT deleting or renaming
+    // existing messages, contacts, settings or native identity files.
+    size_t required_bytes=32768; // transaction metadata + SPIFFS safety margin
+    for(size_t i=0;i<hdr.count;++i){
+        const Part& part=parts.entries[i];
+        if(!(part.category&categories)||
+           (protocol==2&&!strcmp(part.path,MT_CORE_REVISION)))continue;
+        required_bytes+=(size_t)part.size+256;
+    }
+    const size_t total=SPIFFS.totalBytes(),used=SPIFFS.usedBytes();
+    if(used>total||total-used<required_bytes)
+        return fail("Not enough free flash to stage restore without data loss");
+    // A former restore may have left the sole salvage copy as /rstXX.old.
+    // Do not silently overwrite it; the user must preserve it first.
+    for(unsigned i=0;i<MAX_ENTRIES;++i){
+        char old_path[20]{};
+        snprintf(old_path,sizeof(old_path),"/rst%02u.old",i);
+        if(SPIFFS.exists(old_path))
+            return fail("Existing restore salvage files; refusing overwrite");
+    }
     char backup_path[36]="/";strncat(backup_path,filename,sizeof(backup_path)-2);
     File input=meshink_storage_open(backup_path);
     if(!input)return fail("Cannot reopen verified backup");
