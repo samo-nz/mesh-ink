@@ -1769,13 +1769,13 @@ assert '"CANCEL"' in source[source.index("static void draw_channel_delete()"):so
 # first-run restore without a verified SD manifest.
 assert '"backup_restore.cpp"' in component_cmake_source, "backup engine is linked in the hybrid firmware"
 assert '+<backup_restore.cpp>' in platformio_source, "backup engine is compiled in the Arduino firmware"
-assert 'meshink_backup_list(' in source and 'meshink_backup_restore(' in source, "setup and settings both expose SD restore"
+assert 'meshink_backup_list(' in source and 'meshink_backup_schedule(' in source, "setup and settings expose one-shot SD restore"
 assert 'static void draw_backup_options()' in source and 'static void draw_backup_files()' in source, "shared backup list and category UI present"
-assert 'if(!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
+assert 'if(!has_backup_result&&!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
 assert 'if(!meshink_storage_rename(temp,path))' in backup_source, "SD backup is committed after temporary write"
 assert 'if(!inspect(filename,protocol,hdr,parts.entries,true))' in backup_source, "restore validates every selected source before replacement"
 assert 'rollback_transaction(count)' in backup_source and 'meshink_backup_recover_pending()' in backup_source, "restore failure and interrupted boot roll back selected protocol files and NVS"
-assert 'mesh_protocol_flush_now();' in backup_source, "MeshCore contacts are flushed before backup"
+assert 'if(!offline_operation)return fail("Backup must run before protocol startup");' in backup_source, "backup never reads a live protocol's writable files"
 
 assert 'static bool sd_writable()' in backup_source and 'memcmp(sample,actual,sizeof(sample))==0' in backup_source, "backup tests SD write/read readiness without overwriting user files"
 assert 'if(!sd_writable())return false;' in backup_source, "backup refuses unverified or write-protected SD"
