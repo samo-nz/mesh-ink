@@ -1,6 +1,8 @@
 #include "backup_restore.h"
 #include "backup_format.h"
 #include "backup_integrity.h"
+#include "backup_filename.h"
+#include <time.h>
 #include "core_build_versions.h"
 #include "device_settings_snapshot.h"
 #include "message_store.h"
@@ -413,16 +415,12 @@ static bool source_write(File& output,const Plan& p,uint8_t protocol){
     f.close();return ok&&written==p.part.size;
 }
 static bool allowed_filename(const char* file,uint8_t protocol){
-    if(!file||strlen(file)!=12)return false;
-    const char* prefix=protocol==1?"MCBK":"MTBK";
-    if(strncmp(file,prefix,4))return false;
-    for(int i=4;i<8;++i)if(file[i]<'0'||file[i]>'9')return false;
-    return !strcmp(file+8,".BAK");
+    return meshink_backup_filename::valid(protocol,file);
 }
 static bool inspect(const char* filename,uint8_t protocol,
                     Header& header,Part* entries,bool check_data){
     if(!allowed_filename(filename,protocol))return fail("Invalid backup filename");
-    char path[35]="/";strncat(path,filename,sizeof(path)-2);
+    char path[80]{};snprintf(path,sizeof(path),"/%s",filename);
     File input=meshink_storage_open(path);
     if(!input)return fail("Backup file unavailable");
     if(input.read((uint8_t*)&header,sizeof(header))!=sizeof(header)||
@@ -741,9 +739,21 @@ bool meshink_backup_schedule(uint8_t protocol,uint8_t categories,
         return fail("Invalid restore filename");
     Preferences p;
     if(!p.begin(BOOT_BACKUP_NVS,false))return fail("Cannot create backup boot request");
+    // Capture trusted local wall-clock time BEFORE the reboot, as the offline
+    // backup runs prior to RTC/UI initialization. Respect the active TZ rule.
+    char requested[64]{};
+    if(!restore&&mesh_protocol_time_valid()){
+        const time_t epoch=(time_t)mesh_protocol_current_time();
+        struct tm local{};
+        if(localtime_r(&epoch,&local))
+            meshink_backup_filename::make_timestamped(protocol,
+                local.tm_year+1900,local.tm_mon+1,local.tm_mday,
+                local.tm_hour,local.tm_min,requested,sizeof(requested));
+    }
+    const char* selected=restore?filename:requested;
     const bool ok=p.putUChar("protocol",protocol)==1&&
                   p.putUChar("categories",categories)==1&&
-                  p.putString("filename",restore?filename:"")==(restore?strlen(filename):0)&&
+                  p.putString("filename",selected)==strlen(selected)&&
                   p.putUChar("operation",restore?2:1)==1&&
                   p.putUChar("phase",BACKUP_QUEUED)==1;
     if(ok){p.remove("done");p.remove("result");}
@@ -807,9 +817,9 @@ bool meshink_backup_run_pending_on_boot(){
        (operation==1||operation==2);
     if(!valid)return write_boot_result("INVALID BACKUP / RESTORE REQUEST");
     offline_operation=true;
-    char output[32]{};
+    char output[64]{};
     const bool ok=operation==1
-      ?meshink_backup_create(protocol,categories,output,sizeof(output))
+      ?meshink_backup_create(protocol,categories,output,sizeof(output),filename.c_str())
       :meshink_backup_restore(protocol,filename.c_str(),categories);
     offline_operation=false;
     // Never enter a networking core while a restore transaction is unresolved.
@@ -886,7 +896,7 @@ MeshInkBackupRevision meshink_backup_revision(uint8_t protocol,const char* filen
     for(size_t i=0;i<header.count;++i)
         if(!strcmp(parts.entries[i].path,MT_CORE_REVISION))found=true;
     if(!found)return MeshInkBackupRevision::Unknown;
-    char path[35]="/";strncat(path,filename,sizeof(path)-2);
+    char path[80]{};snprintf(path,sizeof(path),"/%s",filename);
     File input=meshink_storage_open(path);
     if(!input||!input.seek(sizeof(Header))){
         if(input)input.close();
@@ -925,7 +935,8 @@ MeshInkBackupRevision meshink_backup_revision(uint8_t protocol,const char* filen
     input.close();
     return MeshInkBackupRevision::Unknown;
 }
-bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,size_t path_len){
+bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,size_t path_len,
+                           const char* requested_name){
     last_error[0]=0;
     if(saved_path&&path_len)saved_path[0]=0;
     if(!offline_operation)return fail("Backup must run before protocol startup");
@@ -1040,16 +1051,36 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     if(!parts)return fail("No selected data is available");
     for(size_t i=0;i<parts;++i)if(!source_crc(plans[i],protocol))
         return fail("Source data changed during backup");
-    char name[20]{},temp[24]{},path[24]{};
+    char name[64]{},temp[24]{},path[80]{};
     bool free_name=false;
-    for(unsigned i=1;i<=9999;++i){
-        snprintf(name,sizeof(name),"%s%04u.BAK",protocol==1?"MCBK":"MTBK",i);
-        snprintf(path,sizeof(path),"/%s",name);
-        if(!meshink_storage_exists(path)){free_name=true;break;}
+    if(requested_name&&requested_name[0]){
+        if(!allowed_filename(requested_name,protocol))
+            return fail("Unsafe requested backup filename");
+        // Never overwrite a prior backup made during the same local minute.
+        for(unsigned i=0;i<=99;++i){
+            if(!meshink_backup_filename::with_suffix(
+                   protocol,requested_name,i,name,sizeof(name)))
+                return fail("Cannot generate unique backup filename");
+            snprintf(path,sizeof(path),"/%s",name);
+            if(!meshink_storage_exists(path)){free_name=true;break;}
+        }
+    }else{
+        // No trusted time: retain existing 8.3 numbering and restore support.
+        for(unsigned i=1;i<=9999;++i){
+            snprintf(name,sizeof(name),"%s%04u.BAK",
+                     protocol==1?"MCBK":"MTBK",i);
+            snprintf(path,sizeof(path),"/%s",name);
+            if(!meshink_storage_exists(path)){free_name=true;break;}
+        }
     }
-    if(!free_name)return fail("Backup filenames exhausted");
-    snprintf(temp,sizeof(temp),"/%.8s.TMP",name);
-    meshink_storage_remove(temp);
+    if(!free_name)return fail("Backup filenames exhausted; no file overwritten");
+    // Do not delete an unrelated temporary file after an interrupted write.
+    bool free_temp=false;
+    for(unsigned i=0;i<=999;++i){
+        snprintf(temp,sizeof(temp),"/MIBT%03u.TMP",i);
+        if(!meshink_storage_exists(temp)){free_temp=true;break;}
+    }
+    if(!free_temp)return fail("Too many pending SD temporary files");
     File dest=meshink_storage_open_write(temp);
     if(!dest)return fail("Cannot create backup on SD");
     Header hdr{MAGIC,protocol==1?FORMAT_VERSION:MT_FORMAT_VERSION,
@@ -1111,7 +1142,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         if(SPIFFS.exists(old_path))
             return fail("Existing restore salvage files; refusing overwrite");
     }
-    char backup_path[36]="/";strncat(backup_path,filename,sizeof(backup_path)-2);
+    char backup_path[80]{};snprintf(backup_path,sizeof(backup_path),"/%s",filename);
     File input=meshink_storage_open(backup_path);
     if(!input)return fail("Cannot reopen verified backup");
     if(!input.seek(sizeof(Header))){input.close();return fail("Cannot seek backup");}
