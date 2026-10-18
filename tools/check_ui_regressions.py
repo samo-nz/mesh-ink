@@ -1923,3 +1923,9 @@ assert "Serial.setTxBufferSize(4096)" in unified_source, "pre-USB-begin TX buffe
 assert unified_source.index("Serial.setTxBufferSize(4096)") < unified_source.index("Serial.begin(115200)"), "USB TX ring allocated before CDC starts"
 assert "char body[384]{};" in mt_prepare, "native logger preserves long RF packet messages"
 assert "constexpr size_t CAPACITY=512;" in (root/"src"/"protocol"/"meshtastic_atomic_log.h").read_text(), "atomic line buffer carries long logs"
+
+# Test.63 onboarding: do not render or activate restore/next until a
+# protocol is explicitly chosen after full wipe.
+assert 'if(setup_protocol_choice){\n        ui_action_button("RESTORE FROM SD"' in source
+assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62)))' in source
+assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74)))' in source

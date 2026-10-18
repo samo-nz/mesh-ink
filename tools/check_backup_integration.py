@@ -66,3 +66,20 @@ assert 'mesh_protocol_restart_into(protocol)' in ui
 assert "meshink_backup_take_boot_result(" in ui
 assert 'meshink_backup_cancel_request();' in ui
 print("PASS: offline backup bootstrap, native Meshtastic manifest, full-only policy, no Leaf")
+
+# Test.63: a full-wipe restore failure must identify its failed stage, and
+# successful rollback must not strand virtual NVS /rstNN.old snapshots.
+# Existing *orphan* salvage files from test.61 must remain untouched.
+assert 'failed_phase="install-file"' in code
+assert 'failed_phase="preserve-original"' in code
+assert 'phase="apply-credentials"' in code
+assert 'phase="apply-shared-name"' in code
+assert 'phase="apply-device-settings"' in code
+assert 'meshink_device_settings::valid(snapshot)' in code
+assert 'if(stages[i].path[0]==\'@\'&&SPIFFS.exists(stages[i].previous))' in code
+assert 'Existing restore salvage files; refusing overwrite' in code
+assert 'SPIFFS.remove(RESTORE_TXN)' in code
+assert 'Restore %s failed; rolled back' in code
+assert 'if(setup_protocol_choice){' in ui
+assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62)))' in ui
+assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74)))' in ui

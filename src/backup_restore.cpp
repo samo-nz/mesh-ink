@@ -687,8 +687,19 @@ static bool rollback_transaction(size_t count){
     for(size_t i=count;i>0;--i)
         if(stages[i-1].path[0]=='@'&&!restore_previous_nvs(stages[i-1]))ok=false;
     if(ok){
-        for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
-        SPIFFS.remove(RESTORE_TXN);
+        // The virtual NVS stages carry independent /rstNN.old rollback copies.
+        // Previously these were NEVER removed after a successful rollback.
+        // That leaked salvage files and blocked every subsequent restore.
+        // Remove the committed transaction marker first; if interrupted during
+        // cleanup, the surviving snapshots must be treated as orphans, not
+        // as a reason to overwrite them silently on the next boot.
+        if(!SPIFFS.remove(RESTORE_TXN))return false;
+        for(size_t i=0;i<count;++i){
+            if(SPIFFS.exists(stages[i].staged))
+                SPIFFS.remove(stages[i].staged);
+            if(stages[i].path[0]=='@'&&SPIFFS.exists(stages[i].previous))
+                SPIFFS.remove(stages[i].previous);
+        }
     }
     return ok;
 }
@@ -1132,6 +1143,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     Header hdr{};
     if(!inspect(filename,protocol,hdr,parts.entries,true))return false;
     if((categories&hdr.categories)!=categories)return fail("Category not present in backup");
+    Serial.printf("[T5-RESTORE] verified archive: protocol=%u entries=%u categories=%u\n",
+                  (unsigned)protocol,(unsigned)hdr.count,(unsigned)categories);
     // Confirm the complete staging set fits WITHOUT deleting or renaming
     // existing messages, contacts, settings or native identity files.
     size_t required_bytes=32768; // transaction metadata + SPIFFS safety margin
@@ -1203,6 +1216,21 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
        (protocol==1?!(has_core_identity&&has_core_prefs):!has_mt_identity)){
         for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
         return fail("Backup missing required identity settings");
+    }
+    // Validate device settings before the first destructive file rename.
+    // Archive CRC ensures integrity, not compatibility with this schema.
+    for(size_t i=0;i<count;++i){
+        if(strcmp(stages[i].path,DEVICE_NVS))continue;
+        File f=SPIFFS.open(stages[i].staged,"r");
+        meshink_device_settings::Snapshot snapshot{};
+        const bool valid=f&&f.size()==sizeof(snapshot)&&
+            f.read((uint8_t*)&snapshot,sizeof(snapshot))==sizeof(snapshot)&&
+            meshink_device_settings::valid(snapshot);
+        if(f)f.close();
+        if(!valid){
+            for(size_t j=0;j<count;++j)SPIFFS.remove(stages[j].staged);
+            return fail("Incompatible device settings; original data untouched");
+        }
     }
     // Restore is replacement, not merge: remove any old recovery journal
     // that would override the restored primary, plus Meshtastic snapshots and
@@ -1321,22 +1349,34 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     // storage. Never use the normal restart path's post-restore flush.
     // Offline restore: the protocol was never started, so no handles are open.
     restore_quiesced=true;
+    const char* failed_phase=nullptr;
+    size_t failed_index=0;
+    Serial.printf("[T5-RESTORE] installing %u stages\n",(unsigned)count);
     for(size_t i=0;i<count;++i){
         Stage& stage=stages[i];
         if(stage.path[0]=='@')continue;
         if(stage.old_exists){
-            if(!SPIFFS.rename(stage.path,stage.previous)){ok=false;break;}
+            if(!SPIFFS.rename(stage.path,stage.previous)){
+                ok=false;failed_index=i;failed_phase="preserve-original";break;
+            }
         }
-        if(!stage.deleting&&!SPIFFS.rename(stage.staged,stage.path)){ok=false;break;}
+        if(!stage.deleting&&!SPIFFS.rename(stage.staged,stage.path)){
+            ok=false;failed_index=i;failed_phase="install-file";break;
+        }
     }
     if(ok){
         for(size_t i=0;i<count;++i){
             Stage& stage=stages[i];
             if(stage.deleting)continue;
-            if(!strcmp(stage.path,CORE_NVS))ok=update_core_auth_from_stage(stage);
-            else if(!strcmp(stage.path,MT_LOCATION_NVS))ok=update_mt_location_from_stage(stage);
-            else if(!strcmp(stage.path,SHARED_NAME))ok=update_shared_name_from_stage(stage,protocol);
-            else if(!strcmp(stage.path,DEVICE_NVS)){
+            const char* phase=nullptr;
+            if(!strcmp(stage.path,CORE_NVS)){
+                phase="apply-credentials";ok=update_core_auth_from_stage(stage);
+            }else if(!strcmp(stage.path,MT_LOCATION_NVS)){
+                phase="apply-mt-location";ok=update_mt_location_from_stage(stage);
+            }else if(!strcmp(stage.path,SHARED_NAME)){
+                phase="apply-shared-name";ok=update_shared_name_from_stage(stage,protocol);
+            }else if(!strcmp(stage.path,DEVICE_NVS)){
+                phase="apply-device-settings";
                 File f=SPIFFS.open(stage.staged,"r");
                 meshink_device_settings::Snapshot snapshot{};
                 const bool loaded=f&&f.size()==sizeof(snapshot)&&
@@ -1344,13 +1384,20 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
                 if(f)f.close();
                 ok=loaded&&meshink_device_settings::apply(snapshot);
             }
-            if(!ok)break;
+            if(!ok){failed_index=i;failed_phase=phase?phase:"apply-settings";break;}
         }
     }
     if(!ok){
+        // Only path and phase are reported, never archive payload or keys.
+        Serial.printf("[T5-RESTORE] failed phase=%s stage=%u path=%s; rollback begins\n",
+                      failed_phase?failed_phase:"unknown",
+                      (unsigned)failed_index,stages[failed_index].path);
         const bool recovered=rollback_transaction(count);
-        return fail(recovered?"Restore aborted; original data recovered":
-                              "Restore failed and recovery is pending; restart required");
+        if(!recovered)return fail("Restore rollback incomplete; preserve salvage");
+        char reason[84]{};
+        snprintf(reason,sizeof(reason),"Restore %s failed; rolled back",
+                 failed_phase?failed_phase:"install");
+        return fail(reason);
     }
     // Set the protocol's completion flag only when the complete identity
     // has been restored, allowing users to skip first-time setup on a wiped unit.

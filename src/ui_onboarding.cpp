@@ -2897,8 +2897,11 @@ static void draw_setup_protocol(){
             280+(int)i*145);
     }
     ui_centred("You can switch protocols later in Settings.",ui_y(720),2,0,false);
-    ui_action_button("RESTORE FROM SD",ui_rect(60,760,420,62),false);
-    setup_footer();
+    // Explicit protocol selection is required before either action is shown.
+    if(setup_protocol_choice){
+        ui_action_button("RESTORE FROM SD",ui_rect(60,760,420,62),false);
+        setup_footer();
+    }
 }
 static void draw_setup_name(){
     setup_progress("NAME YOUR NODE",2);
@@ -4932,8 +4935,7 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::Welcome){
-        if(hit(x,y,ui_rect(60,760,420,62))){
-            if(!setup_protocol_choice){show_toast("CHOOSE A PROTOCOL");return true;}
+        if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62))){
             if(setup_protocol_choice!=mesh_protocol_descriptor().id){
                 Preferences p;
                 if(p.begin("t5-ui",false)){
@@ -4953,8 +4955,7 @@ static bool handle_setup_tap(int16_t x,int16_t y){
                 return true;
             }
         }
-        if(hit(x,y,ui_rect(284,850,232,74))){
-            if(!setup_protocol_choice){show_toast("CHOOSE A PROTOCOL");return true;}
+        if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74))){
             if(setup_protocol_choice!=mesh_protocol_descriptor().id){
                 Preferences p;
                 if(p.begin("t5-ui",false)){
