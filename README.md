@@ -288,3 +288,7 @@ Thank you to everyone who develops and maintains these projects. MeshInk would n
 
 ### test.56 recovery safety
 Before any destructive restore, copy the verified SD backup to a computer or second SD card. Test restoration on a spare T5 where possible. The backup checks journal headers and Meshtastic node snapshot checksums; damaged histories are never silently advertised as backed up. The restore checks the staged copies before replacing live flash and keeps existing rollback safety copies from being overwritten. Successful restores free their temporary copies. CI passing is not proof of full hardware recovery.
+
+
+### test.57 confirmation and reboot display
+Backup and Restore both require an explicit confirmation screen with **OK / Cancel** describing the one-shot reboot before protocol startup. No operation is queued until OK. After confirmation, a non-interactive **REBOOTING...** progress screen is refreshed *before* native worker shutdown, so its deferred save/stop operation no longer looks like a frozen confirmation screen. Restore revision warnings and the optional operation cancellation remain available. The Meshtastic startup FreeRTOS queue assertion observed after the test.56 backup is being investigated separately and must pass a hardware reboot regression before release approval.

@@ -21,7 +21,10 @@ assert 'meshink_backup_revision(' in code
 assert 'MeshInkBackupRevision::Different' in code
 assert 'MeshInkBackupRevision::Unknown' in code
 assert 'backup_revision_status=meshink_backup_revision(' in ui
-assert 'revision_warning?"OK, RESTORE":"RESTORE"' in ui
+assert 'ui_action_button("OK",ui_rect(284,735,232,85),true);' in ui
+assert 'Press OK to reboot the device and back up selected data' in ui
+assert 'Press OK to reboot the device and restore selected data' in ui
+assert 'if(screen==Screen::BackupProgress)return true;' in ui
 assert 'if(protocol==2&&!strcmp(part.path,MT_CORE_REVISION))' in code
 assert 'header.protocol==protocol' in format
 assert "header.categories==15" in format
@@ -37,8 +40,10 @@ assert "stage_delete(MT_NODES_A" in code
 assert "stage_delete(MT_NODES_B" in code
 for name in ("MT_CONFIG","MT_CHANNELS","MT_DEVICE","MT_MODULE","MT_NATIVE_NODES","MT_LOCATION_NVS"):
     assert name in code, name
-assert "meshink_backup_schedule(protocol,backup_flags,false)" in ui
-assert "meshink_backup_schedule(protocol,backup_flags,true,backup_filename)" in ui
+assert 'meshink_backup_schedule(protocol,backup_flags,restoring,' in ui
+assert 'open_screen(Screen::BackupProgress);' in ui
+assert 'open_screen(Screen::BackupConfirm);return true;' in ui
+assert 'mesh_protocol_restart_into(protocol)' in ui
 assert "meshink_backup_take_boot_result(" in ui
 assert 'meshink_backup_cancel_request();' in ui
 print("PASS: offline backup bootstrap, native Meshtastic manifest, full-only policy, no Leaf")
