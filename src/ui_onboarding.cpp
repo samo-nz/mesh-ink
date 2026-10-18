@@ -362,7 +362,7 @@ enum class Screen : uint8_t {
     Contacts, ContactChat, ContactDetails, NodeDelete,
     Channels, ChannelChat, ChannelManage, ChannelCreate, ChannelDelete,
     Maps, Discovery, More, Diagnostics,
-    Settings, ProtocolSelect, ProtocolSettings, BackupOptions, BackupFiles, BackupConfirm, BackupResult,
+    Settings, ProtocolSelect, ProtocolSettings, BackupOptions, BackupFiles, BackupConfirm, BackupProgress, BackupResult,
     GpsSettings, GpsTuning, LocationSharing, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
@@ -3081,27 +3081,40 @@ static void draw_backup_files(){
     }
 }
 static void draw_backup_confirm(){
-    draw_app_header("CONFIRM RESTORE",true);
-    const bool revision_warning=backup_revision_status==MeshInkBackupRevision::Different||
-                                backup_revision_status==MeshInkBackupRevision::Unknown;
-    ui_centred(revision_warning?"CORE VERSION WARNING":"REPLACE SELECTED DATA?",
-               ui_y(195),3,0,true);
+    draw_app_header(backup_restore_mode?"CONFIRM RESTORE":"CONFIRM BACKUP",true);
+    const bool revision_warning=backup_restore_mode&&
+        (backup_revision_status==MeshInkBackupRevision::Different||
+         backup_revision_status==MeshInkBackupRevision::Unknown);
+    ui_centred(revision_warning?"CORE VERSION WARNING":
+               (backup_restore_mode?"REPLACE SELECTED DATA?":"BACK UP SELECTED DATA?"),
+               ui_y(180),3,0,true);
     if(revision_warning){
-        char message[260]{};
+        char message[270]{};
         if(backup_revision_status==MeshInkBackupRevision::Different)
             snprintf(message,sizeof(message),
-                "Backup: %s. Installed: %s. Meshtastic core revisions differ; saved settings may be incompatible. Continue restore?",
+                "Backup: %s. Installed: %s. Meshtastic revisions differ. The restore may be incompatible. OK to reboot and restore anyway?",
                 backup_source_version,MESHINK_BUILD_MESHTASTIC_VERSION);
         else snprintf(message,sizeof(message),
-            "This Meshtastic backup does not record its core revision. Installed: %s. Compatibility cannot be confirmed. Continue restore?",
+            "Backup has no recorded Meshtastic core version (installed: %s). Compatibility is unknown. OK to reboot and restore anyway?",
             MESHINK_BUILD_MESHTASTIC_VERSION);
-        ui_draw_wrapped(message,ui_x(36),ui_y(320),ui_w(470),3,0,false,8);
+        ui_draw_wrapped(message,ui_x(36),ui_y(280),ui_w(470),3,0,false,8);
+    }else if(backup_restore_mode){
+        ui_draw_wrapped("Press OK to reboot the device and restore selected data from SD before Meshtastic or MeshCore starts. Existing selected data will be replaced. The SD backup is retained.",
+            ui_x(36),ui_y(305),ui_w(470),3,0,false,8);
     }else{
-        ui_draw_wrapped("Selected protocol data will be replaced. If Device Settings is selected, device-wide display, power, clock and GPS preferences will also be restored. The SD backup is retained.",
-            ui_x(36),ui_y(350),ui_w(470),3,0,false,6);
+        ui_draw_wrapped("Press OK to reboot the device and back up selected data to SD before Meshtastic or MeshCore starts. Existing device data will not be removed.",
+            ui_x(36),ui_y(305),ui_w(470),3,0,false,8);
     }
     ui_action_button("CANCEL",ui_rect(24,735,232,85),false);
-    ui_action_button(revision_warning?"OK, RESTORE":"RESTORE",ui_rect(284,735,232,85),true);
+    ui_action_button("OK",ui_rect(284,735,232,85),true);
+}
+static void draw_backup_progress(){
+    draw_app_header(backup_restore_mode?"RESTORE FROM SD":"BACKUP TO SD",false);
+    ui_centred("REBOOTING...",ui_y(220),3,0,true);
+    ui_draw_wrapped(backup_restore_mode?
+        "The device will restart and restore the SD archive before the radio starts. Do not remove the SD card or power off.":
+        "The device will restart and create a verified SD backup before the radio starts. Do not remove the SD card or power off.",
+        ui_x(36),ui_y(365),ui_w(470),3,0,false,7);
 }
 static void draw_backup_result(){
     draw_app_header("BACKUP / RESTORE",true);
@@ -3959,12 +3972,13 @@ static void draw_screen() {
         case Screen::BackupOptions:draw_backup_options();break;
         case Screen::BackupFiles:draw_backup_files();break;
         case Screen::BackupConfirm:draw_backup_confirm();break;
+        case Screen::BackupProgress:draw_backup_progress();break;
         case Screen::BackupResult:draw_backup_result();break;case Screen::GpsSettings:draw_gps_settings();break;case Screen::GpsTuning:draw_gps_tuning();break;case Screen::LocationSharing:draw_location_sharing();break;
         case Screen::DateTime:draw_date_time();break;case Screen::ManualTime:draw_manual_time();break;case Screen::Timezone:draw_timezone();break;case Screen::CustomTimezone:draw_custom_timezone();break;
         case Screen::DisplaySettings:draw_display_settings();break;case Screen::NightSchedule:draw_night_schedule();break;case Screen::Help:draw_help();break;case Screen::About:draw_about();break;
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::BackupOptions||
-        screen==Screen::BackupFiles||screen==Screen::BackupConfirm||screen==Screen::BackupResult||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::LocationSharing||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
+        screen==Screen::BackupFiles||screen==Screen::BackupConfirm||screen==Screen::BackupProgress||screen==Screen::BackupResult||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::LocationSharing||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
     if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
@@ -4810,17 +4824,11 @@ static bool handle_backup_tap(int16_t x,int16_t y){
                 if(backup_revision_status==MeshInkBackupRevision::Invalid){
                     backup_show_result(meshink_backup_error());return true;
                 }
-                open_screen(Screen::BackupConfirm);return true;
+            }else{
+                backup_revision_status=MeshInkBackupRevision::Match;
+                backup_source_version[0]=0;
             }
-            char saved[32]{};
-            const uint8_t protocol=mesh_protocol_descriptor().id;
-            if(!meshink_backup_schedule(protocol,backup_flags,false))
-                backup_show_result(meshink_backup_error());
-            else if(!mesh_protocol_restart_into(protocol)){
-                meshink_backup_cancel_request();
-                backup_show_result("BACKUP CANCELLED: UNABLE TO SHUT DOWN PROTOCOL");
-            }
-            return true;
+            open_screen(Screen::BackupConfirm);return true;
         }
         return true;
     }
@@ -4830,15 +4838,25 @@ static bool handle_backup_tap(int16_t x,int16_t y){
         }
         if(hit(x,y,ui_rect(284,735,232,85))){
             const uint8_t protocol=mesh_protocol_descriptor().id;
-            if(!meshink_backup_schedule(protocol,backup_flags,true,backup_filename))
+            const bool restoring=backup_restore_mode;
+            if(!meshink_backup_schedule(protocol,backup_flags,restoring,
+                                        restoring?backup_filename:nullptr)){
                 backup_show_result(meshink_backup_error());
-            else if(!mesh_protocol_restart_into(protocol)){
+                return true;
+            }
+            // Display the notice BEFORE the synchronous worker flush/stop.
+            // Only the user's explicit OK tap is allowed to schedule a reboot.
+            open_screen(Screen::BackupProgress);
+            if(!mesh_protocol_restart_into(protocol)){
                 meshink_backup_cancel_request();
-                backup_show_result("RESTORE CANCELLED: UNABLE TO SHUT DOWN PROTOCOL");
+                backup_show_result(restoring?
+                    "RESTORE CANCELLED: UNABLE TO SHUT DOWN PROTOCOL":
+                    "BACKUP CANCELLED: UNABLE TO SHUT DOWN PROTOCOL");
             }
         }
         return true;
     }
+    if(screen==Screen::BackupProgress)return true;
     if(screen==Screen::BackupResult){
         if(hit_header_back(x,y)||hit(x,y,ui_rect(85,780,370,80))){
             open_screen(backup_return_screen);
