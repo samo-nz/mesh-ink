@@ -298,3 +298,7 @@ Backup and Restore both require an explicit confirmation screen with **OK / Canc
 After successful offline B+R, normal startup previously called `map_tiles_warm_storage()`, which attempted to reinitialize an already-mounted SD filesystem. This could invoke `SDFS::end()` / `SPIClass::endTransaction()` and trigger a FreeRTOS queue assert. The board storage backend now reuses readable existing mounts and only tears down an SD mount when a real remount is needed. A separate confirmation/progress screen is shown before flushing the protocol for the requested reboot.
 
 For future hardware crash reports, the matching primary-build `firmware.elf` is now retained as a separate CI artifact named with its exact commit SHA, so backtraces can be resolved without a speculative rebuild.
+
+
+### test.58 human-readable backup filenames
+When the device has a trusted RTC, new SD backups record the **local date and time at the UI confirmation tap**, including the current timezone: `meshink-tastic-YYYY-MM-DD-HH-MM.BAK` for native Meshtastic and `meshink-core-YYYY-MM-DD-HH-MM.BAK` for MeshCore. Same-minute duplicates gain a `-01` through `-99` suffix; no existing archive is overwritten. Without trustworthy time, the proven numbered `MTBK0001.BAK` / `MCBK0001.BAK` fallback remains. Existing archives keep their existing names and are still visible and restorable. SD long filename support is enabled explicitly for the production cache64 build. The on-disk archive *content* format is unchanged.

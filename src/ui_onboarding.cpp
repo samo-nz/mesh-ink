@@ -372,7 +372,7 @@ static bool backup_restore_mode=false,backup_from_setup=false,backup_restore_pen
 static uint8_t backup_flags=15,backup_available=15;
 static MeshInkBackupInfo backup_entries[24]{};
 static size_t backup_count=0,backup_page=0;
-static char backup_filename[32]{},backup_result_message[84]{};
+static char backup_filename[64]{},backup_result_message[84]{};
 static char backup_source_version[48]{};
 static MeshInkBackupRevision backup_revision_status=MeshInkBackupRevision::Match;
 // Separate protocol completion flags; a legacy completed installation is preserved.

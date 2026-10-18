@@ -14,6 +14,14 @@ assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in stora
 assert "LeafSettings" not in code and "LEAF_NVS" not in code and "LEAF_NODES" not in code
 assert 'Preferences p;\n    if(!p.begin("meshtastic",true))' not in code
 assert "MESHTASTIC_VERSION=2" in format
+assert 'return meshink_backup_filename::valid(protocol,file);' in code
+assert 'meshink_backup_filename::make_timestamped(protocol,' in code
+assert 'meshink_backup_filename::with_suffix(' in code
+assert 'mesh_protocol_time_valid()' in code
+assert 'char output[64]{};' in code
+assert 'MIBT%03u.TMP' in code
+assert 'char filename[64]{}' in get("src/backup_restore.h")
+assert 'static char backup_filename[64]{}' in ui
 assert "meshink_backup_integrity::valid_journal" in code
 assert "bi::valid_node_header" in code
 assert "valid_message_journal(stage.staged,protocol)" in code

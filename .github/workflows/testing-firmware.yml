@@ -61,6 +61,9 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_backup_integrity.cpp -o /tmp/meshink-backup-integrity-test
           /tmp/meshink-backup-integrity-test
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_filename.cpp -o /tmp/meshink-backup-filename-test
+          /tmp/meshink-backup-filename-test
       - name: Maps-only gesture geometry regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
@@ -142,6 +145,8 @@ jobs:
           grep -q '#define CONFIG_SPIRAM_MODE_OCT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_SPIRAM_BOOT_INIT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_SPIRAM_USE_MALLOC 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_LFN_HEAP 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_MAX_LFN 96' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_USE_FASTSEEK 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE 1024' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
