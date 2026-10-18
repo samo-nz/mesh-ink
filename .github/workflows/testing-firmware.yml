@@ -64,6 +64,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_backup_filename.cpp -o /tmp/meshink-backup-filename-test
           /tmp/meshink-backup-filename-test
+      - name: Restore scratch cleanup pathname regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_restore_scratch.cpp -o /tmp/meshink-restore-scratch-test
+          /tmp/meshink-restore-scratch-test
       - name: Native Meshtastic atomic serial record regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \

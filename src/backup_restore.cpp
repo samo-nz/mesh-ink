@@ -2,6 +2,7 @@
 #include "backup_format.h"
 #include "backup_integrity.h"
 #include "backup_filename.h"
+#include "backup_restore_scratch.h"
 #include <time.h>
 #include "core_build_versions.h"
 #include "device_settings_snapshot.h"
@@ -181,6 +182,38 @@ static bool fail(const char* reason){
     snprintf(last_error,sizeof(last_error),"%s",reason);
     Serial.printf("[T5-BACKUP] %s\n",last_error);
     return false;
+}
+// A prior *completed* rollback must never lock out a verified new SD restore.
+// An active /restore.txn is handled first by meshink_backup_recover_pending().
+// Once there is no active journal, both old and current names are orphans.
+static bool cleanup_abandoned_restore_files(){
+    if(SPIFFS.exists(RESTORE_TXN))
+        return fail("Active restore recovery not completed");
+    unsigned removed=0;
+    char path[24]{};
+    for(unsigned slot=0;slot<meshink_restore_scratch::SLOTS;++slot){
+        for(unsigned legacy=0;legacy<2;++legacy){
+            for(unsigned previous=0;previous<2;++previous){
+                if(!meshink_restore_scratch::make_path(
+                   path,sizeof(path),slot,legacy!=0,previous!=0))
+                    return fail("Restore cleanup pathname invalid");
+                if(SPIFFS.exists(path)){
+                    if(!SPIFFS.remove(path)){
+                        Serial.printf("[T5-RESTORE] could not clear %s\n",path);
+                        return fail("Cannot clear old restore scratch");
+                    }
+                    ++removed;
+                }
+            }
+        }
+    }
+    if(SPIFFS.exists(RESTORE_TXN_TEMP)){
+        if(!SPIFFS.remove(RESTORE_TXN_TEMP))
+            return fail("Cannot remove abandoned transaction temp");
+        ++removed;
+    }
+    if(removed)Serial.printf("[T5-RESTORE] cleaned %u abandoned restore scratch files\n",removed);
+    return true;
 }
 static bool sd_ready(){return meshink_storage_media_ready();}
 static bool sd_writable(){
@@ -1147,6 +1180,9 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     if((categories&hdr.categories)!=categories)return fail("Category not present in backup");
     Serial.printf("[T5-RESTORE] verified archive: protocol=%u entries=%u categories=%u\n",
                   (unsigned)protocol,(unsigned)hdr.count,(unsigned)categories);
+    // Verify the SD archive FIRST, then clear aborted transaction scratch.
+    // This is after boot-time recovery and before the space/staging checks.
+    if(!cleanup_abandoned_restore_files())return false;
     // Confirm the complete staging set fits WITHOUT deleting or renaming
     // existing messages, contacts, settings or native identity files.
     size_t required_bytes=32768; // transaction metadata + SPIFFS safety margin
@@ -1159,24 +1195,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     const size_t total=SPIFFS.totalBytes(),used=SPIFFS.usedBytes();
     if(used>total||total-used<required_bytes)
         return fail("Not enough free flash to stage restore without data loss");
-    // A former restore may have left the sole salvage copy as /rstXX.old.
-    // Do not silently overwrite it; the user must preserve it first.
-    unsigned legacy_salvage=0;
-    for(unsigned i=0;i<MAX_ENTRIES;++i){
-        char legacy[20]{},old_path[20]{},staged_path[20]{};
-        snprintf(legacy,sizeof(legacy),"/rst%02u.old",i);
-        if(SPIFFS.exists(legacy))++legacy_salvage;
-        // Test.61 left legacy NVS rollback files after successful rollback.
-        // Leave those copies completely untouched. All future transactions
-        // use isolated /r2sXX paths; never overwrite an existing /r2s copy.
-        snprintf(old_path,sizeof(old_path),"/r2s%02u.old",i);
-        snprintf(staged_path,sizeof(staged_path),"/r2s%02u.tmp",i);
-        if(SPIFFS.exists(old_path)||SPIFFS.exists(staged_path))
-            return fail("Existing restore salvage files; refusing overwrite");
-    }
-    if(legacy_salvage)
-        Serial.printf("[T5-RESTORE] preserving %u legacy salvage snapshots; using isolated /r2s stages\n",
-                      legacy_salvage);
+    // Earlier aborted restore scratch has been cleaned. The next transaction
+    // starts with a fresh /r2s namespace, with no permanent salvage lockout.
     char backup_path[80]{};snprintf(backup_path,sizeof(backup_path),"/%s",filename);
     File input=meshink_storage_open(backup_path);
     if(!input)return fail("Cannot reopen verified backup");
@@ -1322,8 +1342,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         Stage& state=stages[count];
         state=Stage{};
         snprintf(state.path,sizeof(state.path),"%s",SETUP_NVS);
-        snprintf(state.staged,sizeof(state.staged),"/rst%02u.tmp",(unsigned)count);
-        snprintf(state.previous,sizeof(state.previous),"/rst%02u.old",(unsigned)count);
+        snprintf(state.staged,sizeof(state.staged),"/r2s%02u.tmp",(unsigned)count);
+        snprintf(state.previous,sizeof(state.previous),"/r2s%02u.old",(unsigned)count);
         state.category=MESHINK_BACKUP_SETTINGS;
         ++count;
     }

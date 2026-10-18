@@ -69,7 +69,7 @@ print("PASS: offline backup bootstrap, native Meshtastic manifest, full-only pol
 
 # Test.63: a full-wipe restore failure must identify its failed stage, and
 # successful rollback must not strand virtual NVS /rstNN.old snapshots.
-# Existing *orphan* salvage files from test.61 must remain untouched.
+# Orphaned scratch from test.61 must be cleaned for automatic retry.
 assert 'failed_phase="install-file"' in code
 assert 'failed_phase="preserve-original"' in code
 assert 'phase="apply-credentials"' in code
@@ -77,21 +77,30 @@ assert 'phase="apply-shared-name"' in code
 assert 'phase="apply-device-settings"' in code
 assert 'meshink_device_settings::valid(snapshot)' in code
 assert 'if(stages[i].path[0]==\'@\'&&SPIFFS.exists(stages[i].previous))' in code
-assert 'Existing restore salvage files; refusing overwrite' in code
+assert 'Existing restore salvage files; refusing overwrite' not in code
 assert 'SPIFFS.remove(RESTORE_TXN)' in code
 assert 'Restore %s failed; rolled back' in code
 assert 'if(setup_protocol_choice){' in ui
 assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62)))' in ui
 assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74)))' in ui
 
-# Test.63 restore retry after a test.61 rollback: preserve all /rstNN.old
-# salvage files, use a disjoint /r2s namespace and accept both prefixes only
-# for validated crash-recovery journal entries.
-assert 'if(SPIFFS.exists(legacy))++legacy_salvage;' in code
-assert 'preserving %u legacy salvage snapshots; using isolated /r2s stages' in code
-assert '"/r2s%02u.tmp"' in code and '"/r2s%02u.old"' in code
+
+# Test.64: check complete restore-retry order, journal protection, finite
+# allowlist, and no permanent orphan-induced block after failed restore.
+assert 'cleanup_abandoned_restore_files()' in code
+assert 'meshink_restore_scratch::make_path(' in code
+assert 'if(SPIFFS.exists(RESTORE_TXN))' in code
+assert 'if(!SPIFFS.remove(path))' in code
+assert 'if(SPIFFS.exists(RESTORE_TXN_TEMP))' in code
+body=code.split('bool meshink_backup_restore(uint8_t protocol',1)[1]
+assert body.index('if(!inspect(filename,protocol,hdr,parts.entries,true))') < body.index('if(!cleanup_abandoned_restore_files())')
+assert body.index('if(!cleanup_abandoned_restore_files())') < body.index('const size_t total=SPIFFS.totalBytes()')
+assert 'Existing restore salvage files; refusing overwrite' not in code
+assert 'preserving %u legacy salvage' not in code
+assert '"/r2s%02u.tmp"' in body and '"/r2s%02u.old"' in body
 assert '(strncmp(stage.staged,"/rst",4)&&' in code
 assert 'strncmp(stage.staged,"/r2s",4)' in code
 assert '(strncmp(stage.previous,"/rst",4)&&' in code
 assert 'strncmp(stage.previous,"/r2s",4)' in code
-assert 'if(SPIFFS.exists(old_path)||SPIFFS.exists(staged_path))' in code
+assert '"/rst%02u.tmp"' not in body
+assert '"/rst%02u.old"' not in body
