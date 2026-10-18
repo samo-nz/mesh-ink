@@ -35,6 +35,8 @@ jobs:
         run: python tools/check_meshcore_pin.py
       - name: Release integration guards and About versions
         run: python tools/check_release_integration.py
+      - name: Offline backup and restore integration guards
+        run: python tools/check_backup_integration.py
       - name: Architecture boundary checks
         run: python tools/check_architecture.py
       - name: Web flasher safety regression

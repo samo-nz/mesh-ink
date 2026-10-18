@@ -199,7 +199,9 @@ The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**
 
 **Standby:** Both protocols support normal standby. Retained-radio deep-sleep standby is not implemented for Meshtastic and is not a release requirement.
 
-**Upgrading:** Use the update image to preserve earlier MeshInk settings and MeshCore message history; a full-wipe image erases user data. Legacy Meshtastic development v3 journals are not migrated to the new v4 format. Meshtastic backup/restore has not yet been updated for native Meshtastic settings and should not be relied upon to preserve identity or channel keys.
+**Upgrading:** Use the update image to preserve earlier MeshInk settings and MeshCore message history; a full-wipe image erases user data. Legacy Meshtastic development v3 journals are not migrated to the new v4 format.
+
+**SD backup/restore (test builds):** Backup and restore now request one reboot and run before the radio/network stack starts, then continue normal startup and show the result. The MeshCore archive remains v1; official Meshtastic uses a new v2 **full-backup/full-restore only** manifest (native preferences, identity and channel keys, Meshtastic native nodes, MeshInk messages and snapshots, location and device settings). Experimental Leaf archives are not supported. Treat this as an **untested recovery feature** until restoring a full-wiped T5 and verifying identity, keys, channels, messages and nodes on real hardware has passed. Keep a separate known-good backup until that test.
 
 A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
 

@@ -1151,9 +1151,21 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
             const Stage& entry=stages[i];
             if(entry.deleting||entry.path[0]=='@')continue;
             File verified=SPIFFS.open(entry.path,"r");
-            const bool exists=verified&&(verified.size()>0);
+            const Part* expected=nullptr;
+            for(size_t j=0;j<hdr.count;++j)
+                if(!strcmp(parts.entries[j].path,entry.path)){
+                    expected=&parts.entries[j];break;
+                }
+            bool valid=verified&&expected&&verified.size()==expected->size;
+            uint32_t checksum=0xFFFFFFFFU;size_t n=0;
+            while(valid&&n<expected->size){
+                const size_t len=min(sizeof(io),(size_t)(expected->size-n));
+                if(verified.read(io,len)!=len){valid=false;break;}
+                checksum=crc32(io,len,checksum);
+                n+=len;
+            }
             if(verified)verified.close();
-            if(!exists){ok=false;break;}
+            if(!valid||(~checksum)!=expected->crc){ok=false;break;}
         }
     }
     if(!ok){
