@@ -9,6 +9,12 @@ format=get("src/backup_format.h")
 assert "LeafSettings" not in code and "LEAF_NVS" not in code and "LEAF_NODES" not in code
 assert 'Preferences p;\n    if(!p.begin("meshtastic",true))' not in code
 assert "MESHTASTIC_VERSION=2" in format
+assert "meshink_backup_integrity::valid_journal" in code
+assert "bi::valid_node_header" in code
+assert "valid_message_journal(stage.staged,protocol)" in code
+assert "valid_mt_node_snapshot(stage.staged)" in code
+assert "Earlier restore safety snapshot present; aborting" in code
+assert "SPIFFS.remove(stages[i].previous)" in code
 assert 'MT_CORE_REVISION[]="@mt-core-version"' in code
 assert 'sizeof(MESHINK_BUILD_MESHTASTIC_VERSION)' in code
 assert 'meshink_backup_revision(' in code

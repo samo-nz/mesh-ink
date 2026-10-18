@@ -58,6 +58,9 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_backup_format.cpp -o /tmp/meshink-backup-format-test
           /tmp/meshink-backup-format-test
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_integrity.cpp -o /tmp/meshink-backup-integrity-test
+          /tmp/meshink-backup-integrity-test
       - name: Maps-only gesture geometry regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \

@@ -1,5 +1,6 @@
 #include "backup_restore.h"
 #include "backup_format.h"
+#include "backup_integrity.h"
 #include "core_build_versions.h"
 #include "device_settings_snapshot.h"
 #include "message_store.h"
@@ -244,51 +245,33 @@ static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
 // independent checks reject a structurally unusable source BEFORE a "verified"
 // backup can become the operator's only copy of precious message/node history.
 static bool valid_message_journal(const char* path,uint8_t protocol){
-    File file=SPIFFS.open(path,"r");
-    if(!file)return false;
-    MeshInkMessageStoreHeader h{};
-    constexpr uint32_t MAGIC_JOURNAL=0x354D3554U;
-    constexpr size_t LEGACY_CORE_RECORD_BYTES=188;
-    const size_t record_bytes=protocol==2?sizeof(MeshInkStoredMessage):
-                              LEGACY_CORE_RECORD_BYTES;
-    const bool ok=file.read((uint8_t*)&h,sizeof(h))==sizeof(h)&&
-        h.magic==MAGIC_JOURNAL&&h.version==(protocol==2?4:3)&&
-        h.capacity==MESHINK_MESSAGE_CAPACITY&&
-        h.head<MESHINK_MESSAGE_CAPACITY&&h.count<=MESHINK_MESSAGE_CAPACITY&&
-        file.size()==sizeof(h)+MESHINK_MESSAGE_CAPACITY*record_bytes;
-    file.close();
-    return ok;
-}
-struct MtNodeDiskHeader {
-    uint32_t magic=0,version=0,generation=0,count=0,checksum=0;
-};
-constexpr size_t MT_NODE_RECORD_BYTES=68;
-constexpr uint32_t MT_NODE_LIMIT=64;
-static uint32_t fnv_checksum(uint32_t hash,const uint8_t* data,size_t count){
-    for(size_t i=0;i<count;++i){hash^=data[i];hash*=16777619u;}
-    return hash;
+    File f=SPIFFS.open(path,"r");
+    if(!f)return false;
+    meshink_backup_integrity::Journal h{};
+    static_assert(sizeof(h)==sizeof(MeshInkMessageStoreHeader),"Journal mismatch");
+    static_assert(sizeof(MeshInkStoredMessage)==meshink_backup_integrity::MT_RECORD_BYTES,
+                  "Meshtastic record size changed");
+    const bool valid=f.read((uint8_t*)&h,sizeof(h))==sizeof(h)&&
+        meshink_backup_integrity::valid_journal(h,f.size(),protocol);
+    f.close();return valid;
 }
 static bool valid_mt_node_snapshot(const char* path){
-    File file=SPIFFS.open(path,"r");
-    if(!file)return false;
-    MtNodeDiskHeader h{};
-    if(file.read((uint8_t*)&h,sizeof(h))!=sizeof(h)||
-       h.magic!=0x4D544E44U||h.version!=1||h.count>MT_NODE_LIMIT||
-       file.size()!=sizeof(h)+h.count*MT_NODE_RECORD_BYTES){
-        file.close();return false;
-    }
-    uint32_t sum=fnv_checksum(2166136261u,(const uint8_t*)&h.generation,sizeof(h.generation));
-    sum=fnv_checksum(sum,(const uint8_t*)&h.count,sizeof(h.count));
-    uint8_t record[MT_NODE_RECORD_BYTES]{};
+    namespace bi=meshink_backup_integrity;
+    File f=SPIFFS.open(path,"r");
+    if(!f)return false;
+    bi::Node h{};
+    if(f.read((uint8_t*)&h,sizeof(h))!=sizeof(h)||
+       !bi::valid_node_header(h,f.size())){f.close();return false;}
+    uint32_t hash=bi::node_seed(h.generation,h.count);
+    uint8_t rec[bi::NODE_RECORD_BYTES]{};
     for(uint32_t i=0;i<h.count;++i){
-        if(file.read(record,sizeof(record))!=sizeof(record)){
-            file.close();return false;
-        }
-        uint32_t number=0;memcpy(&number,record,sizeof(number));
-        if(!number){file.close();return false;}
-        sum=fnv_checksum(sum,record,sizeof(record));
+        uint32_t node=0;
+        if(f.read(rec,sizeof(rec))!=sizeof(rec)){f.close();return false;}
+        memcpy(&node,rec,sizeof(node));
+        if(!node){f.close();return false;}
+        hash=bi::fnv(hash,rec,sizeof(rec));
     }
-    file.close();return sum==h.checksum;
+    f.close();return hash==h.checksum;
 }
 static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path){
     if(!is_real_path(path,protocol,cat)||count>=MAX_ENTRIES)return false;
