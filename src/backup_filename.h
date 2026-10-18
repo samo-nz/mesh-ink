@@ -41,6 +41,23 @@ inline bool valid(uint8_t protocol,const char* name){
     return s[16]=='-'&&decimal(s+17,2)&&
            !(s[17]=='0'&&s[18]=='0')&&!strcmp(s+19,".BAK");
 }
+// Sort newest first, including same-minute -01/-02 revisions. Timestamped
+// files sort before legacy archives; legacy numbering sorts numerically.
+inline int compare(uint8_t protocol,const char* a,const char* b){
+    if(!valid(protocol,a)||!valid(protocol,b))return 0;
+    const size_t prelen=strlen(prefix(protocol));
+    const bool a_time=!strncmp(a,prefix(protocol),prelen);
+    const bool b_time=!strncmp(b,prefix(protocol),prelen);
+    if(a_time!=b_time)return a_time?1:-1;
+    if(!a_time)return strcmp(a,b);
+    const int minute= strncmp(a+prelen,b+prelen,16);
+    if(minute)return minute;
+    const char* as=a+prelen+16;
+    const char* bs=b+prelen+16;
+    const int ai=*as=='-'?(as[1]-'0')*10+(as[2]-'0'):0;
+    const int bi=*bs=='-'?(bs[1]-'0')*10+(bs[2]-'0'):0;
+    return ai-bi;
+}
 inline bool make_timestamped(uint8_t protocol,int year,int month,int day,
                              int hour,int minute,char* output,size_t capacity){
     if(!output||!capacity||!prefix(protocol))return false;

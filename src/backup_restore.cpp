@@ -851,23 +851,33 @@ size_t meshink_backup_list(uint8_t protocol,MeshInkBackupInfo* out,size_t capaci
         const char* name=path.c_str()+separator+1;
         if(!item.isDirectory()&&allowed_filename(name,protocol)){
             Header hdr{};
-            if(inspect(name,protocol,hdr,parts.entries,false)&&count<capacity){
-                MeshInkBackupInfo& info=out[count++];
-                memset(&info,0,sizeof(info));
-                strncpy(info.filename,name,sizeof(info.filename)-1);
-                info.protocol=protocol;info.categories=hdr.categories;
-                info.entries=hdr.count;info.bytes=item.size();
+            if(inspect(name,protocol,hdr,parts.entries,false)){
+                // FAT directory enumeration order is not chronological.
+                // Retain the newest 'capacity' entries, even if the SD has
+                // more archives than fit in the UI's fixed-size list.
+                const bool keep=count<capacity||
+                    meshink_backup_filename::compare(
+                        protocol,name,out[count-1].filename)>0;
+                if(keep){
+                    MeshInkBackupInfo candidate{};
+                    snprintf(candidate.filename,sizeof(candidate.filename),"%s",name);
+                    candidate.protocol=protocol;candidate.categories=hdr.categories;
+                    candidate.entries=hdr.count;candidate.bytes=item.size();
+                    size_t slot=count<capacity?count++:count-1;
+                    while(slot>0&&meshink_backup_filename::compare(
+                          protocol,candidate.filename,out[slot-1].filename)>0){
+                        out[slot]=out[slot-1];
+                        --slot;
+                    }
+                    out[slot]=candidate;
+                }
             }
         }
         item.close();item=root.openNextFile();
     }
     root.close();
-    // Most recent generated backup numbers appear first.
-    for(size_t i=0;i<count;++i)
-        for(size_t j=i+1;j<count;++j)
-            if(strcmp(out[j].filename,out[i].filename)>0){
-                MeshInkBackupInfo swap=out[i];out[i]=out[j];out[j]=swap;
-            }
+    // The retained shortlist is already newest-first, including -01/-02
+    // collisions, independent of filesystem enumeration order.
     last_error[0]=0;return count;
 }
 uint8_t meshink_backup_categories(uint8_t protocol,const char* filename){
