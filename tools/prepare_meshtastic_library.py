@@ -441,6 +441,7 @@ atomic_text = atomic_path.read_text(encoding="utf-8")
 atomic_include = '#include "protocol/meshtastic_atomic_log.h"\n'
 atomic_anchor = 'void RedirectablePrint::log_to_serial(const char *logLevel, const char *format, va_list arg)\n{\n'
 atomic_bridge = """#if defined(MESHINK_MESHTASTIC_ATOMIC_LOGS) && MESHINK_MESHTASTIC_ATOMIC_LOGS
+    { // isolate local names from upstream fallback code in this function
     char body[160]{};
     va_list copy;
     va_copy(copy, arg);
@@ -466,6 +467,7 @@ atomic_bridge = """#if defined(MESHINK_MESHTASTIC_ATOMIC_LOGS) && MESHINK_MESHTA
         dest->write((const uint8_t*)line, bytes);
     }
     return;
+    } // end isolated atomic logger scope
 #endif
 """
 if atomic_bridge not in atomic_text:
