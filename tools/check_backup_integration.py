@@ -17,6 +17,12 @@ assert "MESHTASTIC_VERSION=2" in format
 assert 'return meshink_backup_filename::valid(protocol,file);' in code
 assert 'meshink_backup_filename::make_timestamped(protocol,' in code
 assert 'meshink_backup_filename::with_suffix(' in code
+assert 'meshink_backup_filename::compare(' in code
+assert 'candidate.filename' in code and 'size_t slot=count<capacity?count++:count-1;' in code
+assert 'static bool draw_backup_filename_lines(' in ui
+assert 'ui_text("SELECTED SD ARCHIVE"' in ui
+assert 'draw_backup_filename_lines(entry.filename' in ui
+assert 'draw_backup_filename_lines(backup_filename' in ui
 assert 'mesh_protocol_time_valid()' in code
 assert 'char output[64]{};' in code
 assert 'MIBT%03u.TMP' in code
