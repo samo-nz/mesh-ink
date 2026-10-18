@@ -1898,3 +1898,11 @@ assert "meshink_io_defer_meshtastic_save(saveWhat)" in mt_prepare
 assert "meshink_io_flash_begin_wait(3000)" in mt_prepare
 assert "TransmitHistory::saveToDisk()" in mt_prepare
 assert "hardware/io_coordinator.cpp" in component_cmake_source
+
+# Test.60: native Meshtastic serial output must be readable in PIO monitor.
+# Guard both compile-time logging paths, including vprintf() and the prefix.
+assert "MESHINK_MESHTASTIC_PLAIN_LOGS=1" in platformio_source, "plain native serial logs enabled"
+assert 'redirectable.count(uncolored_new) != 2' in mt_prepare, "patch both upstream ANSI logger paths"
+assert 'report_warmstore_file("/prefs/warm.dat");' in mt_runtime, "inspect native warm store without destructive recovery"
+assert 'report_warmstore_file("/prefs/warm.dat.tmp");' in mt_runtime, "inspect possible in-flight SafeFile recovery copy"
+assert 'f.read(header,sizeof(header))' in mt_runtime, "read only native warm-store header"

@@ -35,6 +35,7 @@
 #include <cstring>
 #include <cctype>
 #include <cstdio>
+#include <SPIFFS.h>
 
 // Missing upstream-main globals: strictly the protocol engine's state.
 // There is no second device application or hardware initialization.
@@ -80,6 +81,33 @@ bool ever_started=false;
 portMUX_TYPE gps_snapshot_mutex=portMUX_INITIALIZER_UNLOCKED;
 MeshInkMeshtasticGpsSnapshot gps_snapshot{};
 bool gps_snapshot_received=false;
+
+// Observe Meshtastic's native WarmNodeStore snapshot and any interrupted
+// SafeFile staging copy without modifying either. A 16-byte header read is
+// required by upstream; a short read cannot be confused with CRC failure.
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+void report_warmstore_file(const char* path){
+    File f=SPIFFS.open(path,"r");
+    if(!f){
+        Serial.printf("[MT-WARM] %s absent\n",path);
+        return;
+    }
+    const size_t size=f.size();
+    uint8_t header[16]{};
+    const size_t n=f.read(header,sizeof(header));
+    // Only the snapshot HEADER is inspected, never node identities or keys.
+    const uint32_t magic=n==sizeof(header)
+        ?(uint32_t)header[0]|((uint32_t)header[1]<<8)|
+         ((uint32_t)header[2]<<16)|((uint32_t)header[3]<<24)
+        :0;
+    const unsigned count=n==sizeof(header)
+        ?(unsigned)header[8]|((unsigned)header[9]<<8):0;
+    Serial.printf("[MT-WARM] %s size=%lu header_read=%u/16 magic=%08lx count=%u %s\n",
+        path,(unsigned long)size,(unsigned)n,(unsigned long)magic,count,
+        n==sizeof(header)?"header-present":"SHORT-HEADER");
+    f.close();
+}
+#endif
 
 // The MeshInk UI stores its display name and timezone in t5-ui NVS; the
 // upstream Meshtastic NodeDB is authoritative for the companion app. Migrate
@@ -179,6 +207,12 @@ bool meshink_meshtastic_native_begin(){
     powerMonInit();
     serialSinceMsec=millis();
     fsInit(); // uses MeshInk's already-mounted SPIFFS, no autoformat
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    // Inspect both paths BEFORE NodeDB opens warm.dat; don't create, remove,
+    // rename, migrate or rewrite possible recovery content.
+    report_warmstore_file("/prefs/warm.dat");
+    report_warmstore_file("/prefs/warm.dat.tmp");
+#endif
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     Serial.printf("[MT-TEST] official SPI lock, power monitor, SPIFFS initialized; heap=%u\n",
                   (unsigned)ESP.getFreeHeap());

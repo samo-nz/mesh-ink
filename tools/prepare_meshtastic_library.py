@@ -406,3 +406,25 @@ if safe_new not in safe_data:
         raise RuntimeError("SafeFile constructor changed")
     safe_data = io_include + safe_data.replace(safe_old, safe_new, 1)
     safe_cpp.write_text(safe_data, encoding="utf-8")
+
+# MeshInk serial monitor is a human text log, not an ANSI terminal. The
+# official logger turns color on unconditionally for embedded targets. Keep
+# upstream source pinned and change only its ephemeral build checkout, in BOTH
+# logging paths; serial output content and severity remain unchanged.
+redirectable_path = upstream / "src" / "RedirectablePrint.cpp"
+redirectable = redirectable_path.read_text(encoding="utf-8")
+uncolored_original = "#else\n    bool color = true;\n#endif"
+uncolored_new = (
+    "#elif defined(MESHINK_MESHTASTIC_PLAIN_LOGS)\n"
+    "    bool color = false;\n"
+    "#else\n"
+    "    bool color = true;\n"
+    "#endif"
+)
+if redirectable.count(uncolored_new) != 2:
+    if redirectable.count(uncolored_original) != 2:
+        raise RuntimeError("Official Meshtastic ANSI logger changed; review before patching")
+    redirectable_path.write_text(
+        redirectable.replace(uncolored_original, uncolored_new), encoding="utf-8"
+    )
+print("[MeshInk] Native Meshtastic serial logs use plain text without ANSI colors")
