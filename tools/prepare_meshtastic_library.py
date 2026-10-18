@@ -428,3 +428,51 @@ if redirectable.count(uncolored_new) != 2:
         redirectable.replace(uncolored_original, uncolored_new), encoding="utf-8"
     )
 print("[MeshInk] Native Meshtastic serial logs use plain text without ANSI colors")
+
+# Test.61: Multi-task serial interleaving fix. The upstream logger currently
+# emits one line through several printf()/Print::write() calls (some one byte
+# at a time), while MeshInk emits its own T5-/MT- records on the same HWCDC
+# port. Use one bounded buffer and ONE dest->write(buffer,length) instead.
+# Arduino HWCDC serializes each buffer write with tx_lock; it cannot protect
+# a log record split into independent writes. This is build-only and must be
+# idempotent for CI's warnings-visible second build.
+atomic_path = upstream / "src" / "RedirectablePrint.cpp"
+atomic_text = atomic_path.read_text(encoding="utf-8")
+atomic_include = '#include "protocol/meshtastic_atomic_log.h"\n'
+atomic_anchor = 'void RedirectablePrint::log_to_serial(const char *logLevel, const char *format, va_list arg)\n{\n'
+atomic_bridge = """#if defined(MESHINK_MESHTASTIC_ATOMIC_LOGS) && MESHINK_MESHTASTIC_ATOMIC_LOGS
+    char body[160]{};
+    va_list copy;
+    va_copy(copy, arg);
+    const int wanted = vsnprintf(body, sizeof(body), format, copy);
+    va_end(copy);
+    if (wanted < 0) return;
+    size_t body_len = (size_t)wanted < sizeof(body) ? (size_t)wanted : sizeof(body) - 1;
+    if ((size_t)wanted >= sizeof(body)) body[sizeof(body)-2] = '\\n';
+    for (size_t i = 0; i < body_len; ++i) {
+        if (!std::isprint((unsigned char)body[i]) && body[i] != '\\n')
+            body[i] = '#';
+    }
+    const uint32_t local_time = getValidTime(RTCQuality::RTCQualityDevice, true);
+    auto thread = concurrency::OSThread::currentThread;
+    char line[meshink_atomic_log::CAPACITY]{};
+    const size_t bytes = meshink_atomic_log::compose(
+        line, sizeof(line), logLevel, local_time, millis()/1000U,
+        thread ? thread->ThreadName.c_str() : nullptr, body, body_len);
+    const bool serial_enabled = config.has_security ?
+        config.security.serial_enabled : config.device.serial_enabled;
+    if (bytes && (!config.has_lora || serial_enabled)) {
+        // Exactly one underlying HWCDC write; no prefix/body split.
+        dest->write((const uint8_t*)line, bytes);
+    }
+    return;
+#endif
+"""
+if atomic_bridge not in atomic_text:
+    if atomic_text.count(atomic_anchor) != 1:
+        raise RuntimeError("Official Meshtastic log-to-serial entry changed; abort atomic patch")
+    atomic_text = atomic_text.replace(atomic_anchor, atomic_anchor + atomic_bridge, 1)
+    if atomic_include not in atomic_text:
+        atomic_text = atomic_include + atomic_text
+    atomic_path.write_text(atomic_text, encoding="utf-8")
+print("[MeshInk] Meshtastic serial records sent as one atomic HWCDC buffer write")
