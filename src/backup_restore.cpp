@@ -20,7 +20,7 @@ constexpr uint16_t FORMAT_VERSION=meshink_backup_format::VERSION;
 constexpr uint16_t MT_FORMAT_VERSION=meshink_backup_format::MESHTASTIC_VERSION;
 constexpr size_t MAX_ENTRIES=60;
 constexpr size_t MAX_PART_BYTES=256000;
- constexpr char CORE_NVS[]="@mesh-auth";
+constexpr char CORE_NVS[]="@mesh-auth";
 constexpr char SHARED_NAME[]="@node-name";
 constexpr char SETUP_NVS[]="@setup-state";
 constexpr char DEVICE_NVS[]="@device-settings";
@@ -981,6 +981,51 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
         return fail("Backup missing required identity settings");
     }
+    // Restore is replacement, not merge: remove any old recovery journal
+    // that would override the restored primary, plus Meshtastic snapshots and
+    // native preference files not present in the verified full archive.
+    auto stage_delete=[&](const char* path,uint8_t category)->bool {
+        if(!SPIFFS.exists(path))return true;
+        for(size_t i=0;i<count;++i)if(!strcmp(stages[i].path,path))return true;
+        if(count>=MAX_ENTRIES)return false;
+        Stage& entry=stages[count];
+        entry=Stage{};
+        snprintf(entry.path,sizeof(entry.path),"%s",path);
+        snprintf(entry.staged,sizeof(entry.staged),"/rst%02u.tmp",(unsigned)count);
+        snprintf(entry.previous,sizeof(entry.previous),"/rst%02u.old",(unsigned)count);
+        entry.category=category;
+        entry.deleting=true;
+        ++count;
+        return true;
+    };
+    if(categories&MESHINK_BACKUP_MESSAGES){
+        const char* recovery=protocol==1?MC_RECOVERY:MT_RECOVERY;
+        if(!stage_delete(recovery,MESHINK_BACKUP_MESSAGES))
+            return fail("Too many files for journal recovery cleanup");
+    }
+    if(protocol==2){
+        if(categories&MESHINK_BACKUP_NODES){
+            if(!stage_delete(MT_NODES_A,MESHINK_BACKUP_NODES)||
+               !stage_delete(MT_NODES_B,MESHINK_BACKUP_NODES))
+                return fail("Too many node snapshots to replace");
+        }
+        if(categories&MESHINK_BACKUP_SETTINGS){
+            File dir=SPIFFS.open("/prefs");
+            if(dir&&dir.isDirectory()){
+                File item=dir.openNextFile();
+                while(item){
+                    const String path=item.path();
+                    const bool safe=!item.isDirectory()&&mt_pref_path(path.c_str());
+                    const bool queued=safe&&stage_delete(path.c_str(),
+                        !strcmp(path.c_str(),MT_NATIVE_NODES)?MESHINK_BACKUP_NODES:MESHINK_BACKUP_SETTINGS);
+                    item.close();
+                    if(!queued){dir.close();return fail("Unsafe or excessive native pref file");}
+                    item=dir.openNextFile();
+                }
+            }
+            if(dir)dir.close();
+        }
+    }
     if((categories&MESHINK_BACKUP_NODES)&&protocol==1){
         // A Nodes restore means replace, not merge. Preserve obsolete MeshCore
         // blob files in the undo transaction and remove them from the live tree.
@@ -1061,6 +1106,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     if(ok){
         for(size_t i=0;i<count;++i){
             Stage& stage=stages[i];
+            if(stage.deleting)continue;
             if(!strcmp(stage.path,CORE_NVS))ok=update_core_auth_from_stage(stage);
             else if(!strcmp(stage.path,MT_LOCATION_NVS))ok=update_mt_location_from_stage(stage);
             else if(!strcmp(stage.path,SHARED_NAME))ok=update_shared_name_from_stage(stage,protocol);
@@ -1097,6 +1143,23 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
             rollback_transaction(count);
             return fail("Failed to persist restored setup state");
         }
+    }
+    // Read back every newly installed file before declaring the restore
+    // complete. The input archive and staged copies were already CRC-checked.
+    if(ok){
+        for(size_t i=0;i<count;++i){
+            const Stage& entry=stages[i];
+            if(entry.deleting||entry.path[0]=='@')continue;
+            File verified=SPIFFS.open(entry.path,"r");
+            const bool exists=verified&&(verified.size()>0);
+            if(verified)verified.close();
+            if(!exists){ok=false;break;}
+        }
+    }
+    if(!ok){
+        const bool recovered=rollback_transaction(count);
+        return fail(recovered?"Restore verification failed; original data recovered":
+                             "Restore verification failed; reboot recovery required");
     }
     // Once no further storage mutations are needed, make the result durable
     // by removing the recovery marker. Keep previous files for diagnosis.
