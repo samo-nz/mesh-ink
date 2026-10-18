@@ -240,6 +240,56 @@ static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
     }
     return false;
 }
+// The archive CRC only proves that bytes were copied faithfully. These
+// independent checks reject a structurally unusable source BEFORE a "verified"
+// backup can become the operator's only copy of precious message/node history.
+static bool valid_message_journal(const char* path,uint8_t protocol){
+    File file=SPIFFS.open(path,"r");
+    if(!file)return false;
+    MeshInkMessageStoreHeader h{};
+    constexpr uint32_t MAGIC_JOURNAL=0x354D3554U;
+    constexpr size_t LEGACY_CORE_RECORD_BYTES=188;
+    const size_t record_bytes=protocol==2?sizeof(MeshInkStoredMessage):
+                              LEGACY_CORE_RECORD_BYTES;
+    const bool ok=file.read((uint8_t*)&h,sizeof(h))==sizeof(h)&&
+        h.magic==MAGIC_JOURNAL&&h.version==(protocol==2?4:3)&&
+        h.capacity==MESHINK_MESSAGE_CAPACITY&&
+        h.head<MESHINK_MESSAGE_CAPACITY&&h.count<=MESHINK_MESSAGE_CAPACITY&&
+        file.size()==sizeof(h)+MESHINK_MESSAGE_CAPACITY*record_bytes;
+    file.close();
+    return ok;
+}
+struct MtNodeDiskHeader {
+    uint32_t magic=0,version=0,generation=0,count=0,checksum=0;
+};
+constexpr size_t MT_NODE_RECORD_BYTES=68;
+constexpr uint32_t MT_NODE_LIMIT=64;
+static uint32_t fnv_checksum(uint32_t hash,const uint8_t* data,size_t count){
+    for(size_t i=0;i<count;++i){hash^=data[i];hash*=16777619u;}
+    return hash;
+}
+static bool valid_mt_node_snapshot(const char* path){
+    File file=SPIFFS.open(path,"r");
+    if(!file)return false;
+    MtNodeDiskHeader h{};
+    if(file.read((uint8_t*)&h,sizeof(h))!=sizeof(h)||
+       h.magic!=0x4D544E44U||h.version!=1||h.count>MT_NODE_LIMIT||
+       file.size()!=sizeof(h)+h.count*MT_NODE_RECORD_BYTES){
+        file.close();return false;
+    }
+    uint32_t sum=fnv_checksum(2166136261u,(const uint8_t*)&h.generation,sizeof(h.generation));
+    sum=fnv_checksum(sum,(const uint8_t*)&h.count,sizeof(h.count));
+    uint8_t record[MT_NODE_RECORD_BYTES]{};
+    for(uint32_t i=0;i<h.count;++i){
+        if(file.read(record,sizeof(record))!=sizeof(record)){
+            file.close();return false;
+        }
+        uint32_t number=0;memcpy(&number,record,sizeof(number));
+        if(!number){file.close();return false;}
+        sum=fnv_checksum(sum,record,sizeof(record));
+    }
+    file.close();return sum==h.checksum;
+}
 static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path){
     if(!is_real_path(path,protocol,cat)||count>=MAX_ENTRIES)return false;
     for(size_t i=0;i<count;++i)if(!strcmp(plans[i].part.path,path))return true;
@@ -876,6 +926,18 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     if((protocol!=1&&protocol!=2)||!categories||(categories&~15U)||
        (protocol==2&&categories!=15))return fail("Meshtastic needs full backup");
     if(!sd_writable())return false;
+    const char* journal=authoritative_path(protocol==2?MT_MESSAGES:CORE_MESSAGES);
+    if((categories&MESHINK_BACKUP_MESSAGES)&&!valid_message_journal(journal,protocol))
+        return fail("Message journal invalid; backup refused to protect history");
+    if(protocol==2&&(categories&MESHINK_BACKUP_NODES)){
+        const bool a=SPIFFS.exists(MT_NODES_A),b=SPIFFS.exists(MT_NODES_B);
+        const bool valid_a=a&&valid_mt_node_snapshot(MT_NODES_A);
+        const bool valid_b=b&&valid_mt_node_snapshot(MT_NODES_B);
+        if((a||b)&&!valid_a&&!valid_b)
+            return fail("Both Meshtastic node history snapshots invalid");
+        if(a&&!valid_a)Serial.println("[T5-BACKUP] WARN corrupt MT node slot A omitted");
+        if(b&&!valid_b)Serial.println("[T5-BACKUP] WARN corrupt MT node slot B omitted");
+    }
     BackupWorkspace workspace(true,false);
     if(!workspace.ready)return fail("Insufficient PSRAM for backup workspace");
     // All protocol tasks and message writers are absent during maintenance boot.
@@ -904,9 +966,14 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
             }
             if(dir)dir.close();
         }else {
-            for(const char* path:{MT_NATIVE_NODES,MT_NODES_A,MT_NODES_B})
-                if(!add_plan(parts,protocol,2,path))
-                    return fail("Meshtastic node backup preparation failed");
+            if(!add_plan(parts,protocol,2,MT_NATIVE_NODES))
+                return fail("Native Meshtastic node backup preparation failed");
+            // Mirror the UI's two-slot validator. An invalid optional slot is
+            // omitted, never promoted into an apparently good backup.
+            for(const char* path:{MT_NODES_A,MT_NODES_B})
+                if(SPIFFS.exists(path)&&valid_mt_node_snapshot(path)&&
+                   !add_plan(parts,protocol,2,path))
+                    return fail("Meshtastic node history preparation failed");
         }
     }
     if(categories&MESHINK_BACKUP_SETTINGS){
@@ -1050,6 +1117,11 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         }
         dest.flush();dest.close();
         if(!ok||copied!=part.size||(~crc)!=part.crc){ok=false;break;}
+        if(part.category==MESHINK_BACKUP_MESSAGES&&
+           !valid_message_journal(stage.staged,protocol)){ok=false;break;}
+        if(protocol==2&&(!strcmp(part.path,MT_NODES_A)||
+                         !strcmp(part.path,MT_NODES_B))&&
+           !valid_mt_node_snapshot(stage.staged)){ok=false;break;}
         if(!strcmp(part.path,"/identity/_main.id"))has_core_identity=true;
         if(!strcmp(part.path,"/prefs.json"))has_core_prefs=true;
         if(!strcmp(part.path,MT_LOCATION_NVS))has_mt_identity=true;
@@ -1170,8 +1242,11 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
             }
         }else{
             stage.old_exists=SPIFFS.exists(stage.path);
-            if(SPIFFS.exists(stage.previous)&&!SPIFFS.remove(stage.previous))
-                return fail("Cannot clear stale restore snapshot");
+            // Never silently destroy a previous restore's remaining rollback
+            // snapshot: it may be the user's only recoverable copy after a
+            // failed or interrupted earlier test build.
+            if(SPIFFS.exists(stage.previous))
+                return fail("Earlier restore safety snapshot present; aborting");
         }
     }
     if(!save_transaction(count))return fail("Cannot create restore recovery record");
@@ -1257,10 +1332,19 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         return fail(recovered?"Restore verification failed; original data recovered":
                              "Restore verification failed; reboot recovery required");
     }
-    // Once no further storage mutations are needed, make the result durable
-    // by removing the recovery marker. Keep previous files for diagnosis.
+    // The durable transaction is complete ONLY when every installed flash
+    // file has passed its CRC. After removing the marker, no rollback on the
+    // next boot is needed. Free rollback copies so future messages and node
+    // saves do not run out of internal flash. The SD archive is kept.
     if(!SPIFFS.remove(RESTORE_TXN))
         return fail("Cannot finalize restore; reboot recovery required");
-    for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
+    bool cleaned=true;
+    for(size_t i=0;i<count;++i){
+        if(SPIFFS.exists(stages[i].staged))
+            cleaned=SPIFFS.remove(stages[i].staged)&&cleaned;
+        if(SPIFFS.exists(stages[i].previous))
+            cleaned=SPIFFS.remove(stages[i].previous)&&cleaned;
+    }
+    if(!cleaned)Serial.println("[T5-BACKUP] WARN: stale restore snapshots remain; free-space check recommended");
     return true;
 }
