@@ -296,3 +296,5 @@ Backup and Restore both require an explicit confirmation screen with **OK / Canc
 
 ### test.57 SD mount crash correction
 After successful offline B+R, normal startup previously called `map_tiles_warm_storage()`, which attempted to reinitialize an already-mounted SD filesystem. This could invoke `SDFS::end()` / `SPIClass::endTransaction()` and trigger a FreeRTOS queue assert. The board storage backend now reuses readable existing mounts and only tears down an SD mount when a real remount is needed. A separate confirmation/progress screen is shown before flushing the protocol for the requested reboot.
+
+For future hardware crash reports, the matching primary-build `firmware.elf` is now retained as a separate CI artifact named with its exact commit SHA, so backtraces can be resolved without a speculative rebuild.

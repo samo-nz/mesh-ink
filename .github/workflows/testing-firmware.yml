@@ -122,20 +122,10 @@ jobs:
           /tmp/meshink-t5-touch-backend-test
       - name: Build primary cache64 firmware
         run: python -m platformio run -e t5-unified-cache64
-      - name: Decode test.56 reboot crash with matching symbols
-        run: |
-          ELF=".pio/build/t5-unified-cache64/firmware.elf"
-          test -s "$ELF"
-          sha256sum "$ELF"
-          TOOL=$(find "$HOME/.platformio/packages" -type f -name 'xtensa-esp32s3-elf-addr2line' -print -quit)
-          test -n "$TOOL"
-          "$TOOL" -C -f -p -i -e "$ELF" \
-            0x420e7d31 0x42058fc7 0x42072fa5 0x420723ab \
-            0x420074fe 0x4202ae27 0x4202c162 0x420588e4 0x420e8c76
-      - name: Upload cache64 ELF for crash diagnosis
+      - name: Retain cache64 ELF for future hardware backtraces
         uses: actions/upload-artifact@v4
         with:
-          name: meshink-test56-symbols
+          name: meshink-${{ github.sha }}-symbols
           path: .pio/build/t5-unified-cache64/firmware.elf
           if-no-files-found: error
           retention-days: 14
