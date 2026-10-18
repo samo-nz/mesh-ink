@@ -6,7 +6,8 @@
 // Keep layout/version explicit so host tests can catch accidental format drift.
 namespace meshink_backup_format {
 constexpr uint32_t MAGIC=0x3142494DU; // MIB1
-constexpr uint16_t VERSION=1;
+constexpr uint16_t VERSION=1; // Released MeshCore format
+constexpr uint16_t MESHTASTIC_VERSION=2; // Native full snapshot
 struct __attribute__((packed)) Header {
     uint32_t magic;
     uint16_t version;
@@ -24,8 +25,9 @@ struct __attribute__((packed)) Part {
 static_assert(sizeof(Header)==12,"Backup header compatibility changed");
 static_assert(sizeof(Part)==56,"Backup entry compatibility changed");
 inline bool supported(const Header& header,uint8_t protocol,size_t max_entries){
-    return header.magic==MAGIC&&header.version==VERSION&&
-           header.protocol==protocol&&(protocol==1||protocol==2)&&
+    return header.magic==MAGIC&&header.protocol==protocol&&
+           (protocol==1 ? header.version==VERSION :
+            protocol==2 && header.version==MESHTASTIC_VERSION && header.categories==15)&&
            header.count>0&&header.count<=max_entries&&
            (header.categories&~15U)==0&&header.categories;
 }

@@ -17,25 +17,93 @@ using meshink_backup_format::Part;
 using meshink_backup_format::crc32;
 constexpr uint32_t MAGIC=meshink_backup_format::MAGIC;
 constexpr uint16_t FORMAT_VERSION=meshink_backup_format::VERSION;
+constexpr uint16_t MT_FORMAT_VERSION=meshink_backup_format::MESHTASTIC_VERSION;
 constexpr size_t MAX_ENTRIES=60;
 constexpr size_t MAX_PART_BYTES=256000;
-constexpr char LEAF_NVS[]="@meshtastic";
-constexpr char CORE_NVS[]="@mesh-auth";
+ constexpr char CORE_NVS[]="@mesh-auth";
 constexpr char SHARED_NAME[]="@node-name";
 constexpr char SETUP_NVS[]="@setup-state";
 constexpr char DEVICE_NVS[]="@device-settings";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
-constexpr char LEAF_MESSAGES[]="/meshtastic_messages.bin";
-constexpr char LEAF_NODES[]="/meshtastic_nodes.bin";
-struct __attribute__((packed)) LeafSettings {
-    uint32_t magic;
-    uint8_t region,preset,hop,has_private,has_public;
-    uint8_t private_key[32];
-    uint8_t public_key[32];
+constexpr char MT_LOCATION_NVS[]="@mt-location";
+constexpr char MT_MESSAGES[]="/meshtastic_messages.bin";
+constexpr char MC_RECOVERY[]="/mc_messages_recovery.bin";
+constexpr char MT_RECOVERY[]="/mt_messages_recovery.bin";
+constexpr char MT_NODES_A[]="/mt_nodes_a.bin";
+constexpr char MT_NODES_B[]="/mt_nodes_b.bin";
+constexpr char MT_NATIVE_NODES[]="/prefs/nodes.proto";
+constexpr char MT_CONFIG[]="/prefs/config.proto";
+constexpr char MT_CHANNELS[]="/prefs/channels.proto";
+constexpr char MT_DEVICE[]="/prefs/device.proto";
+constexpr char MT_MODULE[]="/prefs/module.proto";
+struct MtLocationSnapshot {
+    uint32_t magic=0x324C544DU; // MTL2
+    uint32_t present=0;
+    uint32_t precision[8]{};
+    uint8_t configured=0,master=0,public_position=0,interval=0;
 };
+static_assert(sizeof(MtLocationSnapshot)==44,"Meshtastic location snapshot changed");
+static bool offline_operation=false;
+static const char* authoritative_path(const char* path){
+    if(!strcmp(path,CORE_MESSAGES)&&SPIFFS.exists(MC_RECOVERY))return MC_RECOVERY;
+    if(!strcmp(path,MT_MESSAGES)&&SPIFFS.exists(MT_RECOVERY))return MT_RECOVERY;
+    return path;
+}
+static bool mt_pref_path(const char* path) {
+    if(!path||strncmp(path,"/prefs/",7)||!path[7]||strlen(path)>=32)return false;
+    for(const char* p=path+7;*p;++p){
+        const char c=*p;
+        if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
+             (c>='0'&&c<='9')||c=='_'||c=='-'||c=='.'))return false;
+    }
+    return true;
+}
+static bool mt_location_capture(MtLocationSnapshot& out) {
+    out=MtLocationSnapshot{};
+    Preferences p;
+    if(!p.begin("mt-location",true))return true;
+    const char* keys[]={"configured","master","public","interval"};
+    for(unsigned i=0;i<4;++i)if(p.isKey(keys[i]))out.present|=1U<<i;
+    out.configured=p.getBool("configured",false);
+    out.master=p.getBool("master",false);
+    out.public_position=p.getBool("public",false);
+    out.interval=p.getUChar("interval",0);
+    for(unsigned i=1;i<8;++i){
+        char key[12];snprintf(key,sizeof(key),"prec%u",i);
+        if(p.isKey(key))out.present|=1U<<(i+3);
+        out.precision[i]=p.getUInt(key,0);
+    }
+    p.end();
+    return true;
+}
+static bool mt_location_valid(const MtLocationSnapshot& d) {
+    return d.magic==0x324C544DU && !(d.present&~0x7FFU) &&
+           d.configured<=1 && d.master<=1 && d.public_position<=1 && d.interval<=3;
+}
+static bool mt_location_apply(const MtLocationSnapshot& d) {
+    if(!mt_location_valid(d))return false;
+    Preferences p;
+    if(!p.begin("mt-location",false))return false;
+    bool ok=true;
+    for(unsigned i=0;i<11;++i){
+        char dynamic_key[12]{};
+        const char* key=nullptr;
+        if(i<4){const char* fixed[]={"configured","master","public","interval"};key=fixed[i];}
+        else{snprintf(dynamic_key,sizeof(dynamic_key),"prec%u",i-3);key=dynamic_key;}
+        if(!(d.present&(1U<<i))){
+            if(p.isKey(key))ok=p.remove(key)&&ok;
+        }else if(i<3){
+            const bool values[]={d.configured!=0,d.master!=0,d.public_position!=0};
+            ok=(p.putBool(key,values[i])==1)&&ok;
+        }else if(i==3)ok=(p.putUChar(key,d.interval)==1)&&ok;
+        else ok=(p.putUInt(key,d.precision[i-3])==4)&&ok;
+    }
+    p.end();
+    return ok;
+}
 static_assert(sizeof(Header)==12,"Backup file header must be stable");
 static_assert(sizeof(Part)==56,"Backup entry header must be stable");
-static_assert(sizeof(LeafSettings)==73,"Leaf settings wire structure changed");
+static_assert(sizeof(MtLocationSnapshot)==44,"MT location snapshot layout changed");
 struct Plan {
     Part part{};
 };
@@ -60,7 +128,7 @@ constexpr size_t BACKUP_NVS_BYTES=4096;
 static uint8_t* nvs_data=nullptr;
 static uint8_t* previous_nvs=nullptr;
 static size_t previous_nvs_size=0;
-static LeafSettings leaf_data{},old_leaf_data{};
+static MtLocationSnapshot mt_location{},old_mt_location{};
 static meshink_device_settings::Snapshot device_data{};
 // Transient PSRAM workspace. Never reserve large backup buffers while idle.
 static Plan* plans=nullptr;
@@ -132,12 +200,13 @@ static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
     if(cat==MESHINK_BACKUP_DEVICE_SETTINGS)return !strcmp(path,DEVICE_NVS);
     if(cat==MESHINK_BACKUP_SETTINGS&&path[0]=='@')
         return !strcmp(path,SHARED_NAME)||
-               !strcmp(path,protocol==1?CORE_NVS:LEAF_NVS);
+               !strcmp(path,protocol==1?CORE_NVS:MT_LOCATION_NVS);
     if(path[0]!='/')return false;
     if(cat==MESHINK_BACKUP_MESSAGES)
-        return !strcmp(path,protocol==1?CORE_MESSAGES:LEAF_MESSAGES);
+        return !strcmp(path,protocol==1?CORE_MESSAGES:MT_MESSAGES);
     if(cat==MESHINK_BACKUP_NODES){
-        if(protocol==2)return !strcmp(path,LEAF_NODES);
+        if(protocol==2)return !strcmp(path,MT_NATIVE_NODES)||
+                               !strcmp(path,MT_NODES_A)||!strcmp(path,MT_NODES_B);
         if(!strcmp(path,"/contacts3")||!strcmp(path,"/adv_blobs"))return true;
         if(strncmp(path,"/bl/",4))return false;
         if(!path[4])return false;
@@ -152,7 +221,7 @@ static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
         if(protocol==1)
             return !strcmp(path,"/prefs.json")||!strcmp(path,"/channels2")||
                    !strcmp(path,"/identity/_main.id")||!strcmp(path,CORE_NVS);
-        return !strcmp(path,LEAF_NVS);
+        return mt_pref_path(path)&&strcmp(path,MT_NATIVE_NODES)!=0;
     }
     return false;
 }
@@ -176,9 +245,9 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
             if(!prefs.begin("mesh-auth",true))return true;
             p.part.size=(uint32_t)prefs.getBytesLength("credentials");
             prefs.end();
-        }else p.part.size=sizeof(LeafSettings);
+        }else p.part.size=sizeof(MtLocationSnapshot);
     }else{
-        File f=SPIFFS.open(path,"r");
+        File f=SPIFFS.open(authoritative_path(path),"r");
         if(!f)return true; // Optional absent files are not part of the backup.
         p.part.size=f.size();
         f.close();
@@ -186,19 +255,6 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
     if(!p.part.size)return true;
     if(p.part.size>MAX_PART_BYTES)return false;
     ++count;return true;
-}
-static void read_leaf_settings(LeafSettings& data){
-    memset(&data,0,sizeof(data));data.magic=0x31534C4DU;
-    Preferences p;
-    if(!p.begin("meshtastic",true))return;
-    data.region=p.getUChar("region",0);
-    data.preset=p.getUChar("preset",0);
-    data.hop=p.getUChar("hop",3);
-    data.has_private=p.getBytesLength("private")==32&&
-        p.getBytes("private",data.private_key,32)==32;
-    data.has_public=p.getBytesLength("public")==32&&
-        p.getBytes("public",data.public_key,32)==32;
-    p.end();
 }
 static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     length=0;
@@ -219,10 +275,10 @@ static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
         return true;
     }
     if(protocol==2){
-        read_leaf_settings(leaf_data);
-        memcpy(nvs_data,&leaf_data,sizeof(leaf_data));
-        length=sizeof(leaf_data);
-        return leaf_data.has_private&&leaf_data.has_public;
+        if(!mt_location_capture(mt_location))return false;
+        memcpy(nvs_data,&mt_location,sizeof(mt_location));
+        length=sizeof(mt_location);
+        return true;
     }
     Preferences p;
     if(!p.begin("mesh-auth",true))return false;
@@ -244,18 +300,21 @@ static bool manifest_has(const Part* items,size_t count,uint8_t category,const c
 static bool categories_complete(uint8_t protocol,uint8_t categories,const Part* parts,size_t count){
     if((categories&MESHINK_BACKUP_MESSAGES)&&
        !manifest_has(parts,count,MESHINK_BACKUP_MESSAGES,
-            protocol==1?CORE_MESSAGES:LEAF_MESSAGES))return false;
+            protocol==1?CORE_MESSAGES:MT_MESSAGES))return false;
     if(categories&MESHINK_BACKUP_NODES){
         if(protocol==1){
             if(!manifest_has(parts,count,MESHINK_BACKUP_NODES,"/contacts3"))return false;
-        }else if(!manifest_has(parts,count,MESHINK_BACKUP_NODES,LEAF_NODES))return false;
+        }else if(!manifest_has(parts,count,MESHINK_BACKUP_NODES,MT_NATIVE_NODES))return false;
     }
     if(categories&MESHINK_BACKUP_SETTINGS){
         if(protocol==1){
             if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,"/prefs.json")||
                !manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,"/identity/_main.id"))
                 return false;
-        }else if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,LEAF_NVS))return false;
+        }else {
+            for(const char* required:{MT_CONFIG,MT_CHANNELS,MT_DEVICE,MT_MODULE,MT_LOCATION_NVS})
+                if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,required))return false;
+        }
         if(!manifest_has(parts,count,MESHINK_BACKUP_SETTINGS,SHARED_NAME))return false;
     }
     if((categories&MESHINK_BACKUP_DEVICE_SETTINGS)&&
@@ -268,7 +327,7 @@ static bool source_crc(Plan& plan,uint8_t protocol){
         if(!load_nvs_source(plan.part.path,protocol,count)||count!=plan.part.size)return false;
         crc=crc32(nvs_data,count,crc);
     }else{
-        File f=SPIFFS.open(plan.part.path,"r");
+        File f=SPIFFS.open(authoritative_path(plan.part.path),"r");
         if(!f)return false;
         while(count<plan.part.size){
             const size_t wanted=min(sizeof(io),(size_t)(plan.part.size-count));
@@ -287,7 +346,7 @@ static bool source_write(File& output,const Plan& p,uint8_t protocol){
         if(!load_nvs_source(p.part.path,protocol,length)||length!=p.part.size)return false;
         return output.write(nvs_data,length)==length;
     }
-    File f=SPIFFS.open(p.part.path,"r");
+    File f=SPIFFS.open(authoritative_path(p.part.path),"r");
     if(!f)return false;
     bool ok=true;
     while(written<p.part.size){
@@ -312,7 +371,7 @@ static bool inspect(const char* filename,uint8_t protocol,
     File input=meshink_storage_open(path);
     if(!input)return fail("Backup file unavailable");
     if(input.read((uint8_t*)&header,sizeof(header))!=sizeof(header)||
-       header.magic!=MAGIC||header.version!=FORMAT_VERSION||
+       header.magic!=MAGIC||
        !meshink_backup_format::supported(header,protocol,MAX_ENTRIES)){
         input.close();return fail("Backup format or protocol mismatch");
     }
@@ -374,36 +433,14 @@ static bool update_core_auth_from_stage(const Stage& stage){
     }
     p.end();return ok;
 }
-static bool update_leaf_from_stage(const Stage& stage){
+static bool update_mt_location_from_stage(const Stage& stage){
     File f=SPIFFS.open(stage.staged,"r");
     if(!f)return false;
-    LeafSettings data{};
-    const bool read_ok=f.size()==sizeof(data)&&
-        f.read((uint8_t*)&data,sizeof(data))==sizeof(data);
+    MtLocationSnapshot value{};
+    const bool ok=f.size()==sizeof(value)&&f.read((uint8_t*)&value,sizeof(value))==sizeof(value);
     f.close();
-    if(!read_ok||data.magic!=0x31534C4DU||
-       data.has_private!=1||data.has_public!=1||data.region==0||
-       data.hop<1||data.hop>7)return false;
-    read_leaf_settings(old_leaf_data);
-    Preferences p;
-    if(!p.begin("meshtastic",false))return false;
-    bool ok=p.putUChar("region",data.region)==1&&
-            p.putUChar("preset",data.preset)==1&&
-            p.putUChar("hop",data.hop)==1&&
-            p.putBytes("private",data.private_key,32)==32&&
-            p.putBytes("public",data.public_key,32)==32;
-    if(!ok){
-        p.putUChar("region",old_leaf_data.region);
-        p.putUChar("preset",old_leaf_data.preset);
-        p.putUChar("hop",old_leaf_data.hop);
-        if(old_leaf_data.has_private)p.putBytes("private",old_leaf_data.private_key,32);
-        else p.remove("private");
-        if(old_leaf_data.has_public)p.putBytes("public",old_leaf_data.public_key,32);
-        else p.remove("public");
-    }
-    p.end();return ok;
+    return ok&&mt_location_apply(value);
 }
-
 static bool update_shared_name_from_stage(const Stage& stage,uint8_t protocol){
     File f=SPIFFS.open(stage.staged,"r");
     if(!f||f.size()<2||f.size()>21){if(f)f.close();return false;}
@@ -439,11 +476,10 @@ static bool snapshot_previous_nvs(Stage& stage){
             p.end();
             if(size&&!exists)return false;
         }
-    }else if(!strcmp(stage.path,LEAF_NVS)){
-        read_leaf_settings(old_leaf_data);
-        size=sizeof(old_leaf_data);
-        memcpy(data,&old_leaf_data,size);
-        exists=true;
+    }else if(!strcmp(stage.path,MT_LOCATION_NVS)){
+        if(!mt_location_capture(old_mt_location))return false;
+        size=sizeof(old_mt_location);
+        memcpy(data,&old_mt_location,size);exists=true;
     }else if(!strcmp(stage.path,DEVICE_NVS)){
         if(!meshink_device_settings::capture(device_data))return false;
         memcpy(data,&device_data,sizeof(device_data));
@@ -484,30 +520,17 @@ static bool snapshot_previous_nvs(Stage& stage){
     backup.flush();backup.close();
     return ok;
 }
-static bool apply_leaf_snapshot(const char* filename){
-    File f=SPIFFS.open(filename,"r");
+static bool restore_mt_location(const char* path){
+    File f=SPIFFS.open(path,"r");
     if(!f)return false;
-    LeafSettings data{};
-    const bool ok=f.size()==sizeof(data)&&
-        f.read((uint8_t*)&data,sizeof(data))==sizeof(data);
-    f.close();
-    if(!ok||data.magic!=0x31534C4DU)return false;
-    Preferences p;
-    if(!p.begin("meshtastic",false))return false;
-    bool saved=p.putUChar("region",data.region)==1 &&
-        p.putUChar("preset",data.preset)==1 &&
-        p.putUChar("hop",data.hop)==1;
-    if(data.has_private)saved=(p.putBytes("private",data.private_key,32)==32)&&saved;
-    else saved=p.remove("private")&&saved;
-    if(data.has_public)saved=(p.putBytes("public",data.public_key,32)==32)&&saved;
-    else saved=p.remove("public")&&saved;
-    p.end();
-    return saved;
+    MtLocationSnapshot value{};
+    const bool ok=f.size()==sizeof(value)&&f.read((uint8_t*)&value,sizeof(value))==sizeof(value);
+    f.close();return ok&&mt_location_apply(value);
 }
 static bool restore_previous_nvs(const Stage& stage){
     if(!stage.path[0]||stage.path[0]!='@')return true;
-    if(!strcmp(stage.path,LEAF_NVS))
-        return stage.old_exists ? apply_leaf_snapshot(stage.previous) : true;
+    if(!strcmp(stage.path,MT_LOCATION_NVS))
+        return stage.old_exists ? restore_mt_location(stage.previous) : true;
     if(!strcmp(stage.path,DEVICE_NVS)){
         File f=SPIFFS.open(stage.previous,"r");
         meshink_device_settings::Snapshot snapshot{};
@@ -678,21 +701,16 @@ uint8_t meshink_backup_categories(uint8_t protocol,const char* filename){
 bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,size_t path_len){
     last_error[0]=0;
     if(saved_path&&path_len)saved_path[0]=0;
-    if((protocol!=1&&protocol!=2)||!categories||(categories&~15U))
-        return fail("Choose backup categories");
+    if(!offline_operation)return fail("Backup must run before protocol startup");
+    if((protocol!=1&&protocol!=2)||!categories||(categories&~15U)||
+       (protocol==2&&categories!=15))return fail("Meshtastic needs full backup");
     if(!sd_writable())return false;
     BackupWorkspace workspace(true,false);
     if(!workspace.ready)return fail("Insufficient PSRAM for backup workspace");
-    mesh_protocol_flush_now();
-    uint32_t sequence=0;size_t count=0;
-    if(categories&MESHINK_BACKUP_MESSAGES){
-        // Close/reopen the live journal to verify the snapshot was fully durable.
-        if(!meshink_message_store().sync_and_verify_for_deep_sleep(sequence,count))
-            return fail("Message journal is not durable");
-    }
+    // All protocol tasks and message writers are absent during maintenance boot.
     size_t parts=0;
     if((categories&MESHINK_BACKUP_MESSAGES)&&
-       !add_plan(parts,protocol,1,protocol==1?CORE_MESSAGES:LEAF_MESSAGES))
+       !add_plan(parts,protocol,1,protocol==1?CORE_MESSAGES:MT_MESSAGES))
         return fail("Message backup preparation failed");
     if(categories&MESHINK_BACKUP_NODES){
         if(protocol==1){
@@ -714,35 +732,59 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
                 }
             }
             if(dir)dir.close();
-        }else if(!add_plan(parts,protocol,2,LEAF_NODES))
-            return fail("Node backup preparation failed");
+        }else {
+            for(const char* path:{MT_NATIVE_NODES,MT_NODES_A,MT_NODES_B})
+                if(!add_plan(parts,protocol,2,path))
+                    return fail("Meshtastic node backup preparation failed");
+        }
     }
     if(categories&MESHINK_BACKUP_SETTINGS){
         if(protocol==1){
             for(const char* f:{"/prefs.json","/channels2","/identity/_main.id",CORE_NVS,SHARED_NAME})
                 if(!add_plan(parts,protocol,4,f))return fail("Settings backup preparation failed");
-        }else if(!add_plan(parts,protocol,4,LEAF_NVS))
-            return fail("Settings backup preparation failed");
+        }else {
+            File dir=SPIFFS.open("/prefs");
+            if(!dir||!dir.isDirectory()){
+                if(dir)dir.close();return fail("Native Meshtastic preferences unavailable");
+            }
+            File item=dir.openNextFile();
+            while(item){
+                const String path=item.path();
+                if(item.isDirectory()||!mt_pref_path(path.c_str())||
+                   !add_plan(parts,protocol,
+                       !strcmp(path.c_str(),MT_NATIVE_NODES)?2:4,path.c_str())){
+                    item.close();dir.close();
+                    return fail("Native Meshtastic preference invalid or too large");
+                }
+                item.close();item=dir.openNextFile();
+            }
+            dir.close();
+            if(!add_plan(parts,protocol,4,MT_LOCATION_NVS))
+                return fail("Meshtastic location prefs unavailable");
+        }
         if(!add_plan(parts,protocol,4,SHARED_NAME))return fail("Node name backup failed");
     }
     if((categories&MESHINK_BACKUP_DEVICE_SETTINGS)&&
        !add_plan(parts,protocol,MESHINK_BACKUP_DEVICE_SETTINGS,DEVICE_NVS))
         return fail("Device settings backup preparation failed");
     if((categories&MESHINK_BACKUP_MESSAGES)&&
-       !has_plan(parts,MESHINK_BACKUP_MESSAGES,protocol==1?CORE_MESSAGES:LEAF_MESSAGES))
+       !has_plan(parts,MESHINK_BACKUP_MESSAGES,protocol==1?CORE_MESSAGES:MT_MESSAGES))
         return fail("No message journal to back up");
     if(categories&MESHINK_BACKUP_NODES){
         if(protocol==1&&!has_plan(parts,MESHINK_BACKUP_NODES,"/contacts3"))
             return fail("No durable MeshCore contacts file");
-        if(protocol==2&&!has_plan(parts,MESHINK_BACKUP_NODES,LEAF_NODES))
-            return fail("No saved nodes; deselect Nodes");
+        if(protocol==2&&!has_plan(parts,MESHINK_BACKUP_NODES,MT_NATIVE_NODES))
+            return fail("Missing native Meshtastic node database");
     }
     if(categories&MESHINK_BACKUP_SETTINGS){
         if(protocol==1&&(!has_plan(parts,4,"/prefs.json")||
             !has_plan(parts,4,"/identity/_main.id")))
             return fail("Identity/prefs unavailable; backup refused");
-        if(protocol==2&&!has_plan(parts,4,LEAF_NVS))
-            return fail("Meshtastic keys unavailable");
+        if(protocol==2){
+            for(const char* required:{MT_CONFIG,MT_CHANNELS,MT_DEVICE,MT_MODULE,MT_LOCATION_NVS})
+                if(!has_plan(parts,4,required))
+                    return fail("Native Meshtastic settings missing");
+        }
         if(!has_plan(parts,4,SHARED_NAME))
             return fail("Node name unavailable");
     }
@@ -764,7 +806,8 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     meshink_storage_remove(temp);
     File dest=meshink_storage_open_write(temp);
     if(!dest)return fail("Cannot create backup on SD");
-    Header hdr{MAGIC,FORMAT_VERSION,protocol,categories,(uint16_t)parts,0};
+    Header hdr{MAGIC,protocol==1?FORMAT_VERSION:MT_FORMAT_VERSION,
+               protocol,categories,(uint16_t)parts,0};
     bool ok=dest.write((const uint8_t*)&hdr,sizeof(hdr))==sizeof(hdr);
     for(size_t i=0;ok&&i<parts;++i){
         const Plan& entry=plans[i];
@@ -791,8 +834,9 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
 bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t categories){
     last_error[0]=0;
     restore_quiesced=false;
-    if((protocol!=1&&protocol!=2)||!categories||(categories&~15U))
-        return fail("Choose restore categories");
+    if(!offline_operation)return fail("Restore must run before protocol startup");
+    if((protocol!=1&&protocol!=2)||!categories||(categories&~15U)||
+       (protocol==2&&categories!=15))return fail("Meshtastic needs full restore");
     if(!sd_ready())return fail("SD card unavailable");
     BackupWorkspace workspace(false,true);
     if(!workspace.ready)return fail("Insufficient PSRAM for restore workspace");
@@ -806,7 +850,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     if(!input)return fail("Cannot reopen verified backup");
     if(!input.seek(sizeof(Header))){input.close();return fail("Cannot seek backup");}
     size_t count=0;bool ok=true;
-    bool has_core_identity=false,has_core_prefs=false,has_leaf_identity=false;
+    bool has_core_identity=false,has_core_prefs=false,has_mt_identity=false;
     for(size_t i=0;i<hdr.count&&ok;++i){
         Part part{};
         if(input.read((uint8_t*)&part,sizeof(part))!=sizeof(part)){ok=false;break;}
@@ -830,7 +874,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         if(!ok||copied!=part.size||(~crc)!=part.crc){ok=false;break;}
         if(!strcmp(part.path,"/identity/_main.id"))has_core_identity=true;
         if(!strcmp(part.path,"/prefs.json"))has_core_prefs=true;
-        if(!strcmp(part.path,LEAF_NVS))has_leaf_identity=true;
+        if(!strcmp(part.path,MT_LOCATION_NVS))has_mt_identity=true;
         ++count;
     }
     input.close();
@@ -839,7 +883,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         return fail("Restore staging failed; existing data untouched");
     }
     if((categories&MESHINK_BACKUP_SETTINGS)&&
-       (protocol==1?!(has_core_identity&&has_core_prefs):!has_leaf_identity)){
+       (protocol==1?!(has_core_identity&&has_core_prefs):!has_mt_identity)){
         for(size_t i=0;i<count;++i)SPIFFS.remove(stages[i].staged);
         return fail("Backup missing required identity settings");
     }
@@ -910,11 +954,8 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     if(!save_transaction(count))return fail("Cannot create restore recovery record");
     // Stop the running protocol and flush pending data BEFORE overwriting
     // storage. Never use the normal restart path's post-restore flush.
-    mesh_protocol_flush_now();
-    mesh_protocol_prepare_shutdown();
+    // Offline restore: the protocol was never started, so no handles are open.
     restore_quiesced=true;
-    if(categories&MESHINK_BACKUP_MESSAGES)
-        meshink_message_store().prepare_for_restore();
     for(size_t i=0;i<count;++i){
         Stage& stage=stages[i];
         if(stage.path[0]=='@')continue;
@@ -927,7 +968,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         for(size_t i=0;i<count;++i){
             Stage& stage=stages[i];
             if(!strcmp(stage.path,CORE_NVS))ok=update_core_auth_from_stage(stage);
-            else if(!strcmp(stage.path,LEAF_NVS))ok=update_leaf_from_stage(stage);
+            else if(!strcmp(stage.path,MT_LOCATION_NVS))ok=update_mt_location_from_stage(stage);
             else if(!strcmp(stage.path,SHARED_NAME))ok=update_shared_name_from_stage(stage,protocol);
             else if(!strcmp(stage.path,DEVICE_NVS)){
                 File f=SPIFFS.open(stage.staged,"r");

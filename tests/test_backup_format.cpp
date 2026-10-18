@@ -22,6 +22,10 @@ int main() {
     auto edited=good;
     edited.magic^=1;assert(!supported(edited,1,60));
     edited=good;edited.version++;assert(!supported(edited,1,60));
+    const Header mt{MAGIC,MESHTASTIC_VERSION,2,15,7,0};
+    assert(supported(mt,2,60));
+    edited=mt;edited.version=VERSION;assert(!supported(edited,2,60));
+    edited=mt;edited.categories=7;assert(!supported(edited,2,60));
     edited=good;edited.categories=8;assert(supported(edited,1,60));
     edited=good;edited.categories=15;assert(supported(edited,1,60));
     edited=good;edited.categories=16;assert(!supported(edited,1,60));
