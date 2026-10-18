@@ -8,7 +8,7 @@
 #include <string.h>
 
 namespace meshink_atomic_log {
-constexpr size_t CAPACITY=384;
+constexpr size_t CAPACITY=512;
 inline size_t compose(char* out,size_t capacity,const char* level,
                       uint32_t local_seconds,uint32_t uptime_seconds,
                       const char* thread,const char* body,size_t body_size){

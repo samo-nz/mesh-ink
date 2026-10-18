@@ -169,7 +169,20 @@ void setup() {
     // until the local UI becomes interactive (or companion setup completes).
     // The steady-state policies then drop back to their validated 80 MHz cruise.
     meshink_performance_set_cpu_mhz(240);
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE && \
+    defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+    // HWCDC defaults to a 256-byte transmit ring. Even a complete, atomic
+    // log write can be partially accepted during PhoneAPI startup flooding.
+    // Allocate before begin(), never tear down a live USB ring buffer.
+    const size_t usb_tx_size=Serial.setTxBufferSize(4096);
+#endif
     Serial.begin(115200);
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE && \
+    defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+    if(usb_tx_size!=4096)
+        Serial.printf("[T5-LOG] WARN: USB TX ring allocation failed (%u); using fallback\n",
+                      (unsigned)usb_tx_size);
+#endif
     meshink_buttons_begin();
     meshink_ram_snapshot("early-after-buttons");
 

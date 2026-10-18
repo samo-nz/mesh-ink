@@ -1915,3 +1915,11 @@ assert "meshtastic_atomic_log.h" in mt_prepare, "build-only official logger adap
 assert "atomic_text.replace(atomic_anchor, atomic_anchor + atomic_bridge, 1)" in mt_prepare, "atomic output applied to official log_to_serial"
 assert "dest->write((const uint8_t*)line, bytes);" in mt_prepare, "one buffer write per native serial line"
 assert "void RedirectablePrint::log_to_serial" in mt_prepare, "official log entry point preserved"
+
+
+# Test.62: HWCDC partial writes under PhoneAPI burst no longer choke on a
+# 256-byte default TX ring. Format full >160-byte Meshtastic RF diagnostics.
+assert "Serial.setTxBufferSize(4096)" in unified_source, "pre-USB-begin TX buffer enlarged"
+assert unified_source.index("Serial.setTxBufferSize(4096)") < unified_source.index("Serial.begin(115200)"), "USB TX ring allocated before CDC starts"
+assert "char body[384]{};" in mt_prepare, "native logger preserves long RF packet messages"
+assert "constexpr size_t CAPACITY=512;" in (root/"src"/"protocol"/"meshtastic_atomic_log.h").read_text(), "atomic line buffer carries long logs"

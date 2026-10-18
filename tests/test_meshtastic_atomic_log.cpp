@@ -22,5 +22,16 @@ int main(){
     assert(!strchr(small,'\033'));
     n=compose(line,sizeof(line),"ERROR",0,0,nullptr,"Bare message\n",13);
     assert(!strcmp(line,"ERROR | ??:??:?? 0 Bare message\n"));
+    // Preserve the entire long RF diagnostic line; the old 160-byte body
+    // truncated both packet replay records in test.61.
+    char packet[320]{};
+    memset(packet,'Q',sizeof(packet)-2);
+    packet[sizeof(packet)-2]='\n';
+    packet[sizeof(packet)-1]=0;
+    n=compose(line,sizeof(line),"DEBUG",23*3600,39,
+              "Radio",packet,strlen(packet));
+    assert(n==strlen(line));
+    assert(strstr(line,packet)!=nullptr);
+    assert(line[n-1]=='\n');
     return 0;
 }

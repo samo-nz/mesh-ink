@@ -442,7 +442,7 @@ atomic_include = '#include "protocol/meshtastic_atomic_log.h"\n'
 atomic_anchor = 'void RedirectablePrint::log_to_serial(const char *logLevel, const char *format, va_list arg)\n{\n'
 atomic_bridge = """#if defined(MESHINK_MESHTASTIC_ATOMIC_LOGS) && MESHINK_MESHTASTIC_ATOMIC_LOGS
     { // isolate local names from upstream fallback code in this function
-    char body[160]{};
+    char body[384]{};
     va_list copy;
     va_copy(copy, arg);
     const int wanted = vsnprintf(body, sizeof(body), format, copy);
