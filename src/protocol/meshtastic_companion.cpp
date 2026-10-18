@@ -438,13 +438,6 @@ void sync_native_timezone_to_meshink(bool immediate=false) {
         Serial.println("[MT-TZ] ERROR: unable to import phone timezone");
         return;
     }
-    if(journal_ready && textMessageModule) {
-        message_observer.observe(textMessageModule);
-        observing_text=true;
-        Serial.println("[MT-JOURNAL] observing native Meshtastic text messages");
-    } else if(!textMessageModule) {
-        Serial.println("[MT-JOURNAL] ERROR: native text observer unavailable");
-    }
     snprintf(last_native_timezone,sizeof(last_native_timezone),"%s",rule);
     Serial.printf("[MT-TZ] Meshtastic updated shared timezone: %s\n",rule);
 }
@@ -509,6 +502,15 @@ void meshink_meshtastic_companion_setup() {
     if (!meshink_meshtastic_native_begin()) {
         Serial.println("[MT-BLE] native Meshtastic radio failed");
         return;
+    }
+    // Observe incoming radio messages with or without a paired phone;
+    // registration must not depend on native timezone changes.
+    if(journal_ready && textMessageModule && !observing_text) {
+        message_observer.observe(textMessageModule);
+        observing_text=true;
+        Serial.println("[MT-JOURNAL] observing native Meshtastic text messages");
+    } else if(!textMessageModule) {
+        Serial.println("[MT-JOURNAL] ERROR: native text observer unavailable");
     }
     snprintf(last_native_timezone,sizeof(last_native_timezone),"%s",
              config.device.tzdef);

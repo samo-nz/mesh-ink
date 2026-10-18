@@ -4,9 +4,9 @@
   <img src="docs/file_00000000248c820a81311144dc2df47d.png" alt="MeshInk — Stay Connected, Further" width="720">
 </p>
 
-**MeshInk is standalone MeshCore firmware for the LILYGO T5 E-Paper S3 Pro.**
+**MeshInk is standalone dual-protocol MeshCore and Meshtastic firmware for the LILYGO T5 E-Paper S3 Pro.**
 
-It provides a touchscreen interface for messaging, channels, contacts, maps and node management directly on the T5, without requiring a phone for normal use. Bluetooth companion mode is also available when you want to use the standard MeshCore apps.
+Choose MeshCore or Meshtastic during setup, or switch later in Settings > Protocol. The touchscreen provides messaging, channels, maps and node management without needing a phone. Each protocol has its own configuration and message history, and both offer Bluetooth companion mode with their respective apps.
 
 ## Screenshots
 
@@ -60,11 +60,11 @@ It provides a touchscreen interface for messaging, channels, contacts, maps and 
 - Node discovery and advertisements
 - Offline maps with mesh-node positions
 - GPS and location sharing
-- MeshCore Bluetooth companion mode
+- MeshCore and Meshtastic Bluetooth companion modes
 - Configurable LoRa region and radio presets
 - E-paper interface with frontlight controls
 - Pull-down Quick Settings for brightness, advert flood and power off
-- Low-power standby with long-press wake/sleep
+- Low-power standby with long-press wake/sleep (Meshtastic normal standby; deep-sleep standby is currently MeshCore-only)
 - New-message indication while in standby
 - Local message history
 - On-device configuration for node, radio, GPS, display and power settings
@@ -191,9 +191,15 @@ If esptool reports that it cannot connect, repeat the BOOT/RESET sequence and tr
 
 ## Using MeshInk
 
-On first setup, choose a node name and radio preset. MeshInk then opens into the main Contacts view.
+On first setup, choose MeshCore or Meshtastic, then configure the selected protocol's node identity and LoRa region/preset. Switching protocols under **Settings > Protocol** restarts the device while preserving the separate protocol journals and settings.
 
-The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. From More you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode.
+The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. Some features, including advertisements and discovery, depend on the active protocol. From More you can open Settings or restart into its Bluetooth companion mode.
+
+**Meshtastic pairing:** Bluetooth companion mode supports a fixed PIN or no PIN. Dynamic random PIN pairing is not supported in this release.
+
+**Standby:** Both protocols support normal standby. Retained-radio deep-sleep standby is not implemented for Meshtastic and is not a release requirement.
+
+**Upgrading:** Use the update image to preserve earlier MeshInk settings and MeshCore message history; a full-wipe image erases user data. Legacy Meshtastic development v3 journals are not migrated to the new v4 format. Meshtastic backup/restore has not yet been updated for native Meshtastic settings and should not be relied upon to preserve identity or channel keys.
 
 A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
 
@@ -251,21 +257,22 @@ python -m pip install Pillow
 pio run -e t5-unified
 ```
 
-MeshCore is kept as an upstream submodule. T5 board support and MeshInk's UI/runtime code are kept outside it to make upstream updates easier to integrate.
+MeshCore and Meshtastic are pinned upstream Git submodules. T5 board support and MeshInk UI/runtime code remain outside them. The pre-build script `tools/generate_core_versions.py` automatically derives each About-screen core version from that upstream code's version definition and actual checked-out Git commit, failing the build if metadata is unavailable.
 
-The firmware version is defined by the `T5_FIRMWARE_VERSION` build flag for the unified target.
+The MeshInk firmware version is defined by the `T5_FIRMWARE_VERSION` build flag for the unified target.
 
 ## Development
 
 **MeshInk was developed by Samo using ChatGPT.**
 
-The project grew from experimentation with the LILYGO T5 hardware and MeshCore into a standalone e-paper MeshCore client.
+The project grew from experimentation with the LILYGO T5 hardware and MeshCore into a standalone dual-protocol e-paper mesh client.
 
 ## Acknowledgements
 
 MeshInk is built on the work of several open-source projects. Many thanks to their developers and contributors:
 
-- [MeshCore](https://github.com/meshcore-dev/MeshCore) — mesh networking protocol and core firmware that MeshInk is built around.
+- [MeshCore](https://github.com/meshcore-dev/MeshCore) — original MeshCore networking protocol integrated in MeshInk.
+- [Meshtastic](https://github.com/meshtastic/firmware) — official Meshtastic networking core integrated alongside MeshCore.
 - [EPDiy](https://github.com/vroland/epdiy) — e-paper display support.
 - [PNGdec](https://github.com/bitbank2/PNGdec) — embedded PNG decoding.
 - [miniz](https://github.com/richgel999/miniz) — compression and decompression support.

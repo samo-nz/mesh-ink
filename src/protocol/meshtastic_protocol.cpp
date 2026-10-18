@@ -11,7 +11,7 @@
 #include "meshtastic_companion.h"
 #include "meshtastic_worker.h"
 #include "meshtastic_ui_data.h"
-#include "../../include/meshtastic_official_version.h"
+#include "../../include/core_build_versions.h"
 #include "../ui_onboarding.h"
 #include "../hardware/storage.h"
 #include "../hardware/board.h"
@@ -382,6 +382,14 @@ bool send(const char* text){
 #endif
     return queued;
 }
+bool prepare_switch_shutdown(){
+    meshink_meshtastic_ui_flush();
+    if(!meshink_meshtastic_worker_stop()){
+        Serial.println("[MeshInk/MT] ERROR: worker did not finish native saves");
+        return false;
+    }
+    return true;
+}
 void stop(){
     meshink_meshtastic_ui_flush();
     const bool stopped=meshink_meshtastic_worker_stop();
@@ -397,9 +405,11 @@ bool running(){return ready;}
 const MeshInkProtocolBackend& backend(){
   static const MeshInkProtocolBackend b=[](){
     MeshInkProtocolBackend value{};
-    value.descriptor={2,"MESHTASTIC","Meshtastic",MESHINK_OFFICIAL_MESHTASTIC_TAG,MESHINK_PROTOCOL_CAP_COMPANION};
+    value.descriptor={2,"MESHTASTIC","Meshtastic",MESHINK_BUILD_MESHTASTIC_VERSION,MESHINK_PROTOCOL_CAP_COMPANION};
     value.setup=start;value.loop=poll;value.is_running=running;
-    value.prepare_shutdown=stop;value.provider=meshink_meshtastic_ui_provider;
+    value.flush_now=meshink_meshtastic_ui_flush;
+    value.prepare_shutdown=stop;value.prepare_switch_shutdown=prepare_switch_shutdown;
+    value.provider=meshink_meshtastic_ui_provider;
     value.request_companion_mode=meshink_meshtastic_request_companion;
     value.consume_companion_request=meshink_meshtastic_consume_companion_request;
     value.companion_setup=meshink_meshtastic_companion_setup;

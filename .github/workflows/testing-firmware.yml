@@ -5,6 +5,7 @@ on:
     branches:
       - testing
       - mesh-agnostic
+      - feature/meshtastic-bt-companion
   # Always test pull requests. MeshCore submodule, build-system and integration
   # changes are too important to depend on a hand-maintained path allow-list.
   pull_request: {}
@@ -32,6 +33,8 @@ jobs:
         run: python tools/check_official_meshtastic_pin.py
       - name: MeshCore submodule pin integrity
         run: python tools/check_meshcore_pin.py
+      - name: Release integration guards and About versions
+        run: python tools/check_release_integration.py
       - name: Architecture boundary checks
         run: python tools/check_architecture.py
       - name: Web flasher safety regression

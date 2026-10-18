@@ -67,6 +67,8 @@ struct MeshInkProtocolBackend {
     bool (*is_running)() = nullptr;
     void (*flush_now)() = nullptr;
     void (*prepare_shutdown)() = nullptr;
+    // Optional fail-closed quiesce before an on-device protocol switch.
+    bool (*prepare_switch_shutdown)() = nullptr;
 
     // Optional companion/transport mode owned by this protocol helper.
     void (*request_companion_mode)() = nullptr;

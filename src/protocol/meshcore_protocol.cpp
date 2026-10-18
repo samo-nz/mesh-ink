@@ -4,7 +4,7 @@
 #include "mesh_protocol_backend.h"
 #include "../local_mesh_runtime.h"
 #include "../companion_runtime.h"
-#include "../../include/meshcore_version.h"
+#include "../../include/core_build_versions.h"
 
 namespace {
 
@@ -235,7 +235,7 @@ static const MeshInkProtocolBackend& backend() {
         b.descriptor.id = 1;
         b.descriptor.name = "MESHCORE";
         b.descriptor.core_name = "MeshCore";
-        b.descriptor.core_version = MESHCORE_RELEASE " (" MESHCORE_REVISION ")";
+        b.descriptor.core_version = MESHINK_BUILD_MESHCORE_VERSION;
         b.descriptor.capabilities =
             MESHINK_PROTOCOL_CAP_DISCOVERY |
             MESHINK_PROTOCOL_CAP_ADVERTISE |

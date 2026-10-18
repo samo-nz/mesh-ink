@@ -189,8 +189,19 @@ bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
 }
 
 bool mesh_protocol_restart_into(uint8_t protocol_id) {
+    const uint8_t original_id=active_backend().descriptor.id;
     if (!mesh_protocol_select_for_next_boot(protocol_id)) return false;
     mesh_protocol_flush_now();
+    // Quiesce the native worker before restarting into a different core.
+    // Never treat a timed-out native flash save as a successful switch.
+    if(active_backend().prepare_switch_shutdown &&
+       !active_backend().prepare_switch_shutdown()) {
+        Serial.println("[T5-PROTOCOL] ERROR: protocol switch cancelled (shutdown timeout)");
+        if(!mesh_protocol_select_for_next_boot(original_id))
+            Serial.println("[T5-PROTOCOL] ERROR: original boot selection could not be restored");
+        return false;
+    }
+    mesh_protocol_prepare_shutdown();
     delay(100);
     ESP.restart();
     return true;
