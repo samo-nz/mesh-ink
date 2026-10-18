@@ -64,6 +64,11 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             tests/test_backup_filename.cpp -o /tmp/meshink-backup-filename-test
           /tmp/meshink-backup-filename-test
+      - name: Native Meshtastic atomic serial record regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_meshtastic_atomic_log.cpp -o /tmp/meshink-atomic-log-test
+          /tmp/meshink-atomic-log-test
       - name: Maps-only gesture geometry regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \

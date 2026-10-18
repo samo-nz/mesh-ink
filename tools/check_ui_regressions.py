@@ -1906,3 +1906,12 @@ assert 'redirectable.count(uncolored_new) != 2' in mt_prepare, "patch both upstr
 assert 'report_warmstore_file("/prefs/warm.dat");' in mt_runtime, "inspect native warm store without destructive recovery"
 assert 'report_warmstore_file("/prefs/warm.dat.tmp");' in mt_runtime, "inspect possible in-flight SafeFile recovery copy"
 assert 'f.read(header,sizeof(header))' in mt_runtime, "read only native warm-store header"
+
+# Test.61: Official Meshtastic logs are assembled as a single buffer and
+# submitted through ONE HWCDC write, rather than mixing byte-by-byte printf
+# fragments with MeshInk T5/MT records. Do not suppress severity or content.
+assert "MESHINK_MESHTASTIC_ATOMIC_LOGS=1" in platformio_source, "atomic Meshtastic serial logging enabled"
+assert "meshtastic_atomic_log.h" in mt_prepare, "build-only official logger adapter included"
+assert "atomic_text.replace(atomic_anchor, atomic_anchor + atomic_bridge, 1)" in mt_prepare, "atomic output applied to official log_to_serial"
+assert "dest->write((const uint8_t*)line, bytes);" in mt_prepare, "one buffer write per native serial line"
+assert "void RedirectablePrint::log_to_serial" in mt_prepare, "official log entry point preserved"
