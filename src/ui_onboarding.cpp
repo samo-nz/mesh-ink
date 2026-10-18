@@ -3054,10 +3054,29 @@ static void draw_backup_options(){
         ui_action_button("BACKUP NOW",ui_rect(284,811,232,80),true);
     }
 }
+// Show both halves of a long SD basename without clipping its distinctive
+// last minute or -NN suffix. Using one ui_text_fit() call hides the suffix and
+// can make two different backups look identical on the selection screen.
+static bool draw_backup_filename_lines(const char* name,int x,int y,int width){
+    if(!name)return false;
+    size_t pfx=0;
+    if(!strncmp(name,"meshink-tastic-",15))pfx=15;
+    else if(!strncmp(name,"meshink-core-",13))pfx=13;
+    const size_t split=pfx+11; // keep YYYY-MM-DD- together on line one
+    if(!pfx||strlen(name)<=split)return false;
+    char first[40]{};
+    memcpy(first,name,split);
+    first[split]=0;
+    const int first_scale=ui_text_width(first,2)<=width?2:1;
+    const int second_scale=ui_text_width(name+split,3)<=width?3:2;
+    ui_text_fit(first,x,y,width,first_scale,0,true);
+    ui_text_fit(name+split,x,y+ui_h(30),width,second_scale,0,true);
+    return true;
+}
 static void draw_backup_files(){
     draw_app_header("CHOOSE SD BACKUP",true);
     char subtitle[46]{};
-    snprintf(subtitle,sizeof(subtitle),"%s / %u BACKUPS",
+    snprintf(subtitle,sizeof(subtitle),"%s / LATEST %u",
              mesh_protocol_name(),(unsigned)backup_count);
     ui_centred(subtitle,ui_y(112),2,0,true);
     if(!backup_count){
@@ -3073,7 +3092,21 @@ static void draw_backup_files(){
             entry.categories&1?"MSG ":"",entry.categories&2?"NODES ":"",
             entry.categories&4?"PROTO ":"",entry.categories&8?"DEVICE ":"",
             (unsigned long)entry.bytes);
-        settings_row(entry.filename,details,170+(int)(i-start)*119);
+        const int row_y=170+(int)(i-start)*119;
+        const MeshInkUiLayout& layout=portrait_layout();
+        const MeshInkUiRect card=meshink_outer_row_rect(layout,row_y,112);
+        const bool long_name=!strncmp(entry.filename,"meshink-tastic-",15)||
+                             !strncmp(entry.filename,"meshink-core-",13);
+        if(long_name){
+            ui_section_card(card);
+            // The row's full filename is intentionally in two lines so
+            // minute and collision suffix remain visible before tapping.
+            draw_backup_filename_lines(entry.filename,layout.content_text_x,
+                                       card.y+ui_h(9),card.width-ui_w(76));
+            ui_text_fit(details,layout.content_text_x,card.y+ui_h(79),
+                        card.width-ui_w(76),2,0,false);
+            ui_text(">",layout.settings_arrow_x,card.y+ui_h(39),3,0,true);
+        }else settings_row(entry.filename,details,row_y);
     }
     if(backup_count>5){
         ui_action_button("PREV",ui_rect(24,800,232,74),backup_page==0);
@@ -3088,6 +3121,12 @@ static void draw_backup_confirm(){
     ui_centred(revision_warning?"CORE VERSION WARNING":
                (backup_restore_mode?"REPLACE SELECTED DATA?":"BACK UP SELECTED DATA?"),
                ui_y(180),3,0,true);
+    if(backup_restore_mode){
+        ui_text("SELECTED SD ARCHIVE",ui_x(32),ui_y(245),2,0,true);
+        if(!draw_backup_filename_lines(backup_filename,ui_x(32),ui_y(272),
+                                       ui_w(476)))
+            ui_text_fit(backup_filename,ui_x(32),ui_y(283),ui_w(476),3,0,true);
+    }
     if(revision_warning){
         char message[270]{};
         if(backup_revision_status==MeshInkBackupRevision::Different)
@@ -3097,10 +3136,10 @@ static void draw_backup_confirm(){
         else snprintf(message,sizeof(message),
             "Backup has no recorded Meshtastic core version (installed: %s). Compatibility is unknown. OK to reboot and restore anyway?",
             MESHINK_BUILD_MESHTASTIC_VERSION);
-        ui_draw_wrapped(message,ui_x(36),ui_y(280),ui_w(470),3,0,false,8);
+        ui_draw_wrapped(message,ui_x(36),ui_y(370),ui_w(470),3,0,false,8);
     }else if(backup_restore_mode){
         ui_draw_wrapped("Press OK to reboot the device and restore selected data from SD before the radio starts. Existing selected data will be replaced. The SD backup is retained.",
-            ui_x(36),ui_y(305),ui_w(470),3,0,false,8);
+            ui_x(36),ui_y(370),ui_w(470),3,0,false,8);
     }else{
         ui_draw_wrapped("Press OK to reboot the device and back up selected data to SD before the radio starts. Existing device data will not be removed.",
             ui_x(36),ui_y(305),ui_w(470),3,0,false,8);
