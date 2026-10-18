@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 import subprocess
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent if "__file__" in globals() else Path.cwd()
 OUTPUT = Path("include/core_build_versions.h")
 
 
