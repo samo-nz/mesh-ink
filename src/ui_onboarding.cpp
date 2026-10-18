@@ -3099,10 +3099,10 @@ static void draw_backup_confirm(){
             MESHINK_BUILD_MESHTASTIC_VERSION);
         ui_draw_wrapped(message,ui_x(36),ui_y(280),ui_w(470),3,0,false,8);
     }else if(backup_restore_mode){
-        ui_draw_wrapped("Press OK to reboot the device and restore selected data from SD before Meshtastic or MeshCore starts. Existing selected data will be replaced. The SD backup is retained.",
+        ui_draw_wrapped("Press OK to reboot the device and restore selected data from SD before the radio starts. Existing selected data will be replaced. The SD backup is retained.",
             ui_x(36),ui_y(305),ui_w(470),3,0,false,8);
     }else{
-        ui_draw_wrapped("Press OK to reboot the device and back up selected data to SD before Meshtastic or MeshCore starts. Existing device data will not be removed.",
+        ui_draw_wrapped("Press OK to reboot the device and back up selected data to SD before the radio starts. Existing device data will not be removed.",
             ui_x(36),ui_y(305),ui_w(470),3,0,false,8);
     }
     ui_action_button("CANCEL",ui_rect(24,735,232,85),false);
