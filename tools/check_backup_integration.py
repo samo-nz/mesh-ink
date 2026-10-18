@@ -83,3 +83,15 @@ assert 'Restore %s failed; rolled back' in code
 assert 'if(setup_protocol_choice){' in ui
 assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62)))' in ui
 assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74)))' in ui
+
+# Test.63 restore retry after a test.61 rollback: preserve all /rstNN.old
+# salvage files, use a disjoint /r2s namespace and accept both prefixes only
+# for validated crash-recovery journal entries.
+assert 'if(SPIFFS.exists(legacy))++legacy_salvage;' in code
+assert 'preserving %u legacy salvage snapshots; using isolated /r2s stages' in code
+assert '"/r2s%02u.tmp"' in code and '"/r2s%02u.old"' in code
+assert '(strncmp(stage.staged,"/rst",4)&&' in code
+assert 'strncmp(stage.staged,"/r2s",4)' in code
+assert '(strncmp(stage.previous,"/rst",4)&&' in code
+assert 'strncmp(stage.previous,"/r2s",4)' in code
+assert 'if(SPIFFS.exists(old_path)||SPIFFS.exists(staged_path))' in code
