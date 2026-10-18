@@ -1,5 +1,6 @@
 #include "backup_restore.h"
 #include "backup_format.h"
+#include "core_build_versions.h"
 #include "device_settings_snapshot.h"
 #include "message_store.h"
 #include "hardware/storage.h"
@@ -26,6 +27,9 @@ constexpr char SETUP_NVS[]="@setup-state";
 constexpr char DEVICE_NVS[]="@device-settings";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
 constexpr char MT_LOCATION_NVS[]="@mt-location";
+constexpr char MT_CORE_REVISION[]="@mt-core-version";
+// This optional metadata is new to test.55: older native v2 backups remain
+// restorable with an explicit "unknown revision" warning.
 constexpr char MT_MESSAGES[]="/meshtastic_messages.bin";
 constexpr char MC_RECOVERY[]="/mc_messages_recovery.bin";
 constexpr char MT_RECOVERY[]="/mt_messages_recovery.bin";
@@ -210,7 +214,8 @@ static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
     if(cat==MESHINK_BACKUP_DEVICE_SETTINGS)return !strcmp(path,DEVICE_NVS);
     if(cat==MESHINK_BACKUP_SETTINGS&&path[0]=='@')
         return !strcmp(path,SHARED_NAME)||
-               !strcmp(path,protocol==1?CORE_NVS:MT_LOCATION_NVS);
+               !strcmp(path,protocol==1?CORE_NVS:MT_LOCATION_NVS)||
+               (protocol==2&&!strcmp(path,MT_CORE_REVISION));
     if(path[0]!='/')return false;
     if(cat==MESHINK_BACKUP_MESSAGES)
         return !strcmp(path,protocol==1?CORE_MESSAGES:MT_MESSAGES);
@@ -243,6 +248,8 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
     strncpy(p.part.path,path,sizeof(p.part.path)-1);
     if(path[0]=='@'){
         if(!strcmp(path,DEVICE_NVS))p.part.size=sizeof(meshink_device_settings::Snapshot);
+        else if(!strcmp(path,MT_CORE_REVISION))
+            p.part.size=sizeof(MESHINK_BUILD_MESHTASTIC_VERSION);
         else if(!strcmp(path,SHARED_NAME)){
             Preferences device;
             if(device.begin("t5-ui",true)){
@@ -268,6 +275,11 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
 }
 static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     length=0;
+    if(!strcmp(path,MT_CORE_REVISION)&&protocol==2){
+        length=sizeof(MESHINK_BUILD_MESHTASTIC_VERSION);
+        memcpy(nvs_data,MESHINK_BUILD_MESHTASTIC_VERSION,length);
+        return true;
+    }
     if(!strcmp(path,DEVICE_NVS)){
         if(!meshink_device_settings::capture(device_data))return false;
         length=sizeof(device_data);
@@ -799,6 +811,64 @@ uint8_t meshink_backup_categories(uint8_t protocol,const char* filename){
     Header header{};
     return inspect(filename,protocol,header,parts.entries,true)?header.categories:0;
 }
+MeshInkBackupRevision meshink_backup_revision(uint8_t protocol,const char* filename,
+                                             char* saved_version,size_t length){
+    if(saved_version&&length)saved_version[0]=0;
+    if(!saved_version||!length)return MeshInkBackupRevision::Invalid;
+    if(!sd_ready()){fail("SD card unavailable");return MeshInkBackupRevision::Invalid;}
+    BackupParts parts;
+    if(!parts.entries){
+        fail("Insufficient PSRAM for backup inspection");
+        return MeshInkBackupRevision::Invalid;
+    }
+    Header header{};
+    if(!inspect(filename,protocol,header,parts.entries,true))
+        return MeshInkBackupRevision::Invalid;
+    if(protocol!=2)return MeshInkBackupRevision::Match;
+    // v2 backups from test.54 did not include version metadata.
+    bool found=false;
+    for(size_t i=0;i<header.count;++i)
+        if(!strcmp(parts.entries[i].path,MT_CORE_REVISION))found=true;
+    if(!found)return MeshInkBackupRevision::Unknown;
+    char path[35]="/";strncat(path,filename,sizeof(path)-2);
+    File input=meshink_storage_open(path);
+    if(!input||!input.seek(sizeof(Header))){
+        if(input)input.close();
+        fail("Cannot open backup revision metadata");
+        return MeshInkBackupRevision::Invalid;
+    }
+    for(size_t i=0;i<header.count;++i){
+        Part entry{};
+        if(input.read((uint8_t*)&entry,sizeof(entry))!=sizeof(entry)){
+            input.close();fail("Incomplete backup revision metadata");
+            return MeshInkBackupRevision::Invalid;
+        }
+        if(strcmp(entry.path,MT_CORE_REVISION)){
+            if(!input.seek(input.position()+entry.size)){
+                input.close();fail("Backup revision seek failed");
+                return MeshInkBackupRevision::Invalid;
+            }
+            continue;
+        }
+        if(entry.size<2||entry.size>length){
+            input.close();return MeshInkBackupRevision::Unknown;
+        }
+        if(input.read((uint8_t*)saved_version,entry.size)!=entry.size){
+            input.close();fail("Cannot read backup revision");
+            return MeshInkBackupRevision::Invalid;
+        }
+        input.close();
+        if(saved_version[entry.size-1]!=0||
+           strnlen(saved_version,entry.size)!=entry.size-1){
+            saved_version[0]=0;
+            return MeshInkBackupRevision::Unknown;
+        }
+        return !strcmp(saved_version,MESHINK_BUILD_MESHTASTIC_VERSION)
+            ?MeshInkBackupRevision::Match:MeshInkBackupRevision::Different;
+    }
+    input.close();
+    return MeshInkBackupRevision::Unknown;
+}
 bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,size_t path_len){
     last_error[0]=0;
     if(saved_path&&path_len)saved_path[0]=0;
@@ -862,6 +932,8 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
             dir.close();
             if(!add_plan(parts,protocol,4,MT_LOCATION_NVS))
                 return fail("Meshtastic location prefs unavailable");
+            if(!add_plan(parts,protocol,4,MT_CORE_REVISION))
+                return fail("Meshtastic version metadata unavailable");
         }
         if(!add_plan(parts,protocol,4,SHARED_NAME))return fail("Node name backup failed");
     }
@@ -956,6 +1028,11 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         Part part{};
         if(input.read((uint8_t*)&part,sizeof(part))!=sizeof(part)){ok=false;break;}
         if(!(part.category&categories)){ok=input.seek(input.position()+part.size);continue;}
+        // Metadata does not correspond to a writable flash or NVS target.
+        if(protocol==2&&!strcmp(part.path,MT_CORE_REVISION)){
+            ok=input.seek(input.position()+part.size);
+            continue;
+        }
         if(count>=MAX_ENTRIES){ok=false;break;}
         Stage& stage=stages[count];stage=Stage{};
         strncpy(stage.path,part.path,sizeof(stage.path)-1);

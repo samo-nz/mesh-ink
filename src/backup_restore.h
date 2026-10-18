@@ -22,6 +22,11 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,
                            char* saved_path,size_t path_len);
 bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t categories);
 uint8_t meshink_backup_categories(uint8_t protocol,const char* filename);
+enum class MeshInkBackupRevision : uint8_t { Match, Different, Unknown, Invalid };
+// Verify the entire archive before comparing the saved native core revision.
+// A different/unknown revision is advisory, not a reason to refuse restore.
+MeshInkBackupRevision meshink_backup_revision(uint8_t protocol,const char* filename,
+                                             char* saved_version,size_t length);
 const char* meshink_backup_error();
 // A partially applied restore has quiesced the radio and must reboot.
 bool meshink_backup_restore_requires_restart();
