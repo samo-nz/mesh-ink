@@ -11,6 +11,11 @@ namespace {
 // Preserve the field-tested map/PMTiles access rate. Keeping this in the
 // backend prevents application code from knowing board electrical tuning.
 constexpr uint32_t T5_STORAGE_SPI_HZ=25000000;
+// Both pre-protocol Backup/Restore and Maps use this backend in one boot.
+// Do not deinitialize an already-mounted Arduino SD card: SD.end() may call
+// SPIClass::endTransaction() after the shared SX1262 SPI bus was configured
+// by RadioLib, triggering a null FreeRTOS queue assertion.
+bool sd_started=false;
 }
 
 bool meshink_storage_mount_internal_safe() {
@@ -36,22 +41,31 @@ bool meshink_storage_mount_internal_safe() {
 }
 
 bool meshink_storage_begin() {
+    // A pre-protocol backup/restore may have mounted SD already; Maps must
+    // reuse it, not close a live filesystem and shared SPI transaction.
+    File root=SD.open("/",FILE_READ);
+    if(root&&root.isDirectory()){
+        root.close();
+        sd_started=true;
+        return true;
+    }
+    if(root)root.close();
+    // Real media failure/removal may require an explicit remount. Never call
+    // SD.end() before the FIRST SD.begin() in this process.
+    if(sd_started){SD.end();sd_started=false;}
     pinMode(T5_PIN_SD_CS,OUTPUT);
     digitalWrite(T5_PIN_SD_CS,HIGH);
-    SD.end();
-    // First-use Meshtastic setup defers LoRa/radio_init until a region is
-    // selected. RadioLib therefore has not yet configured this shared SPI
-    // bus when Maps warms the SD card. Arduino SD.begin() calls spi.begin()
-    // with default ESP32-S3 pins if we don't start it explicitly.
-    // SPIClass::begin is a no-op if the radio already started the bus.
+    // First-use setup may defer radio_init, so configure the shared SPI pins
+    // before Arduino SD.begin tries its own default S3 pin mapping.
     SPIClass& shared_spi=t5_shared_spi();
     shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);
-    return SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);
+    sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);
+    return sd_started;
 }
 
 bool meshink_storage_media_ready() {
     File root=SD.open("/",FILE_READ);
-    if(root&&root.isDirectory()){root.close();return true;}
+    if(root&&root.isDirectory()){root.close();sd_started=true;return true;}
     if(root)root.close();
     // An inserted card may be mounted after startup without opening Maps.
     if(!meshink_storage_begin())return false;
@@ -62,7 +76,7 @@ bool meshink_storage_media_ready() {
 }
 
 void meshink_storage_end() {
-    SD.end();
+    if(sd_started){SD.end();sd_started=false;}
 }
 
 MeshInkStorageFile meshink_storage_open(const char* path) {

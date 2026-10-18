@@ -807,7 +807,7 @@ for storage_api in ("meshink_storage_begin", "meshink_storage_end", "meshink_sto
 assert "T5_PIN_SD_CS" in storage_backend_source, "T5 SD chip select remains storage-backend-owned"
 assert "t5_shared_spi()" in storage_backend_source, "T5 shared SPI selection remains storage-backend-owned"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "field-tested 25 MHz SD access speed is preserved"
-assert "return SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
+assert "sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
 assert '#include "hardware/storage.h"' in map_source, "Maps consumes generic storage boundary"
 assert '#include "hardware/storage.h"' in pmtiles_header, "PMTiles consumes generic storage boundary"
 for leaked_storage_detail in ('#include <SD.h>', '#include "board/target.h"', "T5_PIN_SD_CS", "t5_shared_spi()", "MAP_SD_SPI_HZ", "SD.begin(", "SD.open(", "SD.exists(", "SD.end("):
@@ -1844,7 +1844,9 @@ storage_mount=storage_backend_source.split("bool meshink_storage_begin()",1)[1].
 assert "SPIClass& shared_spi=t5_shared_spi();" in storage_mount, "SD and LoRa use the same board-owned SPI peripheral"
 assert "shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);" in storage_mount, "SD can initialize SPI without LoRa or a completed Meshtastic wizard"
 assert storage_mount.index("shared_spi.begin(")<storage_mount.index("return SD.begin("), "T5 pin mapping must be installed before SD init"
-assert "SD.end();" in storage_mount, "SD remount retains existing explicit unmount lifecycle"
+assert 'if(sd_started){SD.end();sd_started=false;}' in storage_mount, "SD is only unmounted after a prior successful mount"
+assert storage_mount.index('if(root&&root.isDirectory())') < storage_mount.index('SD.end();'), "already-mounted SD is reused before any SPI teardown"
+assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage_mount, "successful first SD mount persists across B+R and Maps warmup"
 
 # 2.1.1-test.17: Meshtastic first-use journal recovery must not get stuck
 # on a filename that exceeds SPIFFS_OBJ_NAME_LEN (32 including NUL).

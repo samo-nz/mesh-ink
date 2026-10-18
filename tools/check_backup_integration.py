@@ -6,6 +6,11 @@ code=get("src/backup_restore.cpp")
 boot=get("src/unified_main.cpp")
 ui=get("src/ui_onboarding.cpp")
 format=get("src/backup_format.h")
+storage=get("src/board/t5_storage_backend.cpp")
+assert "if(root&&root.isDirectory())" in storage
+assert "if(sd_started){SD.end();sd_started=false;}" in storage
+assert storage.index("if(root&&root.isDirectory())") < storage.index("if(sd_started){SD.end();sd_started=false;}")
+assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage
 assert "LeafSettings" not in code and "LEAF_NVS" not in code and "LEAF_NODES" not in code
 assert 'Preferences p;\n    if(!p.begin("meshtastic",true))' not in code
 assert "MESHTASTIC_VERSION=2" in format

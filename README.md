@@ -292,3 +292,7 @@ Before any destructive restore, copy the verified SD backup to a computer or sec
 
 ### test.57 confirmation and reboot display
 Backup and Restore both require an explicit confirmation screen with **OK / Cancel** describing the one-shot reboot before protocol startup. No operation is queued until OK. After confirmation, a non-interactive **REBOOTING...** progress screen is refreshed *before* native worker shutdown, so its deferred save/stop operation no longer looks like a frozen confirmation screen. Restore revision warnings and the optional operation cancellation remain available. The Meshtastic startup FreeRTOS queue assertion observed after the test.56 backup is being investigated separately and must pass a hardware reboot regression before release approval.
+
+
+### test.57 SD mount crash correction
+After successful offline B+R, normal startup previously called `map_tiles_warm_storage()`, which attempted to reinitialize an already-mounted SD filesystem. This could invoke `SDFS::end()` / `SPIClass::endTransaction()` and trigger a FreeRTOS queue assert. The board storage backend now reuses readable existing mounts and only tears down an SD mount when a real remount is needed. A separate confirmation/progress screen is shown before flushing the protocol for the requested reboot.
