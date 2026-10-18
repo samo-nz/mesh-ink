@@ -430,7 +430,10 @@ void meshink_meshtastic_native_loop(){
 }
 
 void meshink_meshtastic_native_stop(){
-    // Drain the staged settings before an intentional shutdown/reboot.
+    // Best-effort save before a requested backup/reboot. If flash rejects a
+    // final native save, the backup still captures the latest durable files;
+    // this warning is not a reason to discard an otherwise sound archive.
+    // The worker must nevertheless finish shutdown before storage is copied.
     const int pending=meshink_io_take_deferred_meshtastic_save();
     if (pending && nodeDB && !nodeDB->saveToDisk(pending)) {
         meshink_io_defer_meshtastic_save(pending);

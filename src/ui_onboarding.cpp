@@ -28,6 +28,7 @@
 #include "message_store.h"
 #include "timezone_service.h"
 #include "backup_restore.h"
+#include "core_build_versions.h"
 #include "fonts/inter_15_regular.h"
 #include "fonts/inter_20_regular.h"
 #include "fonts/inter_25_regular.h"
@@ -372,6 +373,8 @@ static uint8_t backup_flags=15,backup_available=15;
 static MeshInkBackupInfo backup_entries[24]{};
 static size_t backup_count=0,backup_page=0;
 static char backup_filename[32]{},backup_result_message[84]{};
+static char backup_source_version[48]{};
+static MeshInkBackupRevision backup_revision_status=MeshInkBackupRevision::Match;
 // Separate protocol completion flags; a legacy completed installation is preserved.
 static bool setup_meshcore_done=false, setup_meshtastic_done=false, setup_any_done=false;
 static uint8_t setup_return_protocol=0;
@@ -3079,11 +3082,26 @@ static void draw_backup_files(){
 }
 static void draw_backup_confirm(){
     draw_app_header("CONFIRM RESTORE",true);
-    ui_centred("REPLACE SELECTED DATA?",ui_y(195),3,0,true);
-    ui_draw_wrapped("Selected protocol data will be replaced. If Device Settings is selected, device-wide display, power, clock and GPS preferences will also be restored. The SD backup is retained.",
-        ui_x(36),ui_y(350),ui_w(470),3,0,false,6);
+    const bool revision_warning=backup_revision_status==MeshInkBackupRevision::Different||
+                                backup_revision_status==MeshInkBackupRevision::Unknown;
+    ui_centred(revision_warning?"CORE VERSION WARNING":"REPLACE SELECTED DATA?",
+               ui_y(195),3,0,true);
+    if(revision_warning){
+        char message[260]{};
+        if(backup_revision_status==MeshInkBackupRevision::Different)
+            snprintf(message,sizeof(message),
+                "Backup: %s. Installed: %s. Meshtastic core revisions differ; saved settings may be incompatible. Continue restore?",
+                backup_source_version,MESHINK_BUILD_MESHTASTIC_VERSION);
+        else snprintf(message,sizeof(message),
+            "This Meshtastic backup does not record its core revision. Installed: %s. Compatibility cannot be confirmed. Continue restore?",
+            MESHINK_BUILD_MESHTASTIC_VERSION);
+        ui_draw_wrapped(message,ui_x(36),ui_y(320),ui_w(470),3,0,false,8);
+    }else{
+        ui_draw_wrapped("Selected protocol data will be replaced. If Device Settings is selected, device-wide display, power, clock and GPS preferences will also be restored. The SD backup is retained.",
+            ui_x(36),ui_y(350),ui_w(470),3,0,false,6);
+    }
     ui_action_button("CANCEL",ui_rect(24,735,232,85),false);
-    ui_action_button("RESTORE",ui_rect(284,735,232,85),true);
+    ui_action_button(revision_warning?"OK, RESTORE":"RESTORE",ui_rect(284,735,232,85),true);
 }
 static void draw_backup_result(){
     draw_app_header("BACKUP / RESTORE",true);
@@ -4785,7 +4803,15 @@ static bool handle_backup_tap(int16_t x,int16_t y){
         }
         if(hit(x,y,ui_rect(284,811,232,80))){
             if(!backup_flags){show_toast("SELECT A CATEGORY");return true;}
-            if(backup_restore_mode){open_screen(Screen::BackupConfirm);return true;}
+            if(backup_restore_mode){
+                backup_revision_status=meshink_backup_revision(
+                    mesh_protocol_descriptor().id,backup_filename,
+                    backup_source_version,sizeof(backup_source_version));
+                if(backup_revision_status==MeshInkBackupRevision::Invalid){
+                    backup_show_result(meshink_backup_error());return true;
+                }
+                open_screen(Screen::BackupConfirm);return true;
+            }
             char saved[32]{};
             const uint8_t protocol=mesh_protocol_descriptor().id;
             if(!meshink_backup_schedule(protocol,backup_flags,false))

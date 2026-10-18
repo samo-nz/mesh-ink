@@ -9,6 +9,15 @@ format=get("src/backup_format.h")
 assert "LeafSettings" not in code and "LEAF_NVS" not in code and "LEAF_NODES" not in code
 assert 'Preferences p;\n    if(!p.begin("meshtastic",true))' not in code
 assert "MESHTASTIC_VERSION=2" in format
+assert 'MT_CORE_REVISION[]="@mt-core-version"' in code
+assert 'sizeof(MESHINK_BUILD_MESHTASTIC_VERSION)' in code
+assert 'meshink_backup_revision(' in code
+assert 'MeshInkBackupRevision::Different' in code
+assert 'MeshInkBackupRevision::Unknown' in code
+assert 'backup_revision_status=meshink_backup_revision(' in ui
+assert 'revision_warning?"OK, RESTORE":"RESTORE"' in ui
+assert 'if(protocol==2&&!strcmp(part.path,MT_CORE_REVISION))' in code
+assert 'header.protocol==protocol' in format
 assert "header.categories==15" in format
 assert "protocol==2&&categories!=15" in code
 assert "meshink_backup_run_pending_on_boot()" in boot
