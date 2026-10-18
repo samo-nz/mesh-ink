@@ -702,6 +702,13 @@ bool meshink_backup_take_boot_result(char* out,size_t length){
     }
     p.end();return has;
 }
+bool meshink_backup_has_pending_request(){
+    Preferences p;
+    if(!p.begin(BOOT_BACKUP_NVS,true))return false;
+    const bool exists=p.getUChar("operation",0)!=0;
+    p.end();
+    return exists;
+}
 bool meshink_backup_run_pending_on_boot(){
     // This runs before ui_setup/mesh_protocol_setup/companion_setup, so neither
     // Meshtastic nor MeshCore can write files while we inspect or restore them.

@@ -32,5 +32,6 @@ bool meshink_backup_recover_pending();
 bool meshink_backup_schedule(uint8_t protocol,uint8_t categories,
                              bool restore,const char* filename=nullptr);
 void meshink_backup_cancel_request();
+bool meshink_backup_has_pending_request();
 bool meshink_backup_run_pending_on_boot(); // false: unsafe to start any protocol
 bool meshink_backup_take_boot_result(char* out,size_t length);

@@ -18,6 +18,7 @@
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
+static bool backup_boot_blocked = false;
 
 
 static char terminal_line[48]{};
@@ -174,14 +175,21 @@ void setup() {
 
 
     bool radio_wake=meshink_board_woke_from_radio();
-    const bool button_wake=meshink_board_woke_from_primary_button();
-    const bool timer_wake=meshink_board_woke_from_timer();
+    bool button_wake=meshink_board_woke_from_primary_button();
+    bool timer_wake=meshink_board_woke_from_timer();
+    const bool backup_requested=meshink_backup_has_pending_request();
 
     // EXT0/EXT1 route their wake pads through RTC IO. Capture the wake cause
     // first, then restore DIO1/BOOT to digital GPIO before RadioLib ISR setup
     // or another deep-sleep cycle.
     if(radio_wake||button_wake||timer_wake)
         meshink_board_restore_deep_sleep_wake_pads();
+    if(backup_requested){
+        // An interrupted reboot must never enter retained RX/radio mode before
+        // its pending backup/restore has been recovered or executed.
+        radio_wake=button_wake=timer_wake=false;
+        Serial.println("[T5-BACKUP] queued maintenance overrides retained wake");
+    }
 
     // A timer can win the ESP32 wake-cause race just as DIO1 asserts. Release
     // only the automatic pad hold, then let a pending radio packet take priority
@@ -294,6 +302,7 @@ void setup() {
     // state initializes. A failed rollback/mount never boots a live radio.
     if(!meshink_backup_run_pending_on_boot()){
         Serial.println("[T5-BOOT] FATAL: backup storage recovery unsafe; protocol startup blocked");
+        backup_boot_blocked=true;
         return;
     }
     companion_mode = mesh_protocol_consume_companion_request();
@@ -359,7 +368,7 @@ void setup() {
 
 void loop() {
     meshink_ram_audit_periodic();
-    if(cache64_psram_blocked){delay(1000);return;}
+    if(cache64_psram_blocked||backup_boot_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         mesh_protocol_rx_wake_loop();
         if(mesh_protocol_rx_wake_promoted())deep_sleep_rx_mode=false;
