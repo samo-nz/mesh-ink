@@ -2917,8 +2917,8 @@ static void setup_progress(const char* title,uint8_t number){
     snprintf(header,sizeof(header),"%s",title);
     draw_app_header(header,false,setup_any_done?"CANCEL":nullptr);
     char progress[32]{};
-    snprintf(progress,sizeof(progress),"STEP %u OF 6  /  %s",
-             (unsigned)number,mesh_protocol_name());
+    snprintf(progress,sizeof(progress),"STEP %u OF %u  /  %s",
+             (unsigned)number,setup_is_meshcore()?3U:6U,mesh_protocol_name());
     ui_centred(progress,ui_y(94),2,0,true);
 }
 static void setup_list_pager(size_t current,size_t count){
@@ -2948,7 +2948,7 @@ static void draw_setup_protocol(){
     }
 }
 static void draw_setup_name(){
-    setup_progress("NAME YOUR NODE",2);
+    setup_progress("NAME YOUR NODE",setup_is_meshcore()?1:2);
     ui_text("NODE NAME",ui_x(28),ui_y(152),2,0,true);
     const MeshInkUiRect field=ui_rect(24,185,492,96);
     ui_section_card(field);
@@ -2959,7 +2959,8 @@ static void draw_setup_name(){
     else {
         ui_action_button("EDIT NAME",ui_rect(60,450,420,74),false);
         ui_centred("ENTER on keyboard closes it.",ui_y(610),2,0,false);
-        ui_action_button("RESTORE FROM SD",ui_rect(60,720,420,70),false);
+        if(!setup_is_meshcore())
+            ui_action_button("RESTORE FROM SD",ui_rect(60,720,420,70),false);
         setup_footer();
     }
 }
@@ -2976,7 +2977,8 @@ static void draw_setup_region(){
     setup_footer();
 }
 static void draw_setup_preset(){
-    setup_progress(setup_is_meshcore()?"RADIO PRESET":"MODEM PRESET",4);
+    setup_progress(setup_is_meshcore()?"SELECT RADIO PRESET":"MODEM PRESET",
+                   setup_is_meshcore()?2:4);
     const size_t count=setup_preset_count();
     const size_t offset=(size_t)setup_preset_page*5;
     for(size_t i=offset;i<count&&i<offset+5;++i){
@@ -2987,7 +2989,11 @@ static void draw_setup_preset(){
                      142+(int)(i-offset)*116);
     }
     setup_list_pager(setup_preset_page,count);
-    setup_footer();
+    if(setup_is_meshcore()){
+        // A tap on a standard preset advances to review; CUSTOM opens the
+        // editor. No misleading NEXT button without a chosen selection.
+        ui_action_button("BACK",ui_rect(24,850,232,74),false);
+    }else setup_footer();
 }
 static void setup_compact_row(const char* title,const char* value,int y){
     const MeshInkUiRect rect=ui_rect(24,y,492,70);
@@ -2997,7 +3003,10 @@ static void setup_compact_row(const char* title,const char* value,int y){
                 rect.width-ui_w(272),2,0,true);
 }
 static void draw_setup_radio(){
-    setup_progress("RADIO CONFIGURATION",5);
+    if(setup_is_meshcore()){
+        draw_app_header("CUSTOMIZE RADIO",false,setup_any_done?"CANCEL":nullptr);
+        ui_centred("OPTIONAL RADIO SETTINGS / MESHCORE",ui_y(94),2,0,true);
+    }else setup_progress("RADIO CONFIGURATION",5);
     if(!setup_is_meshcore()){
         settings_info_row("REGION",setup_region_label(setup_region),160);
         settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),298);
@@ -3033,41 +3042,32 @@ static void draw_setup_radio(){
     setup_compact_row("SPREADING FACTOR",spreading,524);
     setup_compact_row("CODING RATE",coding,605);
     setup_compact_row("PATH HASH",hash,686);
-    setup_footer();
+    setup_footer("DONE");
 }
 static void draw_setup_review(){
-    setup_progress("REVIEW AND START",6);
+    setup_progress("REVIEW AND START",setup_is_meshcore()?3:6);
     settings_info_row("PROTOCOL",mesh_protocol_name(),138);
     settings_info_row("NODE NAME",node_name,268);
-    settings_info_row("REGION",setup_region_label(setup_region),398);
     if(setup_is_meshcore()){
-        const MeshInkRadioPreset& base=mesh_protocol_radio_preset_at(
-            setup_radio_preset<0?0:(size_t)setup_radio_preset);
-        const bool modified=setup_radio_preset>0&&
-            (fabsf(strtof(setup_freq,nullptr)-base.frequency_khz/1000.0f)>0.0005f||
-             fabsf(setup_bw-base.bandwidth_khz)>0.05f||
-             setup_sf!=base.spreading_factor||
-             setup_cr!=base.coding_rate||setup_hash!=base.path_hash_bytes);
-        char preset_summary[72]{};
-        if(setup_radio_preset<0)snprintf(preset_summary,sizeof(preset_summary),"CUSTOM");
-        else if(modified)snprintf(preset_summary,sizeof(preset_summary),
-                                 "CUSTOM BASED ON %s",base.title);
-        else snprintf(preset_summary,sizeof(preset_summary),"%s",base.title);
-        settings_info_row("RADIO",preset_summary,528);
-        char summary[90]{};
-        snprintf(summary,sizeof(summary),"%s MHz  /  SF%u  /  BW%.1f  /  CR4/%u  /  %sdBm",
-            setup_freq,(unsigned)setup_sf,(double)setup_bw,
-            (unsigned)setup_cr,setup_power);
-        ui_text_fit(summary,ui_x(28),ui_y(699),ui_w(486),2,0,false);
+        settings_info_row("RADIO PRESET",setup_core_radio_label(),398);
+        ui_action_button("CUSTOMIZE",ui_rect(60,540,420,74),false);
+        char summary[96]{};
+        snprintf(summary,sizeof(summary),"%s MHz / SF%u / BW%.1f / CR4/%u",
+                 setup_freq,(unsigned)setup_sf,(double)setup_bw,(unsigned)setup_cr);
+        ui_text_fit(summary,ui_x(28),ui_y(674),ui_w(486),2,0,false);
+        char routing[60]{};
+        snprintf(routing,sizeof(routing),"PATH HASH %u BYTES  /  TX POWER %s dBm",
+                 (unsigned)setup_hash,setup_power);
+        ui_text_fit(routing,ui_x(28),ui_y(713),ui_w(486),2,0,false);
+        ui_text_fit("VERIFY LOCAL TX REGULATIONS BEFORE TRANSMITTING",
+                    ui_x(28),ui_y(755),ui_w(488),2,0,false);
     }else{
+        settings_info_row("REGION",setup_region_label(setup_region),398);
         settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),528);
         char details[40]{};
         snprintf(details,sizeof(details),"HOP LIMIT: %u",(unsigned)setup_hops);
         ui_centred(details,ui_y(710),2,0,false);
     }
-    if(setup_is_meshcore())
-        ui_text_fit("VERIFY LOCAL TX REGULATIONS BEFORE TRANSMITTING",
-                    ui_x(28),ui_y(755),ui_w(488),2,0,false);
     setup_footer("START MESHINK");
 }
 
