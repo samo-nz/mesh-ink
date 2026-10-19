@@ -1423,6 +1423,21 @@ static void ui_action_button(const char* label,const MeshInkUiRect& rect,bool se
     ui_text(label,rect.x+(rect.width-label_width)/2,
             rect.y+(rect.height-ui_text_height(scale))/2,scale,selected?0xFF:0,true);
 }
+static void ui_action_button_two_lines(const char* first,const char* second,
+                                       const MeshInkUiRect& rect,bool selected=false){
+    rounded_box(rect,max(ui_w(12),ui_h(12)),selected);
+    // POWER OFF on the neighbouring button uses scale 3. Two centered
+    // lines keep the advert/broadcast labels at that exact text size.
+    constexpr int scale=3;
+    const int line_height=ui_text_height(scale);
+    const int gap=ui_h(5);
+    const int top=rect.y+(rect.height-(2*line_height+gap))/2;
+    const uint8_t color=selected?0xFF:0;
+    ui_text(first,rect.x+(rect.width-ui_text_width(first,scale))/2,
+            top,scale,color,true);
+    ui_text(second,rect.x+(rect.width-ui_text_width(second,scale))/2,
+            top+line_height+gap,scale,color,true);
+}
 static void ui_section_card(const MeshInkUiRect& rect) {
     rounded_box(rect,max(ui_w(14),ui_h(14)),false);
 }
@@ -3749,7 +3764,9 @@ static void draw_help() {
     ui_section_card(maps);ui_section_card(companion);
 
     ui_text("QUICK SETTINGS",layout.content_text_x,quick.y+ui_h(12),3,0,true);
-    ui_draw_wrapped("Swipe down from the top edge for front light, advert flood and power off.",
+    ui_draw_wrapped(mesh_protocol_descriptor().id==2
+                     ?"Swipe down for front light, location or NodeInfo broadcast, and power off."
+                     :"Swipe down from the top edge for front light, advert flood and power off.",
                     layout.content_text_x,quick.y+ui_h(48),quick.width-ui_w(32),2,0,false,3);
 
     char button_title[32];
@@ -4040,8 +4057,17 @@ static void draw_quick_panel() {
     else snprintf(level,sizeof(level),"%u%%",(unsigned)frontlight_brightness);
     ui_centred(level,ui_y(273),4,0,true);
 
-    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE))
-        ui_action_button("ADVERT FLOOD",advert_button,true);
+    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)){
+        ui_action_button_two_lines("ADVERT","FLOOD",advert_button,true);
+    }else if(mesh_protocol_descriptor().id==2){
+        bool sharing=false,public_approximate=false;
+        uint8_t interval=0;
+        const bool available=mesh_protocol_location_sharing_get(
+            sharing,public_approximate,interval);
+        ui_action_button_two_lines("BROADCAST",
+            !available?"LOADING":(sharing?"LOCATION":"NODE INFO"),
+            advert_button,true);
+    }
     ui_action_button("POWER OFF",power_button,false);
 
     ui_centred("Tap below or swipe up to close",ui_y(560),2,0,false);
@@ -4113,10 +4139,22 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
 
     if(hit(x,y,meshink_quick_minus_rect(layout))) { quick_set_brightness((int)frontlight_brightness-1);return true; }
     if(hit(x,y,meshink_quick_plus_rect(layout))) { quick_set_brightness((int)frontlight_brightness+1);return true; }
-    if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)&&
-       hit(x,y,meshink_quick_advert_rect(layout))) {
-        show_toast(mesh_protocol_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
-        draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
+    if(hit(x,y,meshink_quick_advert_rect(layout))){
+        if(mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)){
+            show_toast(mesh_protocol_send_advert(true)?"SENDING FLOOD ADVERT":"ADVERT BUSY");
+            draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
+        }
+        if(mesh_protocol_descriptor().id==2){
+            bool sharing=false,public_approximate=false;
+            uint8_t interval=0;
+            const bool available=mesh_protocol_location_sharing_get(
+                sharing,public_approximate,interval);
+            const bool queued=available&&mesh_protocol_quick_broadcast(sharing);
+            show_toast(!available?"LOCATION SETTINGS LOADING":
+                       queued?(sharing?"POSITION REQUEST QUEUED":"NODE INFO REQUEST QUEUED"):
+                              "BROADCAST BUSY OR UNAVAILABLE");
+            draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
+        }
     }
     if(hit(x,y,meshink_quick_power_rect(layout))) {
         quick_panel_active=false;quick_panel_restore_landscape=false;

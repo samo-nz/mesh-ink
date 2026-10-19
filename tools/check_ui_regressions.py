@@ -1492,7 +1492,7 @@ assert "rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.
 assert "rounded_box(zoom_in" in source and "rounded_box(zoom_out" in source and "rounded_box(locate" in source, "map controls use the same rounded style"
 assert "ui_section_card(core);ui_section_card(radio);ui_section_card(packets);" in source, "diagnostics is grouped into readable cards"
 assert "ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard);" in source, "Help uses readable grouped cards"
-assert "ui_action_button(\"ADVERT FLOOD\",advert_button,true);" in source and "ui_action_button(\"POWER OFF\",power_button,false);" in source, "Quick Settings actions use shared polished buttons"
+assert 'ui_action_button_two_lines("ADVERT","FLOOD",advert_button,true);' in source and 'ui_action_button("POWER OFF",power_button,false);' in source, "Quick Settings advert and power retain equal text scale"
 assert "rounded_box(start_rect" in source and "ui_action_button(\"SAVE SCHEDULE\",save_rect,true);" in source, "Night Schedule uses rounded selected fields and action"
 assert "ui_section_card(info);" in source[source.index("static void draw_about"):], "About metadata is grouped into a rounded card"
 assert "static void box(int x" not in source and "box(" not in render_body.replace("rounded_box(", ""), "legacy square box primitive is fully removed from screen rendering"
@@ -2029,3 +2029,26 @@ assert 'meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,
 assert 'meshink_display_fill_rect({0,top,metrics.width,max(1,ui_h(2))},0,fb);' in name_keyboard_source, 'opaque keyboard backdrop needs a black top border'
 assert name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);') < name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,max(1,ui_h(2))},0,fb);') < name_keyboard_source.index('key(label,{digits.start'), 'background and top divider must be drawn before keys'
 assert 'else if(screen==Screen::ProtocolSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)' in source, 'name input retains optimized drawing path'
+
+# Test.82: protocol-specific Quick Settings, native radio and privacy gates.
+assert 'ui_action_button_two_lines("BROADCAST",' in source
+assert 'sharing?"LOCATION":"NODE INFO"' in source
+assert 'const bool queued=available&&mesh_protocol_quick_broadcast(sharing);' in source
+two_line_source=source.split('static void ui_action_button_two_lines(',1)[1].split('static void ui_section_card(',1)[0]
+assert 'constexpr int scale=3;' in two_line_source, 'multiline quick actions match POWER OFF font'
+assert 'mesh_protocol_send_advert(true)' in source, 'original MeshCore advert preserved'
+assert 'mesh_protocol_quick_broadcast(bool location)' in protocol_source
+assert 'quick_broadcast)(bool location)' in (root / "src" / "protocol" / "mesh_protocol_backend.h").read_text(encoding="utf-8")
+mt_worker=(root / "src" / "protocol" / "meshtastic_worker.cpp").read_text(encoding="utf-8")
+assert 'meshink_meshtastic_native_quick_broadcast(quick==1)' in mt_worker
+assert 'quick_location_allowed.load(std::memory_order_acquire)' in mt_worker
+assert 'quick_broadcast_request.compare_exchange_strong' in mt_worker
+assert 'meshink_meshtastic_worker_allow_quick_location(enabled);' in meshtastic_ui_source
+assert 'location!=sharing' in meshtastic_protocol_source
+assert 'ever_queued&&(uint32_t)(now-last_queued)<30000UL' in meshtastic_protocol_source
+mt_native=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_broadcast(bool location){',1)[1].split('void meshink_meshtastic_native_loop(){',1)[0]
+assert 'findPositionChannel(channel)' in mt_native
+assert '!nodeDB->hasLocalPositionSinceBoot()' in mt_native
+assert 'positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel)' in mt_native
+assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false)' in mt_native
+assert 'isTxAllowedChannelUtil(!tracker)' in mt_native and 'isTxAllowedAirUtil()' in mt_native
