@@ -129,6 +129,11 @@ struct SetupSnapshot {
     uint32_t magic=0x31595553U; // SUY1
     uint8_t present=0,complete=0,mc=0,mst=0,return_id=0,choice=0;
 };
+struct NameCacheUndo {
+    uint32_t magic=0x31434E49U; // INC1, protocol-specific UI cache rollback
+    uint8_t protocol=0,present=0,pending=0;
+    char long_name[40]{},short_name[5]{};
+};
 static char last_error[84]="";
 static bool restore_quiesced=false;
 constexpr char BOOT_BACKUP_NVS[]="meshink-backup";
@@ -321,7 +326,9 @@ static bool add_plan(size_t& count,uint8_t protocol,uint8_t cat,const char* path
         else if(!strcmp(path,SHARED_NAME)){
             Preferences device;
             if(device.begin("t5-ui",true)){
-                const String name=device.getString("name","");
+                String name=device.getString(protocol==1?"mc_name":"mt_long","");
+                if(!name.length())name=device.getString("name","");
+                if(!name.length())name=protocol==1?"MeshInk":"Meshtastic";
                 p.part.size=min((size_t)21,name.length()+1);
                 device.end();
             }
@@ -357,9 +364,11 @@ static bool load_nvs_source(const char* path,uint8_t protocol,size_t& length){
     if(!strcmp(path,SHARED_NAME)){
         Preferences p;
         if(!p.begin("t5-ui",true))return false;
-        const String name=p.getString("name","");
+        String name=p.getString(protocol==1?"mc_name":"mt_long","");
+        if(!name.length())name=p.getString("name","");
         p.end();
-        if(name.length()<1||name.length()>20)return false;
+        if(!name.length())name=protocol==1?"MeshInk":"Meshtastic";
+        if(name.length()>20)name=name.substring(0,20); // archive metadata, native name is authoritative
         length=name.length()+1;
         memcpy(nvs_data,name.c_str(),length);
         return true;
@@ -528,28 +537,28 @@ static bool update_mt_location_from_stage(const Stage& stage){
     return ok&&mt_location_apply(value);
 }
 static bool update_shared_name_from_stage(const Stage& stage,uint8_t protocol){
+    // Both legacy archive formats contain @node-name, which could belong to
+    // the other protocol. Validate it, but never apply it over native identity.
     File f=SPIFFS.open(stage.staged,"r");
     if(!f||f.size()<2||f.size()>21){if(f)f.close();return false;}
-    char new_name[22]{};
-    const size_t len=f.size();
-    const bool ok=f.read((uint8_t*)new_name,len)==len&&
-                  new_name[len-1]==0&&strlen(new_name)==len-1;
-    f.close();
-    if(!ok||strchr(new_name,' '))return false;
-    Preferences p;
-    if(!p.begin("t5-ui",false))return false;
-    // Node name is deliberately shared in MeshInk. Restoring a second
-    // protocol must never rename an already configured first protocol.
-    const bool other_configured=protocol==1
-        ?p.getBool("setup_mst",false)
-        :p.getBool("setup_mc",!p.isKey("setup_mst")&&p.getBool("complete",false));
-    bool saved=true;
-    if(!other_configured)saved=p.putString("name",new_name)==strlen(new_name);
-    p.end();
-    return saved;
+    char legacy[22]{};
+    const size_t n=f.size();
+    const bool valid=f.read((uint8_t*)legacy,n)==n&&legacy[n-1]==0&&
+                     strlen(legacy)==n-1;
+    f.close();if(!valid)return false;
+    Preferences ui;
+    if(!ui.begin("t5-ui",false))return false;
+    bool ok=true;
+    auto clear=[&](const char* key){if(ui.isKey(key))ok=ui.remove(key)&&ok;};
+    if(protocol==1)clear("mc_name");
+    else{clear("mt_long");clear("mt_short");clear("mt_name_pending");}
+    if(protocol==1)ok=!ui.isKey("mc_name")&&ok;
+    else ok=!ui.isKey("mt_long")&&!ui.isKey("mt_short")&&
+            !ui.isKey("mt_name_pending")&&ok;
+    ui.end();return ok;
 }
 
-static bool snapshot_previous_nvs(Stage& stage){
+static bool snapshot_previous_nvs(Stage& stage,uint8_t protocol){
     Preferences p;
     uint8_t* data=nvs_data;
     size_t size=0;
@@ -586,16 +595,27 @@ static bool snapshot_previous_nvs(Stage& stage){
         p.end();
         memcpy(data,&snapshot,sizeof(snapshot));size=sizeof(snapshot);exists=true;
     }else if(!strcmp(stage.path,SHARED_NAME)){
-        if(p.begin("t5-ui",true)){
-            const String name=p.getString("name","");
-            if(name.length()){
-                if(name.length()>20){p.end();return false;}
-                size=name.length()+1;
-                memcpy(data,name.c_str(),size);
-                exists=true;
-            }
-            p.end();
+        NameCacheUndo undo{};
+        undo.protocol=protocol;
+        if(!p.begin("t5-ui",true))return false;
+        const char* key=protocol==1?"mc_name":"mt_long";
+        if(p.isKey(key)){
+            const String value=p.getString(key,"");
+            if(value.length()>=sizeof(undo.long_name)){p.end();return false;}
+            memcpy(undo.long_name,value.c_str(),value.length()+1);undo.present|=1;
         }
+        if(protocol==2){
+            if(p.isKey("mt_short")){
+                const String value=p.getString("mt_short","");
+                if(value.length()>=sizeof(undo.short_name)){p.end();return false;}
+                memcpy(undo.short_name,value.c_str(),value.length()+1);undo.present|=2;
+            }
+            if(p.isKey("mt_name_pending")){
+                undo.pending=p.getBool("mt_name_pending",false)?1:0;undo.present|=4;
+            }
+        }
+        p.end();
+        memcpy(data,&undo,sizeof(undo));size=sizeof(undo);exists=true;
     }else return false;
     stage.old_exists=exists;
     SPIFFS.remove(stage.previous);
@@ -655,6 +675,34 @@ static bool restore_previous_nvs(const Stage& stage){
             }else if(p.isKey(names[i]))ok=p.remove(names[i])&&ok;
         }
         p.end();return ok;
+    }
+    if(!strcmp(stage.path,SHARED_NAME)&&stage.old_exists){
+        File f=SPIFFS.open(stage.previous,"r");
+        if(!f)return false;
+        if(f.size()==sizeof(NameCacheUndo)){
+            NameCacheUndo undo{};
+            const bool valid=f.read((uint8_t*)&undo,sizeof(undo))==sizeof(undo)&&
+                undo.magic==0x31434E49U&&(undo.protocol==1||undo.protocol==2)&&
+                !(undo.present&~7U)&&undo.pending<=1&&
+                memchr(undo.long_name,0,sizeof(undo.long_name))&&
+                memchr(undo.short_name,0,sizeof(undo.short_name));
+            f.close();if(!valid)return false;
+            Preferences ui;if(!ui.begin("t5-ui",false))return false;
+            bool ok=true;
+            auto restore_key=[&](const char* key,bool present,const char* value){
+                if(present)ok=(ui.putString(key,value)==strlen(value))&&ok;
+                else if(ui.isKey(key))ok=ui.remove(key)&&ok;
+            };
+            restore_key(undo.protocol==1?"mc_name":"mt_long",undo.present&1,undo.long_name);
+            if(undo.protocol==2){
+                restore_key("mt_short",undo.present&2,undo.short_name);
+                if(undo.present&4)ok=(ui.putBool("mt_name_pending",undo.pending!=0)==1)&&ok;
+                else if(ui.isKey("mt_name_pending"))ok=ui.remove("mt_name_pending")&&ok;
+            }
+            ui.end();return ok;
+        }
+        f.close();
+        // A pre-upgrade recovery journal carried the old shared name bytes.
     }
     const char* name=!strcmp(stage.path,CORE_NVS)?"mesh-auth":"t5-ui";
     const char* key=!strcmp(stage.path,CORE_NVS)?"credentials":"name";
@@ -1357,7 +1405,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
     for(size_t i=0;i<count;++i){
         Stage& stage=stages[i];
         if(stage.path[0]=='@'){
-            if(!snapshot_previous_nvs(stage)){
+            if(!snapshot_previous_nvs(stage,protocol)){
                 for(size_t j=0;j<count;++j)SPIFFS.remove(stages[j].staged);
                 return fail("Cannot save existing settings for rollback");
             }
