@@ -1347,16 +1347,10 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         state.category=MESHINK_BACKUP_SETTINGS;
         ++count;
     }
-    // Device-wide options have their own independent rollback snapshot.
-    if(categories&MESHINK_BACKUP_DEVICE_SETTINGS){
-        if(count>=MAX_ENTRIES)return fail("Not enough recovery slots for device settings");
-        Stage& stage=stages[count];stage=Stage{};
-        snprintf(stage.path,sizeof(stage.path),"%s",DEVICE_NVS);
-        snprintf(stage.staged,sizeof(stage.staged),"/r2s%02u.tmp",(unsigned)count);
-        snprintf(stage.previous,sizeof(stage.previous),"/r2s%02u.old",(unsigned)count);
-        stage.category=MESHINK_BACKUP_DEVICE_SETTINGS;
-        ++count;
-    }
+    // The @device-settings entry is already staged from the verified archive.
+    // It also gets a rollback snapshot in snapshot_previous_nvs() below.
+    // Do not append a second, empty virtual stage: that stage has no
+    // staged payload and fails when the restore attempts to apply it.
     // Collect existing files/NVS snapshots and publish a durable undo manifest
     // BEFORE replacing any live protocol data. If reset interrupts this
     // section, the next boot rolls the entire operation back.
@@ -1414,6 +1408,7 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
                 const bool loaded=f&&f.size()==sizeof(snapshot)&&
                     f.read((uint8_t*)&snapshot,sizeof(snapshot))==sizeof(snapshot);
                 if(f)f.close();
+                if(!loaded)Serial.printf("[T5-RESTORE] device settings staged payload missing or incomplete stage=%u\n",(unsigned)i);
                 ok=loaded&&meshink_device_settings::apply(snapshot);
             }
             if(!ok){failed_index=i;failed_phase=phase?phase:"apply-settings";break;}
