@@ -104,7 +104,7 @@ contains('static char node_name[21] = "MeshInk-";', "default MeshInk identity pr
 contains('static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";', "new ID alphabet")
 contains('for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];', "four randomized characters")
 contains('node_name[12]=0;', "generated name termination")
-contains('initial_name.putString("name",node_name);', "generated name persisted before setup save")
+assert 'initial_name.putString("name",node_name);' not in source, "name drafts must not be persisted on boot"
 contains('}else if(!setup_complete){', "existing completed identity is preserved")
 assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved line below setup keyboard"
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
@@ -2005,3 +2005,13 @@ assert "constexpr size_t CAPACITY=512;" in (root/"src"/"protocol"/"meshtastic_at
 assert 'if(setup_protocol_choice){\n        ui_action_button("RESTORE FROM SD"' in source
 assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62)))' in source
 assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74)))' in source
+
+# Test.75: protocol identity changes only through explicit user-authorised paths.
+assert 'mesh_protocol_apply_name(node_name);' not in source, 'boot cannot rewrite native names'
+assert 'mesh_protocol_read_identity(actual,sizeof(actual),short_name,sizeof(short_name))' in source
+assert 'mesh_protocol_descriptor().id==2?"mt_long":"mc_name"' in source
+assert 'ProtocolSettingsRowKind::NodeShort' in source
+assert 'mesh_protocol_update_identity(node_name,' in source
+assert 'mesh_protocol_read_identity(about_long,sizeof(about_long),about_short,sizeof(about_short))' in source
+assert 'const bool migrate_default=' not in meshtastic_runtime_source
+assert 'if(identity_pending&&name.length()&&short_name.length())' in meshtastic_runtime_source

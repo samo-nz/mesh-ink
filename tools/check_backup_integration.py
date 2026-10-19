@@ -130,3 +130,11 @@ assert '(strncmp(stage.previous,"/rst",4)&&' in code
 assert 'strncmp(stage.previous,"/r2s",4)' in code
 assert '"/rst%02u.tmp"' not in body
 assert '"/rst%02u.old"' not in body
+
+# Test.75: old @node-name archive entries cannot override native protocol owners.
+assert 'SHARED_NAME[]="@node-name"' in code
+assert 'clear("mt_name_pending")' in code
+assert 'clear("mc_name")' in code
+assert 'struct NameCacheUndo' in code
+assert 'snapshot_previous_nvs(stage,protocol)' in code
+assert 'p.putString("name",new_name)' not in code
