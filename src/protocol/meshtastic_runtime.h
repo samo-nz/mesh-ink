@@ -1,6 +1,7 @@
 #pragma once
 #include "../hardware/gps_types.h"
 #include <stdint.h>
+#include <stddef.h>
 
 // Snapshot is produced only by MeshInk's UI/GNSS owner task. The official
 // networking worker must not concurrently read the mutable MicroNMEA parser.

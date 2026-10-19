@@ -2015,3 +2015,5 @@ assert 'mesh_protocol_update_identity(node_name,' in source
 assert 'mesh_protocol_read_identity(about_long,sizeof(about_long),about_short,sizeof(about_short))' in source
 assert 'const bool migrate_default=' not in meshtastic_runtime_source
 assert 'if(identity_pending&&name.length()&&short_name.length())' in meshtastic_runtime_source
+
+assert 'if(!setup_complete&&mesh_protocol_descriptor().id==1)' in source, 'unconfigured native default cannot overwrite name draft'
