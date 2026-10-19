@@ -1397,7 +1397,7 @@ struct NativeRegion {
 // These are official upstream region enum values. Never add the SX1280-only
 // 2.4 GHz region to an SX1262 build. Licensing, permitted RF parameters and
 // actual preset constraints remain the responsibility of upstream Meshtastic.
-const NativeRegion regions[]={
+const NativeRegion setup_regions[]={
     {meshtastic_Config_LoRaConfig_RegionCode_ANZ,"ANZ"},
     {meshtastic_Config_LoRaConfig_RegionCode_NZ_865,"NZ 865"},
     {meshtastic_Config_LoRaConfig_RegionCode_US,"US"},
@@ -1416,7 +1416,7 @@ const NativeRegion regions[]={
     {meshtastic_Config_LoRaConfig_RegionCode_BR_902,"BRAZIL 902"}
 };
 const meshtastic_LoRaPresetGroup* permitted_group(size_t region){
-    if(region>=sizeof(regions)/sizeof(regions[0]))return nullptr;
+    if(region>=sizeof(setup_regions)/sizeof(setup_regions[0]))return nullptr;
     // Upstream's table is static and independent of the radio/NodeDB.
     // The wizard must not start a live network to discover its legal presets.
     static meshtastic_LoRaRegionPresetMap offline_map{};
@@ -1429,7 +1429,7 @@ const meshtastic_LoRaPresetGroup* permitted_group(size_t region){
         ?state->region_map:offline_map;
     for(size_t i=0;i<map.region_groups_count;++i){
         const auto& mapping=map.region_groups[i];
-        if(mapping.region==regions[region].code&&mapping.group_index<map.groups_count)
+        if(mapping.region==setup_regions[region].code&&mapping.group_index<map.groups_count)
             return &map.groups[mapping.group_index];
     }
     return nullptr;
@@ -1465,10 +1465,10 @@ const char* preset_label(meshtastic_Config_LoRaConfig_ModemPreset p){
 }
 }
 size_t meshink_meshtastic_ui_region_count(){
-    return sizeof(regions)/sizeof(regions[0]);
+    return sizeof(setup_regions)/sizeof(setup_regions[0]);
 }
 const char* meshink_meshtastic_ui_region_name(size_t i){
-    return i<meshink_meshtastic_ui_region_count()?regions[i].label:"";
+    return i<meshink_meshtastic_ui_region_count()?setup_regions[i].label:"";
 }
 size_t meshink_meshtastic_ui_preset_count(size_t region){
     if(region>=meshink_meshtastic_ui_region_count())return 0;
@@ -1494,7 +1494,7 @@ bool meshink_meshtastic_ui_commit_radio(size_t r,size_t p,uint8_t hops){
     // and flash saves may outlive the UI thread and trigger the watchdog.
     Preferences pset;
     if(!pset.begin("mt-onboard",false))return false;
-    const uint8_t region=(uint8_t)regions[r].code;
+    const uint8_t region=(uint8_t)setup_regions[r].code;
     const uint8_t preset=(uint8_t)allowed->presets[p];
     const bool ok=pset.putUChar("region",region)==1&&
                   pset.putUChar("preset",preset)==1&&
