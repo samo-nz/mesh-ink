@@ -3,6 +3,7 @@
 #include "../hardware/radio.h"
 #include "../../lib/Meshtastic/src/mesh/SX1262Interface.h"
 #include "../../lib/Meshtastic/src/mesh/Router.h"
+#include "../../lib/Meshtastic/src/mesh/RadioTxHook.h"
 #include "../../lib/Meshtastic/src/SPILock.h"
 #include <Arduino.h>
 #include <memory>
@@ -29,6 +30,19 @@ public:
 std::unique_ptr<MeshInkNativeRadioHal> native_hal;
 class MeshInkNativeSX1262;
 MeshInkNativeSX1262* active_native_radio=nullptr;
+
+struct QuickRadioTrace {
+    uint32_t packet_id=0,requested_at=0,tx_good_before=0;
+    uint8_t kind=0;
+    bool active=false,capturing=false,before_tx=false,finished=false,transmitted=false;
+};
+QuickRadioTrace quick_trace{};
+class MeshInkQuickTxHook final : public RadioTxHook {
+public:
+    PreTxAction beforeTransmit(RadioInterface* iface,meshtastic_MeshPacket* packet) override;
+    void packetReleased(RadioInterface* iface,const meshtastic_MeshPacket* packet) override;
+};
+MeshInkQuickTxHook quick_tx_hook;
 
 // The T5 RF switch must be enabled AFTER SX1262 begin(), as in MeshCore's
 // proven LilyGO post-init sequence. Keep upstream RF modem/IRQ logic intact.
@@ -69,6 +83,18 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
         return apply_board_settings();
     }
 public:
+    uint32_t tx_good_count() const {return txGood;}
+    ErrorCode send(meshtastic_MeshPacket* packet) override {
+        // The upstream module allocates a unique ID; capture it from the
+        // actual router-to-radio handoff, not from another pending broadcast.
+        const bool capture=quick_trace.active&&quick_trace.capturing&&
+            !quick_trace.packet_id&&packet&&packet->id&&
+            packet->to==NODENUM_BROADCAST;
+        const uint32_t packet_id=capture?packet->id:0;
+        const ErrorCode result=SX1262Interface::send(packet);
+        if(capture&&result==ERRNO_OK)quick_trace.packet_id=packet_id;
+        return result;
+    }
     void report() const {
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
         Serial.printf("[MT-TEST] radio stats rx_ok=%lu rx_bad=%lu tx_ok=%lu tx_relay=%lu tx_drop=%u rx_armed=%u rx_offline=%u recovery_attempts=%u\n",
@@ -92,6 +118,63 @@ public:
         return apply_board_settings();
     }
 };
+
+RadioTxHook::PreTxAction MeshInkQuickTxHook::beforeTransmit(
+    RadioInterface* iface,meshtastic_MeshPacket* packet){
+    if(iface==active_native_radio&&packet&&quick_trace.active&&
+       quick_trace.packet_id&&packet->id==quick_trace.packet_id){
+        if(!quick_trace.before_tx){
+            quick_trace.before_tx=true;
+            quick_trace.tx_good_before=active_native_radio->tx_good_count();
+        }
+    }
+    return PRETX_SEND;
+}
+void MeshInkQuickTxHook::packetReleased(
+    RadioInterface* iface,const meshtastic_MeshPacket* packet){
+    if(iface!=active_native_radio||!packet||!quick_trace.active||
+       !quick_trace.packet_id||packet->id!=quick_trace.packet_id)return;
+    // The native driver increments txGood BEFORE invoking packetReleased
+    // on completion. Drop/cancel hooks do not increment the counter.
+    quick_trace.transmitted=quick_trace.before_tx&&
+        active_native_radio->tx_good_count()!=quick_trace.tx_good_before;
+    quick_trace.finished=true;
+    Serial.printf("[MT-QUICK] radio released id=%08lx tx_complete=%u\n",
+                  (unsigned long)packet->id,quick_trace.transmitted?1U:0U);
+}
+}
+
+bool meshink_meshtastic_radio_quick_begin(uint8_t kind){
+    if(!active_native_radio||quick_trace.active||(kind!=1&&kind!=2))return false;
+    quick_trace=QuickRadioTrace{};
+    quick_trace.active=true;
+    quick_trace.capturing=true;
+    quick_trace.kind=kind;
+    quick_trace.requested_at=millis();
+    return true;
+}
+void meshink_meshtastic_radio_quick_finish(bool native_accepted){
+    if(!quick_trace.active)return;
+    quick_trace.capturing=false;
+    if(!native_accepted||!quick_trace.packet_id)quick_trace.finished=true;
+    Serial.printf("[MT-QUICK] kind=%u native_accepted=%u radio_id=%08lx\n",
+                  (unsigned)quick_trace.kind,native_accepted?1U:0U,
+                  (unsigned long)quick_trace.packet_id);
+}
+bool meshink_meshtastic_radio_quick_result(uint8_t& kind,bool& transmitted){
+    if(!quick_trace.active)return false;
+    // A radio packet can remain in CAD backoff, be superseded, or disappear
+    // without a completion callback. Time out as failure, never as sent.
+    if(!quick_trace.finished&&(uint32_t)(millis()-quick_trace.requested_at)>=60000UL){
+        quick_trace.finished=true;
+        Serial.printf("[MT-QUICK] radio timeout id=%08lx\n",
+                      (unsigned long)quick_trace.packet_id);
+    }
+    if(!quick_trace.finished)return false;
+    kind=quick_trace.kind;
+    transmitted=quick_trace.transmitted;
+    quick_trace=QuickRadioTrace{};
+    return true;
 }
 
 std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
