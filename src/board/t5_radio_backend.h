@@ -27,3 +27,7 @@ class SPIClass;
 MeshInkSX126xModuleConfig meshink_radio_native_module_config();
 SPIClass& meshink_radio_native_spi_bus();
 void meshink_radio_prepare_native_spi_bus();
+// Board-owned global GPIO ISR service, with protocol-specific per-pin handler.
+// These are called by the native HAL; they do not initialize or reset SX1262.
+bool meshink_radio_native_attach_interrupt(uint32_t pin,void (*callback)(void),uint32_t mode);
+void meshink_radio_native_detach_interrupt(uint32_t pin);
