@@ -20,3 +20,5 @@ void meshink_meshtastic_native_loop();
 // Feed upstream position networking from MeshInk's existing GNSS service.
 void meshink_meshtastic_native_gps_update();
 void meshink_meshtastic_native_stop();
+bool meshink_meshtastic_native_read_identity(char* long_name,size_t long_capacity,
+                                            char* short_name,size_t short_capacity);

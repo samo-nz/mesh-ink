@@ -320,6 +320,14 @@ bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uin
 void mesh_protocol_apply_name(const char* name) {
     if (active_backend().apply_name) active_backend().apply_name(name);
 }
+bool mesh_protocol_read_identity(char* long_name,size_t long_size,char* short_name,size_t short_size){
+    return active_backend().read_identity &&
+        active_backend().read_identity(long_name,long_size,short_name,short_size);
+}
+bool mesh_protocol_update_identity(const char* long_name,const char* short_name){
+    return active_backend().update_identity &&
+        active_backend().update_identity(long_name,short_name);
+}
 
 bool mesh_protocol_name_character_allowed(char c) {
     if (active_backend().name_character_allowed)

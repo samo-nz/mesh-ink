@@ -161,15 +161,6 @@ void report_warmstore_file(const char* path){
 // upstream Meshtastic NodeDB is authoritative for the companion app. Migrate
 // only Meshtastic's untouched default values. Never overwrite changes made
 // later through the Android app, keys, channels, or LoRa configuration.
-bool is_native_default_name(){
-    static constexpr char prefix[]="Meshtastic ";
-    if(strncmp(owner.long_name,prefix,sizeof(prefix)-1))return false;
-    const char* suffix=owner.long_name+sizeof(prefix)-1;
-    if(strlen(suffix)!=4 || strcmp(owner.short_name,suffix))return false;
-    for(const char* p=suffix;*p;++p)
-        if(!isxdigit((unsigned char)*p))return false;
-    return true;
-}
 // The UI saves first-time radio selections while the native engine is OFF.
 // Install verified settings immediately after NodeDB opens, before Router,
 // modules, PhoneAPI or SX1262. No live Admin packet or concurrent writer.
@@ -242,9 +233,9 @@ bool native_finish_onboarding(){
     if(!onboarding_radio_staged)return true;
     Preferences ui;
     if(!ui.begin("t5-ui",false))return false;
-    const String long_name=ui.getString("name","");
-    const String short_name=ui.getString("mt_short","");
     const bool identity_pending=ui.getBool("mt_name_pending",false);
+    const String long_name=ui.getString("mt_long",identity_pending?ui.getString("name",""):"");
+    const String short_name=ui.getString("mt_short","");
     if(identity_pending||!long_name.length()||!short_name.length()||
        strcmp(owner.long_name,long_name.c_str())||
        strcmp(owner.short_name,short_name.c_str())){
@@ -279,23 +270,17 @@ void bridge_ui_preferences_after_nodedb(){
     String name, short_name;
     bool identity_pending=false;
     if(pref.begin("t5-ui",true)){
-        name=pref.getString("name","");
+        name=pref.getString("mt_long",pref.getBool("mt_name_pending",false)?pref.getString("name",""):"");
         short_name=pref.getString("mt_short","");
         identity_pending=pref.getBool("mt_name_pending",false);
         pref.end();
     }
-    // An explicitly confirmed wizard identity is a one-time handoff to the
-    // official NodeDB. Never continuously mirror NVS into a user-edited
-    // identity: changes made through the companion app must remain authoritative.
-    const bool migrate_default=!identity_pending&&is_native_default_name();
-    if(name.length()&&(identity_pending||migrate_default)){
+    // Only an explicit initial setup confirmation may change the native owner.
+    // Never migrate from a shared/old name on ordinary boot or after restore.
+    if(identity_pending&&name.length()&&short_name.length()){
         meshtastic_User updated=owner; // preserve pubkey, id and all other fields
         snprintf(updated.long_name,sizeof(updated.long_name),"%s",name.c_str());
-        char generated[5]{};
-        meshink_suggest_short_name(name.c_str(),generated);
-        const char* chosen=(identity_pending&&short_name.length())?
-            short_name.c_str():generated;
-        if(chosen[0])snprintf(updated.short_name,sizeof(updated.short_name),"%s",chosen);
+        snprintf(updated.short_name,sizeof(updated.short_name),"%s",short_name.c_str());
         if(nodeDB->updateUser(nodeDB->getNodeNum(),updated)){
             owner=updated;
             const bool saved=nodeDB->saveToDisk(SEGMENT_DEVICESTATE|SEGMENT_NODEDATABASE);
@@ -347,6 +332,15 @@ void meshink_meshtastic_native_set_gps_snapshot(const MeshInkMeshtasticGpsSnapsh
     gps_snapshot=snapshot;
     gps_snapshot_received=true;
     portEXIT_CRITICAL(&gps_snapshot_mutex);
+}
+
+bool meshink_meshtastic_native_read_identity(char* long_name,size_t long_capacity,
+                                            char* short_name,size_t short_capacity){
+    if(!native_ready||!long_name||long_capacity<2||!short_name||short_capacity<2||
+       !owner.long_name[0]||!owner.short_name[0])return false;
+    snprintf(long_name,long_capacity,"%s",owner.long_name);
+    snprintf(short_name,short_capacity,"%s",owner.short_name);
+    return true;
 }
 
 bool meshink_meshtastic_native_begin(){

@@ -47,6 +47,8 @@ bool mesh_protocol_send_advert(bool flood);
 
 bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode);
 void mesh_protocol_apply_name(const char* name);
+bool mesh_protocol_read_identity(char* long_name,size_t long_size,char* short_name,size_t short_size);
+bool mesh_protocol_update_identity(const char* long_name,const char* short_name);
 bool mesh_protocol_name_character_allowed(char c);
 size_t mesh_protocol_node_name_max_length();
 const char* mesh_protocol_radio_summary();

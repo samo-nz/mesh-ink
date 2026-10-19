@@ -11,6 +11,7 @@
 #include "meshtastic_companion.h"
 #include "meshtastic_worker.h"
 #include "meshtastic_ui_data.h"
+#include "../../lib/Meshtastic/src/mesh/NodeDB.h"
 #include "../../include/core_build_versions.h"
 #include "../ui_onboarding.h"
 #include "../hardware/storage.h"
@@ -411,6 +412,31 @@ void stop(){
     ready=false;
 }
 bool running(){return ready;}
+bool submit_owner_identity(const char* long_name,const char* short_name){
+    if(!ready||!long_name||!short_name||!long_name[0]||!short_name[0]||
+       strlen(long_name)>20||strlen(short_name)>4||!meshink_meshtastic_ui_own_node())return false;
+    auto scratch=psram_scratch<PhoneTxScratch>();
+    if(!scratch)return false;
+    auto& admin=scratch->admin;
+    admin.which_payload_variant=meshtastic_AdminMessage_set_owner_tag;
+    admin.set_owner=owner; // preserve native owner attributes and licensing
+    snprintf(admin.set_owner.long_name,sizeof(admin.set_owner.long_name),"%s",long_name);
+    snprintf(admin.set_owner.short_name,sizeof(admin.set_owner.short_name),"%s",short_name);
+    auto& request=scratch->request;
+    request.which_payload_variant=meshtastic_ToRadio_packet_tag;
+    request.packet.to=meshink_meshtastic_ui_own_node();
+    request.packet.channel=0;
+    request.packet.id=esp_random();if(!request.packet.id)request.packet.id=1;
+    request.packet.want_ack=true;
+    request.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
+    request.packet.decoded.portnum=meshtastic_PortNum_ADMIN_APP;
+    pb_ostream_t inner=pb_ostream_from_buffer(request.packet.decoded.payload.bytes,sizeof(request.packet.decoded.payload.bytes));
+    if(!pb_encode(&inner,meshtastic_AdminMessage_fields,&admin))return false;
+    request.packet.decoded.payload.size=inner.bytes_written;
+    pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
+    return pb_encode(&outer,meshtastic_ToRadio_fields,&request)&&
+           meshink_meshtastic_worker_submit(scratch->wire,outer.bytes_written,request.packet.id);
+}
 const MeshInkProtocolBackend& backend(){
   static const MeshInkProtocolBackend b=[](){
     MeshInkProtocolBackend value{};
@@ -438,6 +464,8 @@ const MeshInkProtocolBackend& backend(){
     value.setup_preset_name_for_region=meshink_meshtastic_ui_preset_name;
     value.setup_preset_index_for_region=meshink_meshtastic_ui_preset_index;
     value.setup_commit_radio=meshink_meshtastic_ui_commit_radio;
+    value.read_identity=meshink_meshtastic_native_read_identity;
+    value.update_identity=submit_owner_identity;
     return value;
   }();
   return b;

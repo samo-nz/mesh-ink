@@ -111,6 +111,22 @@ static bool name_character_allowed(char c) {
     return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_';
 }
 
+static bool read_identity(char* long_name,size_t capacity,char* short_name,size_t short_capacity){
+    (void)short_name;(void)short_capacity;
+    if(!long_name||!capacity)return false;
+    const auto* settings=meshink_meshcore().getNodePrefs();
+    if(!settings||!settings->node_name[0])return false;
+    snprintf(long_name,capacity,"%s",settings->node_name);
+    return long_name[0]!=0;
+}
+static bool update_identity(const char* long_name,const char* short_name){
+    (void)short_name;
+    if(!long_name||!long_name[0]||strlen(long_name)>20)return false;
+    for(const char* p=long_name;*p;++p)if(!name_character_allowed(*p))return false;
+    local_mesh_apply_name(long_name);
+    char verify[21]{};
+    return read_identity(verify,sizeof(verify),nullptr,0)&&!strcmp(verify,long_name);
+}
 static size_t node_name_max_length() {
     return 20;
 }
@@ -282,6 +298,8 @@ static const MeshInkProtocolBackend& backend() {
         b.setup_save_tx_power = local_mesh_save_tx_power;
         b.setup_current_tx_power = local_mesh_tx_power;
         b.apply_name = local_mesh_apply_name;
+        b.read_identity = read_identity;
+        b.update_identity = update_identity;
         b.name_character_allowed = name_character_allowed;
         b.node_name_max_length = node_name_max_length;
         b.radio_summary = local_mesh_radio_summary;

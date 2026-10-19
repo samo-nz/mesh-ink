@@ -312,27 +312,9 @@ bool start_ble() {
     }
     uint8_t mac[6]{};
     getMacAddr(mac);
-    // The native Meshtastic owner wins after the Android app has customized
-    // it. Until then use MeshInk's configured node name instead of advertising
-    // Meshtastic_xxxx when the original on-device setup already named us.
-    // This changes only the BLE alias, not Meshtastic's stored owner fields.
-    const unsigned default_suffix = nodeDB ? (nodeDB->getNodeNum() & 0xffffU) : 0U;
-    char default_owner[40]{};
-    snprintf(default_owner, sizeof(default_owner), "Meshtastic %04x", default_suffix);
-    const bool native_name_custom = owner.long_name[0] &&
-        strcmp(owner.long_name, default_owner) != 0;
-    Preferences ui_prefs;
-    String meshink_name;
-    if (ui_prefs.begin("t5-ui", true)) {
-        meshink_name = ui_prefs.getString("name", "");
-        ui_prefs.end();
-    }
-    const char* source = native_name_custom ? "native" :
-                         meshink_name.length() ? "MeshInk" : "default";
-    const char* desired = native_name_custom ? owner.long_name :
-                          meshink_name.length() ? meshink_name.c_str() : default_owner;
-    snprintf(ble_name, sizeof(ble_name), "%.29s", desired);
-    Serial.printf("[MT-BLE] advertised name=%s source=%s\n", ble_name, source);
+    // BLE advertises only Meshtastic's native identity; never a shared UI name.
+    snprintf(ble_name,sizeof(ble_name),"%.29s",owner.long_name[0]?owner.long_name:"Meshtastic");
+    Serial.printf("[MT-BLE] native advertised name=%s\n",ble_name);
 
     BLEDevice::init(ble_name);
     BLEDevice::setMTU(517);
