@@ -6311,6 +6311,7 @@ static void ui_load_persistent_state() {
 }
 
 void ui_startup(const MeshInkUiStartupPlan& plan) {
+    const bool reuse_prepared_display=plan.display&&display_session_active;
     ui_boot_cpu_active=true;
     set_cpu_target(UI_RENDER_CPU_MHZ,"ui-startup");
     Serial.begin(115200);
@@ -6324,12 +6325,16 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
     if(plan.touch)meshink_touch_prepare_boot();
 
     if(plan.display){
-        meshink_display_init();
-        display_session_active=true;
+        // A factory-erased partition can display a preparation notice before
+        // normal UI/NVS startup. EPDiy high-level init is one-shot per boot.
+        if(!reuse_prepared_display){
+            meshink_display_init();
+            display_session_active=true;
+            Serial.println("[T5-INIT] display=initialized");
+        }else Serial.println("[T5-INIT] display=reusing-first-format-session");
         if(plan.radio_settle)meshink_board_start_local_radio_settle();
         if(plan.touch)set_ui_orientation(MeshInkOrientation::Portrait);
         else meshink_display_set_orientation(MeshInkOrientation::Portrait);
-        Serial.println("[T5-INIT] display=initialized");
     }
 
     if(plan.service_mesh_between_steps)mesh_protocol_service_startup();
@@ -6346,7 +6351,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
 
     if(plan.service_mesh_between_steps)mesh_protocol_service_startup();
 
-    if(plan.display){
+    if(plan.display&&!reuse_prepared_display){
         display=meshink_display_state_init();
         fb=meshink_display_framebuffer(&display);
     }
@@ -6381,6 +6386,36 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
 void ui_setup() {
     MeshInkUiStartupPlan plan{};
     ui_startup(plan);
+}
+
+void ui_show_first_format_preparation() {
+    // Reached only when the storage backend has checked that EVERY byte in
+    // the SPIFFS partition is erased. No protocol, journal or NVS state may
+    // be opened/modified before the maintenance restore boundary completes.
+    if(display_session_active)return;
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(0);
+    meshink_display_init();
+    display_session_active=true;
+    meshink_display_set_orientation(MeshInkOrientation::Portrait);
+    display=meshink_display_state_init();
+    fb=meshink_display_framebuffer(&display);
+    if(!fb){
+        Serial.println("[T5-BOOT] first-format display framebuffer unavailable");
+        return;
+    }
+    meshink_display_set_all_white(&display);
+    ui_centred("MESHINK",ui_y(230),6,0,true);
+    ui_centred("PREPARING DEVICE",ui_y(420),3,0,true);
+    ui_centred("INITIALISING STORAGE",ui_y(495),3,0,true);
+    ui_centred("FIRST START MAY TAKE A WHILE",ui_y(625),2,0,false);
+    ui_centred("DO NOT SWITCH OFF",ui_y(705),2,0,true);
+    meshink_display_poweron();
+    const MeshInkDisplayResult result=meshink_display_update_screen(
+        &display,MeshInkRefreshMode::FastGray16,
+        (int)meshink_display_ambient_temperature());
+    meshink_display_poweroff();
+    Serial.printf("[T5-BOOT] first-format preparation displayed result=%d\\n",(int)result);
 }
 
 void ui_show_storage_initializing() {
