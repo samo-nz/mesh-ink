@@ -3,6 +3,7 @@
 #include "meshtastic_companion.h"
 #include "meshtastic_platform.cpp" // headless service definitions (single TU)
 #include "meshtastic_radio.h"
+#include "meshtastic_worker.h"
 #include "../../lib/Meshtastic/src/FSCommon.h"
 #include "../../lib/Meshtastic/src/SPILock.h"
 #include "../../lib/Meshtastic/src/PowerMon.h"
@@ -84,6 +85,50 @@ bool onboarding_radio_staged=false;
 portMUX_TYPE gps_snapshot_mutex=portMUX_INITIALIZER_UNLOCKED;
 MeshInkMeshtasticGpsSnapshot gps_snapshot{};
 bool gps_snapshot_received=false;
+
+// Only the native router knows when a retry actually fires. Observe its
+// protected pending map AFTER upstream runOnce(), without changing the
+// retransmission algorithm or timing. Events cross cores through the worker
+// FIFO; MeshInk's UI never reads native mutable routing structures.
+class MeshInkProgressRouter final : public ReliableRouter {
+    struct LastReport { uint32_t id=0; uint8_t count=0; };
+    LastReport reported_[24]{};
+    size_t next_slot_=0;
+public:
+    int32_t runOnce() override {
+        const int32_t delay_ms=ReliableRouter::runOnce();
+        if(!nodeDB)return delay_ms;
+        const uint32_t self=nodeDB->getNodeNum();
+        for(const auto& entry:pending){
+            const PendingPacket& entry_state=entry.second;
+            const auto* packet=entry_state.packet;
+            if(!packet||packet->from!=self||isBroadcast(packet->to)||
+               entry_state.initialNumRetransmissions!=NUM_RELIABLE_UNICAST_ATTEMPTS-1)
+                continue;
+            const uint8_t total=entry_state.initialNumRetransmissions;
+            if(entry_state.numRetransmissions>total)continue;
+            const uint8_t completed=total-entry_state.numRetransmissions;
+            if(!completed)continue;
+            LastReport* previous=nullptr;
+            for(auto& slot:reported_)
+                if(slot.id==packet->id){previous=&slot;break;}
+            if(previous&&previous->count>=completed)continue;
+            if(!meshink_meshtastic_worker_note_retry(packet->id,completed,total))
+                continue; // leave last-report unchanged and offer again
+            if(!previous){
+                previous=&reported_[next_slot_];
+                next_slot_=(next_slot_+1)%24;
+            }
+            previous->id=packet->id;
+            previous->count=completed;
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+            Serial.printf("[MT-RETRY] packet=%08lx retry=%u/%u\\n",
+                          (unsigned long)packet->id,(unsigned)completed,(unsigned)total);
+#endif
+        }
+        return delay_ms;
+    }
+};
 
 // Observe Meshtastic's native WarmNodeStore snapshot and any interrupted
 // SafeFile staging copy without modifying either. A 16-byte header read is
@@ -382,7 +427,7 @@ bool meshink_meshtastic_native_begin(){
         nodeDB->clearLocalPosition();
     TransmitHistory::getInstance()->loadFromDisk();
     if(nodeStatus)nodeStatus->observe(&nodeDB->newStatus);
-    router=new(std::nothrow) ReliableRouter();
+    router=new(std::nothrow) MeshInkProgressRouter();
     service=new(std::nothrow) MeshService();
     if(!router||!service){
         Serial.println("[MeshInk/MT] Router or MeshService allocation failed");
