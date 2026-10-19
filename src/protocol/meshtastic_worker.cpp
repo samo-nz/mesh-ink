@@ -123,7 +123,9 @@ void network_task(void*){
             if(!privacy_ok){
                 const uint8_t result=3; // privacy revoked after user tap
                 (void)xQueueSend(quick_events,&result,0);
-            }else if(cooldown||!meshink_meshtastic_radio_quick_begin(quick)){
+            }else if(cooldown||
+                     (quick==2&&meshink_meshtastic_native_quick_nodeinfo_busy())||
+                     !meshink_meshtastic_radio_quick_begin(quick)){
                 const uint8_t result=4; // radio pending, or cooldown after real TX
                 (void)xQueueSend(quick_events,&result,0);
             }else{

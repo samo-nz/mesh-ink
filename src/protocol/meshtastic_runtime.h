@@ -22,6 +22,8 @@ void meshink_meshtastic_native_loop();
 bool meshink_meshtastic_native_quick_broadcast(bool location);
 // Native NodeDB state may only be inspected on the network worker.
 bool meshink_meshtastic_native_quick_position_available();
+// Native NodeInfo sends honor upstream's 60-second interactive send floor.
+bool meshink_meshtastic_native_quick_nodeinfo_busy();
 // Feed upstream position networking from MeshInk's existing GNSS service.
 void meshink_meshtastic_native_gps_update();
 void meshink_meshtastic_native_stop();

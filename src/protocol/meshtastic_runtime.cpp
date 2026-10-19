@@ -567,6 +567,14 @@ void meshink_meshtastic_native_gps_update(){
 #endif
 }
 
+bool meshink_meshtastic_native_quick_nodeinfo_busy(){
+    if(!transmitHistory)return false;
+    const uint32_t last=transmitHistory->getLastSentToMeshMillis(
+        meshtastic_PortNum_NODEINFO_APP);
+    // Mirror native NodeInfoModule's interactive/urgent 60-second floor.
+    return last&&Throttle::isWithinTimespanMs(last,60UL*1000UL);
+}
+
 bool meshink_meshtastic_native_quick_position_available(){
     if(!native_ready||!config.lora.tx_enabled||!nodeDB||!positionModule)return false;
     // Meshtastic fixed positions remain usable without a GPS lock. Non-fixed
@@ -593,7 +601,9 @@ bool meshink_meshtastic_native_quick_broadcast(bool location){
         return positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel);
     }
     if(!nodeInfoModule||!airTime->isTxAllowedAirUtil())return false;
-    return nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false);
+    // The fourth argument selects upstream's intentionally shorter 60s
+    // interactive/urgent timeout. Periodic announcements retain 30 minutes.
+    return nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false,0,true);
 }
 
 void meshink_meshtastic_native_loop(){
