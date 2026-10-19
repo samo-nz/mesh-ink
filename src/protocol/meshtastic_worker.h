@@ -5,6 +5,9 @@
 // The Meshtastic worker exclusively runs the official router and PhoneAPI.
 // The common MeshInk UI only exchanges serialized packets via RTOS queues.
 bool meshink_meshtastic_worker_start();
+bool meshink_meshtastic_worker_quick_broadcast(bool location);
+// Immediate revocation of pending quick-position announcements.
+void meshink_meshtastic_worker_allow_quick_location(bool allowed);
 bool meshink_meshtastic_worker_submit(const uint8_t* bytes,size_t size,uint32_t packet_id=0);
 // After an accepted channel Admin command, replay the authoritative channel
 // snapshot back into the MeshInk UI on the owning network task.

@@ -49,6 +49,8 @@ TaskHandle_t worker_task=nullptr;
 RxFrame* rx_pool[kRxFrames]{};
 std::atomic<bool> stop_requested{false};
 std::atomic<bool> config_refresh_requested{false};
+std::atomic<uint8_t> quick_broadcast_request{0}; // 0 idle, 1 position, 2 NodeInfo
+std::atomic<bool> quick_location_allowed{false};
 bool running=false;
 
 void release_resources(){
@@ -99,6 +101,16 @@ void network_task(void*){
             meshink_meshtastic_native_gps_update();
         }
         meshink_meshtastic_native_loop();
+        // Only the network worker may invoke native Meshtastic modules.
+        // Recheck privacy after GPS update, even if the user disabled sharing
+        // while a previous touch-driven request was pending.
+        const uint8_t quick=quick_broadcast_request.exchange(0,std::memory_order_acq_rel);
+        if(quick){
+            const bool privacy_ok=quick!=1||quick_location_allowed.load(std::memory_order_acquire);
+            const bool accepted=privacy_ok&&meshink_meshtastic_native_quick_broadcast(quick==1);
+            Serial.printf("[MT-QUICK] type=%s native_accepted=%u privacy=%u\n",
+                          quick==1?"position":"nodeinfo",accepted?1U:0U,privacy_ok?1U:0U);
+        }
 
         // Local channel add/remove is submitted through upstream AdminModule.
         // Only after the official router has applied the write, re-request the
@@ -170,6 +182,8 @@ bool meshink_meshtastic_worker_start(){
     }
     stop_requested.store(false,std::memory_order_release);
     config_refresh_requested.store(false,std::memory_order_release);
+    quick_broadcast_request.store(0,std::memory_order_release);
+    quick_location_allowed.store(false,std::memory_order_release);
     if(xTaskCreatePinnedToCore(network_task,"mt-network",kNetworkStackBytes,
                                nullptr,kNetworkPriority,&worker_task,
                                kNetworkCore)!=pdPASS){
@@ -197,6 +211,21 @@ bool meshink_meshtastic_worker_submit(const uint8_t* bytes,size_t size,uint32_t 
         return false;
     }
     return true;
+}
+
+bool meshink_meshtastic_worker_quick_broadcast(bool location){
+    if(!running||stop_requested.load(std::memory_order_acquire))return false;
+    if(location&&!quick_location_allowed.load(std::memory_order_acquire))return false;
+    uint8_t empty=0;
+    return quick_broadcast_request.compare_exchange_strong(
+        empty,location?1U:2U,std::memory_order_acq_rel);
+}
+void meshink_meshtastic_worker_allow_quick_location(bool allowed){
+    quick_location_allowed.store(allowed,std::memory_order_release);
+    if(!allowed){
+        uint8_t expected=1;
+        quick_broadcast_request.compare_exchange_strong(expected,0,std::memory_order_acq_rel);
+    }
 }
 
 void meshink_meshtastic_worker_refresh_channels(){

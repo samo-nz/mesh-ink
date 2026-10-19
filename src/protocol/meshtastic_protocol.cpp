@@ -412,6 +412,22 @@ void stop(){
     ready=false;
 }
 bool running(){return ready;}
+bool quick_broadcast(bool location){
+    bool sharing=false,public_approximate=false;
+    uint8_t interval=0;
+    // Snapshot the current explicit location-sharing state. Never infer
+    // permission from GPS availability or a stale UI label.
+    if(!ready||!meshink_meshtastic_ui_location_get(sharing,public_approximate,interval)||
+       location!=sharing)return false;
+    static uint32_t last_queued=0;
+    static bool ever_queued=false;
+    const uint32_t now=millis();
+    if(ever_queued&&(uint32_t)(now-last_queued)<30000UL)return false;
+    meshink_meshtastic_worker_allow_quick_location(sharing);
+    if(!meshink_meshtastic_worker_quick_broadcast(location))return false;
+    last_queued=now;ever_queued=true;
+    return true;
+}
 size_t mt_node_name_max_length(){return 39;}
 bool submit_owner_identity(const char* long_name,const char* short_name){
     if(!ready||!long_name||!short_name||!long_name[0]||!short_name[0]||
@@ -456,6 +472,7 @@ const MeshInkProtocolBackend& backend(){
     value.settings_count=meshink_meshtastic_ui_settings_count;
     value.settings_item=meshink_meshtastic_ui_settings_item;
     value.gps_mode_changed=shared_gps_mode_changed;
+    value.quick_broadcast=quick_broadcast;
     value.location_sharing_get=meshink_meshtastic_ui_location_get;
     value.location_sharing_set=meshink_meshtastic_ui_location_set;
     value.my_location=shared_my_location;

@@ -1,4 +1,5 @@
 #include "meshtastic_ui_data.h"
+#include "meshtastic_worker.h"
 #include "../ui_onboarding.h"
 #include "../message_store.h"
 #include <pb_decode.h>
@@ -1250,6 +1251,9 @@ bool meshink_meshtastic_ui_location_set(bool enabled,bool public_approximate,uin
             if(current)state->location_private_precision[i]=current;
         }
     }
+    // Disabling sharing immediately revokes pending manual position sends,
+    // before native channel Admin writes can finish on the other core.
+    meshink_meshtastic_worker_allow_quick_location(enabled);
     state->location_share=enabled;
     state->location_public=public_approximate;
     state->location_interval=interval;
