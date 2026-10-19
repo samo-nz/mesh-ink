@@ -1,5 +1,6 @@
 #include "meshtastic_worker.h"
 #include "meshtastic_official_phoneapi.h"
+#include "meshtastic_radio.h"
 #include "meshtastic_runtime.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
 #include <Arduino.h>
@@ -44,6 +45,7 @@ QueueHandle_t rx_ready=nullptr;
 QueueHandle_t tx_pending=nullptr;
 QueueHandle_t tx_failed=nullptr;
 QueueHandle_t retry_events=nullptr;
+QueueHandle_t quick_events=nullptr;
 SemaphoreHandle_t worker_exited=nullptr;
 TaskHandle_t worker_task=nullptr;
 RxFrame* rx_pool[kRxFrames]{};
@@ -64,6 +66,7 @@ void release_resources(){
     if(rx_ready){vQueueDelete(rx_ready);rx_ready=nullptr;}
     if(tx_failed){vQueueDelete(tx_failed);tx_failed=nullptr;}
     if(retry_events){vQueueDelete(retry_events);retry_events=nullptr;}
+    if(quick_events){vQueueDelete(quick_events);quick_events=nullptr;}
     if(worker_exited){vSemaphoreDelete(worker_exited);worker_exited=nullptr;}
     for(auto& frame:rx_pool){heap_caps_free(frame);frame=nullptr;}
     worker_task=nullptr;
@@ -74,6 +77,8 @@ void network_task(void*){
     const TickType_t pause=pdMS_TO_TICKS(5)?pdMS_TO_TICKS(5):1;
     uint32_t last_gps=0,last_slow_report=0;
     uint32_t refresh_at=0;
+    uint32_t last_quick_sent_ms=0;
+    bool quick_ever_sent=false;
     while(!stop_requested.load(std::memory_order_acquire)){
         const uint32_t started=millis();
 
@@ -107,9 +112,31 @@ void network_task(void*){
         const uint8_t quick=quick_broadcast_request.exchange(0,std::memory_order_acq_rel);
         if(quick){
             const bool privacy_ok=quick!=1||quick_location_allowed.load(std::memory_order_acquire);
-            const bool accepted=privacy_ok&&meshink_meshtastic_native_quick_broadcast(quick==1);
-            Serial.printf("[MT-QUICK] type=%s native_accepted=%u privacy=%u\n",
-                          quick==1?"position":"nodeinfo",accepted?1U:0U,privacy_ok?1U:0U);
+            const bool cooldown=quick_ever_sent&&
+                (uint32_t)(millis()-last_quick_sent_ms)<30000UL;
+            if(!privacy_ok){
+                const uint8_t result=3; // privacy revoked after user tap
+                (void)xQueueSend(quick_events,&result,0);
+            }else if(cooldown||!meshink_meshtastic_radio_quick_begin(quick)){
+                const uint8_t result=4; // radio pending, or cooldown after real TX
+                (void)xQueueSend(quick_events,&result,0);
+            }else{
+                const bool native_accepted=meshink_meshtastic_native_quick_broadcast(quick==1);
+                meshink_meshtastic_radio_quick_finish(native_accepted);
+            }
+        }
+        uint8_t result_kind=0;
+        bool transmitted=false;
+        if(meshink_meshtastic_radio_quick_result(result_kind,transmitted)){
+            const uint8_t result=transmitted?result_kind:3;
+            if(transmitted){
+                last_quick_sent_ms=millis();
+                quick_ever_sent=true;
+            }
+            if(xQueueSend(quick_events,&result,0)!=pdTRUE)
+                Serial.println("[MT-QUICK] ERROR: result queue full");
+            Serial.printf("[MT-QUICK] radio outcome kind=%u transmitted=%u\n",
+                          (unsigned)result_kind,transmitted?1U:0U);
         }
 
         // Local channel add/remove is submitted through upstream AdminModule.
@@ -167,8 +194,9 @@ bool meshink_meshtastic_worker_start(){
     tx_pending=xQueueCreate(kTxFrames,sizeof(TxFrame*));
     tx_failed=xQueueCreate(kTxFrames,sizeof(uint32_t));
     retry_events=xQueueCreate(kTxFrames,sizeof(RetryEvent));
+    quick_events=xQueueCreate(4,sizeof(uint8_t));
     worker_exited=xSemaphoreCreateBinary();
-    if(!rx_free||!rx_ready||!tx_pending||!tx_failed||!retry_events||!worker_exited){
+    if(!rx_free||!rx_ready||!tx_pending||!tx_failed||!retry_events||!quick_events||!worker_exited){
         Serial.println("[MT-WORKER] ERROR: queues/semaphore allocation failed");
         release_resources();return false;
     }
@@ -219,6 +247,9 @@ bool meshink_meshtastic_worker_quick_broadcast(bool location){
     uint8_t empty=0;
     return quick_broadcast_request.compare_exchange_strong(
         empty,location?1U:2U,std::memory_order_acq_rel);
+}
+bool meshink_meshtastic_worker_quick_result(uint8_t& result){
+    return running&&quick_events&&xQueueReceive(quick_events,&result,0)==pdTRUE;
 }
 void meshink_meshtastic_worker_allow_quick_location(bool allowed){
     quick_location_allowed.store(allowed,std::memory_order_release);

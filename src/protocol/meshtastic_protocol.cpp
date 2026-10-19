@@ -161,6 +161,11 @@ void poll(){
     update_shared_gps_status();
     if(!ready)return;
     meshink_meshtastic_ui_tick();
+    // Unlike PhoneAPI queue acceptance, these events are emitted only after
+    // the radio's native packet-release/completion callback (or rejection).
+    uint8_t quick_result=0;
+    while(meshink_meshtastic_worker_quick_result(quick_result))
+        ui_notify_meshtastic_quick_result(quick_result);
 #if ENV_INCLUDE_GPS == 1
     // Only MeshInk's UI task reads its mutable GNSS provider. A small locked
     // snapshot feeds official position networking on the other CPU core.
@@ -418,15 +423,9 @@ bool quick_broadcast(bool location){
     // Snapshot the current explicit location-sharing state. Never infer
     // permission from GPS availability or a stale UI label.
     if(!ready||!meshink_meshtastic_ui_location_get(sharing,public_approximate,interval)||
-       location!=sharing)return false;
-    static uint32_t last_queued=0;
-    static bool ever_queued=false;
-    const uint32_t now=millis();
-    if(ever_queued&&(uint32_t)(now-last_queued)<30000UL)return false;
+       (location&&!sharing))return false;
     meshink_meshtastic_worker_allow_quick_location(sharing);
-    if(!meshink_meshtastic_worker_quick_broadcast(location))return false;
-    last_queued=now;ever_queued=true;
-    return true;
+    return meshink_meshtastic_worker_quick_broadcast(location);
 }
 size_t mt_node_name_max_length(){return 39;}
 bool submit_owner_identity(const char* long_name,const char* short_name){
