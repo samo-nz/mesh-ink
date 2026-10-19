@@ -18,6 +18,7 @@
 #include "../../lib/Meshtastic/src/mesh/MeshService.h"
 #include "../../lib/Meshtastic/src/mesh/CryptoEngine.h"
 #include "../../lib/Meshtastic/src/mesh/RadioLibInterface.h"
+#include "../../lib/Meshtastic/src/mesh/MeshRadio.h"
 #include "../../lib/Meshtastic/src/mesh/Throttle.h"
 #include "../../lib/Meshtastic/src/modules/Modules.h"
 #include "../../lib/Meshtastic/src/modules/PositionModule.h"
@@ -77,6 +78,7 @@ meshtastic_DeviceMetadata getDeviceMetadata(){
 namespace {
 bool native_ready=false;
 bool ever_started=false;
+bool onboarding_radio_staged=false;
 // The receiver is serviced by MeshInk on the UI core. The worker only sees
 // an immutable position/time snapshot, never the live MicroNMEA state.
 portMUX_TYPE gps_snapshot_mutex=portMUX_INITIALIZER_UNLOCKED;
@@ -123,6 +125,110 @@ bool is_native_default_name(){
         if(!isxdigit((unsigned char)*p))return false;
     return true;
 }
+// The UI saves first-time radio selections while the native engine is OFF.
+// Install verified settings immediately after NodeDB opens, before Router,
+// modules, PhoneAPI or SX1262. No live Admin packet or concurrent writer.
+bool native_apply_onboarding_radio(){
+    Preferences draft;
+    if(!draft.begin("mt-onboard",true))return true;
+    const bool pending=draft.getBool("pending",false);
+    const auto region=(meshtastic_Config_LoRaConfig_RegionCode)draft.getUChar("region",0);
+    const auto preset=(meshtastic_Config_LoRaConfig_ModemPreset)draft.getUChar("preset",255);
+    const uint8_t hops=draft.getUChar("hops",0);
+    draft.end();
+    if(!pending){
+        // A previous wizard used to mark setup complete without applying LoRa.
+        // Recover automatically without deleting native identity, channels or
+        // either protocol's journals.
+        if(config.lora.region==meshtastic_Config_LoRaConfig_RegionCode_UNSET){
+            Preferences ui;
+            if(ui.begin("t5-ui",false)){
+                if(ui.getBool("setup_mst",false)){
+                    ui.putBool("setup_mst",false);
+                    Serial.println("[MT-SETUP] invalid legacy completion: region UNSET; wizard required");
+                }
+                ui.end();
+            }
+            return false;
+        }
+        return true;
+    }
+    if(region==meshtastic_Config_LoRaConfig_RegionCode_UNSET||hops<1||hops>7){
+        Serial.println("[MT-SETUP] rejected invalid pending region/hops");
+        return false;
+    }
+    static meshtastic_LoRaRegionPresetMap map{};
+    getRegionPresetMap(map); // Same pinned official legality map as PhoneAPI.
+    bool permitted=false;
+    for(size_t i=0;i<map.region_groups_count&&!permitted;++i){
+        if(map.region_groups[i].region!=region)continue;
+        const unsigned group=map.region_groups[i].group_index;
+        if(group>=map.groups_count)break;
+        for(size_t j=0;j<map.groups[group].presets_count;++j)
+            if(map.groups[group].presets[j]==preset){permitted=true;break;}
+    }
+    if(!permitted){
+        Serial.println("[MT-SETUP] pending region/preset not in official map");
+        return false;
+    }
+    config.lora.region=region;
+    config.lora.use_preset=true;
+    config.lora.modem_preset=preset;
+    config.lora.hop_limit=hops;
+    config.lora.tx_enabled=true;
+    if(!nodeDB->saveToDisk(SEGMENT_CONFIG)){
+        Serial.println("[MT-SETUP] native radio config save failed; setup pending");
+        return false;
+    }
+    File verify=SPIFFS.open("/prefs/config.proto","r");
+    const bool stored=verify&&verify.size()>0;
+    if(verify)verify.close();
+    if(!stored){
+        Serial.println("[MT-SETUP] native radio config file unavailable after save");
+        return false;
+    }
+    onboarding_radio_staged=true;
+    Serial.printf("[MT-SETUP] native radio saved region=%u preset=%u hops=%u\\n",
+                  (unsigned)region,(unsigned)preset,(unsigned)hops);
+    return true;
+}
+
+bool native_finish_onboarding(){
+    if(!onboarding_radio_staged)return true;
+    Preferences ui;
+    if(!ui.begin("t5-ui",false))return false;
+    const String long_name=ui.getString("name","");
+    const String short_name=ui.getString("mt_short","");
+    const bool identity_pending=ui.getBool("mt_name_pending",false);
+    if(identity_pending||!long_name.length()||!short_name.length()||
+       strcmp(owner.long_name,long_name.c_str())||
+       strcmp(owner.short_name,short_name.c_str())){
+        ui.end();
+        Serial.println("[MT-SETUP] identity not yet saved; setup remains pending");
+        return false;
+    }
+    // Only claim setup is complete after native radio and identity were saved.
+    const bool saved=ui.putBool("setup_mst",true)==1&&
+                     ui.putBool("complete",true)==1&&
+                     ui.putUChar("setup_return",0)==1&&
+                     ui.putUChar("setup_choice",0)==1;
+    ui.end();
+    if(!saved)return false;
+    Preferences verify;
+    if(!verify.begin("t5-ui",true))return false;
+    const bool confirmed=verify.getBool("setup_mst",false);
+    verify.end();
+    if(!confirmed)return false;
+    Preferences draft;
+    if(draft.begin("mt-onboard",false)){
+        if(!draft.remove("pending"))
+            Serial.println("[MT-SETUP] WARN pending marker retained; will revalidate next boot");
+        draft.end();
+    }
+    Serial.println("[MT-SETUP] native radio + identity verified; setup complete");
+    return true;
+}
+
 void bridge_ui_preferences_after_nodedb(){
     Preferences pref;
     String name, short_name;
@@ -148,7 +254,7 @@ void bridge_ui_preferences_after_nodedb(){
         if(nodeDB->updateUser(nodeDB->getNodeNum(),updated)){
             owner=updated;
             const bool saved=nodeDB->saveToDisk(SEGMENT_DEVICESTATE|SEGMENT_NODEDATABASE);
-            Serial.printf("[MT-BRIDGE] native name=%s short=%s saved=%u\\n",
+            Serial.printf("[MT-BRIDGE] native name=%s short=%s saved=%u\n",
                           owner.long_name,owner.short_name,saved?1U:0U);
             if(saved&&identity_pending){
                 Preferences done;
@@ -235,6 +341,7 @@ bool meshink_meshtastic_native_begin(){
                   (unsigned)config.lora.modem_preset,config.lora.tx_enabled?1U:0U,
                   (unsigned)ESP.getFreeHeap());
 #endif
+    if(!native_apply_onboarding_radio())return false;
     // Privacy fail-closed: if the user explicitly disabled sharing, clear
     // any stale native on-wire channel precision BEFORE the radio is attached.
     // A power loss during an earlier setting change must never re-enable
@@ -283,6 +390,7 @@ bool meshink_meshtastic_native_begin(){
     }
     service->init();
     bridge_ui_preferences_after_nodedb();
+    if(!native_finish_onboarding())return false;
     if(!airTime)airTime=new(std::nothrow) AirTime();
     if(!airTime){
         Serial.println("[MeshInk/MT] Airtime allocator failed");
