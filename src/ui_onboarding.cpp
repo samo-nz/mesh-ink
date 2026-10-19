@@ -1467,7 +1467,10 @@ static const char** active_keyboard_rows(){
 static void draw_landscape_keyboard(){
     const auto metrics=keyboard_metrics(true);
     meshink_display_set_all_white(&display);
-    const char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
+    const char* value=keyboard_password_mode?remote_password:
+        (keyboard_message_mode?compose_text:
+        (screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit
+             ?setup_short_name:node_name));
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(10),ui_h(10)),false);
     const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,960);
@@ -4630,10 +4633,25 @@ static void append(char c) {
         }
         return;
     }
+    if(screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit){
+        if(c>='a'&&c<='z')c=(char)(c-'a'+'A');
+        if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')))return;
+        const size_t n=strlen(setup_short_name);
+        if(n<sizeof(setup_short_name)-1){
+            setup_short_name[n]=c;setup_short_name[n+1]=0;
+            setup_short_manual=true;
+        }
+        return;
+    }
     if(c==' '||!mesh_protocol_name_character_allowed(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded protocol-invalid name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
     const size_t limit=min(sizeof(node_name)-1,mesh_protocol_node_name_max_length());
-    size_t n=strlen(node_name); if (n<limit) { node_name[n]=c; node_name[n+1]=0; saved=false; }
+    size_t n=strlen(node_name);
+    if(n<limit){
+        node_name[n]=c;node_name[n+1]=0;saved=false;
+        if(screen==Screen::SetupName&&!setup_is_meshcore()&&!setup_short_manual)
+            meshink_suggest_short_name(node_name,setup_short_name);
+    }
 }
 static bool hit(int16_t x,int16_t y,int bx,int by,int bw,int bh) { return x>=bx&&x<bx+bw&&y>=by&&y<by+bh; }
 static bool hit(int16_t x,int16_t y,const MeshInkUiRect& rect) {
@@ -4726,9 +4744,17 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
     if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
         if(x>=meshink_keyboard::delete_split(metrics)){
-            char* value=keyboard_password_mode?remote_password:(keyboard_message_mode?compose_text:node_name);
+            char* value=keyboard_password_mode?remote_password:
+                (keyboard_message_mode?compose_text:
+                (screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit
+                   ?setup_short_name:node_name));
             const size_t n=strlen(value);
             if(n)value[n-1]=0;
+            if(screen==Screen::SetupName&&!setup_is_meshcore()){
+                if(setup_short_edit)setup_short_manual=true;
+                else if(!setup_short_manual)
+                    meshink_suggest_short_name(node_name,setup_short_name);
+            }
             if(!keyboard_message_mode&&!keyboard_password_mode)saved=false;
             queue_text_refresh();return true;
         }
@@ -4841,9 +4867,16 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
         if(x>=meshink_keyboard::delete_split(metrics)){
             char* value=screen==Screen::SetupRadio
-                ?(setup_edit_field?setup_power:setup_freq):node_name;
+                ?(setup_edit_field?setup_power:setup_freq)
+                :(screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit
+                   ?setup_short_name:node_name);
             const size_t n=strlen(value);
             if(n)value[n-1]=0;
+            if(screen==Screen::SetupName&&!setup_is_meshcore()){
+                if(setup_short_edit)setup_short_manual=true;
+                else if(!setup_short_manual)
+                    meshink_suggest_short_name(node_name,setup_short_name);
+            }
             saved=false;queue_text_refresh();return true;
         }
     }
@@ -5055,12 +5088,14 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::SetupName){
-        if(!setup_is_meshcore()&&!keyboard_visible&&
-           hit(x,y,ui_rect(60,720,420,70))){
-            backup_open_files(Screen::SetupName);return true;
-        }
-        if(hit(x,y,ui_rect(24,185,492,96))||
-           hit(x,y,ui_rect(60,450,420,74))){
+        const bool short_field=!setup_is_meshcore() &&
+            (hit(x,y,ui_rect(24,345,492,88))||
+             hit(x,y,ui_rect(60,610,420,70)));
+        const bool long_field=hit(x,y,ui_rect(24,185,492,96))||
+            hit(x,y,setup_is_meshcore()?ui_rect(60,450,420,74):
+                                     ui_rect(60,518,420,70));
+        if(short_field||long_field){
+            setup_short_edit=short_field;
             keyboard_visible=true;
             replace_name_on_type=false;
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
@@ -5069,7 +5104,8 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             setup_enter(setup_any_done?Screen::SetupCancel:Screen::Welcome);return true;
         }
         if(hit(x,y,ui_rect(284,850,232,74))){
-            if(!node_name[0]||strlen(node_name)>20||strchr(node_name,' ')){
+            if(!node_name[0]||strlen(node_name)>20||strchr(node_name,' ')||
+               (!setup_is_meshcore()&&!setup_short_name[0])){
                 show_toast("INVALID NODE NAME");return true;
             }
             setup_preset_page=0;
@@ -5097,7 +5133,13 @@ static bool handle_setup_tap(int16_t x,int16_t y){
                     setup_enter(Screen::SetupReview);
                 }
                 return true;
-            }else setup_radio_preset=(int)i;
+            }else{
+                // Native modem choices already come from the selected region's
+                // official allowed-presets list.
+                setup_radio_preset=(int)i;
+                setup_enter(Screen::SetupReview);
+                return true;
+            }
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
         }
         if(count>5&&hit(x,y,ui_rect(24,744,232,65))){
@@ -5118,9 +5160,6 @@ static bool handle_setup_tap(int16_t x,int16_t y){
                 setup_preset_page=0;
                 setup_radio_preset=0; // Meshtastic LongFast default
                 setup_enter(Screen::SetupPreset);
-            }else if(!setup_is_meshcore()){
-                if(setup_radio_preset<0){show_toast("CHOOSE A PRESET");return true;}
-                setup_enter(Screen::SetupRadio);
             }
             return true;
         }
@@ -5153,7 +5192,7 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             }else return true;
         }else{
             if(hit_outer_row(x,y,436))setup_hops=(uint8_t)(setup_hops>=7?1:setup_hops+1);
-            else if(hit(x,y,ui_rect(24,850,232,74))){setup_enter(Screen::SetupPreset);return true;}
+            else if(hit(x,y,ui_rect(24,850,232,74))){setup_enter(Screen::SetupReview);return true;}
             else if(hit(x,y,ui_rect(284,850,232,74))){setup_enter(Screen::SetupReview);return true;}
             else return true;
         }
@@ -5161,13 +5200,13 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::SetupReview){
-        if(setup_is_meshcore()&&hit(x,y,ui_rect(60,540,420,74))){
+        if(hit(x,y,setup_is_meshcore()?ui_rect(60,540,420,74):
+                                      ui_rect(60,716,420,66))){
             setup_radio_return=Screen::SetupReview;
             setup_enter(Screen::SetupRadio);return true;
         }
         if(hit(x,y,ui_rect(24,850,232,74))){
-            setup_enter(setup_is_meshcore()?Screen::SetupPreset:Screen::SetupRadio);
-            return true;
+            setup_enter(Screen::SetupPreset);return true;
         }
         if(hit(x,y,ui_rect(284,850,232,74))){
             if(!setup_finish()){
