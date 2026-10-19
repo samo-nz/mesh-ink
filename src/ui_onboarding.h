@@ -20,6 +20,7 @@ struct MeshInkUiStartupPlan {
 
 void ui_startup(const MeshInkUiStartupPlan& plan);
 void ui_setup();
+void ui_sync_protocol_setup_result(); // adopt native first-boot commit before first interactive frame
 // First-use SPIFFS mount happens before ui_setup(); show a minimal, persistent
 // e-paper preparation notice without loading/modifying protocol or NVS state.
 void ui_show_first_format_preparation();
