@@ -47,6 +47,7 @@ radio_selector_source = (root / "src" / "hardware" / "radio.h").read_text(encodi
 radio_types_source = (root / "src" / "hardware" / "radio_types.h").read_text(encoding="utf-8")
 radio_backend_header = (root / "src" / "board" / "t5_radio_backend.h").read_text(encoding="utf-8")
 radio_backend_source = (root / "src" / "board" / "t5_radio_backend.cpp").read_text(encoding="utf-8")
+native_radio_source = (root / "src" / "protocol" / "meshtastic_radio.cpp").read_text(encoding="utf-8")
 storage_selector_source = (root / "src" / "hardware" / "storage.h").read_text(encoding="utf-8")
 storage_backend_header = (root / "src" / "board" / "t5_storage_backend.h").read_text(encoding="utf-8")
 storage_backend_source = (root / "src" / "board" / "t5_storage_backend.cpp").read_text(encoding="utf-8")
@@ -313,6 +314,17 @@ assert "meshink_radio_gpio_isr" in epdiy_patch_source and "&& !meshink_radio_gpi
 assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
 assert "meshink_epdiy_note_gpio_isr_service" in epdiy_patch_source and "gpio_isr_service_ready" in board_target_source, "EPDiy and radio share explicit global ISR-service installed state"
 assert "if(gpio_isr_service_ready)return true;" in board_target_source, "radio skips duplicate gpio_install_isr_service calls when EPDiy already owns the service"
+assert "class MeshInkNativeRadioHal final : public LockingArduinoHal" in native_radio_source, "native Meshtastic HAL retains official SPI locking while overriding the IRQ binding"
+native_hal_body = native_radio_source.split("class MeshInkNativeRadioHal final",1)[1].split("std::unique_ptr<MeshInkNativeRadioHal> native_hal;",1)[0]
+assert "meshink_radio_native_attach_interrupt(pin,callback,mode)" in native_hal_body, "native DIO1 must use board-owned global ISR service"
+assert "meshink_radio_native_detach_interrupt(pin)" in native_hal_body, "native DIO1 must remove only its handler"
+assert "ArduinoHal::attachInterrupt" not in native_hal_body and "ArduinoHal::detachInterrupt" not in native_hal_body, "native HAL must not reinstall GPIO ISR via Arduino"
+assert "new(std::nothrow) MeshInkNativeRadioHal(" in native_radio_source, "native radio must actually construct shared-interrupt HAL"
+assert "t5_native_radio_attach_interrupt(pin,callback,mode)" in radio_backend_source and "t5_native_radio_detach_interrupt(pin)" in radio_backend_source, "board backend must delegate native interrupt to common owner"
+native_attach_body=board_target_source.split("bool t5_native_radio_attach_interrupt(",1)[1].split("void t5_native_radio_detach_interrupt(",1)[0]
+assert "radio_hal.attachInterrupt(pin,callback,mode)" in native_attach_body and "radio_hal.handlerActive(pin)" in native_attach_body, "native callback shares board-owned DIO1 ISR/ownership checks"
+assert "radio_hal.detachInterrupt(pin)" in board_target_source.split("void t5_native_radio_detach_interrupt(",1)[1].split("static CustomSX1262 radio",1)[0], "native callback unregistration retains the global ISR service"
+assert "gpio_uninstall_isr_service();" not in native_attach_body, "native driver must never tear down the global IRQ service"
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
 assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
 assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
