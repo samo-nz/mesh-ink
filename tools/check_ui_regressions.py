@@ -2023,7 +2023,9 @@ assert 'if(!setup_complete&&mesh_protocol_descriptor().id==1)' in source, 'uncon
 name_keyboard_source=source.split('static void draw_keyboard() {',1)[1].split('static void landscape_key(',1)[0]
 assert 'screen==Screen::ProtocolSettings||screen==Screen::SetupName' in name_keyboard_source
 assert 'screen==Screen::SetupRadio' in name_keyboard_source
-assert 'const int top=metrics.clear_top;' in name_keyboard_source
+assert 'const int top=max(0,metrics.number_top-metrics.row_gap);' in name_keyboard_source, 'keyboard background must begin one normal vertical key gap above the numbers'
+assert 'const int top=metrics.clear_top;' not in name_keyboard_source, 'keyboard must not cover options above the number keys'
 assert 'meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);' in name_keyboard_source
-assert name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);') < name_keyboard_source.index('key(label,{digits.start'), 'name keyboard backdrop must be painted before drawing keys'
+assert 'meshink_display_fill_rect({0,top,metrics.width,max(1,ui_h(2))},0,fb);' in name_keyboard_source, 'opaque keyboard backdrop needs a black top border'
+assert name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);') < name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,max(1,ui_h(2))},0,fb);') < name_keyboard_source.index('key(label,{digits.start'), 'background and top divider must be drawn before keys'
 assert 'else if(screen==Screen::ProtocolSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)' in source, 'name input retains optimized drawing path'
