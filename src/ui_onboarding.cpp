@@ -16,6 +16,7 @@
 #include <atomic>
 #include <SPIFFS.h>
 #include "ui_onboarding.h"
+#include "setup_short_name.h"
 #include "channel_key.h"
 #include "ui_data.h"
 #include "protocol/mesh_protocol.h"
@@ -383,6 +384,8 @@ static uint8_t setup_region=0,setup_region_page=0,setup_preset_page=0;
 static int setup_radio_preset=-1;
 static uint8_t setup_hops=3,setup_sf=0,setup_cr=0,setup_hash=0,setup_edit_field=0;
 static Screen setup_radio_return=Screen::SetupPreset;
+static char setup_short_name[5]{};
+static bool setup_short_manual=false,setup_short_edit=false;
 static float setup_bw=0;
 static char setup_freq[18]{},setup_power[8]{};
 static bool setup_is_screen(Screen value){
@@ -900,6 +903,9 @@ static void setup_initialize_draft(){
     setup_freq[0]=0;setup_power[0]=0;
     setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
     setup_edit_field=0;
+    setup_short_manual=false;
+    setup_short_edit=false;
+    meshink_suggest_short_name(node_name,setup_short_name);
     // Meshtastic's ANZ region is not assumed to be index zero.
     if(!setup_is_meshcore())
         for(size_t i=0;i<setup_region_count();++i)
@@ -915,12 +921,20 @@ static bool setup_finish(){
         if(setup_rf_matches_selected_preset())
             selected_preset=(uint8_t)setup_radio_preset;
         else selected_preset=0; // Explicit CUSTOM or RF-incompatible modification.
-    }else if(!mesh_protocol_setup_commit_radio(setup_region,(size_t)setup_radio_preset,setup_hops)){
-        return false;
+    }else{
+        if(!setup_short_name[0]||
+           !mesh_protocol_setup_commit_radio(setup_region,(size_t)setup_radio_preset,setup_hops))
+            return false;
     }
     Preferences commit;
     if(!commit.begin("t5-ui",false))return false;
     commit.putString("name",node_name);
+    if(!setup_is_meshcore()){
+        // Native identity is updated exactly once after the setup restart.
+        // The key is removed only after the official NodeDB saves successfully.
+        commit.putString("mt_short",setup_short_name);
+        commit.putBool("mt_name_pending",true);
+    }
     commit.putUChar("preset_v2",selected_preset);
     commit.putBool("complete",true); // preserve legacy readers
     commit.putBool("name_migrated",true);
@@ -2918,7 +2932,7 @@ static void setup_progress(const char* title,uint8_t number){
     draw_app_header(header,false,setup_any_done?"CANCEL":nullptr);
     char progress[32]{};
     snprintf(progress,sizeof(progress),"STEP %u OF %u  /  %s",
-             (unsigned)number,setup_is_meshcore()?3U:6U,mesh_protocol_name());
+             (unsigned)number,setup_is_meshcore()?3U:4U,mesh_protocol_name());
     ui_centred(progress,ui_y(94),2,0,true);
 }
 static void setup_list_pager(size_t current,size_t count){
@@ -2948,24 +2962,37 @@ static void draw_setup_protocol(){
     }
 }
 static void draw_setup_name(){
-    setup_progress("NAME YOUR NODE",setup_is_meshcore()?1:2);
-    ui_text("NODE NAME",ui_x(28),ui_y(152),2,0,true);
+    setup_progress("NAME YOUR NODE",1);
+    ui_text(setup_is_meshcore()?"NODE NAME":"LONG NAME",ui_x(28),ui_y(152),2,0,true);
     const MeshInkUiRect field=ui_rect(24,185,492,96);
     ui_section_card(field);
     ui_text_fit(node_name,field.x+ui_w(17),field.y+ui_h(24),
                 field.width-ui_w(34),3,0,true);
-    ui_centred("Letters, numbers and symbols. No spaces.",ui_y(330),2,0,false);
-    if(keyboard_visible)draw_keyboard();
-    else {
-        ui_action_button("EDIT NAME",ui_rect(60,450,420,74),false);
-        ui_centred("ENTER on keyboard closes it.",ui_y(610),2,0,false);
-        if(!setup_is_meshcore())
-            ui_action_button("RESTORE FROM SD",ui_rect(60,720,420,70),false);
-        setup_footer();
+    if(!setup_is_meshcore()){
+        ui_text("SHORT NAME (UP TO 4)",ui_x(28),ui_y(317),2,0,true);
+        const MeshInkUiRect short_field=ui_rect(24,345,492,88);
+        ui_section_card(short_field);
+        ui_text_fit(setup_short_name,short_field.x+ui_w(17),
+                    short_field.y+ui_h(20),short_field.width-ui_w(34),3,0,true);
+        if(!keyboard_visible){
+            ui_centred(setup_short_manual?"Manual short name":"Suggested from long name",
+                       ui_y(455),2,0,false);
+            ui_action_button("EDIT LONG NAME",ui_rect(60,518,420,70),false);
+            ui_action_button("EDIT SHORT NAME",ui_rect(60,610,420,70),false);
+            ui_centred("Tap a name to edit. ENTER closes keyboard.",ui_y(745),2,0,false);
+        }else draw_keyboard();
+    }else{
+        ui_centred("Letters, numbers and symbols. No spaces.",ui_y(330),2,0,false);
+        if(keyboard_visible)draw_keyboard();
+        else {
+            ui_action_button("EDIT NAME",ui_rect(60,450,420,74),false);
+            ui_centred("ENTER on keyboard closes it.",ui_y(610),2,0,false);
+        }
     }
+    if(!keyboard_visible)setup_footer();
 }
 static void draw_setup_region(){
-    setup_progress("SELECT REGION",3);
+    setup_progress("SELECT REGION",2);
     const size_t count=setup_region_count();
     const size_t offset=(size_t)setup_region_page*5;
     for(size_t i=offset;i<count&&i<offset+5;++i){
@@ -2978,7 +3005,7 @@ static void draw_setup_region(){
 }
 static void draw_setup_preset(){
     setup_progress(setup_is_meshcore()?"SELECT RADIO PRESET":"MODEM PRESET",
-                   setup_is_meshcore()?2:4);
+                   setup_is_meshcore()?2:3);
     const size_t count=setup_preset_count();
     const size_t offset=(size_t)setup_preset_page*5;
     for(size_t i=offset;i<count&&i<offset+5;++i){
@@ -2989,11 +3016,8 @@ static void draw_setup_preset(){
                      142+(int)(i-offset)*116);
     }
     setup_list_pager(setup_preset_page,count);
-    if(setup_is_meshcore()){
-        // A tap on a standard preset advances to review; CUSTOM opens the
-        // editor. No misleading NEXT button without a chosen selection.
-        ui_action_button("BACK",ui_rect(24,850,232,74),false);
-    }else setup_footer();
+    // Tapping a preset immediately advances to review, for either protocol.
+    ui_action_button("BACK",ui_rect(24,850,232,74),false);
 }
 static void setup_compact_row(const char* title,const char* value,int y){
     const MeshInkUiRect rect=ui_rect(24,y,492,70);
@@ -3006,7 +3030,10 @@ static void draw_setup_radio(){
     if(setup_is_meshcore()){
         draw_app_header("CUSTOMIZE RADIO",false,setup_any_done?"CANCEL":nullptr);
         ui_centred("OPTIONAL RADIO SETTINGS",ui_y(94),2,0,true);
-    }else setup_progress("RADIO CONFIGURATION",5);
+    }else{
+        draw_app_header("CUSTOMIZE RADIO",false,setup_any_done?"CANCEL":nullptr);
+        ui_centred("OPTIONAL RADIO SETTINGS",ui_y(94),2,0,true);
+    }
     if(!setup_is_meshcore()){
         settings_info_row("REGION",setup_region_label(setup_region),160);
         settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),298);
@@ -3015,7 +3042,7 @@ static void draw_setup_radio(){
         settings_row("HOP LIMIT",hops,436);
         ui_draw_wrapped("Select a supported modem preset.",
             ui_x(34),ui_y(620),ui_w(470),2,0,false,4);
-        setup_footer();
+        setup_footer("DONE");
         return;
     }
     ui_text("FREQUENCY (MHz)",ui_x(28),ui_y(145),2,0,true);
@@ -3045,9 +3072,11 @@ static void draw_setup_radio(){
     setup_footer("DONE");
 }
 static void draw_setup_review(){
-    setup_progress("REVIEW AND START",setup_is_meshcore()?3:6);
-    settings_info_row("PROTOCOL",mesh_protocol_name(),138);
-    settings_info_row("NODE NAME",node_name,268);
+    setup_progress("REVIEW AND START",setup_is_meshcore()?3:4);
+    if(setup_is_meshcore()){
+        settings_info_row("PROTOCOL",mesh_protocol_name(),138);
+        settings_info_row("NODE NAME",node_name,268);
+    }
     if(setup_is_meshcore()){
         settings_info_row("RADIO PRESET",setup_core_radio_label(),398);
         ui_action_button("CUSTOMIZE",ui_rect(60,540,420,74),false);
@@ -3062,11 +3091,16 @@ static void draw_setup_review(){
         ui_text_fit("VERIFY LOCAL TX REGULATIONS BEFORE TRANSMITTING",
                     ui_x(28),ui_y(755),ui_w(488),2,0,false);
     }else{
-        settings_info_row("REGION",setup_region_label(setup_region),398);
-        settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),528);
+        // Progress header already identifies the protocol; use the extra space
+        // to show both identity fields and the official region/preset.
+        settings_info_row("LONG NAME",node_name,148);
+        settings_info_row("SHORT NAME",setup_short_name,272);
+        settings_info_row("REGION",setup_region_label(setup_region),396);
+        settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),520);
         char details[40]{};
         snprintf(details,sizeof(details),"HOP LIMIT: %u",(unsigned)setup_hops);
-        ui_centred(details,ui_y(710),2,0,false);
+        ui_centred(details,ui_y(663),2,0,false);
+        ui_action_button("CUSTOMIZE",ui_rect(60,716,420,66),false);
     }
     setup_footer("START MESHINK");
 }
