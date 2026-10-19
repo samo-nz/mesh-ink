@@ -247,6 +247,15 @@ void poll(){
             Serial.printf("[MeshInk/MT] ERROR: FromRadio protobuf decode failed, len=%u\n",(unsigned)n);
         }
     }
+    // Retry events are derived from the native router's actual pending-state
+    // decrements, not a guessed UI timer. Drain after PhoneAPI ACK/NAK events
+    // so a final Delivered/Failed status always wins over older queued retries.
+    uint32_t retry_packet=0;
+    uint8_t retry_number=0,retry_total=0;
+    for(unsigned i=0;i<ui_event_limit&&
+        meshink_meshtastic_worker_retry_status(retry_packet,retry_number,retry_total);++i){
+        meshink_meshtastic_ui_retry_status(retry_packet,retry_number,retry_total);
+    }
     // Dispatch a user-requested query through the unchanged official worker.
     uint32_t query_node=0;
     uint8_t query_channel=0;
