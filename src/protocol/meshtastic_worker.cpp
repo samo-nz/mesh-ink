@@ -31,11 +31,19 @@ struct TxFrame {
     uint32_t packet_id;
     uint8_t wire[meshtastic_ToRadio_size];
 };
+// Only the native worker sends events into this bounded cross-core FIFO.
+// No PhoneAPI or router state is ever inspected by the UI core.
+struct RetryEvent {
+    uint32_t packet_id;
+    uint8_t retry;
+    uint8_t total;
+};
 
 QueueHandle_t rx_free=nullptr;
 QueueHandle_t rx_ready=nullptr;
 QueueHandle_t tx_pending=nullptr;
 QueueHandle_t tx_failed=nullptr;
+QueueHandle_t retry_events=nullptr;
 SemaphoreHandle_t worker_exited=nullptr;
 TaskHandle_t worker_task=nullptr;
 RxFrame* rx_pool[kRxFrames]{};
@@ -53,6 +61,7 @@ void release_resources(){
     if(rx_free){vQueueDelete(rx_free);rx_free=nullptr;}
     if(rx_ready){vQueueDelete(rx_ready);rx_ready=nullptr;}
     if(tx_failed){vQueueDelete(tx_failed);tx_failed=nullptr;}
+    if(retry_events){vQueueDelete(retry_events);retry_events=nullptr;}
     if(worker_exited){vSemaphoreDelete(worker_exited);worker_exited=nullptr;}
     for(auto& frame:rx_pool){heap_caps_free(frame);frame=nullptr;}
     worker_task=nullptr;
@@ -145,8 +154,9 @@ bool meshink_meshtastic_worker_start(){
     rx_ready=xQueueCreate(kRxFrames,sizeof(RxFrame*));
     tx_pending=xQueueCreate(kTxFrames,sizeof(TxFrame*));
     tx_failed=xQueueCreate(kTxFrames,sizeof(uint32_t));
+    retry_events=xQueueCreate(kTxFrames,sizeof(RetryEvent));
     worker_exited=xSemaphoreCreateBinary();
-    if(!rx_free||!rx_ready||!tx_pending||!tx_failed||!worker_exited){
+    if(!rx_free||!rx_ready||!tx_pending||!tx_failed||!retry_events||!worker_exited){
         Serial.println("[MT-WORKER] ERROR: queues/semaphore allocation failed");
         release_resources();return false;
     }
@@ -206,6 +216,24 @@ size_t meshink_meshtastic_worker_receive(uint8_t* bytes,size_t capacity){
 
 bool meshink_meshtastic_worker_tx_failed(uint32_t& packet_id){
     return running&&xQueueReceive(tx_failed,&packet_id,0)==pdTRUE;
+}
+
+bool meshink_meshtastic_worker_note_retry(uint32_t packet_id,uint8_t retry,uint8_t total){
+    if(!retry_events||!packet_id||!retry||retry>total)return false;
+    const RetryEvent event{packet_id,retry,total};
+    // If the UI is in a slow e-paper refresh, leave the router's previous
+    // seen-count unchanged so it can re-offer this same update next cycle.
+    return xQueueSend(retry_events,&event,0)==pdTRUE;
+}
+
+bool meshink_meshtastic_worker_retry_status(uint32_t& packet_id,uint8_t& retry,uint8_t& total){
+    if(!running||!retry_events)return false;
+    RetryEvent event{};
+    if(xQueueReceive(retry_events,&event,0)!=pdTRUE)return false;
+    packet_id=event.packet_id;
+    retry=event.retry;
+    total=event.total;
+    return true;
 }
 
 bool meshink_meshtastic_worker_stop(){
