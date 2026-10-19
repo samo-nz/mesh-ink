@@ -85,6 +85,8 @@ struct Message {
     uint32_t journal_sequence=0;
     char text[241]{};
     char time[16]{};
+    // Runtime-only retry text; the shared footer already shows network first.
+    char retry_label[22]{};
     UiMessage row{};
 };
 struct State {
@@ -701,13 +703,27 @@ void note_config(const meshtastic_Config& config){
 // A PhoneAPI acceptance only says the packet entered the official service.
 // The subsequent official queue-status result can still reject it (e.g. region
 // unset or airtime exhausted); surface that instead of showing a false send.
+bool outgoing_awaiting_ack(UiMessageState status){
+    switch(status){
+        case UiMessageState::Sending:
+        case UiMessageState::Sent:
+        case UiMessageState::Retrying1:
+        case UiMessageState::Retrying2:
+        case UiMessageState::Retrying3:
+        case UiMessageState::Retrying4:
+        case UiMessageState::Retrying5:return true;
+        default:return false;
+    }
+}
 void note_queue_status(const meshtastic_QueueStatus& queue){
     if(!state||!queue.mesh_packet_id||queue.res==0)return;
     for(size_t i=0;i<state->message_count;++i){
         Message& m=state->messages[i];
         if(m.packet_id!=queue.mesh_packet_id||!m.row.outgoing)continue;
-        if(m.row.state==UiMessageState::Sending||m.row.state==UiMessageState::Sent){
+        if(outgoing_awaiting_ack(m.row.state)){
             m.row.state=UiMessageState::Failed;
+            m.retry_label[0]=0;
+            m.row.network="";
             if(journal_ready&&m.journal_sequence)
                 meshink_message_store().update_state(m.journal_sequence,m.row.state);
             changed();
@@ -725,8 +741,10 @@ void note_routing(const meshtastic_MeshPacket& packet){
     for(size_t i=0;i<state->message_count;++i){
         Message& m=state->messages[i];
         if(m.packet_id==ref&&!m.broadcast&&!m.unread){
-            if(m.row.state==UiMessageState::Sending||m.row.state==UiMessageState::Sent){
+            if(outgoing_awaiting_ack(m.row.state)){
                 m.row.state=bad?UiMessageState::Failed:UiMessageState::Delivered;
+                m.retry_label[0]=0;
+                m.row.network="";
                 if(journal_ready&&m.journal_sequence)
                     meshink_message_store().update_state(m.journal_sequence,m.row.state);
                 changed();
@@ -1131,6 +1149,8 @@ public:
             if(!active_matches(m))continue;
             if(i--!=0)continue;
             m.row.text=m.text;m.row.time=m.time;
+            // View-cache shifts relocate messages; always reattach this pointer.
+            m.row.network=m.retry_label[0]?m.retry_label:"";
             return m.row;
         }
         return empty_message;
@@ -1264,6 +1284,26 @@ void meshink_meshtastic_ui_sent(uint32_t id,const char* text,bool success){
     m->row={m->text,m->time,true,m->broadcast?UiMessageState::Sent:UiMessageState::Sending,""};
     append_to_journal(*m,(uint32_t)time(nullptr),false);
     changed();
+}
+void meshink_meshtastic_ui_retry_status(uint32_t packet_id,uint8_t retry,uint8_t total){
+    if(!state||!packet_id||!retry||!total||retry>total)return;
+    for(size_t i=0;i<state->message_count;++i){
+        Message& m=state->messages[i];
+        if(m.packet_id!=packet_id||m.broadcast||!m.row.outgoing||
+           !outgoing_awaiting_ack(m.row.state))continue;
+        const uint8_t displayed=retry>5?5:retry;
+        const UiMessageState next=(UiMessageState)(
+            (uint8_t)UiMessageState::Retrying1+displayed-1);
+        char label[sizeof(m.retry_label)]{};
+        snprintf(label,sizeof(label),"RETRYING %u/%u",(unsigned)retry,(unsigned)total);
+        if(m.row.state==next&&!strcmp(label,m.retry_label))continue;
+        snprintf(m.retry_label,sizeof(m.retry_label),"%s",label);
+        m.row.network=m.retry_label;
+        m.row.state=next;
+        if(journal_ready&&m.journal_sequence)
+            meshink_message_store().update_state(m.journal_sequence,m.row.state);
+        changed();
+    }
 }
 void meshink_meshtastic_ui_receive(const meshtastic_FromRadio& response){
     if(!state)return;
