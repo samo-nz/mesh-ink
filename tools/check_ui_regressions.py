@@ -1795,7 +1795,11 @@ assert 'static bool draw_backup_filename_lines(' in source and 'name+split' in s
 assert 'draw_backup_filename_lines(entry.filename' in source and 'draw_backup_filename_lines(backup_filename' in source, "list selection and final restore confirmation show the entire filename"
 assert 'ui_text("SELECTED SD ARCHIVE"' in source, "show chosen archive before destructive confirmation"
 assert 'candidate.filename' in backup_source and 'meshink_backup_filename::compare(' in backup_source, "latest 24 backups selected regardless of directory order"
-assert 'static void draw_backup_confirm()' in source and 'static void draw_backup_progress()' in source, "backup and restore show reboot confirmation followed by progress notice"
+assert 'static void draw_backup_confirm()' in source and 'static void draw_backup_progress()' in source, "backup and restore show confirmation followed by persistent operation notice"
+progress=source.split('static void draw_backup_progress(){',1)[1].split('static void draw_backup_result(){',1)[0]
+assert 'backup_restore_mode?"RESTORING...":"BACKING UP..."' in progress, "waiting notice identifies the selected operation"
+assert 'THIS MAY TAKE A FEW MINUTES' in progress and 'The screen will not update until' in progress, "both operations explain the long e-paper pause"
+assert 'REBOOTING...' not in progress, "maintenance wait must not claim to be only rebooting"
 assert 'if(screen==Screen::BackupProgress)return true;' in source, "reboot progress screen refuses unintended touch"
 assert source.index('open_screen(Screen::BackupProgress);',source.index('if(screen==Screen::BackupConfirm){')) < source.index('mesh_protocol_restart_into(protocol)',source.index('if(screen==Screen::BackupConfirm){')), "reboot notice is rendered before Meshtastic flush/shutdown"
 assert 'if(!has_backup_result&&!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
