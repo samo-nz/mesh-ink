@@ -382,6 +382,7 @@ static uint8_t setup_protocol_choice=0;
 static uint8_t setup_region=0,setup_region_page=0,setup_preset_page=0;
 static int setup_radio_preset=-1;
 static uint8_t setup_hops=3,setup_sf=0,setup_cr=0,setup_hash=0,setup_edit_field=0;
+static Screen setup_radio_return=Screen::SetupPreset;
 static float setup_bw=0;
 static char setup_freq[18]{},setup_power[8]{};
 static bool setup_is_screen(Screen value){
@@ -783,17 +784,27 @@ struct MeshInkCpuBoostScope {
     }
 };
 
+static bool meshcore_rf_matches_preset(const MeshInkRadioPreset& preset){
+    if(!preset.path_hash_bytes)return false;
+    // LoRa explicit-header coding rate, MeshCore routing path hash and TX
+    // power do not determine whether this RF profile can receive packets.
+    // Reuse the existing backend comparison while allowing all supported
+    // coding rates and path-hash sizes; frequency, BW and SF must match.
+    for(uint8_t cr=5;cr<=8;++cr)
+        for(uint8_t path_bytes=1;path_bytes<=3;++path_bytes)
+            if(mesh_protocol_radio_matches(preset.frequency_khz/1000.0f,
+                   preset.bandwidth_khz,preset.spreading_factor,cr,path_bytes))
+                return true;
+    return false;
+}
 static const char* active_radio_label(){
-    auto matches=[](const MeshInkRadioPreset& preset){
-        return preset.path_hash_bytes&&mesh_protocol_radio_matches(
-            preset.frequency_khz/1000.0f,preset.bandwidth_khz,
-            preset.spreading_factor,preset.coding_rate,preset.path_hash_bytes);
-    };
-    if(selected_preset<mesh_protocol_radio_preset_count()&&matches(mesh_protocol_radio_preset_at(selected_preset)))
-        return mesh_protocol_radio_preset_at(selected_preset).title;
-    for(uint8_t i=1;i<mesh_protocol_radio_preset_count();++i)
-        if(matches(mesh_protocol_radio_preset_at(i)))return mesh_protocol_radio_preset_at(i).title;
-    return mesh_protocol_radio_summary();
+    if(!mesh_protocol_supports_radio_presets())return mesh_protocol_radio_summary();
+    // Respect the user's explicit CUSTOM selection, even if its RF values
+    // happen to coincide with one of the named presets.
+    if(selected_preset==0||selected_preset>=mesh_protocol_radio_preset_count())
+        return "CUSTOM";
+    const MeshInkRadioPreset& selected=mesh_protocol_radio_preset_at(selected_preset);
+    return meshcore_rf_matches_preset(selected)?selected.title:"CUSTOM";
 }
 
 static bool apply_selected_preset() {
@@ -811,35 +822,64 @@ static bool apply_selected_preset() {
 }
 
 
-// The same setup screens serve both protocols. Protocol one maps its existing
-// radio presets into short regional lists; Meshtastic enumerates its native regions.
-// Region and preset filtering are supplied by the selected protocol helper.
+// Meshtastic retains the original region-filtered onboarding. MeshCore uses
+// one complete preset list, with CUSTOM followed by both NZ profiles.
 static size_t setup_region_count(){return mesh_protocol_setup_region_count();}
 static const char* setup_region_label(size_t index){
     return mesh_protocol_setup_region_name(index);
 }
-static int setup_core_preset_at(size_t index){
-    return mesh_protocol_setup_preset_index(setup_region,index);
+static int setup_core_preset_at(size_t visible){
+    if(visible==0)return -1; // CUSTOM
+    if(visible==1)return 17; // NZ NARROW
+    if(visible==2)return 18; // NZ GISBORNE
+    size_t shown=3;
+    for(size_t i=1;i<mesh_protocol_radio_preset_count();++i){
+        if(i==17||i==18)continue;
+        if(shown++==visible)return (int)i;
+    }
+    return -2;
 }
 static size_t setup_preset_count(){
-    return mesh_protocol_setup_preset_count(setup_region);
+    return setup_is_meshcore()?mesh_protocol_radio_preset_count():
+           mesh_protocol_setup_preset_count(setup_region);
 }
 static const char* setup_preset_label(size_t index){
+    if(setup_is_meshcore()){
+        const int selected=setup_core_preset_at(index);
+        return selected==-1?"CUSTOM":
+               selected>0?mesh_protocol_radio_preset_at((size_t)selected).title:"";
+    }
     return mesh_protocol_setup_preset_name(setup_region,index);
 }
+static bool setup_rf_matches_selected_preset(){
+    if(!setup_is_meshcore()||setup_radio_preset<=0||
+       (size_t)setup_radio_preset>=mesh_protocol_radio_preset_count()||!setup_freq[0])
+        return false;
+    const MeshInkRadioPreset& base=mesh_protocol_radio_preset_at((size_t)setup_radio_preset);
+    return fabsf(strtof(setup_freq,nullptr)-base.frequency_khz/1000.0f)<0.0005f&&
+           fabsf(setup_bw-base.bandwidth_khz)<0.05f&&
+           setup_sf==base.spreading_factor;
+}
+static const char* setup_core_radio_label(){
+    return setup_rf_matches_selected_preset()
+        ?mesh_protocol_radio_preset_at((size_t)setup_radio_preset).title:"CUSTOM";
+}
 static void setup_load_core_preset(int index){
+    // Explicit CUSTOM begins with NZ Narrow values but remains CUSTOM.
+    const int source=index<0?17:index;
     setup_radio_preset=index;
     setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
     setup_freq[0]=0;setup_power[0]=0;setup_edit_field=0;
-    if(index<=0||index>=mesh_protocol_radio_preset_count())return;
-    const MeshInkRadioPreset& preset=mesh_protocol_radio_preset_at(index);
+    if(source<=0||(size_t)source>=mesh_protocol_radio_preset_count())return;
+    const MeshInkRadioPreset& preset=mesh_protocol_radio_preset_at((size_t)source);
     snprintf(setup_freq,sizeof(setup_freq),"%.3f",(double)preset.frequency_khz/1000.0);
     setup_bw=preset.bandwidth_khz;
     setup_sf=preset.spreading_factor;
     setup_cr=preset.coding_rate;
     setup_hash=preset.path_hash_bytes;
-    const uint8_t power=mesh_protocol_setup_current_tx_power();
-    snprintf(setup_power,sizeof(setup_power),"%u",(unsigned)(power?power:20));
+    // Setup starts with 22 dBm; normal radio-setting changes are independent
+    // of the RF preset compatibility/name.
+    snprintf(setup_power,sizeof(setup_power),"%u",22U);
 }
 static bool setup_radio_valid(){
     if(!setup_freq[0]||!setup_power[0]||!setup_bw||!setup_sf||!setup_cr||!setup_hash)return false;
@@ -848,12 +888,15 @@ static bool setup_radio_valid(){
     const long power=strtol(setup_power,&power_end,10);
     return freq_end!=setup_freq&&!*freq_end&&
            power_end!=setup_power&&!*power_end&&power>=2&&power<=22&&
-           mesh_protocol_setup_validate_radio(setup_region,(float)frequency,setup_bw,
+           mesh_protocol_setup_validate_radio(
+               setup_is_meshcore()?setup_region_count()-1:setup_region,
+               (float)frequency,setup_bw,
                                                setup_sf,setup_cr,setup_hash,(uint8_t)power);
 }
 static void setup_initialize_draft(){
     setup_region=0;setup_region_page=0;setup_preset_page=0;
-    setup_hops=3;setup_radio_preset=-1;
+    setup_hops=3;setup_radio_preset=setup_is_meshcore()?-2:-1;
+    setup_radio_return=Screen::SetupPreset;
     setup_freq[0]=0;setup_power[0]=0;
     setup_bw=0;setup_sf=0;setup_cr=0;setup_hash=0;
     setup_edit_field=0;
@@ -869,8 +912,9 @@ static bool setup_finish(){
         const float freq=(float)strtod(setup_freq,nullptr);
         if(!mesh_protocol_apply_radio(freq,setup_bw,setup_sf,setup_cr,setup_hash-1))return false;
         if(!mesh_protocol_setup_save_tx_power((uint8_t)strtoul(setup_power,nullptr,10)))return false;
-        if(setup_radio_preset>0)selected_preset=(uint8_t)setup_radio_preset;
-        else selected_preset=0; // KEEP CURRENT is only the settings-picker sentinel.
+        if(setup_rf_matches_selected_preset())
+            selected_preset=(uint8_t)setup_radio_preset;
+        else selected_preset=0; // Explicit CUSTOM or RF-incompatible modification.
     }else if(!mesh_protocol_setup_commit_radio(setup_region,(size_t)setup_radio_preset,setup_hops)){
         return false;
     }
