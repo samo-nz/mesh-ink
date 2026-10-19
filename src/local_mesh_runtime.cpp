@@ -1410,6 +1410,13 @@ bool local_mesh_save_tx_power(uint8_t dbm){
 }
 bool local_mesh_apply_radio(float freq,float bw,uint8_t sf,uint8_t cr,uint8_t path_hash_mode){auto* p=meshink_meshcore().getNodePrefs();if(freq<=0||bw<7||sf<5||sf>12||cr<5||cr>8)return false;p->freq=freq;p->bw=bw;p->sf=sf;p->cr=cr;p->path_hash_mode=min((uint8_t)2,path_hash_mode);meshink_meshcore().savePrefs();meshink_radio_apply_params(freq,bw,sf,cr);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] radio preset applied %.3f SF%u BW%.1f CR%u hash=%u\n",freq,sf,bw,cr,p->path_hash_mode);return true;}
 void local_mesh_apply_name(const char* name){auto* p=meshink_meshcore().getNodePrefs();strncpy(p->node_name,name,sizeof(p->node_name)-1);p->node_name[sizeof(p->node_name)-1]=0;meshink_meshcore().savePrefs();}
+bool local_mesh_read_name(char* out,size_t capacity){
+    if(!out||capacity<2)return false;
+    const auto* p=meshink_meshcore().getNodePrefs();
+    if(!p||!p->node_name[0])return false;
+    snprintf(out,capacity,"%s",p->node_name);
+    return out[0]!=0;
+}
 void local_mesh_sync_gps_mode(MeshInkGpsConstellationMode mode){
 #if ENV_INCLUDE_GPS == 1
     const bool enabled=mode!=MeshInkGpsConstellationMode::None;

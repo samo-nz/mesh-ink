@@ -922,7 +922,10 @@ static void setup_initialize_draft(){
             }
         }
     }
-    meshink_suggest_short_name(node_name,setup_short_name);
+    // Reconfiguring an existing radio must never change the custom short
+    // name even in the UI draft. Generate only for a first-time identity.
+    if(!setup_protocol_done(mesh_protocol_descriptor().id))
+        meshink_suggest_short_name(node_name,setup_short_name);
     // Meshtastic's ANZ region is not assumed to be index zero.
     if(!setup_is_meshcore())
         for(size_t i=0;i<setup_region_count();++i)

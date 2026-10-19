@@ -20,6 +20,7 @@ bool local_mesh_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_
 bool local_mesh_save_tx_power(uint8_t dbm);
 uint8_t local_mesh_tx_power();
 void local_mesh_apply_name(const char* name);
+bool local_mesh_read_name(char* out,size_t capacity);
 void local_mesh_sync_gps_mode(MeshInkGpsConstellationMode mode);
 uint32_t local_mesh_gps_interval();
 bool local_mesh_gps_advert_location();

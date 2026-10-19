@@ -114,10 +114,7 @@ static bool name_character_allowed(char c) {
 static bool read_identity(char* long_name,size_t capacity,char* short_name,size_t short_capacity){
     (void)short_name;(void)short_capacity;
     if(!long_name||!capacity)return false;
-    const auto* settings=meshink_meshcore().getNodePrefs();
-    if(!settings||!settings->node_name[0])return false;
-    snprintf(long_name,capacity,"%s",settings->node_name);
-    return long_name[0]!=0;
+    return local_mesh_read_name(long_name,capacity);
 }
 static bool update_identity(const char* long_name,const char* short_name){
     (void)short_name;
