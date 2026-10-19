@@ -93,7 +93,7 @@ assert 'meshink_suggest_short_name(node_name,setup_short_name);' in source, "Ini
 assert 'setup_short_manual=true;' in source and 'if(!setup_short_manual)' in source, "Manual short names are never overwritten"
 assert 'commit.putString("mt_short",setup_short_name)==strlen(setup_short_name)' in source and 'commit.putBool("mt_name_pending",true)==1' in source, "Confirmed identity is checked before native handoff"
 assert 'saved=(commit.putBool("setup_mst",false)==1)&&saved;' in source, "Meshtastic wizard never claims completion before native saved config"
-assert 'ui_sync_protocol_setup_result()' in get("src/unified_main.cpp"), "post-native startup updates wizard after confirmed save"
+assert 'ui_sync_protocol_setup_result()' in unified_source, "post-native startup updates wizard after confirmed save"
 assert 'ui_centred(progress,ui_y(116),2,0,true);' in source, "Step label is below the shared title region"
 assert 'settings_info_row("SHORT NAME",setup_short_name' in source, "Review displays short name"
 assert 'setup_radio_preset=(int)i;' in source and 'setup_enter(Screen::SetupReview);' in source, "Preset selections lead to shared review"
