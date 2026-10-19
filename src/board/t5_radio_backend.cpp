@@ -71,3 +71,12 @@ void meshink_radio_prepare_native_spi_bus() {
     // attachment; this prepares the common board-owned SPI bus only.
     t5_prepare_native_radio_spi();
 }
+
+bool meshink_radio_native_attach_interrupt(uint32_t pin,void (*callback)(void),
+                                           uint32_t mode) {
+    return t5_native_radio_attach_interrupt(pin,callback,mode);
+}
+
+void meshink_radio_native_detach_interrupt(uint32_t pin) {
+    t5_native_radio_detach_interrupt(pin);
+}
