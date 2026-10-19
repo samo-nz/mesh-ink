@@ -2055,7 +2055,7 @@ assert 'isTxAllowedChannelUtil(!tracker)' in mt_native and 'isTxAllowedAirUtil()
 
 # Test.83: a GNSS fix gates location labels/requests, and SENT toasts are
 # emitted exclusively from the native SX1262 packet completion result.
-assert source.count('available&&sharing&&status_gps_enabled&&status_gps_fix')==2
+assert source.count('available&&sharing&&mesh_protocol_quick_position_available()')==2
 assert 'POSITION REQUEST QUEUED' not in source and 'NODE INFO REQUEST QUEUED' not in source
 assert 'ui_notify_meshtastic_quick_result(uint8_t result)' in source
 result_handler=source.split('void ui_notify_meshtastic_quick_result(uint8_t result){',1)[1].split('void ui_notify_advert_result(',1)[0]
@@ -2072,3 +2072,17 @@ assert 'quick_trace.packet_id=packet_id' in mt_radio
 assert 'tx_good_count()!=quick_trace.tx_good_before' in mt_radio
 assert 'void MeshInkQuickTxHook::packetReleased(' in mt_radio
 assert '60000UL' in mt_radio, 'silent/no-completion packets time out as failed'
+
+# Test.84: Meshtastic native NodeDB (not MeshInk GPS icon) determines which
+# Quick Settings action is offered, including valid native fixed positions.
+assert 'mesh_protocol_quick_position_available()' in protocol_source
+assert 'quick_position_available)( ' not in (root/"src"/"protocol"/"mesh_protocol_backend.h").read_text(encoding="utf-8")
+assert 'quick_position_available)() = nullptr;' in (root/"src"/"protocol"/"mesh_protocol_backend.h").read_text(encoding="utf-8")
+assert 'meshink_meshtastic_worker_quick_position_available()' in meshtastic_protocol_source
+assert 'meshink_meshtastic_native_quick_position_available()' in mt_worker
+assert 'quick_native_position_available.load(std::memory_order_acquire)' in mt_worker
+native_ready=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_position_available(){',1)[1].split('bool meshink_meshtastic_native_quick_broadcast(',1)[0]
+assert 'config.position.fixed_position' in native_ready
+assert '!nodeDB->hasLocalPositionSinceBoot()' in native_ready
+assert 'nodeDB->hasValidPosition(own_node)' in native_ready
+assert 'findPositionChannel(channel)' in native_ready

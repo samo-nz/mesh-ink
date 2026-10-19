@@ -4064,9 +4064,9 @@ static void draw_quick_panel() {
         uint8_t interval=0;
         const bool available=mesh_protocol_location_sharing_get(
             sharing,public_approximate,interval);
-        // Only advertise location when explicitly shared AND the physical
-        // GNSS receiver reports a live fix; otherwise advertise identity.
-        const bool send_location=available&&sharing&&status_gps_enabled&&status_gps_fix;
+        // Native Meshtastic NodeDB is authoritative: a configured fixed
+        // position can be broadcast without a live physical GPS lock.
+        const bool send_location=available&&sharing&&mesh_protocol_quick_position_available();
         ui_action_button_two_lines("BROADCAST",
             !available?"LOADING":(send_location?"LOCATION":"NODE INFO"),
             advert_button,true);
@@ -4152,7 +4152,7 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
             uint8_t interval=0;
             const bool available=mesh_protocol_location_sharing_get(
                 sharing,public_approximate,interval);
-            const bool send_location=available&&sharing&&status_gps_enabled&&status_gps_fix;
+            const bool send_location=available&&sharing&&mesh_protocol_quick_position_available();
             // Queue acceptance is not a radio transmission. The worker reports
             // actual completion back to the UI through a separate event.
             const bool queued=available&&mesh_protocol_quick_broadcast(send_location);
