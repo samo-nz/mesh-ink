@@ -100,7 +100,7 @@ assert 'm.retry_label[0]=0;' in meshtastic_ui_source, "final routing verdict mus
 
 # First-install identity, setup text and guaranteed e-paper transitions.
 contains('#include <esp_random.h>', "hardware-generated first-install identity")
-contains('static char node_name[21] = "MeshInk-";', "default MeshInk identity prefix")
+contains('static char node_name[40] = "MeshInk-";', "protocol-aware node name capacity")
 contains('static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";', "new ID alphabet")
 contains('for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];', "four randomized characters")
 contains('node_name[12]=0;', "generated name termination")
@@ -147,7 +147,7 @@ assert 'p.putUChar("setup_choice",setup_protocol_choice);' in source, "protocol 
 assert "static void draw_setup_protocol()" in source and "static void draw_setup_review()" in source, "shared setup has protocol selection and final review"
 contains('landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),metrics.action_key);', "landscape keyboard preserves DONE for name entry and LOGIN for repeater auth")
 assert 'if(was_setup)show_contacts_after_setup();' not in source, "landscape keyboard must not complete setup"
-assert source.count('save_node_name();')==1, "only the portrait SAVE may persist setup"
+assert source.count('if(!save_node_name())')==1, "only the portrait SAVE may submit a native identity edit"
 contains('keyboard_visible=true;set_keyboard_orientation(false);\n        return true;', "landscape DONE returns to portrait without saving")
 assert "if(wizard_entry){" in source and "keyboard_visible=false;" in source[source.index("static bool handle_name_keyboard"):], "wizard keyboard ENTER only collapses input"
 

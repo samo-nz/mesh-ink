@@ -189,7 +189,7 @@ bool ui_save_screenshot(char* path_out,size_t path_len){
     return true;
 }
 static Preferences prefs;
-static char node_name[21] = "MeshInk-";
+static char node_name[40] = "MeshInk-";
 static uint8_t selected_preset = 17;
 static bool saved = false;
 static bool replace_name_on_type = false;
@@ -5158,7 +5158,7 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             setup_enter(setup_any_done?Screen::SetupCancel:Screen::Welcome);return true;
         }
         if(hit(x,y,ui_rect(284,850,232,74))){
-            if(!node_name[0]||strlen(node_name)>20||strchr(node_name,' ')||
+            if(!node_name[0]||strlen(node_name)>mesh_protocol_node_name_max_length()||strchr(node_name,' ')||
                (!setup_is_meshcore()&&!setup_short_name[0])){
                 show_toast("INVALID NODE NAME");return true;
             }
@@ -6343,7 +6343,8 @@ static void ui_load_persistent_state() {
 
     if(saved_name.length()){
         size_t out=0;
-        for(size_t i=0;i<saved_name.length()&&out<20;++i){
+        for(size_t i=0;i<saved_name.length()&&out<sizeof(node_name)-1&&
+                        out<mesh_protocol_node_name_max_length();++i){
             const char ch=saved_name[i];
             if(mesh_protocol_name_character_allowed(ch))node_name[out++]=ch;
             else T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded stored illegal name character 0x%02X\n",(unsigned char)ch);

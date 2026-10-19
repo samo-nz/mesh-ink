@@ -412,9 +412,10 @@ void stop(){
     ready=false;
 }
 bool running(){return ready;}
+size_t mt_node_name_max_length(){return 39;}
 bool submit_owner_identity(const char* long_name,const char* short_name){
     if(!ready||!long_name||!short_name||!long_name[0]||!short_name[0]||
-       strlen(long_name)>20||strlen(short_name)>4||!meshink_meshtastic_ui_own_node())return false;
+       strlen(long_name)>39||strlen(short_name)>4||!meshink_meshtastic_ui_own_node())return false;
     auto scratch=psram_scratch<PhoneTxScratch>();
     if(!scratch)return false;
     auto& admin=scratch->admin;
@@ -466,6 +467,7 @@ const MeshInkProtocolBackend& backend(){
     value.setup_commit_radio=meshink_meshtastic_ui_commit_radio;
     value.read_identity=meshink_meshtastic_native_read_identity;
     value.update_identity=submit_owner_identity;
+    value.node_name_max_length=mt_node_name_max_length;
     return value;
   }();
   return b;
