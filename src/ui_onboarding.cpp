@@ -905,6 +905,23 @@ static void setup_initialize_draft(){
     setup_edit_field=0;
     setup_short_manual=false;
     setup_short_edit=false;
+    // A second protocol setup suggests the existing name once; never links it.
+    if(!setup_protocol_done(mesh_protocol_descriptor().id)){
+        Preferences other;
+        if(other.begin("t5-ui",true)){
+            const String proposal=setup_is_meshcore()
+                ?(setup_meshtastic_done?other.getString("mt_long",""):String())
+                :(setup_meshcore_done?other.getString("mc_name",(!setup_meshtastic_done?other.getString("name",""):"")):String());
+            other.end();
+            if(proposal.length()){
+                size_t n=0;
+                for(size_t i=0;i<proposal.length()&&n<20;++i)
+                    if(mesh_protocol_name_character_allowed(proposal[i])&&proposal[i]!=' ')
+                        node_name[n++]=proposal[i];
+                node_name[n]=0;
+            }
+        }
+    }
     meshink_suggest_short_name(node_name,setup_short_name);
     // Meshtastic's ANZ region is not assumed to be index zero.
     if(!setup_is_meshcore())
@@ -932,14 +949,17 @@ static bool setup_finish(){
     // the offline radio draft is already staged, but the official NodeDB has
     // not opened yet: completion is decided on the NEXT boot after the native
     // radio + identity files have been saved and verified.
-    bool saved=commit.putString("name",node_name)==strlen(node_name);
+    bool saved=true;
     if(!setup_is_meshcore()){
+        saved=commit.putString("mt_long",node_name)==strlen(node_name)&&saved;
         saved=commit.putString("mt_short",setup_short_name)==strlen(setup_short_name)&&saved;
         saved=(commit.putBool("mt_name_pending",true)==1)&&saved;
         saved=(commit.putBool("setup_mst",false)==1)&&saved;
     }
     saved=(commit.putUChar("preset_v2",selected_preset)==1)&&saved;
     if(setup_is_meshcore()){
+        saved=mesh_protocol_update_identity(node_name,nullptr)&&saved;
+        saved=(commit.putString("mc_name",node_name)==strlen(node_name))&&saved;
         saved=(commit.putBool("complete",true)==1)&&saved;
         saved=(commit.putBool("setup_mc",true)==1)&&saved;
     }
@@ -1481,7 +1501,7 @@ static void draw_landscape_keyboard(){
     meshink_display_set_all_white(&display);
     const char* value=keyboard_password_mode?remote_password:
         (keyboard_message_mode?compose_text:
-        (screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit
+        ((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()&&setup_short_edit
              ?setup_short_name:node_name));
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(10),ui_h(10)),false);
@@ -3317,14 +3337,14 @@ static void draw_protocol_select() {
                     layout.section_margin,ui_y(760),layout.section_width,2,0,false,4);
 }
 
-enum class ProtocolSettingsRowKind:uint8_t{NodeName,RadioPreset,RadioSetup,Backend,AdvertZero,AdvertFlood};
+enum class ProtocolSettingsRowKind:uint8_t{NodeName,NodeShort,RadioPreset,RadioSetup,Backend,AdvertZero,AdvertFlood};
 
 static size_t protocol_settings_total_count(){
     // A configured MeshInk setup flag must not hide native Meshtastic radio
     // setup if an older/incompatible protocol config was discarded.
     const bool has_native_region_setup=!mesh_protocol_supports_radio_presets()&&
         mesh_protocol_setup_region_count()>0;
-    return 1+(mesh_protocol_supports_radio_presets()?1:0)+(has_native_region_setup?1:0)+
+    return (mesh_protocol_descriptor().id==2?2:1)+(mesh_protocol_supports_radio_presets()?1:0)+(has_native_region_setup?1:0)+
            mesh_protocol_setting_count()+
            (mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)?2:0);
 }
@@ -3335,10 +3355,15 @@ static bool protocol_settings_row(size_t index,ProtocolSettingsRowKind& kind,
     backend_id=0;editable=true;
     if(index==0){
         kind=ProtocolSettingsRowKind::NodeName;
-        title="NODE NAME";value=node_name;
+        title=mesh_protocol_descriptor().id==2?"LONG NAME":"NODE NAME";value=node_name;
         return true;
     }
-    size_t cursor=1;
+    if(mesh_protocol_descriptor().id==2&&index==1){
+        kind=ProtocolSettingsRowKind::NodeShort;
+        title="SHORT NAME";value=setup_short_name;
+        return true;
+    }
+    size_t cursor=mesh_protocol_descriptor().id==2?2:1;
     if(mesh_protocol_supports_radio_presets()){
         if(index==cursor){
             kind=ProtocolSettingsRowKind::RadioPreset;
@@ -3395,7 +3420,9 @@ static void draw_protocol_settings() {
 
 static void draw_protocol_name_fast() {
     MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-protocol-name-draw");
-    settings_row("NODE NAME",node_name,protocol_settings_row_y(0));
+    settings_row(mesh_protocol_descriptor().id==2?(setup_short_edit?"SHORT NAME":"LONG NAME"):"NODE NAME",
+                 mesh_protocol_descriptor().id==2&&setup_short_edit?setup_short_name:node_name,
+                 protocol_settings_row_y(mesh_protocol_descriptor().id==2&&setup_short_edit?1:0));
 }
 
 static const char* gps_mode_label(){
@@ -3918,7 +3945,12 @@ static void draw_about() {
     draw_branding_stack(ui_y(92),ui_y(492),ui_h(22),ui_h(86),ui_h(30));
     ui_centred("Made by Samo",ui_y(506),3,0,true);
     ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
-    if(node_name[0])ui_centred_fit(node_name,ui_y(600),layout.width-ui_w(32),3,0,true);
+    char about_long[40]{},about_short[5]{};
+    const char* about_name=node_name;
+    if(mesh_protocol_descriptor().id==2&&
+       mesh_protocol_read_identity(about_long,sizeof(about_long),about_short,sizeof(about_short)))
+        about_name=about_long;
+    if(about_name[0])ui_centred_fit(about_name,ui_y(600),layout.width-ui_w(32),3,0,true);
     ui_centred(UI_VERSION,ui_y(642),3,0,true);
     const MeshInkUiRect info=meshink_outer_row_rect(layout,698,150);
     ui_section_card(info);
@@ -4653,7 +4685,7 @@ static void append(char c) {
         }
         return;
     }
-    if(screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit){
+    if((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()&&setup_short_edit){
         if(c>='a'&&c<='z')c=(char)(c-'a'+'A');
         if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')))return;
         const size_t n=strlen(setup_short_name);
@@ -4750,11 +4782,18 @@ static void set_keyboard_orientation(bool landscape){
     T5_DEBUGF(T5_LOG_UI,"[T5-UI] keyboard orientation=%s\n",landscape?"landscape":"portrait");
     draw_screen();refresh(MeshInkRefreshMode::FastGray16);
 }
-static void save_node_name(){
-    prefs.begin("t5-ui",false);prefs.putString("name",node_name);prefs.putUChar("preset_v2",selected_preset);
-    prefs.putBool("name_migrated",true);prefs.end();
-    if(mesh_is_ready)mesh_protocol_apply_name(node_name);
-    saved=true;
+static bool save_node_name(){
+    if(!mesh_is_ready||!node_name[0]||
+       (mesh_protocol_descriptor().id==2&&!setup_short_name[0]))return false;
+    // UI edits are explicit actions. Meshtastic passes them to the native
+    // worker; a queued request is not treated as a persisted name yet.
+    if(!mesh_protocol_update_identity(node_name,
+           mesh_protocol_descriptor().id==2?setup_short_name:nullptr))return false;
+    if(mesh_protocol_descriptor().id==1){
+        Preferences p;
+        if(p.begin("t5-ui",false)){p.putString("mc_name",node_name);p.end();}
+    }
+    saved=true;return true;
 }
 
 static bool handle_landscape_keyboard(int16_t x,int16_t y){
@@ -4766,11 +4805,11 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
         if(x>=meshink_keyboard::delete_split(metrics)){
             char* value=keyboard_password_mode?remote_password:
                 (keyboard_message_mode?compose_text:
-                (screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit
+                ((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()&&setup_short_edit
                    ?setup_short_name:node_name));
             const size_t n=strlen(value);
             if(n)value[n-1]=0;
-            if(screen==Screen::SetupName&&!setup_is_meshcore()){
+            if((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()){
                 if(setup_short_edit)setup_short_manual=true;
                 else if(!setup_short_manual)
                     meshink_suggest_short_name(node_name,setup_short_name);
@@ -4888,11 +4927,11 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
         if(x>=meshink_keyboard::delete_split(metrics)){
             char* value=screen==Screen::SetupRadio
                 ?(setup_edit_field?setup_power:setup_freq)
-                :(screen==Screen::SetupName&&!setup_is_meshcore()&&setup_short_edit
+                :((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()&&setup_short_edit
                    ?setup_short_name:node_name);
             const size_t n=strlen(value);
             if(n)value[n-1]=0;
-            if(screen==Screen::SetupName&&!setup_is_meshcore()){
+            if((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()){
                 if(setup_short_edit)setup_short_manual=true;
                 else if(!setup_short_manual)
                     meshink_suggest_short_name(node_name,setup_short_name);
@@ -4916,9 +4955,9 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
             return true;
         }
         if(!node_name[0]){show_toast("NAME REQUIRED");return true;}
-        save_node_name();
+        if(!save_node_name()){show_toast("NAME SAVE FAILED");return true;}
         keyboard_visible=false;
-        show_toast("IDENTITY SAVED");
+        show_toast(mesh_protocol_descriptor().id==2?"NAME UPDATE QUEUED":"IDENTITY SAVED");
         draw_screen();refresh(MeshInkRefreshMode::Direct);
         return true;
     }
@@ -5584,7 +5623,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                         (flood?"SENDING FLOOD ADVERT":"SENDING ZERO HOP ADVERT"):"ADVERT BUSY");
                     draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
-                if(kind==ProtocolSettingsRowKind::NodeName){
+                if(kind==ProtocolSettingsRowKind::NodeName||kind==ProtocolSettingsRowKind::NodeShort){
+                    char long_name[40]{},short_name[5]{};
+                    if(mesh_protocol_read_identity(long_name,sizeof(long_name),short_name,sizeof(short_name))){
+                        snprintf(node_name,sizeof(node_name),"%s",long_name);
+                        if(mesh_protocol_descriptor().id==2)
+                            snprintf(setup_short_name,sizeof(setup_short_name),"%s",short_name);
+                    }
+                    setup_short_edit=kind==ProtocolSettingsRowKind::NodeShort;
+                    setup_short_manual=true;
                     replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true;
                     text_refresh_pending=false;draw_screen();refresh(MeshInkRefreshMode::Direct);
                     return true;
@@ -6193,7 +6240,7 @@ void ui_prepare_headless_rx_wake() {
 
 static void ui_load_persistent_state() {
     prefs.begin("t5-ui",true);
-    String saved_name=prefs.getString("name","");
+    String saved_name;
     selected_preset=prefs.getUChar("preset_v2",17);
     const bool legacy_setup_complete=prefs.getBool("complete",false);
     // Legacy 'complete' meant the original single-protocol installation.
@@ -6204,6 +6251,10 @@ static void ui_load_persistent_state() {
     setup_meshtastic_done=prefs.getBool("setup_mst",false);
     setup_any_done=setup_meshcore_done||setup_meshtastic_done;
     setup_complete=setup_protocol_done(mesh_protocol_descriptor().id);
+    saved_name=prefs.getString(mesh_protocol_descriptor().id==2?"mt_long":"mc_name","");
+    // The legacy key may be used as a MeshCore display fallback only.
+    if(!saved_name.length()&&mesh_protocol_descriptor().id==1&&setup_meshcore_done&&
+       !setup_meshtastic_done)saved_name=prefs.getString("name","");
     setup_return_protocol=prefs.getUChar("setup_return",0);
     setup_protocol_choice=prefs.getUChar("setup_choice",0);
     backup_restore_pending=prefs.getBool("restore_pending",false);
@@ -6303,13 +6354,9 @@ static void ui_load_persistent_state() {
         memcpy(node_name,"MeshInk-",8);
         for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];
         node_name[12]=0;
-        Preferences initial_name;
-        if(initial_name.begin("t5-ui",false)){
-            initial_name.putString("name",node_name);
-            initial_name.end();
-        }
+        // A generated name is an uncommitted setup suggestion only.
         T5_DEBUGF(T5_LOG_UI,"[T5-BOOT] generated first-setup device name: %s\n",node_name);
-    }
+    }else node_name[0]=0;
 
     uint8_t retained_tab=0;
     if(meshink_power_get_retained_ui_tab(retained_tab)){
@@ -6443,7 +6490,7 @@ static void paint_cold_boot_frame(bool first_format){
         draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125),ui_h(65));
         Preferences p;
         if(p.begin("t5-ui",true)){
-            String name=p.getString("name","");
+            String name=p.getString(mesh_protocol_descriptor().id==2?"mt_long":"mc_name","");
             p.end();
             if(name.length())
                 ui_centred_fit(name.c_str(),ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
@@ -7154,24 +7201,21 @@ void ui_apply_initial_radio_preset(){
 
 void ui_mesh_ready(){
     mesh_is_ready=true;
-    // MeshInk owns the user-visible identity. Every active protocol receives
-    // the same stored name through its adapter instead of becoming the source
-    // of truth for shared product state.
-    Preferences state;
-    if(state.begin("t5-ui",false)){
-        const String stored_name=state.getString("name",node_name);
-        if(stored_name.length()){
-            strncpy(node_name,stored_name.c_str(),sizeof(node_name)-1);
-            node_name[sizeof(node_name)-1]=0;
+    // Read protocol-native identity after startup. Never push an old UI cache
+    // into a protocol at boot, after a switch, or after a backup restore.
+    char actual[40]{},short_name[5]{};
+    if(mesh_protocol_read_identity(actual,sizeof(actual),short_name,sizeof(short_name))){
+        snprintf(node_name,sizeof(node_name),"%s",actual);
+        if(mesh_protocol_descriptor().id==2)
+            snprintf(setup_short_name,sizeof(setup_short_name),"%s",short_name);
+        Preferences state;
+        if(state.begin("t5-ui",false)){
+            const char* key=mesh_protocol_descriptor().id==2?"mt_long":"mc_name";
+            if(state.getString(key,"")!=String(actual))state.putString(key,actual);
+            if(mesh_protocol_descriptor().id==2&&
+               state.getString("mt_short","")!=String(short_name))state.putString("mt_short",short_name);
+            state.end();
         }
-        state.putBool("name_migrated",true);
-        state.putString("name",node_name);
-        state.end();
-    }
-    if(node_name[0]){
-        mesh_protocol_apply_name(node_name);
-        T5_DEBUGF(T5_LOG_UI,"[T5-UI] MeshInk node name applied to %s '%s'\n",
-                  mesh_protocol_name(),node_name);
     }
     update_status_hardware();status_bar_dirty=true;
 }
