@@ -335,10 +335,24 @@ void setup() {
     if(boot_check==MeshInkPowerSleepCheck::Critical)
         ui_minimal_low_battery_shutdown(boot_power,"cold-boot");
 
-    // First-use formatting happens inside the pre-protocol backup recovery
-    // mount. Show preparation on the e-paper before the format blocks, without
-    // running normal UI/NVS initialization ahead of a possible restore.
-    meshink_storage_set_first_format_notice(ui_show_first_format_preparation);
+    // Keep the existing persistent operation notice during backup/restore,
+    // and avoid starting the local-UI splash in Bluetooth companion mode.
+    // This read-only check does NOT consume the companion one-shot NVS key.
+    Preferences early_mode;
+    bool companion_pending=false;
+    if(early_mode.begin("t5-boot",true)){
+        companion_pending=early_mode.getBool("companion_once",false);
+        early_mode.end();
+    }
+    const bool early_local_splash=!backup_requested&&!companion_pending;
+    if(early_local_splash){
+        // After the battery guard but BEFORE the potentially long filesystem
+        // mount/format. Only the display is initialized; no radio, journal,
+        // touch, GPS or writable application NVS state is started.
+        ui_show_cold_boot_splash();
+    }
+    meshink_storage_set_first_format_notice(
+        early_local_splash?ui_show_first_format_preparation:nullptr);
     // One-shot maintenance runs BEFORE any core, journal writer or shared UI
     // state initializes. A failed rollback/mount never boots a live radio.
     if(!meshink_backup_run_pending_on_boot()){
