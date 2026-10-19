@@ -3684,9 +3684,11 @@ static void draw_display_settings() {
     ui_text("-",layout.content_text_x,ui_y(452),3,0,true);
     ui_text("+",layout.width-ui_w(48),ui_y(452),3,0,true);
     settings_row("STANDBY",standby_timeout_name(),538);
-    ui_action_button(deep_sleep_standby?(mesh_protocol_supports_deep_sleep_standby()?
-                     "DEEP SLEEP":"NORMAL ONLY"):"NORMAL",
-                     meshink_settings_inline_action_rect(layout,538),true);
+    // Only offer this switch on a protocol with implemented retained-radio
+    // wake. Meshtastic uses ordinary standby until its deep-sleep path exists.
+    if(mesh_protocol_supports_deep_sleep_standby())
+        ui_action_button(deep_sleep_standby?"DEEP SLEEP":"NORMAL",
+                         meshink_settings_inline_action_rect(layout,538),true);
     settings_row("MAP SCALE",map_imperial?"IMPERIAL":"METRIC",656);
     const MeshInkUiRect shutdown=meshink_shutdown_rect(layout);
     ui_action_button("SHUT DOWN",shutdown,false);
@@ -5745,7 +5747,12 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             if(hit_outer_row(x,y,118)){frontlight_mode=(FrontlightMode)(((uint8_t)frontlight_mode+1)%3);save_frontlight_settings();if(frontlight_mode==FrontlightMode::Off)frontlight_drive(false);else frontlight_event();show_toast(frontlight_mode_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,238)){frontlight_timeout_index=(frontlight_timeout_index+1)%5;save_frontlight_settings();frontlight_event();show_toast(frontlight_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
-            if(hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),538))){deep_sleep_standby=!deep_sleep_standby;save_frontlight_settings();show_toast(deep_sleep_standby?"DEEP SLEEP ON":"NORMAL STANDBY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+            if(mesh_protocol_supports_deep_sleep_standby()&&
+               hit(x,y,meshink_settings_inline_action_rect(portrait_layout(),538))){
+                deep_sleep_standby=!deep_sleep_standby;save_frontlight_settings();
+                show_toast(deep_sleep_standby?"DEEP SLEEP ON":"NORMAL STANDBY");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+            }
             if(hit_outer_row(x,y,538)){standby_timeout_index=(standby_timeout_index+1)%4;save_frontlight_settings();last_user_activity=millis();show_toast(standby_timeout_name());draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit_outer_row(x,y,656)){map_imperial=!map_imperial;prefs.begin("t5-ui",false);prefs.putBool("map_imperial",map_imperial);prefs.end();show_toast(map_imperial?"IMPERIAL SCALE":"METRIC SCALE");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
             if(hit(x,y,meshink_shutdown_rect(portrait_layout()))){
