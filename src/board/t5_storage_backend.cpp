@@ -16,6 +16,11 @@ constexpr uint32_t T5_STORAGE_SPI_HZ=25000000;
 // SPIClass::endTransaction() after the shared SX1262 SPI bus was configured
 // by RadioLib, triggering a null FreeRTOS queue assertion.
 bool sd_started=false;
+MeshInkFirstFormatNotice first_format_notice=nullptr;
+}
+
+void meshink_storage_set_first_format_notice(MeshInkFirstFormatNotice notice){
+    first_format_notice=notice;
 }
 
 bool meshink_storage_mount_internal_safe() {
@@ -37,6 +42,9 @@ bool meshink_storage_mount_internal_safe() {
             }
     }
     Serial.println("[T5-STORAGE] partition fully erased; initializing SPIFFS once");
+    // The safe, erased-only decision is made before displaying first-boot
+    // preparation; never show a formatting notice for populated/corrupt flash.
+    if(first_format_notice)first_format_notice();
     return SPIFFS.begin(true);
 }
 
