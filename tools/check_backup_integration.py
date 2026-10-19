@@ -18,14 +18,24 @@ assert 'if(bytes[i]!=0xFF)' in storage
 assert 'autoformat refused' in storage
 assert 'if(first_format_notice)first_format_notice();' in storage
 assert storage.index('if(bytes[i]!=0xFF)') < storage.index('if(first_format_notice)first_format_notice();') < storage.index('return SPIFFS.begin(true);')
-assert 'meshink_storage_set_first_format_notice(ui_show_first_format_preparation);' in boot
-assert boot.index('meshink_storage_set_first_format_notice(ui_show_first_format_preparation);') < boot.index('if(!meshink_backup_run_pending_on_boot())')
-assert boot.index('if(!meshink_backup_run_pending_on_boot())') < boot.index('ui_setup();')
-assert 'void ui_show_first_format_preparation()' in ui
-assert 'meshink_display_update_screen(' in ui.split('void ui_show_first_format_preparation()',1)[1].split('void ui_show_storage_initializing()',1)[0]
+assert 'ui_show_cold_boot_splash();' in boot, "normal cold-boot splash precedes storage mount"
+assert 'early_local_splash=!backup_requested&&!companion_pending' in boot, "never replace maintenance notice or companion screen"
+assert 'meshink_storage_set_first_format_notice(' in boot and 'early_local_splash?ui_show_first_format_preparation:nullptr' in boot
+assert boot.index('ui_show_cold_boot_splash();') < boot.index('if(!meshink_backup_run_pending_on_boot())') < boot.index('ui_setup();')
+assert 'void ui_show_cold_boot_splash()' in ui
+assert 'void ui_show_first_format_preparation()' in ui and 'paint_cold_boot_frame(true);' in ui
+assert 'selected_protocol_has_completed_setup()' in ui, "unconfigured setup uses neutral branding"
+assert 'draw_meshink_logo(ui_y(245),false);' in ui, "pre-selection splash has MeshInk logo only"
+assert 'if(!first_format&&selected_protocol_has_completed_setup())' in ui
 assert 'const bool reuse_prepared_display=plan.display&&display_session_active;' in ui
 assert 'if(plan.display&&!reuse_prepared_display)' in ui
-assert 'display=reusing-first-format-session' in ui
+assert 'display=reusing-cold-boot-session' in ui
+assert 'plan.splash&&plan.display&&!cold_boot_splash_drawn' in ui, "no second startup splash after early boot"
+early_paint=ui.split('static void paint_cold_boot_frame(bool first_format){',1)[1].split('void ui_show_cold_boot_splash()',1)[0]
+assert early_paint.index('meshink_display_clear();') < early_paint.index('meshink_display_set_all_white(&display);')
+assert early_paint.index('meshink_display_invalidate_previous(&display);') < early_paint.index('meshink_display_update_screen(')
+assert 'MeshInkRefreshMode::Gray16' in early_paint, "cold boot uses full grayscale refresh, not differential fast-only"
+assert storage.index('if(bytes[i]!=0xFF)') < storage.index('if(first_format_notice)first_format_notice();') < storage.index('return SPIFFS.begin(true);')
 
 assert "LeafSettings" not in code and "LEAF_NVS" not in code and "LEAF_NODES" not in code
 assert 'Preferences p;\n    if(!p.begin("meshtastic",true))' not in code
