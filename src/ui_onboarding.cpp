@@ -5021,7 +5021,8 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::SetupName){
-        if(!keyboard_visible&&hit(x,y,ui_rect(60,720,420,70))){
+        if(!setup_is_meshcore()&&!keyboard_visible&&
+           hit(x,y,ui_rect(60,720,420,70))){
             backup_open_files(Screen::SetupName);return true;
         }
         if(hit(x,y,ui_rect(24,185,492,96))||
@@ -5037,7 +5038,9 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             if(!node_name[0]||strlen(node_name)>20||strchr(node_name,' ')){
                 show_toast("INVALID NODE NAME");return true;
             }
-            setup_enter(Screen::SetupRegion);return true;
+            setup_preset_page=0;
+            setup_enter(setup_is_meshcore()?Screen::SetupPreset:Screen::SetupRegion);
+            return true;
         }
         return true;
     }
@@ -5049,8 +5052,18 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         for(size_t i=first;i<count&&i<first+5;++i){
             if(!hit_outer_row(x,y,142+(int)(i-first)*116))continue;
             if(is_region)setup_region=(uint8_t)i;
-            else if(setup_is_meshcore())setup_load_core_preset(setup_core_preset_at(i));
-            else setup_radio_preset=(int)i;
+            else if(setup_is_meshcore()){
+                const int preset=setup_core_preset_at(i);
+                if(preset==-1){
+                    setup_load_core_preset(-1); // CUSTOM starts with NZ Narrow.
+                    setup_radio_return=Screen::SetupPreset;
+                    setup_enter(Screen::SetupRadio);
+                }else if(preset>0){
+                    setup_load_core_preset(preset);
+                    setup_enter(Screen::SetupReview);
+                }
+                return true;
+            }else setup_radio_preset=(int)i;
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
         }
         if(count>5&&hit(x,y,ui_rect(24,744,232,65))){
@@ -5062,18 +5075,17 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
         }
         if(hit(x,y,ui_rect(24,850,232,74))){
-            setup_enter(is_region?Screen::SetupName:Screen::SetupRegion);return true;
+            setup_enter(is_region?Screen::SetupName:
+                        setup_is_meshcore()?Screen::SetupName:Screen::SetupRegion);
+            return true;
         }
         if(hit(x,y,ui_rect(284,850,232,74))){
             if(is_region){
                 setup_preset_page=0;
-                if(setup_is_meshcore()){
-                    if(setup_region==0)setup_load_core_preset(17); // NZ NARROW default
-                    else setup_load_core_preset(-1);
-                }else setup_radio_preset=0; // LongFast
+                setup_radio_preset=0; // Meshtastic LongFast default
                 setup_enter(Screen::SetupPreset);
-            }else{
-                if(setup_radio_preset<-1){show_toast("CHOOSE A PRESET");return true;}
+            }else if(!setup_is_meshcore()){
+                if(setup_radio_preset<0){show_toast("CHOOSE A PRESET");return true;}
                 setup_enter(Screen::SetupRadio);
             }
             return true;
@@ -5100,7 +5112,7 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             }else if(hit(x,y,ui_rect(24,686,492,70))){
                 setup_hash=setup_hash>=3?1:setup_hash+1;
             }else if(hit(x,y,ui_rect(24,850,232,74))){
-                setup_enter(Screen::SetupPreset);return true;
+                setup_enter(setup_radio_return);return true;
             }else if(hit(x,y,ui_rect(284,850,232,74))){
                 if(!setup_radio_valid()){show_toast("CHECK RADIO VALUES");return true;}
                 setup_enter(Screen::SetupReview);return true;
@@ -5115,8 +5127,13 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::SetupReview){
-        if(hit(x,y,ui_rect(24,850,232,74))){
+        if(setup_is_meshcore()&&hit(x,y,ui_rect(60,540,420,74))){
+            setup_radio_return=Screen::SetupReview;
             setup_enter(Screen::SetupRadio);return true;
+        }
+        if(hit(x,y,ui_rect(24,850,232,74))){
+            setup_enter(setup_is_meshcore()?Screen::SetupPreset:Screen::SetupRadio);
+            return true;
         }
         if(hit(x,y,ui_rect(284,850,232,74))){
             if(!setup_finish()){
