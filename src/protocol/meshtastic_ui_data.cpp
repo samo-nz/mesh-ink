@@ -6,6 +6,7 @@
 #include <esp_system.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
+#include "../../lib/Meshtastic/src/mesh/MeshRadio.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -1415,9 +1416,17 @@ const NativeRegion regions[]={
     {meshtastic_Config_LoRaConfig_RegionCode_BR_902,"BRAZIL 902"}
 };
 const meshtastic_LoRaPresetGroup* permitted_group(size_t region){
-    if(!state||!state->region_map_received||
-       region>=sizeof(regions)/sizeof(regions[0]))return nullptr;
-    const auto& map=state->region_map;
+    if(region>=sizeof(regions)/sizeof(regions[0]))return nullptr;
+    // Upstream's table is static and independent of the radio/NodeDB.
+    // The wizard must not start a live network to discover its legal presets.
+    static meshtastic_LoRaRegionPresetMap offline_map{};
+    static bool offline_ready=false;
+    if(!offline_ready){
+        getRegionPresetMap(offline_map);
+        offline_ready=true;
+    }
+    const auto& map=(state&&state->region_map_received)
+        ?state->region_map:offline_map;
     for(size_t i=0;i<map.region_groups_count;++i){
         const auto& mapping=map.region_groups[i];
         if(mapping.region==regions[region].code&&mapping.group_index<map.groups_count)
@@ -1477,18 +1486,30 @@ int meshink_meshtastic_ui_preset_index(size_t r,size_t p){
            p<meshink_meshtastic_ui_preset_count(r)?(int)p:-1;
 }
 bool meshink_meshtastic_ui_commit_radio(size_t r,size_t p,uint8_t hops){
-    if(!state||!state->config_complete||!state->config_received||
-       r>=meshink_meshtastic_ui_region_count()||hops<1||hops>7)return false;
+    if(r>=meshink_meshtastic_ui_region_count()||hops<1||hops>7)return false;
     const auto* allowed=permitted_group(r);
-    // Only commit combinations confirmed by the pinned official engine.
     if(!allowed||p>=allowed->presets_count)return false;
-    meshtastic_Config_LoRaConfig next=state->lora;
-    next.region=regions[r].code;
-    next.use_preset=true;
-    next.modem_preset=allowed->presets[p];
-    next.hop_limit=hops;
-    next.tx_enabled=true;
-    return meshink_meshtastic_submit_lora_config(next);
+    // Stage the OFFLINE first-time configuration. Never send live Admin
+    // set_config and immediately stop its worker: native crypto/key generation
+    // and flash saves may outlive the UI thread and trigger the watchdog.
+    Preferences pset;
+    if(!pset.begin("mt-onboard",false))return false;
+    const uint8_t region=(uint8_t)regions[r].code;
+    const uint8_t preset=(uint8_t)allowed->presets[p];
+    const bool ok=pset.putUChar("region",region)==1&&
+                  pset.putUChar("preset",preset)==1&&
+                  pset.putUChar("hops",hops)==1&&
+                  pset.putBool("pending",true)==1;
+    pset.end();
+    if(!ok)return false;
+    Preferences check;
+    if(!check.begin("mt-onboard",true))return false;
+    const bool confirmed=check.getBool("pending",false)&&
+        check.getUChar("region",0)==region&&
+        check.getUChar("preset",255)==preset&&
+        check.getUChar("hops",0)==hops;
+    check.end();
+    return confirmed;
 }
 
 bool meshink_meshtastic_ui_next_remote_request(uint32_t& node,uint8_t& channel,UiNodeInfoRequest& type){
