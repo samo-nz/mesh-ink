@@ -6448,7 +6448,7 @@ static void paint_cold_boot_frame(bool first_format){
                 ui_centred_fit(name.c_str(),ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
         }
     }else{
-        // A factory-wiped device must never imply MeshCore or Meshtastic was
+        // A factory-wiped device must never imply any protocol was
         // selected. This uses the existing MeshInk artwork at a central Y.
         draw_meshink_logo(ui_y(245),false);
     }
