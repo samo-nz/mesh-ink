@@ -21,8 +21,11 @@ struct MeshInkUiStartupPlan {
 void ui_startup(const MeshInkUiStartupPlan& plan);
 void ui_setup();
 void ui_sync_protocol_setup_result(); // adopt native first-boot commit before first interactive frame
-// First-use SPIFFS mount happens before ui_setup(); show a minimal, persistent
-// e-paper preparation notice without loading/modifying protocol or NVS state.
+// Cold-boot-only display: after battery guard, before SPIFFS mount.
+// Reuses the exact same EPDiy high-level state throughout UI startup.
+void ui_show_cold_boot_splash();
+// Invoked only after storage proves SPIFFS is fully erased; replaces the
+// initial splash with the first-format notice and stays until setup is ready.
 void ui_show_first_format_preparation();
 void ui_prepare_headless_rx_wake();
 bool ui_headless_message_alert_pending();
