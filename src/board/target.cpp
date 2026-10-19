@@ -541,6 +541,31 @@ void (*T5RadioHal::callbacks_[GPIO_NUM_MAX])(void)={};
 bool T5RadioHal::attached_[GPIO_NUM_MAX]={};
 
 static T5RadioHal radio_hal(radio_spi);
+// The native RadioLib HAL must NOT call Arduino attachInterrupt here: EPDiy
+// already installed the global IDF GPIO ISR service on interactive boots.
+// Both protocols share the board's one well-defined DIO1 IRQ lifetime.
+static bool native_radio_irq_owned=false;
+bool t5_native_radio_attach_interrupt(uint32_t pin,void (*callback)(void),
+                                      uint32_t mode){
+    if(pin!=(uint32_t)P_LORA_DIO_1||!callback){
+        Serial.printf("[T5-RADIO] invalid native DIO1 attach pin=%lu\\n",
+                      (unsigned long)pin);
+        return false;
+    }
+    if(radio_hal.handlerActive(pin)&&!native_radio_irq_owned){
+        // A different radio owner still has the pin; never steal its ISR.
+        Serial.println("[T5-RADIO] DIO1 interrupt owned by another runtime");
+        return false;
+    }
+    radio_hal.attachInterrupt(pin,callback,mode);
+    native_radio_irq_owned=radio_hal.handlerActive(pin);
+    return native_radio_irq_owned;
+}
+void t5_native_radio_detach_interrupt(uint32_t pin){
+    if(pin!=(uint32_t)P_LORA_DIO_1||!native_radio_irq_owned)return;
+    radio_hal.detachInterrupt(pin);
+    native_radio_irq_owned=false;
+}
 static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
 MeshInkSX1262Wrapper radio_driver(radio, board);
