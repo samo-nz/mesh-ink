@@ -262,6 +262,9 @@ bool meshink_meshtastic_worker_quick_broadcast(bool location){
 bool meshink_meshtastic_worker_quick_result(uint8_t& result){
     return running&&quick_events&&xQueueReceive(quick_events,&result,0)==pdTRUE;
 }
+bool meshink_meshtastic_worker_quick_location_allowed(){
+    return quick_location_allowed.load(std::memory_order_acquire);
+}
 void meshink_meshtastic_worker_allow_quick_location(bool allowed){
     quick_location_allowed.store(allowed,std::memory_order_release);
     if(!allowed){

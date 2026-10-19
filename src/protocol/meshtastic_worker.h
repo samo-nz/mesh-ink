@@ -12,6 +12,7 @@ bool meshink_meshtastic_worker_quick_position_available();
 bool meshink_meshtastic_worker_quick_result(uint8_t& result);
 // Immediate revocation of pending quick-position announcements.
 void meshink_meshtastic_worker_allow_quick_location(bool allowed);
+bool meshink_meshtastic_worker_quick_location_allowed();
 bool meshink_meshtastic_worker_submit(const uint8_t* bytes,size_t size,uint32_t packet_id=0);
 // After an accepted channel Admin command, replay the authoritative channel
 // snapshot back into the MeshInk UI on the owning network task.

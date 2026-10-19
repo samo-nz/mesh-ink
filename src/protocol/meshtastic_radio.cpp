@@ -1,4 +1,5 @@
 #include "meshtastic_radio.h"
+#include "meshtastic_worker.h"
 #include "meshtastic_sx1262_instance.cpp" // actual official SX1262 implementation
 #include "../hardware/radio.h"
 #include "../../lib/Meshtastic/src/mesh/SX1262Interface.h"
@@ -72,6 +73,16 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
         return true;
     }
   protected:
+    // Upstream calls the packetReleased hook even when startTransmit itself
+    // fails (via completeSending). Do not mistake that accounting callback for
+    // successful RF transmission.
+    bool startSend(meshtastic_MeshPacket* packet) override {
+        const bool tracked=quick_trace.active&&packet&&quick_trace.packet_id&&
+                           packet->id==quick_trace.packet_id;
+        const bool started=SX1262Interface::startSend(packet);
+        if(tracked&&!started)quick_trace.transmitted=false;
+        return started;
+    }
     // Upstream's chip recovery re-runs begin(), clearing DIO2 switching.
     // Reapply the board electrical settings on recovery too, without changing
     // the initial begin-before-DIO2 ordering shared with working MeshCore.
@@ -123,6 +134,10 @@ RadioTxHook::PreTxAction MeshInkQuickTxHook::beforeTransmit(
     RadioInterface* iface,meshtastic_MeshPacket* packet){
     if(iface==active_native_radio&&packet&&quick_trace.active&&
        quick_trace.packet_id&&packet->id==quick_trace.packet_id){
+        // A queued position may be waiting for CAD when the user disables
+        // sharing. Native pre-TX hook must revoke it before radio airtime.
+        if(quick_trace.kind==1&&!meshink_meshtastic_worker_quick_location_allowed())
+            return PRETX_DROP;
         if(!quick_trace.before_tx){
             quick_trace.before_tx=true;
             quick_trace.tx_good_before=active_native_radio->tx_good_count();

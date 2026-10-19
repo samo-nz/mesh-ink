@@ -2048,7 +2048,7 @@ assert '(location&&!sharing)' in meshtastic_protocol_source
 assert 'quick_ever_sent&&' in mt_worker and 'last_quick_sent_ms)<30000UL' in mt_worker
 mt_native=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_broadcast(bool location){',1)[1].split('void meshink_meshtastic_native_loop(){',1)[0]
 assert 'findPositionChannel(channel)' in mt_native
-assert '!nodeDB->hasLocalPositionSinceBoot()' in mt_native
+assert 'meshink_meshtastic_native_quick_position_available()' in mt_native
 assert 'positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel)' in mt_native
 assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false)' in mt_native
 assert 'isTxAllowedChannelUtil(!tracker)' in mt_native and 'isTxAllowedAirUtil()' in mt_native
@@ -2086,3 +2086,11 @@ assert 'config.position.fixed_position' in native_ready
 assert '!nodeDB->hasLocalPositionSinceBoot()' in native_ready
 assert 'nodeDB->hasValidPosition(own_node)' in native_ready
 assert 'findPositionChannel(channel)' in native_ready
+
+# Test.85: a successful upstream TX counter can also be incremented for a
+# failed startTransmit; our radio subclass must explicitly reject that case.
+assert 'bool startSend(meshtastic_MeshPacket* packet) override' in mt_radio
+assert 'if(tracked&&!started)quick_trace.transmitted=false;' in mt_radio
+assert 'meshink_meshtastic_worker_quick_location_allowed()' in mt_radio
+assert 'return PRETX_DROP;' in mt_radio
+assert 'bool meshink_meshtastic_worker_quick_location_allowed()' in mt_worker
