@@ -48,6 +48,10 @@ radio_types_source = (root / "src" / "hardware" / "radio_types.h").read_text(enc
 radio_backend_header = (root / "src" / "board" / "t5_radio_backend.h").read_text(encoding="utf-8")
 radio_backend_source = (root / "src" / "board" / "t5_radio_backend.cpp").read_text(encoding="utf-8")
 native_radio_source = (root / "src" / "protocol" / "meshtastic_radio.cpp").read_text(encoding="utf-8")
+meshtastic_runtime_source = (root / "src" / "protocol" / "meshtastic_runtime.cpp").read_text(encoding="utf-8")
+meshtastic_worker_source = (root / "src" / "protocol" / "meshtastic_worker.cpp").read_text(encoding="utf-8")
+meshtastic_protocol_source = (root / "src" / "protocol" / "meshtastic_protocol.cpp").read_text(encoding="utf-8")
+meshtastic_ui_source = (root / "src" / "protocol" / "meshtastic_ui_data.cpp").read_text(encoding="utf-8")
 storage_selector_source = (root / "src" / "hardware" / "storage.h").read_text(encoding="utf-8")
 storage_backend_header = (root / "src" / "board" / "t5_storage_backend.h").read_text(encoding="utf-8")
 storage_backend_source = (root / "src" / "board" / "t5_storage_backend.cpp").read_text(encoding="utf-8")
@@ -63,6 +67,36 @@ cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].
 
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
+
+# Native Meshtastic cleanup: unsupported deep sleep must be neither drawn nor
+# touch-enabled. MeshCore retains its original control.
+display_page=source.split("static void draw_display_settings()",1)[1].split("static void draw_help()",1)[0]
+assert 'if(mesh_protocol_supports_deep_sleep_standby())' in display_page
+assert 'ui_action_button(deep_sleep_standby?"DEEP SLEEP":"NORMAL"' in display_page
+assert '"NORMAL ONLY"' not in display_page, "unsupported deep sleep must not be advertised"
+display_tap=source.split("case Screen::DisplaySettings:",2)[2].split("case Screen::NightSchedule:",1)[0]
+assert 'if(mesh_protocol_supports_deep_sleep_standby()&&' in display_tap, "hidden switch must not retain an invisible touch target"
+assert 'if(hit_outer_row(x,y,538))' in display_tap, "standby timeout remains configurable"
+
+# A MeshInk router subclass observes actual upstream retry decrements, never
+# simulates them by a wall clock. Only UI core changes flash journal/status.
+assert 'class MeshInkProgressRouter final : public ReliableRouter' in meshtastic_runtime_source
+assert 'const int32_t delay_ms=ReliableRouter::runOnce();' in meshtastic_runtime_source
+assert 'entry_state.initialNumRetransmissions!=NUM_RELIABLE_UNICAST_ATTEMPTS-1' in meshtastic_runtime_source
+assert 'const uint8_t completed=total-entry_state.numRetransmissions;' in meshtastic_runtime_source
+assert 'meshink_meshtastic_worker_note_retry(packet->id,completed,total)' in meshtastic_runtime_source
+assert 'router=new(std::nothrow) MeshInkProgressRouter();' in meshtastic_runtime_source
+assert 'xQueueCreate(kTxFrames,sizeof(RetryEvent))' in meshtastic_worker_source
+assert 'xQueueSend(retry_events,&event,0)' in meshtastic_worker_source
+assert 'xQueueReceive(retry_events,&event,0)' in meshtastic_worker_source
+assert 'meshink_meshtastic_worker_retry_status(retry_packet,retry_number,retry_total)' in meshtastic_protocol_source
+assert 'meshink_meshtastic_ui_retry_status(retry_packet,retry_number,retry_total);' in meshtastic_protocol_source
+assert meshtastic_protocol_source.index('meshink_meshtastic_ui_receive(data);') < meshtastic_protocol_source.index('meshink_meshtastic_ui_retry_status(retry_packet,retry_number,retry_total);'), "ACK/NAK updates precede queued retry labels"
+assert '"RETRYING %u/%u"' in meshtastic_ui_source
+assert 'm.row.network=m.retry_label[0]?m.retry_label:"";' in meshtastic_ui_source
+assert 'outgoing_awaiting_ack(m.row.state)' in meshtastic_ui_source
+assert 'meshink_message_store().update_state(m.journal_sequence,m.row.state)' in meshtastic_ui_source
+assert 'm.retry_label[0]=0;' in meshtastic_ui_source, "final routing verdict must clear transient retry wording"
 
 # First-install identity, setup text and guaranteed e-paper transitions.
 contains('#include <esp_random.h>', "hardware-generated first-install identity")
