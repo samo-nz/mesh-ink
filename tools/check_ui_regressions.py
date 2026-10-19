@@ -1244,7 +1244,9 @@ assert "mutable MessageView active_message_view_{};" in runtime_source, "UI stil
 assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "formatted history is never prebuilt"
 assert "store().read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
-assert "mesh_protocol_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "protocol startup remains after display initialization"
+assert 'if(selected_protocol_ready_for_boot())mesh_protocol_setup();' in unified_source, "configured protocol starts after display initialization; unconfigured native wizard stays offline"
+assert unified_source.index('ui_setup();') < unified_source.index('if(selected_protocol_ready_for_boot())mesh_protocol_setup();'), "interactive UI is prepared before native startup"
+assert 'setup_meshcore_done=setup_meshcore_done' not in source, "reverse protocol setup never invents MeshCore completion"
 
 
 # Test52: page history stays on-demand. Only tiny anchors and lazy per-message
