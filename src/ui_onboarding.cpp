@@ -7205,7 +7205,7 @@ void ui_apply_initial_radio_preset(){
 
 void ui_mesh_ready(){
     mesh_is_ready=true;
-    // Unconfigured MeshCore may have an internal default owner already; it
+    // An unconfigured backend may have an internal default owner already; it
     // must not replace the setup draft or the other protocol's suggestion.
     if(!setup_complete&&mesh_protocol_descriptor().id==1){
         update_status_hardware();status_bar_dirty=true;return;
