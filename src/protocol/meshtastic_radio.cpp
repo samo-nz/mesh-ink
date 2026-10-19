@@ -10,8 +10,23 @@
 
 namespace {
 // RadioLib's HAL is borrowed by the official native radio instance and must
-// outlive it. This exists only when the Meshtastic protocol starts.
-std::unique_ptr<LockingArduinoHal> native_hal;
+// outlive it. The normal ArduinoHal IRQ path would attempt to install its own
+// global GPIO service AFTER EPDiy has already installed one for the display.
+// Share the board-owned DIO1 service instead; only the callback changes for
+// RX/TX, never the process-wide service or the SX1262 chip state.
+class MeshInkNativeRadioHal final : public LockingArduinoHal {
+public:
+    using LockingArduinoHal::LockingArduinoHal;
+    void attachInterrupt(uint32_t pin,void (*callback)(void),uint32_t mode) override {
+        if(!meshink_radio_native_attach_interrupt(pin,callback,mode))
+            Serial.printf("[MeshInk/MT] DIO1 callback attach FAILED pin=%lu\\n",
+                          (unsigned long)pin);
+    }
+    void detachInterrupt(uint32_t pin) override {
+        meshink_radio_native_detach_interrupt(pin);
+    }
+};
+std::unique_ptr<MeshInkNativeRadioHal> native_hal;
 class MeshInkNativeSX1262;
 MeshInkNativeSX1262* active_native_radio=nullptr;
 
@@ -99,7 +114,7 @@ std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
         return nullptr;
     }
     if(!native_hal){
-        native_hal.reset(new(std::nothrow) LockingArduinoHal(
+        native_hal.reset(new(std::nothrow) MeshInkNativeRadioHal(
             meshink_radio_native_spi_bus(),
             SPISettings(4000000,MSBFIRST,SPI_MODE0)));
         if(!native_hal)return nullptr;
