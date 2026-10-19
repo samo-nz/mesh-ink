@@ -567,14 +567,24 @@ void meshink_meshtastic_native_gps_update(){
 #endif
 }
 
+bool meshink_meshtastic_native_quick_position_available(){
+    if(!native_ready||!config.lora.tx_enabled||!nodeDB||!positionModule)return false;
+    // Meshtastic fixed positions remain usable without a GPS lock. Non-fixed
+    // positions must have been refreshed in this boot, never merely restored.
+    if(!config.position.fixed_position&&!nodeDB->hasLocalPositionSinceBoot())
+        return false;
+    const auto* own_node=nodeDB->getMeshNode(nodeDB->getNodeNum());
+    if(!own_node||!nodeDB->hasValidPosition(own_node))return false;
+    uint8_t channel=0;
+    return findPositionChannel(channel); // native per-channel opt-in/privacy
+}
+
 bool meshink_meshtastic_native_quick_broadcast(bool location){
     // Only the pinned native worker may touch upstream router/module state.
     // Meshtastic enforces channel privacy/precision and packet routing.
     if(!native_ready||!config.lora.tx_enabled||!airTime||!nodeDB)return false;
     if(location){
-        if(!positionModule)return false;
-        // Restored positions cannot masquerade as a fresh GPS fix.
-        if(!config.position.fixed_position&&!nodeDB->hasLocalPositionSinceBoot())return false;
+        if(!meshink_meshtastic_native_quick_position_available())return false;
         uint8_t channel=0;
         if(!findPositionChannel(channel))return false;
         const bool tracker=config.device.role==meshtastic_Config_DeviceConfig_Role_TRACKER||

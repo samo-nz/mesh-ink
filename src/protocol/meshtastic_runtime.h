@@ -20,6 +20,8 @@ bool meshink_meshtastic_native_begin();
 void meshink_meshtastic_native_loop();
 // Only called by Meshtastic's network worker, never by the UI task.
 bool meshink_meshtastic_native_quick_broadcast(bool location);
+// Native NodeDB state may only be inspected on the network worker.
+bool meshink_meshtastic_native_quick_position_available();
 // Feed upstream position networking from MeshInk's existing GNSS service.
 void meshink_meshtastic_native_gps_update();
 void meshink_meshtastic_native_stop();

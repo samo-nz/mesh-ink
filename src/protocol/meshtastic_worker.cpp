@@ -53,6 +53,7 @@ std::atomic<bool> stop_requested{false};
 std::atomic<bool> config_refresh_requested{false};
 std::atomic<uint8_t> quick_broadcast_request{0}; // 0 idle, 1 position, 2 NodeInfo
 std::atomic<bool> quick_location_allowed{false};
+std::atomic<bool> quick_native_position_available{false};
 bool running=false;
 
 void release_resources(){
@@ -106,6 +107,11 @@ void network_task(void*){
             meshink_meshtastic_native_gps_update();
         }
         meshink_meshtastic_native_loop();
+        // The UI reads this atomic snapshot, never the mutable official
+        // NodeDB, config or position-module objects on another CPU core.
+        quick_native_position_available.store(
+            meshink_meshtastic_native_quick_position_available(),
+            std::memory_order_release);
         // Only the network worker may invoke native Meshtastic modules.
         // Recheck privacy after GPS update, even if the user disabled sharing
         // while a previous touch-driven request was pending.
@@ -212,6 +218,7 @@ bool meshink_meshtastic_worker_start(){
     config_refresh_requested.store(false,std::memory_order_release);
     quick_broadcast_request.store(0,std::memory_order_release);
     quick_location_allowed.store(false,std::memory_order_release);
+    quick_native_position_available.store(false,std::memory_order_release);
     if(xTaskCreatePinnedToCore(network_task,"mt-network",kNetworkStackBytes,
                                nullptr,kNetworkPriority,&worker_task,
                                kNetworkCore)!=pdPASS){
@@ -241,9 +248,13 @@ bool meshink_meshtastic_worker_submit(const uint8_t* bytes,size_t size,uint32_t 
     return true;
 }
 
+bool meshink_meshtastic_worker_quick_position_available(){
+    return running&&quick_native_position_available.load(std::memory_order_acquire);
+}
 bool meshink_meshtastic_worker_quick_broadcast(bool location){
     if(!running||stop_requested.load(std::memory_order_acquire))return false;
-    if(location&&!quick_location_allowed.load(std::memory_order_acquire))return false;
+    if(location&&(!quick_location_allowed.load(std::memory_order_acquire)||
+                  !quick_native_position_available.load(std::memory_order_acquire)))return false;
     uint8_t empty=0;
     return quick_broadcast_request.compare_exchange_strong(
         empty,location?1U:2U,std::memory_order_acq_rel);

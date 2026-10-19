@@ -417,6 +417,7 @@ void stop(){
     ready=false;
 }
 bool running(){return ready;}
+bool quick_position_available(){return ready&&meshink_meshtastic_worker_quick_position_available();}
 bool quick_broadcast(bool location){
     bool sharing=false,public_approximate=false;
     uint8_t interval=0;
@@ -472,6 +473,7 @@ const MeshInkProtocolBackend& backend(){
     value.settings_item=meshink_meshtastic_ui_settings_item;
     value.gps_mode_changed=shared_gps_mode_changed;
     value.quick_broadcast=quick_broadcast;
+    value.quick_position_available=quick_position_available;
     value.location_sharing_get=meshink_meshtastic_ui_location_get;
     value.location_sharing_set=meshink_meshtastic_ui_location_set;
     value.my_location=shared_my_location;

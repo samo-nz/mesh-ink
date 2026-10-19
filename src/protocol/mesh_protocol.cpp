@@ -313,6 +313,9 @@ bool mesh_protocol_send_advert(bool flood) {
 bool mesh_protocol_quick_broadcast(bool location){
     return active_backend().quick_broadcast ? active_backend().quick_broadcast(location) : false;
 }
+bool mesh_protocol_quick_position_available(){
+    return active_backend().quick_position_available ? active_backend().quick_position_available() : false;
+}
 
 bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode) {
     return active_backend().apply_radio

@@ -6,6 +6,7 @@
 // The common MeshInk UI only exchanges serialized packets via RTOS queues.
 bool meshink_meshtastic_worker_start();
 bool meshink_meshtastic_worker_quick_broadcast(bool location);
+bool meshink_meshtastic_worker_quick_position_available();
 // Native SX1262 completion results, never PhoneAPI queue acceptance.
 // 1=location sent, 2=NodeInfo sent, 3=failed, 4=radio busy.
 bool meshink_meshtastic_worker_quick_result(uint8_t& result);
