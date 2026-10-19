@@ -11,6 +11,22 @@ assert "if(root&&root.isDirectory())" in storage
 assert "if(sd_started){SD.end();sd_started=false;}" in storage
 assert storage.index("if(root&&root.isDirectory())") < storage.index("if(sd_started){SD.end();sd_started=false;}")
 assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage
+# Factory-new SPIFFS is the ONLY time the first-format notice may appear.
+# Keep erase verification authoritative: no mount failure may imply a wipe.
+assert 'if(SPIFFS.begin(false))return true;' in storage
+assert 'if(bytes[i]!=0xFF)' in storage
+assert 'autoformat refused' in storage
+assert 'if(first_format_notice)first_format_notice();' in storage
+assert storage.index('if(bytes[i]!=0xFF)') < storage.index('if(first_format_notice)first_format_notice();') < storage.index('return SPIFFS.begin(true);')
+assert 'meshink_storage_set_first_format_notice(ui_show_first_format_preparation);' in boot
+assert boot.index('meshink_storage_set_first_format_notice(ui_show_first_format_preparation);') < boot.index('if(!meshink_backup_run_pending_on_boot())')
+assert boot.index('if(!meshink_backup_run_pending_on_boot())') < boot.index('ui_setup();')
+assert 'void ui_show_first_format_preparation()' in ui
+assert 'meshink_display_update_screen(' in ui.split('void ui_show_first_format_preparation()',1)[1].split('void ui_show_storage_initializing()',1)[0]
+assert 'const bool reuse_prepared_display=plan.display&&display_session_active;' in ui
+assert 'if(plan.display&&!reuse_prepared_display)' in ui
+assert 'display=reusing-first-format-session' in ui
+
 assert "LeafSettings" not in code and "LEAF_NVS" not in code and "LEAF_NODES" not in code
 assert 'Preferences p;\n    if(!p.begin("meshtastic",true))' not in code
 assert "MESHTASTIC_VERSION=2" in format
