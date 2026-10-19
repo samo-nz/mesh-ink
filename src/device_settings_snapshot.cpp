@@ -73,13 +73,19 @@ bool read_group(const char* name,const Field* fields,size_t count,uint8_t first,
 }
 bool write_group(const char* name,const Field* fields,size_t count,uint8_t first,const Snapshot& value){
     Preferences prefs;
-    if(!prefs.begin(name,false))return false;
+    if(!prefs.begin(name,false)){
+        Serial.printf("[T5-RESTORE] NVS open failed namespace=%s\n",name);
+        return false;
+    }
     const uint8_t* raw=(const uint8_t*)&value;
     bool ok=true;
     for(size_t i=0;i<count;++i){
         const Field& f=fields[i];
         if(!(value.present&((uint32_t)1U<<(first+i)))){
-            if(prefs.isKey(f.key))ok=prefs.remove(f.key)&&ok;
+            if(prefs.isKey(f.key)&&!prefs.remove(f.key)){
+                Serial.printf("[T5-RESTORE] NVS remove failed namespace=%s key=%s\n",name,f.key);
+                ok=false;
+            }
             continue;
         }
         const uint8_t* field=raw+f.offset;
@@ -101,6 +107,7 @@ bool write_group(const char* name,const Field* fields,size_t count,uint8_t first
                 break;
             }
         }
+        if(!wrote)Serial.printf("[T5-RESTORE] NVS write failed namespace=%s key=%s\n",name,f.key);
         ok=wrote&&ok;
     }
     prefs.end();
@@ -132,10 +139,26 @@ bool capture(Snapshot& out){
     return valid(out);
 }
 bool apply(const Snapshot& value){
-    if(!valid(value))return false;
+    if(!valid(value)){
+        Serial.println("[T5-RESTORE] device settings snapshot invalid");
+        return false;
+    }
     // Only whitelisted settings are modified; other keys remain untouched.
-    return write_group("t5-ui",UI,UI_COUNT,0,value)&&
-           write_group("t5-gnss",GPS,GPS_COUNT,UI_COUNT,value)&&
-           write_group("t5-rtc",RTC,RTC_COUNT,UI_COUNT+GPS_COUNT,value);
+    if(!write_group("t5-ui",UI,UI_COUNT,0,value)||
+       !write_group("t5-gnss",GPS,GPS_COUNT,UI_COUNT,value)||
+       !write_group("t5-rtc",RTC,RTC_COUNT,UI_COUNT+GPS_COUNT,value))
+        return false;
+    Snapshot readback{};
+    if(!capture(readback)){
+        Serial.println("[T5-RESTORE] device settings readback failed");
+        return false;
+    }
+    if(memcmp(&value,&readback,sizeof(value))!=0){
+        Serial.printf("[T5-RESTORE] device settings readback mismatch expected_mask=%08lx actual_mask=%08lx\n",
+                      (unsigned long)value.present,(unsigned long)readback.present);
+        return false;
+    }
+    Serial.println("[T5-RESTORE] device settings written and verified");
+    return true;
 }
 } // namespace meshink_device_settings
