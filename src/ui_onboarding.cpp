@@ -3246,12 +3246,16 @@ static void draw_backup_confirm(){
     ui_action_button("OK",ui_rect(284,735,232,85),true);
 }
 static void draw_backup_progress(){
+    // This e-paper image persists across the maintenance reboot. Flash/SD
+    // work happens before UI initialization, so do not imply live progress
+    // or leave a misleading "REBOOTING..." screen visible for minutes.
     draw_app_header(backup_restore_mode?"RESTORE FROM SD":"BACKUP TO SD",false);
-    ui_centred("REBOOTING...",ui_y(220),3,0,true);
+    ui_centred(backup_restore_mode?"RESTORING...":"BACKING UP...",ui_y(220),3,0,true);
+    ui_centred("THIS MAY TAKE A FEW MINUTES",ui_y(322),2,0,true);
     ui_draw_wrapped(backup_restore_mode?
-        "The device will restart and restore the SD archive before the radio starts. Do not remove the SD card or power off.":
-        "The device will restart and create a verified SD backup before the radio starts. Do not remove the SD card or power off.",
-        ui_x(36),ui_y(365),ui_w(470),3,0,false,7);
+        "Restoring your saved data from SD. The screen will not update until the restore finishes and the device starts. Do not remove the SD card or switch off.":
+        "Saving and verifying your data on SD. The screen will not update until the backup finishes and the device starts. Do not remove the SD card or switch off.",
+        ui_x(36),ui_y(415),ui_w(470),3,0,false,7);
 }
 static void draw_backup_result(){
     draw_app_header("BACKUP / RESTORE",true);
