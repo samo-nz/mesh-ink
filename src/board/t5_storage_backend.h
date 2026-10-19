@@ -11,6 +11,10 @@ bool meshink_storage_begin();
 bool meshink_storage_media_ready();
 // Internal flash: never autoformat a partition containing existing data.
 bool meshink_storage_mount_internal_safe();
+// Optional cold-boot notice before the ONLY permitted automatic first format.
+// The storage driver owns erase verification; the UI owns rendering.
+using MeshInkFirstFormatNotice = void (*)();
+void meshink_storage_set_first_format_notice(MeshInkFirstFormatNotice notice);
 void meshink_storage_end();
 MeshInkStorageFile meshink_storage_open(const char* path);
 MeshInkStorageFile meshink_storage_open_write(const char* path);
