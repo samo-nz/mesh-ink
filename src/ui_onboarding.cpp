@@ -922,31 +922,43 @@ static bool setup_finish(){
             selected_preset=(uint8_t)setup_radio_preset;
         else selected_preset=0; // Explicit CUSTOM or RF-incompatible modification.
     }else{
-        if(!setup_short_name[0]||
+        if(!setup_short_name[0]||setup_radio_preset<0||
            !mesh_protocol_setup_commit_radio(setup_region,(size_t)setup_radio_preset,setup_hops))
             return false;
     }
     Preferences commit;
     if(!commit.begin("t5-ui",false))return false;
-    commit.putString("name",node_name);
+    // Never report success if any NVS write fails. For the native protocol,
+    // the offline radio draft is already staged, but the official NodeDB has
+    // not opened yet: completion is decided on the NEXT boot after the native
+    // radio + identity files have been saved and verified.
+    bool saved=commit.putString("name",node_name)==strlen(node_name);
     if(!setup_is_meshcore()){
-        // Native identity is updated exactly once after the setup restart.
-        // The key is removed only after the official NodeDB saves successfully.
-        commit.putString("mt_short",setup_short_name);
-        commit.putBool("mt_name_pending",true);
+        saved=commit.putString("mt_short",setup_short_name)==strlen(setup_short_name)&&saved;
+        saved=(commit.putBool("mt_name_pending",true)==1)&&saved;
+        saved=(commit.putBool("setup_mst",false)==1)&&saved;
     }
-    commit.putUChar("preset_v2",selected_preset);
-    commit.putBool("complete",true); // preserve legacy readers
-    commit.putBool("name_migrated",true);
-    commit.putBool(setup_is_meshcore()?"setup_mc":"setup_mst",true);
-    commit.putUChar("setup_return",0);
-    commit.putUChar("setup_choice",0);
+    saved=(commit.putUChar("preset_v2",selected_preset)==1)&&saved;
+    if(setup_is_meshcore()){
+        saved=(commit.putBool("complete",true)==1)&&saved;
+        saved=(commit.putBool("setup_mc",true)==1)&&saved;
+    }
+    saved=(commit.putBool("name_migrated",true)==1)&&saved;
+    saved=(commit.putUChar("setup_return",0)==1)&&saved;
+    saved=(commit.putUChar("setup_choice",0)==1)&&saved;
     commit.end();
+    if(!saved)return false;
+    if(!setup_is_meshcore()){
+        // No live native worker exists during a first-time wizard. Restart
+        // directly into the pending native setup, avoiding a shutdown race.
+        Serial.println("[MT-SETUP] draft saved; reboot to apply radio before network startup");
+        Serial.flush();delay(100);
+        ESP.restart();
+        return true;
+    }
     setup_complete=true;
     setup_any_done=true;
-    if(setup_is_meshcore())setup_meshcore_done=true;else setup_meshtastic_done=true;
-    // Restart with the confirmed parameters so both protocols initialize the
-    // same way they will on every subsequent boot.
+    setup_meshcore_done=true;
     return mesh_protocol_restart_into(mesh_protocol_descriptor().id);
 }
 
@@ -2936,7 +2948,9 @@ static void setup_progress(const char* title,uint8_t number){
     char progress[32]{};
     snprintf(progress,sizeof(progress),"STEP %u OF %u  /  %s",
              (unsigned)number,setup_is_meshcore()?3U:4U,mesh_protocol_name());
-    ui_centred(progress,ui_y(94),2,0,true);
+    // Keep progress below the header title, not within its glyph bounds.
+    // The first form/list row starts at y=142.
+    ui_centred(progress,ui_y(116),2,0,true);
 }
 static void setup_list_pager(size_t current,size_t count){
     if(count<=5)return;
@@ -6425,6 +6439,26 @@ void ui_show_storage_initializing() {
     ui_centred("INITIALISING STORAGE...",ui_y(716),3,0,true);
     refresh(MeshInkRefreshMode::FastGray16);
     T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash: initialising storage after SPIFFS mount failed");
+}
+
+void ui_sync_protocol_setup_result(){
+    // The official radio/identity first-boot commit completes after ui_setup
+    // has read the previous (pending) flags. Reconcile in memory before the
+    // first interactive screen; also re-open the wizard when older invalid
+    // installs had been incorrectly marked complete with an UNSET region.
+    if(mesh_protocol_descriptor().id!=2)return;
+    Preferences p;
+    if(!p.begin("t5-ui",true))return;
+    const bool configured=p.getBool("setup_mst",false);
+    p.end();
+    if(configured==setup_meshtastic_done)return;
+    setup_meshtastic_done=configured;
+    setup_any_done=setup_meshcore_done||setup_meshtastic_done;
+    setup_complete=configured;
+    keyboard_visible=false;
+    screen=configured?Screen::Contacts:Screen::SetupName;
+    Serial.printf("[MT-SETUP] UI setup synchronization complete=%u\\n",
+                  configured?1U:0U);
 }
 
 void ui_finish_startup() {
