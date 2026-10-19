@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include <string.h>
 #include "ui_onboarding.h"
 #include "protocol/mesh_protocol.h"
@@ -15,6 +16,28 @@
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
 #endif
+
+// The official network must not be started merely to draw an unconfigured
+// first-time wizard. A completed or pending native setup may boot the core;
+// new unconfigured devices instead use the offline native region/preset map.
+static bool selected_protocol_ready_for_boot(){
+    if(mesh_protocol_descriptor().id!=2)return true;
+    Preferences ui;
+    bool configured=false;
+    if(ui.begin("t5-ui",true)){
+        configured=ui.getBool("setup_mst",false);
+        ui.end();
+    }
+    Preferences staged;
+    bool pending=false;
+    if(staged.begin("mt-onboard",true)){
+        pending=staged.getBool("pending",false);
+        staged.end();
+    }
+    if(!configured&&!pending)
+        Serial.println("[MT-SETUP] offline onboarding; native worker/radio not started");
+    return configured||pending;
+}
 
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
@@ -364,7 +387,10 @@ void setup() {
         ui_setup();           // show boot logo while storage/radio initialize
         meshink_ram_snapshot("after-ui-setup");
 
-        mesh_protocol_setup();   // includes first-boot SPIFFS mount / format
+        // An unconfigured native protocol must not create a live worker,
+        // radio identity or persistent defaults while the wizard is open.
+        if(selected_protocol_ready_for_boot())mesh_protocol_setup();
+        ui_sync_protocol_setup_result();
         meshink_ram_snapshot("after-protocol-setup");
 
 
