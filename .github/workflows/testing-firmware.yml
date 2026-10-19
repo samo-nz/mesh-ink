@@ -28,6 +28,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Restore ESP-IDF/platform/compiler downloads and prior build outputs.
+      # Stable configuration cache key lets incremental rebuilds work even
+      # though every testing firmware bumps its embedded version.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            ~/.platformio/.cache
+            .pio
+          key: meshink-testing-cache64-${{ runner.os }}-${{ hashFiles('sdkconfig.cache64', 'tools/prepare_meshtastic_library.py', 'tools/select_crypto_provider.py') }}
+          restore-keys: |
+            meshink-testing-cache64-${{ runner.os }}-
       - run: python -m pip install platformio Pillow
       - name: Official Meshtastic source and crypto pin integrity
         run: python tools/check_official_meshtastic_pin.py
@@ -138,15 +151,11 @@ jobs:
             -Itests/touch_backend_stubs -Isrc \
             tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
           /tmp/meshink-t5-touch-backend-test
-      - name: Build primary cache64 firmware
-        run: python -m platformio run -e t5-unified-cache64
-      - name: Retain cache64 ELF for future hardware backtraces
-        uses: actions/upload-artifact@v4
-        with:
-          name: meshink-${{ github.sha }}-symbols
-          path: .pio/build/t5-unified-cache64/firmware.elf
-          if-no-files-found: error
-          retention-days: 14
+      - name: Build primary cache64 firmware and audit project warnings
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64 2>&1 | tee /tmp/meshink-cache64-build.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-build.log
       - name: Verify cache64 SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -210,11 +219,8 @@ jobs:
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
           sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
 
-      - name: Warnings-visible cache64 firmware audit
-        run: |
-          set -o pipefail
-          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
-          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
+      # Project-owned -Wall/-Wextra warnings are checked in the PRIMARY
+      # compile above: no second cold firmware compilation is necessary.
       - name: Verify testing version is embedded
         env:
           VERSION: ${{ steps.version.outputs.version }}

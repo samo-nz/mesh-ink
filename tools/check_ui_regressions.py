@@ -2099,3 +2099,14 @@ assert 'bool meshink_meshtastic_worker_quick_location_allowed()' in mt_worker
 # timestamp rather than illegally invoking the private native method.
 assert 'bool startSend(meshtastic_MeshPacket* packet) override' not in mt_radio
 assert 'quick_trace.tx_start_before=active_native_radio->tx_start_time();' in mt_radio
+
+# Test.87: upstream interactive NodeInfo override and build acceleration.
+assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false,0,true)' in meshtastic_runtime_source
+assert 'bool meshink_meshtastic_native_quick_nodeinfo_busy()' in meshtastic_runtime_source
+assert 'Throttle::isWithinTimespanMs(last,60UL*1000UL)' in meshtastic_runtime_source
+assert 'quick==2&&meshink_meshtastic_native_quick_nodeinfo_busy()' in mt_worker
+assert 'python tools/check_build_warnings.py /tmp/meshink-cache64-build.log' in testing_workflow_source
+assert 'python -m platformio run -e t5-unified-cache64-warnings' not in testing_workflow_source, 'duplicate full firmware build removed'
+assert 'meshink-${{ github.sha }}-symbols' not in testing_workflow_source, 'symbols artifact disabled'
+assert 'actions/cache@v4' in testing_workflow_source, 'testing build caches toolchains and objects'
+assert 'build_src_flags =\n    -Wall\n    -Wextra' in (root/"platformio.ini").read_text(encoding="utf-8")
