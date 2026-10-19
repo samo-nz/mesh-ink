@@ -4064,8 +4064,11 @@ static void draw_quick_panel() {
         uint8_t interval=0;
         const bool available=mesh_protocol_location_sharing_get(
             sharing,public_approximate,interval);
+        // Only advertise location when explicitly shared AND the physical
+        // GNSS receiver reports a live fix; otherwise advertise identity.
+        const bool send_location=available&&sharing&&status_gps_enabled&&status_gps_fix;
         ui_action_button_two_lines("BROADCAST",
-            !available?"LOADING":(sharing?"LOCATION":"NODE INFO"),
+            !available?"LOADING":(send_location?"LOCATION":"NODE INFO"),
             advert_button,true);
     }
     ui_action_button("POWER OFF",power_button,false);
@@ -4149,11 +4152,15 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
             uint8_t interval=0;
             const bool available=mesh_protocol_location_sharing_get(
                 sharing,public_approximate,interval);
-            const bool queued=available&&mesh_protocol_quick_broadcast(sharing);
-            show_toast(!available?"LOCATION SETTINGS LOADING":
-                       queued?(sharing?"POSITION REQUEST QUEUED":"NODE INFO REQUEST QUEUED"):
-                              "BROADCAST BUSY OR UNAVAILABLE");
-            draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);return true;
+            const bool send_location=available&&sharing&&status_gps_enabled&&status_gps_fix;
+            // Queue acceptance is not a radio transmission. The worker reports
+            // actual completion back to the UI through a separate event.
+            const bool queued=available&&mesh_protocol_quick_broadcast(send_location);
+            if(!queued){
+                show_toast(available?"RADIO BUSY - TRY LATER":"FAILED");
+                draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);
+            }
+            return true;
         }
     }
     if(hit(x,y,meshink_quick_power_rect(layout))) {
@@ -7207,6 +7214,19 @@ bool ui_restore_failed_compose(const char* text){
     compose_text[sizeof(compose_text)-1]=0;
     status_dirty=true;
     return true;
+}
+
+void ui_notify_meshtastic_quick_result(uint8_t result){
+    // Only the four user-selected outcomes. Never say SENT merely because
+    // the Meshtastic worker or router accepted a queued packet.
+    const char* message=result==1?"LOCATION SENT":
+                        result==2?"NODE INFO SENT":
+                        result==4?"RADIO BUSY - TRY LATER":"FAILED";
+    show_toast(message);
+    if(keyboard_message_mode&&(keyboard_visible||keyboard_landscape))
+        deferred_data_refresh=true;
+    else status_dirty=true;
+    T5_DEBUGF(T5_LOG_MESH,"[MT-QUICK] UI radio result=%u\n",(unsigned)result);
 }
 
 void ui_notify_advert_result(bool flood,bool ok){

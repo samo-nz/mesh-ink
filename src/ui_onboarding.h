@@ -46,6 +46,8 @@ void ui_status_set_gps(bool enabled, bool has_fix, int satellites, long latitude
 void ui_notify_message_received(bool channel);
 bool ui_restore_failed_compose(const char* text);
 void ui_notify_advert_result(bool flood, bool ok);
+// Called on the UI task only after native SX1262 completion/rejection.
+void ui_notify_meshtastic_quick_result(uint8_t result);
 void ui_notify_node_position_unavailable();
 void ui_request_data_refresh(const char* reason);
 void ui_apply_initial_radio_preset(); // sync first-time setup radio before showing UI

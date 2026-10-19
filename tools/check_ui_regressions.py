@@ -2032,8 +2032,8 @@ assert 'else if(screen==Screen::ProtocolSettings&&keyboard_visible&&!keyboard_la
 
 # Test.82: protocol-specific Quick Settings, native radio and privacy gates.
 assert 'ui_action_button_two_lines("BROADCAST",' in source
-assert 'sharing?"LOCATION":"NODE INFO"' in source
-assert 'const bool queued=available&&mesh_protocol_quick_broadcast(sharing);' in source
+assert 'send_location?"LOCATION":"NODE INFO"' in source
+assert 'const bool queued=available&&mesh_protocol_quick_broadcast(send_location);' in source
 two_line_source=source.split('static void ui_action_button_two_lines(',1)[1].split('static void ui_section_card(',1)[0]
 assert 'constexpr int scale=3;' in two_line_source, 'multiline quick actions match POWER OFF font'
 assert 'mesh_protocol_send_advert(true)' in source, 'original MeshCore advert preserved'
@@ -2044,11 +2044,31 @@ assert 'meshink_meshtastic_native_quick_broadcast(quick==1)' in mt_worker
 assert 'quick_location_allowed.load(std::memory_order_acquire)' in mt_worker
 assert 'quick_broadcast_request.compare_exchange_strong' in mt_worker
 assert 'meshink_meshtastic_worker_allow_quick_location(enabled);' in meshtastic_ui_source
-assert 'location!=sharing' in meshtastic_protocol_source
-assert 'ever_queued&&(uint32_t)(now-last_queued)<30000UL' in meshtastic_protocol_source
+assert '(location&&!sharing)' in meshtastic_protocol_source
+assert 'quick_ever_sent&&' in mt_worker and 'last_quick_sent_ms)<30000UL' in mt_worker
 mt_native=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_broadcast(bool location){',1)[1].split('void meshink_meshtastic_native_loop(){',1)[0]
 assert 'findPositionChannel(channel)' in mt_native
 assert '!nodeDB->hasLocalPositionSinceBoot()' in mt_native
 assert 'positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel)' in mt_native
 assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false)' in mt_native
 assert 'isTxAllowedChannelUtil(!tracker)' in mt_native and 'isTxAllowedAirUtil()' in mt_native
+
+# Test.83: a GNSS fix gates location labels/requests, and SENT toasts are
+# emitted exclusively from the native SX1262 packet completion result.
+assert source.count('available&&sharing&&status_gps_enabled&&status_gps_fix')==2
+assert 'POSITION REQUEST QUEUED' not in source and 'NODE INFO REQUEST QUEUED' not in source
+assert 'ui_notify_meshtastic_quick_result(uint8_t result)' in source
+result_handler=source.split('void ui_notify_meshtastic_quick_result(uint8_t result){',1)[1].split('void ui_notify_advert_result(',1)[0]
+assert all(s in result_handler for s in ('"LOCATION SENT"','"NODE INFO SENT"','"FAILED"','"RADIO BUSY - TRY LATER"'))
+assert 'quick_broadcast_request.exchange(0,std::memory_order_acq_rel)' in mt_worker
+assert 'meshink_meshtastic_radio_quick_finish(native_accepted);' in mt_worker
+assert 'meshink_meshtastic_radio_quick_result(result_kind,transmitted)' in mt_worker
+assert 'result=transmitted?result_kind:3' in mt_worker
+assert 'ui_notify_meshtastic_quick_result(quick_result)' in meshtastic_protocol_source
+mt_radio=(root/"src"/"protocol"/"meshtastic_radio.cpp").read_text(encoding="utf-8")
+assert 'class MeshInkQuickTxHook final : public RadioTxHook' in mt_radio
+assert 'ErrorCode send(meshtastic_MeshPacket* packet) override' in mt_radio
+assert 'quick_trace.packet_id=packet_id' in mt_radio
+assert 'tx_good_count()!=quick_trace.tx_good_before' in mt_radio
+assert 'void MeshInkQuickTxHook::packetReleased(' in mt_radio
+assert '60000UL' in mt_radio, 'silent/no-completion packets time out as failed'
