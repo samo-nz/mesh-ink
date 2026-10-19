@@ -10,6 +10,7 @@
 #include "hardware/power.h"
 #include "hardware/performance.h"
 #include "hardware/ram_audit.h"
+#include "hardware/storage.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -311,6 +312,10 @@ void setup() {
     if(boot_check==MeshInkPowerSleepCheck::Critical)
         ui_minimal_low_battery_shutdown(boot_power,"cold-boot");
 
+    // First-use formatting happens inside the pre-protocol backup recovery
+    // mount. Show preparation on the e-paper before the format blocks, without
+    // running normal UI/NVS initialization ahead of a possible restore.
+    meshink_storage_set_first_format_notice(ui_show_first_format_preparation);
     // One-shot maintenance runs BEFORE any core, journal writer or shared UI
     // state initializes. A failed rollback/mount never boots a live radio.
     if(!meshink_backup_run_pending_on_boot()){
