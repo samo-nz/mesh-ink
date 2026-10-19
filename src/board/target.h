@@ -98,3 +98,8 @@ bool t5_radio_set_lora_crc(uint8_t bytes);
 
 // T5-only implementation, called exclusively by the generic hardware/radio API.
 void t5_prepare_native_radio_spi();
+// The GPIO ISR service belongs to the board, not to either radio protocol.
+// Native Meshtastic uses the same per-pin DIO1 handler lifetime as MeshCore,
+// without attempting to reinstall the already-active process-wide service.
+bool t5_native_radio_attach_interrupt(uint32_t pin,void (*callback)(void),uint32_t mode);
+void t5_native_radio_detach_interrupt(uint32_t pin);
