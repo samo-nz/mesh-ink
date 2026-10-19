@@ -1451,6 +1451,17 @@ static void key(const char* label,const meshink_keyboard::Rect& rect) {
 
 static void draw_keyboard() {
     const auto metrics=keyboard_metrics(false);
+    // Name-entry keyboards overlay settings rows that extend beneath the
+    // keycaps. Paint an opaque backdrop before drawing the keys so previous
+    // settings text/card borders cannot show through their gaps. Keep the
+    // editable name fields above clear_top untouched; other keyboard users
+    // (notably password and chat) own their own background composition.
+    if(screen==Screen::ProtocolSettings||screen==Screen::SetupName||
+       screen==Screen::SetupRadio){
+        const int top=metrics.clear_top;
+        if(top>=0&&top<metrics.height)
+            meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);
+    }
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;numbers[i];++i){
