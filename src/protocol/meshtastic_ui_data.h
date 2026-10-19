@@ -15,6 +15,8 @@ bool meshink_meshtastic_ui_location_get(bool& enabled,bool& public_approximate,u
 bool meshink_meshtastic_ui_location_set(bool enabled,bool public_approximate,uint8_t interval);
 void meshink_meshtastic_ui_flush();
 void meshink_meshtastic_ui_sent(uint32_t packet_id, const char* text, bool success);
+// UI-core-only projection of native retry events; never schedules RF itself.
+void meshink_meshtastic_ui_retry_status(uint32_t packet_id,uint8_t retry,uint8_t total);
 // Discover unnamed nodes from real incoming traffic; request their official
 // Meshtastic User identity over the same channel with global/per-node throttles.
 // The selected protocol sends using its existing official worker.
