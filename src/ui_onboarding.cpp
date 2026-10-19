@@ -3248,7 +3248,7 @@ static void draw_backup_confirm(){
 static void draw_backup_progress(){
     // This e-paper image persists across the maintenance reboot. Flash/SD
     // work happens before UI initialization, so do not imply live progress
-    // or leave a misleading "REBOOTING..." screen visible for minutes.
+    // or leave a misleading restart-only screen visible for minutes.
     draw_app_header(backup_restore_mode?"RESTORE FROM SD":"BACKUP TO SD",false);
     ui_centred(backup_restore_mode?"RESTORING...":"BACKING UP...",ui_y(220),3,0,true);
     ui_centred("THIS MAY TAKE A FEW MINUTES",ui_y(322),2,0,true);
