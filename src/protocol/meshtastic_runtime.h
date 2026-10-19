@@ -18,6 +18,8 @@ void meshink_meshtastic_native_set_gps_snapshot(const MeshInkMeshtasticGpsSnapsh
 // Upstream Meshtastic exclusively owns the networking engine while selected.
 bool meshink_meshtastic_native_begin();
 void meshink_meshtastic_native_loop();
+// Only called by Meshtastic's network worker, never by the UI task.
+bool meshink_meshtastic_native_quick_broadcast(bool location);
 // Feed upstream position networking from MeshInk's existing GNSS service.
 void meshink_meshtastic_native_gps_update();
 void meshink_meshtastic_native_stop();

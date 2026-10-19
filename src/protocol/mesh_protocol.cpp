@@ -310,6 +310,9 @@ bool mesh_protocol_send_active(const char* text) {
 bool mesh_protocol_send_advert(bool flood) {
     return active_backend().send_advert ? active_backend().send_advert(flood) : false;
 }
+bool mesh_protocol_quick_broadcast(bool location){
+    return active_backend().quick_broadcast ? active_backend().quick_broadcast(location) : false;
+}
 
 bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode) {
     return active_backend().apply_radio

@@ -23,6 +23,8 @@
 #include "../../lib/Meshtastic/src/mesh/Throttle.h"
 #include "../../lib/Meshtastic/src/modules/Modules.h"
 #include "../../lib/Meshtastic/src/modules/PositionModule.h"
+#include "../../lib/Meshtastic/src/modules/NodeInfoModule.h"
+#include "../../lib/Meshtastic/src/mesh/PositionPrecision.h"
 #include "../../lib/Meshtastic/src/gps/RTC.h"
 #include "../hardware/gps.h"
 #include "../timezone_service.h"
@@ -563,6 +565,25 @@ void meshink_meshtastic_native_gps_update(){
                   (unsigned long)p.time,positionModule?1U:0U);
 #endif
 #endif
+}
+
+bool meshink_meshtastic_native_quick_broadcast(bool location){
+    // Only the pinned native worker may touch upstream router/module state.
+    // Meshtastic enforces channel privacy/precision and packet routing.
+    if(!native_ready||!config.lora.tx_enabled||!airTime||!nodeDB)return false;
+    if(location){
+        if(!positionModule)return false;
+        // Restored positions cannot masquerade as a fresh GPS fix.
+        if(!config.position.fixed_position&&!nodeDB->hasLocalPositionSinceBoot())return false;
+        uint8_t channel=0;
+        if(!findPositionChannel(channel))return false;
+        const bool tracker=config.device.role==meshtastic_Config_DeviceConfig_Role_TRACKER||
+                           config.device.role==meshtastic_Config_DeviceConfig_Role_TAK_TRACKER;
+        if(!airTime->isTxAllowedChannelUtil(!tracker))return false;
+        return positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel);
+    }
+    if(!nodeInfoModule||!airTime->isTxAllowedAirUtil())return false;
+    return nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false);
 }
 
 void meshink_meshtastic_native_loop(){

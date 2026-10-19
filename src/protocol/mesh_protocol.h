@@ -44,6 +44,7 @@ UiDataProvider* mesh_protocol_provider();
 void mesh_protocol_refresh_ui_data();
 bool mesh_protocol_send_active(const char* text);
 bool mesh_protocol_send_advert(bool flood);
+bool mesh_protocol_quick_broadcast(bool location);
 
 bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode);
 void mesh_protocol_apply_name(const char* name);

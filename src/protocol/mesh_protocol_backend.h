@@ -82,6 +82,8 @@ struct MeshInkProtocolBackend {
     void (*refresh_ui_data)() = nullptr;
     bool (*send_active)(const char* text) = nullptr;
     bool (*send_advert)(bool flood) = nullptr;
+    // Native quick announcement (location or identity) on other protocols.
+    bool (*quick_broadcast)(bool location) = nullptr;
 
     // Identity/radio settings.
     bool (*apply_radio)(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode) = nullptr;
