@@ -548,13 +548,13 @@ static bool native_radio_irq_owned=false;
 bool t5_native_radio_attach_interrupt(uint32_t pin,void (*callback)(void),
                                       uint32_t mode){
     if(pin!=(uint32_t)P_LORA_DIO_1||!callback){
-        Serial.printf("[T5-RADIO] invalid native DIO1 attach pin=%lu\\n",
+        Serial.printf("[T5-ERROR] invalid native DIO1 attach pin=%lu\\n",
                       (unsigned long)pin);
         return false;
     }
     if(radio_hal.handlerActive(pin)&&!native_radio_irq_owned){
         // A different radio owner still has the pin; never steal its ISR.
-        Serial.println("[T5-RADIO] DIO1 interrupt owned by another runtime");
+        Serial.println("[T5-ERROR] DIO1 interrupt owned by another runtime");
         return false;
     }
     radio_hal.attachInterrupt(pin,callback,mode);
