@@ -20,6 +20,9 @@ struct MeshInkUiStartupPlan {
 
 void ui_startup(const MeshInkUiStartupPlan& plan);
 void ui_setup();
+// First-use SPIFFS mount happens before ui_setup(); show a minimal, persistent
+// e-paper preparation notice without loading/modifying protocol or NVS state.
+void ui_show_first_format_preparation();
 void ui_prepare_headless_rx_wake();
 bool ui_headless_message_alert_pending();
 bool ui_service_headless_message_alert();
