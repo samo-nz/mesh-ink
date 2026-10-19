@@ -2050,7 +2050,7 @@ mt_native=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_
 assert 'findPositionChannel(channel)' in mt_native
 assert 'meshink_meshtastic_native_quick_position_available()' in mt_native
 assert 'positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel)' in mt_native
-assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false)' in mt_native
+assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false,0,true)' in mt_native
 assert 'isTxAllowedChannelUtil(!tracker)' in mt_native and 'isTxAllowedAirUtil()' in mt_native
 
 # Test.83: a GNSS fix gates location labels/requests, and SENT toasts are
