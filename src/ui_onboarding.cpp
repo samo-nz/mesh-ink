@@ -349,6 +349,7 @@ static bool headless_ui_state=false;
 static bool headless_alert_requested=false;
 static bool headless_display_session=false;
 static bool display_session_active=false;
+static bool cold_boot_splash_drawn=false;
 static bool quick_panel_active=false;
 static bool quick_panel_restore_landscape=false;
 static volatile bool quick_slider_dragging=false;
@@ -6349,7 +6350,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
             meshink_display_init();
             display_session_active=true;
             Serial.println("[T5-INIT] display=initialized");
-        }else Serial.println("[T5-INIT] display=reusing-first-format-session");
+        }else Serial.println("[T5-INIT] display=reusing-cold-boot-session");
         if(plan.radio_settle)meshink_board_start_local_radio_settle();
         if(plan.touch)set_ui_orientation(MeshInkOrientation::Portrait);
         else meshink_display_set_orientation(MeshInkOrientation::Portrait);
@@ -6385,19 +6386,11 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
 
     if(plan.service_mesh_between_steps)mesh_protocol_service_startup();
 
-    if(plan.splash&&plan.display){
-        meshink_display_set_all_white(&display);
-        // Centre the larger boot branding between the top margin and
-        // startup information, keeping the protocol logo at 125px high.
-        draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125),ui_h(65));
-        ui_centred("STARTING UP...",ui_y(716),3,0,true);
-        if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
-        ui_centred(UI_VERSION,ui_y(885),2,0,true);
-        meshink_display_poweron();
-        meshink_display_clear();
-        meshink_display_poweroff();
-        refresh(MeshInkRefreshMode::FastGray16);
-        T5_DEBUGLN(T5_LOG_UI,"[T5-BOOT] splash visible; starting storage and mesh initialization");
+    if(plan.splash&&plan.display&&!cold_boot_splash_drawn){
+        // Maintenance boots show their retained operation notice throughout
+        // the synchronous backup/restore; the normal splash is only needed
+        // after it has completed. Never draw a SECOND splash after formatting.
+        ui_show_cold_boot_splash();
     }
 }
 
@@ -6406,11 +6399,11 @@ void ui_setup() {
     ui_startup(plan);
 }
 
-void ui_show_first_format_preparation() {
-    // Reached only when the storage backend has checked that EVERY byte in
-    // the SPIFFS partition is erased. No protocol, journal or NVS state may
-    // be opened/modified before the maintenance restore boundary completes.
-    if(display_session_active)return;
+// Reuse the same EPDiy high-level session across the early splash, optional
+// first-format notice, and the normal UI. Initializing it twice in one boot
+// is unsafe even when the board-level EPD driver was deinitialized.
+static bool ensure_cold_boot_display(){
+    if(display_session_active)return fb!=nullptr;
     meshink_power_frontlight_begin();
     meshink_power_frontlight_set(0);
     meshink_display_init();
@@ -6418,22 +6411,75 @@ void ui_show_first_format_preparation() {
     meshink_display_set_orientation(MeshInkOrientation::Portrait);
     display=meshink_display_state_init();
     fb=meshink_display_framebuffer(&display);
-    if(!fb){
-        Serial.println("[T5-BOOT] first-format display framebuffer unavailable");
-        return;
-    }
+    if(!fb)Serial.println("[T5-BOOT] ERROR early EPD framebuffer unavailable");
+    return fb!=nullptr;
+}
+
+static bool selected_protocol_has_completed_setup(){
+    Preferences p;
+    if(!p.begin("t5-ui",true))return false;
+    const bool legacy=p.getBool("complete",false);
+    const bool new_flags=p.isKey("setup_mc")||p.isKey("setup_mst");
+    const uint8_t id=mesh_protocol_descriptor().id;
+    const bool ready=id==1?p.getBool("setup_mc",!new_flags&&legacy):
+                     id==2?p.getBool("setup_mst",false):false;
+    p.end();
+    return ready;
+}
+
+static void paint_cold_boot_frame(bool first_format){
+    if(!ensure_cold_boot_display())return;
+    // E-paper remembers the PREVIOUS physical image, independently of our
+    // framebuffer. Wipe the physical panel before composing the replacement;
+    // force the entire new image so GL16/GC16 cannot skip old text pixels.
+    meshink_display_poweron();
+    meshink_display_clear();
+    meshink_display_poweroff();
     meshink_display_set_all_white(&display);
-    ui_centred("MESHINK",ui_y(230),6,0,true);
-    ui_centred("PREPARING DEVICE",ui_y(420),3,0,true);
-    ui_centred("INITIALISING STORAGE",ui_y(495),3,0,true);
-    ui_centred("FIRST START MAY TAKE A WHILE",ui_y(625),2,0,false);
-    ui_centred("DO NOT SWITCH OFF",ui_y(705),2,0,true);
+    if(!first_format&&selected_protocol_has_completed_setup()){
+        // The normal configured-protocol branding remains at its test.43
+        // location. Only unconfigured/first-format boots are neutral.
+        draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125),ui_h(65));
+        Preferences p;
+        if(p.begin("t5-ui",true)){
+            String name=p.getString("name","");
+            p.end();
+            if(name.length())
+                ui_centred_fit(name.c_str(),ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
+        }
+    }else{
+        // A factory-wiped device must never imply MeshCore or Meshtastic was
+        // selected. This uses the existing MeshInk artwork at a central Y.
+        draw_meshink_logo(ui_y(245),false);
+    }
+    if(first_format){
+        ui_centred("FIRST START",ui_y(620),3,0,true);
+        ui_centred("INITIALISING STORAGE...",ui_y(693),3,0,true);
+        ui_centred("THIS MAY TAKE A FEW MINUTES",ui_y(776),2,0,false);
+        ui_centred("DO NOT SWITCH OFF",ui_y(835),2,0,true);
+    }else{
+        ui_centred("STARTING UP...",ui_y(716),3,0,true);
+    }
+    ui_centred(UI_VERSION,ui_y(885),2,0,true);
+    meshink_display_invalidate_previous(&display);
     meshink_display_poweron();
     const MeshInkDisplayResult result=meshink_display_update_screen(
-        &display,MeshInkRefreshMode::FastGray16,
+        &display,MeshInkRefreshMode::Gray16,
         (int)meshink_display_ambient_temperature());
     meshink_display_poweroff();
-    Serial.printf("[T5-BOOT] first-format preparation displayed result=%d\\n",(int)result);
+    cold_boot_splash_drawn=true;
+    Serial.printf("[T5-BOOT] splash=%s clear-before-draw=1 result=%d\\n",
+                  first_format?"FIRST FORMAT":"STARTUP",(int)result);
+}
+
+void ui_show_cold_boot_splash(){
+    paint_cold_boot_frame(false);
+}
+
+void ui_show_first_format_preparation(){
+    // The storage backend calls this only after verifying the entire SPIFFS
+    // partition is erased. Never infer "factory new" from a failed mount.
+    paint_cold_boot_frame(true);
 }
 
 void ui_show_storage_initializing() {
