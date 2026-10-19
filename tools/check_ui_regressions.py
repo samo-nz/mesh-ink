@@ -2089,8 +2089,13 @@ assert 'findPositionChannel(channel)' in native_ready
 
 # Test.85: a successful upstream TX counter can also be incremented for a
 # failed startTransmit; our radio subclass must explicitly reject that case.
-assert 'bool startSend(meshtastic_MeshPacket* packet) override' in mt_radio
-assert 'if(tracked&&!started)quick_trace.transmitted=false;' in mt_radio
+assert 'uint32_t tx_start_time() const {return lastTxStart;}' in mt_radio
+assert 'tx_start_time()!=quick_trace.tx_start_before' in mt_radio
 assert 'meshink_meshtastic_worker_quick_location_allowed()' in mt_radio
 assert 'return PRETX_DROP;' in mt_radio
 assert 'bool meshink_meshtastic_worker_quick_location_allowed()' in mt_worker
+
+# Test.86: official startSend() is private; use its protected successful-TX
+# timestamp rather than illegally invoking the private native method.
+assert 'bool startSend(meshtastic_MeshPacket* packet) override' not in mt_radio
+assert 'quick_trace.tx_start_before=active_native_radio->tx_start_time();' in mt_radio

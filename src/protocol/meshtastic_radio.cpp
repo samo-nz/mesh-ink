@@ -33,7 +33,7 @@ class MeshInkNativeSX1262;
 MeshInkNativeSX1262* active_native_radio=nullptr;
 
 struct QuickRadioTrace {
-    uint32_t packet_id=0,requested_at=0,tx_good_before=0;
+    uint32_t packet_id=0,requested_at=0,tx_good_before=0,tx_start_before=0;
     uint8_t kind=0;
     bool active=false,capturing=false,before_tx=false,finished=false,transmitted=false;
 };
@@ -73,16 +73,6 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
         return true;
     }
   protected:
-    // Upstream calls the packetReleased hook even when startTransmit itself
-    // fails (via completeSending). Do not mistake that accounting callback for
-    // successful RF transmission.
-    bool startSend(meshtastic_MeshPacket* packet) override {
-        const bool tracked=quick_trace.active&&packet&&quick_trace.packet_id&&
-                           packet->id==quick_trace.packet_id;
-        const bool started=SX1262Interface::startSend(packet);
-        if(tracked&&!started)quick_trace.transmitted=false;
-        return started;
-    }
     // Upstream's chip recovery re-runs begin(), clearing DIO2 switching.
     // Reapply the board electrical settings on recovery too, without changing
     // the initial begin-before-DIO2 ordering shared with working MeshCore.
@@ -95,6 +85,10 @@ class MeshInkNativeSX1262 final : public SX1262Interface {
     }
 public:
     uint32_t tx_good_count() const {return txGood;}
+    // The upstream startSend() method is private. This protected base stamp is
+    // updated only AFTER RadioLib accepts startTransmit(), unlike txGood,
+    // which also advances for unsuccessful startup cleanup.
+    uint32_t tx_start_time() const {return lastTxStart;}
     ErrorCode send(meshtastic_MeshPacket* packet) override {
         // The upstream module allocates a unique ID; capture it from the
         // actual router-to-radio handoff, not from another pending broadcast.
@@ -141,6 +135,7 @@ RadioTxHook::PreTxAction MeshInkQuickTxHook::beforeTransmit(
         if(!quick_trace.before_tx){
             quick_trace.before_tx=true;
             quick_trace.tx_good_before=active_native_radio->tx_good_count();
+            quick_trace.tx_start_before=active_native_radio->tx_start_time();
         }
     }
     return PRETX_SEND;
@@ -152,7 +147,8 @@ void MeshInkQuickTxHook::packetReleased(
     // The native driver increments txGood BEFORE invoking packetReleased
     // on completion. Drop/cancel hooks do not increment the counter.
     quick_trace.transmitted=quick_trace.before_tx&&
-        active_native_radio->tx_good_count()!=quick_trace.tx_good_before;
+        active_native_radio->tx_good_count()!=quick_trace.tx_good_before&&
+        active_native_radio->tx_start_time()!=quick_trace.tx_start_before;
     quick_trace.finished=true;
     Serial.printf("[MT-QUICK] radio released id=%08lx tx_complete=%u\n",
                   (unsigned long)packet->id,quick_trace.transmitted?1U:0U);
