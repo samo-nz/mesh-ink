@@ -368,7 +368,6 @@ enum class Screen : uint8_t {
     GpsSettings, GpsTuning, LocationSharing, DateTime, ManualTime, Timezone, CustomTimezone, DisplaySettings, NightSchedule, Help, About
 };
 static Screen screen = Screen::Welcome;
-static Screen setup_cancel_from=Screen::SetupName;
 static Screen backup_return_screen=Screen::More;
 static bool backup_restore_mode=false,backup_from_setup=false,backup_restore_pending=false;
 static uint8_t backup_flags=15,backup_available=15;
@@ -2935,6 +2934,11 @@ static void settings_info_row(const char* title,const char* subtitle,int referen
 }
 
 
+// Shared for both protocols: users can restore an existing identity directly
+// from the name step, including when Welcome was skipped after switching.
+static MeshInkUiRect setup_restore_button_rect(){
+    return ui_rect(60,650,420,74);
+}
 static void setup_footer(const char* action="NEXT"){
     if(keyboard_visible)return;
     const MeshInkUiRect left=ui_rect(24,850,232,74);
@@ -2945,7 +2949,7 @@ static void setup_footer(const char* action="NEXT"){
 static void setup_progress(const char* title,uint8_t number){
     char header[48]{};
     snprintf(header,sizeof(header),"%s",title);
-    draw_app_header(header,false,setup_any_done?"CANCEL":nullptr);
+    draw_app_header(header,false);
     char progress[32]{};
     snprintf(progress,sizeof(progress),"STEP %u OF %u  /  %s",
              (unsigned)number,setup_is_meshcore()?3U:4U,mesh_protocol_name());
@@ -2995,19 +2999,19 @@ static void draw_setup_name(){
         if(!keyboard_visible){
             ui_centred(setup_short_manual?"Manual short name":"Suggested from long name",
                        ui_y(455),2,0,false);
-            ui_action_button("EDIT LONG NAME",ui_rect(60,518,420,70),false);
-            ui_action_button("EDIT SHORT NAME",ui_rect(60,610,420,70),false);
-            ui_centred("Tap a name to edit. ENTER closes keyboard.",ui_y(745),2,0,false);
+            ui_centred("Tap either name field to edit.",ui_y(530),2,0,false);
         }else draw_keyboard();
     }else{
-        ui_centred("Letters, numbers and symbols. No spaces.",ui_y(330),2,0,false);
         if(keyboard_visible)draw_keyboard();
-        else {
-            ui_action_button("EDIT NAME",ui_rect(60,450,420,74),false);
-            ui_centred("ENTER on keyboard closes it.",ui_y(610),2,0,false);
+        else{
+            ui_centred("Letters, numbers and symbols. No spaces.",ui_y(330),2,0,false);
+            ui_centred("Tap the name field to edit.",ui_y(455),2,0,false);
         }
     }
-    if(!keyboard_visible)setup_footer();
+    if(!keyboard_visible){
+        ui_action_button("RESTORE FROM SD",setup_restore_button_rect(),false);
+        setup_footer();
+    }
 }
 static void draw_setup_region(){
     setup_progress("SELECT REGION",2);
@@ -3045,13 +3049,8 @@ static void setup_compact_row(const char* title,const char* value,int y){
                 rect.width-ui_w(272),2,0,true);
 }
 static void draw_setup_radio(){
-    if(setup_is_meshcore()){
-        draw_app_header("CUSTOMIZE RADIO",false,setup_any_done?"CANCEL":nullptr);
-        ui_centred("OPTIONAL RADIO SETTINGS",ui_y(94),2,0,true);
-    }else{
-        draw_app_header("CUSTOMIZE RADIO",false,setup_any_done?"CANCEL":nullptr);
-        ui_centred("OPTIONAL RADIO SETTINGS",ui_y(94),2,0,true);
-    }
+    draw_app_header("CUSTOMIZE RADIO",false);
+    ui_centred("OPTIONAL RADIO SETTINGS",ui_y(94),2,0,true);
     if(!setup_is_meshcore()){
         settings_info_row("REGION",setup_region_label(setup_region),160);
         settings_info_row("MODEM",setup_preset_label((size_t)setup_radio_preset),298);
@@ -3265,7 +3264,7 @@ static void draw_backup_result(){
 }
 
 static void draw_setup_cancel(){
-    draw_app_header("CANCEL SETUP",true);
+    draw_app_header("RETURN TO PREVIOUS PROTOCOL",true);
     ui_centred("RETURN TO YOUR PREVIOUS PROTOCOL?",ui_y(225),3,0,true);
     ui_draw_wrapped("This protocol will remain unconfigured. Your previous protocol and its settings will be retained.",
         ui_x(40),ui_y(355),ui_w(460),3,0,false,5);
@@ -5046,15 +5045,9 @@ static bool handle_setup_tap(int16_t x,int16_t y){
             return handle_name_keyboard(x,y);
         }
     }
-    if(screen!=Screen::Welcome&&screen!=Screen::SetupCancel&&
-       setup_any_done&&hit_header_action(x,y)){
-        setup_cancel_from=screen;
-        setup_enter(Screen::SetupCancel);
-        return true;
-    }
     if(screen==Screen::SetupCancel){
         if(hit(x,y,ui_rect(24,660,232,75))){
-            setup_enter(setup_cancel_from);return true;
+            setup_enter(Screen::SetupName);return true;
         }
         if(hit(x,y,ui_rect(284,660,232,75))){
             if(setup_return_protocol&&setup_protocol_done(setup_return_protocol))
@@ -5107,17 +5100,18 @@ static bool handle_setup_tap(int16_t x,int16_t y){
         return true;
     }
     if(screen==Screen::SetupName){
-        const bool short_field=!setup_is_meshcore() &&
-            (hit(x,y,ui_rect(24,345,492,88))||
-             hit(x,y,ui_rect(60,610,420,70)));
-        const bool long_field=hit(x,y,ui_rect(24,185,492,96))||
-            hit(x,y,setup_is_meshcore()?ui_rect(60,450,420,74):
-                                     ui_rect(60,518,420,70));
+        const bool short_field=!setup_is_meshcore()&&
+            hit(x,y,ui_rect(24,345,492,88));
+        const bool long_field=hit(x,y,ui_rect(24,185,492,96));
         if(short_field||long_field){
             setup_short_edit=short_field;
             keyboard_visible=true;
             replace_name_on_type=false;
             draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+        }
+        if(hit(x,y,setup_restore_button_rect())){
+            backup_open_files(Screen::SetupName);
+            return true;
         }
         if(hit(x,y,ui_rect(24,850,232,74))){
             setup_enter(setup_any_done?Screen::SetupCancel:Screen::Welcome);return true;
