@@ -786,7 +786,7 @@ struct MeshInkCpuBoostScope {
 
 static bool meshcore_rf_matches_preset(const MeshInkRadioPreset& preset){
     if(!preset.path_hash_bytes)return false;
-    // LoRa explicit-header coding rate, MeshCore routing path hash and TX
+    // LoRa explicit-header coding rate, routing path hash and TX
     // power do not determine whether this RF profile can receive packets.
     // Reuse the existing backend comparison while allowing all supported
     // coding rates and path-hash sizes; frequency, BW and SF must match.
@@ -822,7 +822,7 @@ static bool apply_selected_preset() {
 }
 
 
-// Meshtastic retains the original region-filtered onboarding. MeshCore uses
+// Protocol two retains the original region-filtered onboarding. Protocol one uses
 // one complete preset list, with CUSTOM followed by both NZ profiles.
 static size_t setup_region_count(){return mesh_protocol_setup_region_count();}
 static const char* setup_region_label(size_t index){
@@ -3005,7 +3005,7 @@ static void setup_compact_row(const char* title,const char* value,int y){
 static void draw_setup_radio(){
     if(setup_is_meshcore()){
         draw_app_header("CUSTOMIZE RADIO",false,setup_any_done?"CANCEL":nullptr);
-        ui_centred("OPTIONAL RADIO SETTINGS / MESHCORE",ui_y(94),2,0,true);
+        ui_centred("OPTIONAL RADIO SETTINGS",ui_y(94),2,0,true);
     }else setup_progress("RADIO CONFIGURATION",5);
     if(!setup_is_meshcore()){
         settings_info_row("REGION",setup_region_label(setup_region),160);
