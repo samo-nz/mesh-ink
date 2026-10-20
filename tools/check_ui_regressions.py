@@ -651,7 +651,7 @@ assert "static void ui_draw_wrapped_tail(" in source, "bounded tail rendering re
 assert "static void ui_draw_compose_tail(" in source, "message composer has a dedicated clipped tail renderer"
 assert source.count("ui_draw_compose_tail(")>=3, "portrait and landscape message entry both use the clipped compose tail renderer"
 assert "landscape?198:618" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape keyboard is shifted to the bottom edge"
-assert "Rect{16,14,928,165}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compose viewport uses the reclaimed white space"
+assert "Rect{16,105,928,74}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compact compose viewport leaves room for UTF-8 picker above"
 
 assert "meshink_keyboard::in_row(y,828)" not in source, "portrait third-row touch must not use fixed T5 y coordinates"
 assert "meshink_keyboard::in_row(y,425)" not in source, "landscape action-row touch must not use fixed T5 y coordinates"
