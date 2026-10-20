@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101b24">
   <title>MeshInk · Serial Console</title>
   <link rel="stylesheet" href="./style.css">
-  <script type="module" src="./serial.js?v=current-release-only-1"></script>
+  <script type="module" src="./serial.js?v=release-modes-1"></script>
 </head>
 <body>
   <main class="shell">
@@ -59,12 +59,12 @@
       <p class="serial-stats">Reported web events are best-effort, not unique devices or verified boots. GitHub downloads count release assets separately, not firmware fetched by the web flasher.</p>
       <div class="usage-table-scroll">
         <table class="usage-table">
-          <thead><tr><th>Version</th><th>Web downloads</th><th>Successful flashes</th><th>GitHub downloads</th></tr></thead>
-          <tbody id="usage-rows"><tr><td colspan="4">Loading public release totals…</td></tr></tbody>
+          <thead><tr><th rowspan="2">Version</th><th colspan="2">Web downloads</th><th colspan="2">Successful flashes</th><th colspan="2">GitHub downloads</th></tr><tr><th>Update</th><th>Full wipe</th><th>Update</th><th>Full wipe</th><th>Update</th><th>Full wipe</th></tr></thead>
+          <tbody id="usage-rows"><tr><td colspan="7">Loading public release totals…</td></tr></tbody>
         </table>
       </div>
       <p id="usage-status" class="serial-stats" role="status" aria-live="polite">Web event counting requires the optional statistics service.</p>
-      <p class="serial-stats"><strong>Web downloads:</strong> verified firmware downloads from the flasher. <strong>Flashes:</strong> browser-reported completed writes. <strong>GitHub downloads:</strong> official release update and full-wipe asset downloads. These totals can overlap.</p>
+      <p class="serial-stats"><strong>Web downloads:</strong> verified firmware downloads from the flasher. <strong>Flashes:</strong> browser-reported completed writes. <strong>GitHub downloads:</strong> official release asset downloads. Totals can overlap. Only published stable versions 3.1.0 and later are shown.</p>
     </section>
 
     <footer><a href="./">Back to Web Flasher</a> · <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">MeshInk on GitHub</a></footer>
