@@ -1,4 +1,4 @@
-# MeshInk 3.0.0
+# MeshInk 3.1.0
 
 <p align="center">
   <img src="docs/file_00000000248c820a81311144dc2df47d.png" alt="MeshInk — Stay Connected, Further" width="720">
@@ -59,7 +59,7 @@ Send private or channel messages, explore offline maps, discover nodes and share
 
 - **Two networks, one device** — Switch between MeshCore and Meshtastic (one active at a time).
 - **Standalone messaging** — Private and channel messages on the touchscreen.
-- **Fast, responsive typing** — A carefully tuned on-screen keyboard designed to make messaging feel natural on e-paper.
+- **Fast, responsive typing** — Portrait and landscape keyboards with UTF-8 accented-character alternatives on long-press, an emoji picker with 34 choices, and Unicode-aware message editing.
 - **Offline maps** — View maps and mesh-node locations without internet.
 - **GPS and location sharing** — Find your position and choose when to share it.
 - **Contacts and discovery** — Find nodes and manage contacts.
@@ -68,6 +68,13 @@ Send private or channel messages, explore offline maps, discover nodes and share
 - **Battery-friendly standby** — Low-power standby and unread-message indications.
 - **Customisable settings** — Radio, GPS, display and power preferences.
 - **SD card support** — Offline maps and device backup/restore.
+
+### New in 3.1.0
+
+- **International typing** — Long-press characters for accented letters and punctuation alternatives on portrait or landscape keyboards.
+- **Emoji messaging** — 34 selectable emoji, with ten frequent shortcuts on the symbols row and a compact landscape selection panel.
+- **UTF-8-aware composition** — Correct character boundaries for wrapping, editing, backspace and display clipping.
+- **Meshtastic message progress** — Show actual retry progress for acknowledged direct messages and the final delivery/failure outcome.
 
 ## Hardware
 
