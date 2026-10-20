@@ -72,15 +72,14 @@ export async function showUsageStatistics() {
     const t = totals.get(version);
     const webValue = (value) => webEnabled && web.status === "fulfilled" ? value : "—";
     const tr = document.createElement("tr");
-    tr.append(cell(version), cell(webValue(t.updateDownloads)), cell(webValue(t.wipeDownloads)),
-      cell(webValue(t.updateFlashes)), cell(webValue(t.wipeFlashes)),
-      cell(t.githubUpdate), cell(t.githubWipe));
+    tr.append(cell(version), cell(webValue(t.updateFlashes)), cell(webValue(t.wipeFlashes)),
+      cell(t.githubUpdate + t.githubWipe));
     rows.append(tr);
   }
   if (!totals.size) {
     const tr = document.createElement("tr");
     const td = cell("Release counts unavailable");
-    td.colSpan = 7;
+    td.colSpan = 4;
     tr.append(td);
     rows.append(tr);
   }
