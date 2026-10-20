@@ -1,5 +1,6 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js.js";
 import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";
+import { reportFlashEvent } from "./flash-stats.js";
 
 const UPDATE_ADDRESS = 0x10000;
 const FULL_WIPE_ADDRESS = 0x0;
@@ -276,6 +277,7 @@ async function flash() {
       setActivity("Checking firmware checksum…");
       if (await sha256(bytes) !== item.sha256) throw new Error("Firmware checksum mismatch; nothing was flashed.");
       firmwareLabel = `MeshInk v${activeManifest.version}`;
+      reportFlashEvent(activeManifest.version, mode, "download");
       setActivity("Firmware verified. Connecting to the T5…");
     }
     transport = new Transport(port, false);
@@ -306,6 +308,7 @@ async function flash() {
       }
     });
     completed = true;
+    if (source === "release") reportFlashEvent(activeManifest.version, mode, "flash");
     flashingCompleted = true;
     progress.value = 100;
     setActivity("Firmware written successfully. Restarting the T5…");
