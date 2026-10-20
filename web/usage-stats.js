@@ -2,7 +2,7 @@ import { STATS_ENDPOINT } from "./stats-config.js?v=stats-20261020-2";
 
 const rows = document.getElementById("usage-rows");
 const status = document.getElementById("usage-status");
-const GITHUB_RELEASES = "https://api.github.com/repos/samo-nz/mesh-ink/releases?per_page=100";
+const GITHUB_LATEST = "https://api.github.com/repos/samo-nz/mesh-ink/releases/latest";
 
 function cell(text) {
   const el = document.createElement("td");
@@ -34,25 +34,30 @@ async function getJSON(url) {
 export async function showUsageStatistics() {
   const webEnabled = !!STATS_ENDPOINT;
   const [github, web] = await Promise.allSettled([
-    getJSON(GITHUB_RELEASES),
+    getJSON(GITHUB_LATEST),
     webEnabled ? getJSON(STATS_ENDPOINT.replace(/\/$/, "") + "/stats") : Promise.resolve(null)
   ]);
 
   const totals = new Map();
-  if (github.status === "fulfilled" && Array.isArray(github.value)) {
-    for (const release of github.value) {
-      const version = String(release.tag_name || "").replace(/^v/, "");
-      if (!/^\d+\.\d+\.\d+(?:-rc\.\d+)?$/.test(version)) continue;
-      if (!totals.has(version)) totals.set(version, { downloads: 0, flashes: 0, github: 0 });
-      totals.get(version).github += onlyFirmwareAssets(release, version);
+  // The table is deliberately scoped to the current published stable release.
+  // Older events remain in D1 for historical auditing, but are not displayed.
+  let currentVersion = null;
+  if (github.status === "fulfilled" && github.value?.tag_name) {
+    const version = String(github.value.tag_name).replace(/^v/, "");
+    if (/^\d+\.\d+\.\d+$/.test(version)) {
+      currentVersion = version;
+      totals.set(version, {
+        downloads: 0,
+        flashes: 0,
+        github: onlyFirmwareAssets(github.value, version)
+      });
     }
   }
   if (web.status === "fulfilled" && web.value && Array.isArray(web.value.counts)) {
     for (const event of web.value.counts) {
-      if (!/^\d+\.\d+\.\d+(?:-rc\.\d+)?$/.test(event.version || "")) continue;
+      if (!currentVersion || event.version !== currentVersion) continue;
       if (!["download", "flash"].includes(event.event) || !["update", "wipe"].includes(event.mode)) continue;
       if (!Number.isSafeInteger(event.count) || event.count < 0) continue;
-      if (!totals.has(event.version)) totals.set(event.version, { downloads: 0, flashes: 0, github: null });
       totals.get(event.version)[event.event === "download" ? "downloads" : "flashes"] += event.count;
     }
   }
