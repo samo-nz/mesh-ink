@@ -25,6 +25,7 @@
 #include "ui_layout.h"
 #include "t5_logging.h"
 #include "keyboard_geometry.h"
+#include "keyboard_utf8_input.h"
 #include "message_limits.h"
 #include "utf8_display.h"
 #include "fonts/meshink_emoji.h"
@@ -200,6 +201,10 @@ static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
 static bool message_keyboard_case_dirty = false;
 static bool keyboard_landscape = false;
+static bool picker_open=false,picker_emoji=false;
+static char picker_pending_key=0;
+static uint32_t picker_chars[40]={};
+static int picker_count=0;
 static bool standby_restore_landscape = false;
 static uint16_t status_unread = 0;
 static uint16_t status_channel_unread = 0;
@@ -1693,6 +1698,57 @@ static void key(const char* label,const meshink_keyboard::Rect& rect) {
             rect.y+(rect.height-ui_text_height(scale))/2,scale,0,true);
 }
 
+
+static void keyboard_picker_start(char letter,bool emoji){
+    picker_open=false;picker_emoji=emoji;picker_pending_key=emoji?0:letter;picker_count=0;
+    if(emoji){
+        for(uint32_t cp:MESHINK_KEYBOARD_ALL_EMOJI)picker_chars[picker_count++]=cp;
+    }else{
+        const char* alt=meshink_letter_alternatives(letter);
+        if(!alt)return;
+        const size_t n=strlen(alt);
+        for(size_t i=0;i<n&&picker_count<40;){
+            const auto ch=meshink_utf8::next(alt+i,n-i);
+            if(!ch.bytes)break;
+            picker_chars[picker_count++]=ch.codepoint;
+            i+=ch.bytes;
+        }
+    }
+    picker_open=picker_count>0;
+}
+static meshink_keyboard::Rect keyboard_picker_rect(){
+    const auto m=keyboard_metrics(keyboard_landscape);
+    const int tile=keyboard_landscape?38:48;
+    const int rows=(picker_count+7)/8;
+    const int height=rows*tile+16;
+    // Overlay the message history, ABOVE the fixed compose entry box.
+    return {m.entry.x,max(0,m.entry.y-height-8),m.entry.width,height};
+}
+static int keyboard_picker_option(int x,int y){
+    const auto r=keyboard_picker_rect();
+    if(x<r.x||x>=r.x+r.width||y<r.y+8||y>=r.y+r.height)return -1;
+    const int tile=keyboard_landscape?38:48;
+    const int col=(x-r.x)*8/r.width,row=(y-r.y-8)/tile;
+    const int index=row*8+col;
+    return index<picker_count?index:-1;
+}
+static void draw_keyboard_picker(){
+    if(!picker_open||!keyboard_message_mode)return;
+    const auto r=keyboard_picker_rect();
+    meshink_display_fill_rect({r.x,r.y,r.width,r.height},0xFF,fb);
+    rounded_box(r.x,r.y,r.width,r.height,max(4,ui_w(5)));
+    const int tile=keyboard_landscape?38:48;
+    for(int i=0;i<picker_count;++i){
+        const int x=r.x+(i%8)*r.width/8;
+        const int y=r.y+8+(i/8)*tile;
+        char encoded[5];meshink_encode_utf8(picker_chars[i],encoded);
+        // Scale 2 uses the dedicated native 16-pixel emoji face.
+        const int scale=picker_emoji?2:3;
+        ui_text(encoded,x+(r.width/8-ui_text_width(encoded,scale))/2,
+                y+(tile-ui_text_height(scale))/2,scale,0,false);
+    }
+}
+
 static void draw_keyboard() {
     const auto metrics=keyboard_metrics(false);
     // Name-entry keyboards need an opaque backing between the keys, but
@@ -1711,8 +1767,10 @@ static void draw_keyboard() {
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;numbers[i];++i){
-        char label[2]={numbers[i],0};
-        key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
+        char label[5]={numbers[i],0};
+        if(keyboard_symbols&&keyboard_message_mode)meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
+        if(keyboard_symbols&&keyboard_message_mode)ui_text(label,digits.start+i*digits.pitch+(digits.width-ui_text_width(label,2))/2,metrics.number_top+(metrics.key_height-ui_text_height(2))/2,2,0,false);
+        else key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
     const char* letter_rows_upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
     const char* letter_rows_lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
@@ -1779,7 +1837,8 @@ static void draw_landscape_keyboard(){
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
-        char label[2]={numbers[i],0};
+        char label[5]={numbers[i],0};
+        if(keyboard_symbols&&keyboard_message_mode)meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
         landscape_key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
     const char** rows=active_keyboard_rows();
@@ -4304,6 +4363,7 @@ static void draw_quick_panel() {
 
     ui_centred("Tap below or swipe up to close",ui_y(560),2,0,false);
     draw_toast();
+    draw_keyboard_picker();
 }
 
 static void close_quick_panel() {
@@ -4420,6 +4480,7 @@ static void draw_screen() {
     }
     if(keyboard_landscape){
         draw_landscape_keyboard();
+        draw_keyboard_picker();
         return;
     }
     switch(screen){
@@ -5112,6 +5173,7 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
     }
     char character=0;
     if(keyboard_character_at(x,y,true,character)){
+        if(keyboard_message_mode&&keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
         append(character);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
@@ -5179,12 +5241,13 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
         if(x>=meshink_keyboard::delete_split(metrics)){
             const size_t n=strlen(compose_text);
-            if(n)compose_text[n-1]=0;
+            if(n)meshink_erase_utf8(compose_text);
             queue_text_refresh();return true;
         }
     }
     char character=0;
     if(keyboard_character_at(x,y,false,character)){
+        if(keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
         append(character);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
@@ -7161,7 +7224,56 @@ void ui_loop() {
             const uint8_t page_count=(mesh_protocol_radio_preset_count()+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MeshInkRefreshMode::FastGray16);
-        }else handle_tap(tap.x,tap.y);
+        }else {
+            const bool message_edit=keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
+                (screen==Screen::ContactChat||screen==Screen::ChannelChat);
+            bool handled_picker=false;
+            if(message_edit){
+                const auto m=keyboard_metrics(keyboard_landscape);
+                if(picker_open){
+                    const int choice=keyboard_picker_option(tap.x,tap.y);
+                    if(choice>=0){
+                        if(meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,picker_chars[choice]))
+                            queue_text_refresh();
+                        picker_open=false;picker_pending_key=0;
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                        handled_picker=true;
+                    }else if(tap.y<m.number_top){
+                        // Outside the options: dismiss; leave existing text unchanged.
+                        picker_open=false;picker_pending_key=0;
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                        handled_picker=true;
+                    }else{
+                        // Keyboard taps dismiss the popover while preserving the
+                        // originally held letter before normal typing continues.
+                        if(picker_pending_key)append(picker_pending_key);
+                        picker_open=false;picker_pending_key=0;
+                        queue_text_refresh();
+                    }
+                }
+                if(!handled_picker&&tap.hold_ms>=450&&!keyboard_symbols){
+                    char letter=0;
+                    if(meshink_keyboard::in_row(tap.y,m.mode_key.y,m)&&
+                       tap.x<meshink_keyboard::mode_split(m)){
+                        keyboard_picker_start(0,true);
+                    }else if(keyboard_character_at(tap.x,tap.y,keyboard_landscape,letter)&&
+                              meshink_letter_alternatives(letter)){
+                        keyboard_picker_start(letter,false);
+                    }
+                    if(picker_open){
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                        handled_picker=true;
+                    }
+                }else if(!handled_picker&&tap.hold_ms>=450&&keyboard_symbols&&
+                         meshink_keyboard::in_row(tap.y,m.mode_key.y,m)&&
+                         tap.x<meshink_keyboard::mode_split(m)){
+                    keyboard_picker_start(0,true);
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                    handled_picker=true;
+                }
+            }
+            if(!handled_picker)handle_tap(tap.x,tap.y);
+        }
     }
     const uint32_t touch_diag_now=millis();
     if(touch_diag_now-last_touch_diag_ms>=5000UL){
