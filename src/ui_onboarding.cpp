@@ -5164,7 +5164,7 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
                 ((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()&&setup_short_edit
                    ?setup_short_name:node_name));
             const size_t n=strlen(value);
-            if(n)value[n-1]=0;
+            if(n){if(keyboard_message_mode)meshink_erase_utf8(value);else value[n-1]=0;}
             if((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()){
                 if(setup_short_edit)setup_short_manual=true;
                 else if(!setup_short_manual)
