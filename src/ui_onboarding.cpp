@@ -1309,7 +1309,11 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         if(*cursor=='\n'){++cursor;continue;}
         size_t take=ui_wrap_take(cursor,max_width,scale);
         if(!take)take=1;
-        char line_text[160]{};const size_t copy=min(take,sizeof(line_text)-4);
+        char line_text[160]{};
+        size_t copy=min(take,sizeof(line_text)-4);
+        // If the display line buffer is shorter than the measured text,
+        // never copy half of a multibyte UTF-8 character.
+        if(copy<take)while(copy&&(((uint8_t)cursor[copy]&0xC0)==0x80))--copy;
         memcpy(line_text,cursor,copy);
         size_t trim=strlen(line_text);
         while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
