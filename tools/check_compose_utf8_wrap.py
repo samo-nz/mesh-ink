@@ -27,6 +27,6 @@ assert portrait.rindex("draw_keyboard_picker();") > portrait.rindex("draw_toast(
 
 # An incremental chat redraw must explicitly erase popup pixels on dismissal.
 assert "static void keyboard_picker_clear_pixels()" in source
-handler = source[source.index("if(picker_open){\n                    int choice=keyboard_picker_option"): ]
+handler = source[source.index("int choice=keyboard_picker_option"): ]
 assert handler.count("keyboard_picker_clear_pixels();") >= 3
 assert "Repaint the erased history overlay after the key tap." in handler
