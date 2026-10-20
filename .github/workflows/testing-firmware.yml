@@ -102,6 +102,11 @@ jobs:
           g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
             tests/test_ui_layout.cpp -o /tmp/ui-layout-test
           /tmp/ui-layout-test
+      - name: UTF-8 decoding and emoji glyph regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_utf8_display.cpp -o /tmp/meshink-utf8-display-test
+          /tmp/meshink-utf8-display-test
       - name: Map grayscale equivalence regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
