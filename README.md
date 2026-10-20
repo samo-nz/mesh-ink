@@ -8,7 +8,7 @@
 
 MeshInk turns the **LILYGO T5 E-Paper S3 Pro** into a standalone touchscreen mesh communicator supporting **MeshCore and Meshtastic**.
 
-Send private or channel messages, explore offline maps, discover nodes and share your location — without needing a phone or internet connection. Choose your network during setup or switch later in **Settings > Protocol**. Each protocol keeps its own settings and message history.
+Send private or channel messages, explore offline maps, discover nodes and share your location — without needing a phone or internet connection. Built for fast, responsive touchscreen interaction, MeshInk puts special emphasis on a smooth, practical on-screen keyboard for everyday messaging. Choose your network during setup or switch later in **Settings > Protocol**. Each protocol keeps its own settings and message history.
 
 ## Screenshots
 
@@ -59,6 +59,7 @@ Send private or channel messages, explore offline maps, discover nodes and share
 
 - **Two networks, one device** — Switch between MeshCore and Meshtastic (one active at a time).
 - **Standalone messaging** — Private and channel messages on the touchscreen.
+- **Fast, responsive typing** — A carefully tuned on-screen keyboard designed to make messaging feel natural on e-paper.
 - **Offline maps** — View maps and mesh-node locations without internet.
 - **GPS and location sharing** — Find your position and choose when to share it.
 - **Contacts and discovery** — Find nodes and manage contacts.
