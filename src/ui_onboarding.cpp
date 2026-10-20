@@ -1116,6 +1116,42 @@ static uint32_t ui_small_latin_base(uint32_t cp,uint8_t* mark=nullptr) {
     if(mark)*mark=m;
     return base;
 }
+// Additional Central European letters, drawn as native-font base glyphs
+// plus robust diacritics. Return the original character when unsupported.
+// mark: 1 ogonek, 2 acute, 3 caron, 4 L stroke, 5 overdot.
+static uint32_t ui_extended_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
+    uint8_t mark=0;
+    uint32_t base=cp;
+    switch(cp){
+        case 0x0104: base='A'; mark=1; break;
+        case 0x0105: base='a'; mark=1; break;
+        case 0x0106: base='C'; mark=2; break;
+        case 0x0107: base='c'; mark=2; break;
+        case 0x010C: base='C'; mark=3; break;
+        case 0x010D: base='c'; mark=3; break;
+        case 0x0118: base='E'; mark=1; break;
+        case 0x0119: base='e'; mark=1; break;
+        case 0x0141: base='L'; mark=4; break;
+        case 0x0142: base='l'; mark=4; break;
+        case 0x0143: base='N'; mark=2; break;
+        case 0x0144: base='n'; mark=2; break;
+        case 0x0158: base='R'; mark=3; break;
+        case 0x0159: base='r'; mark=3; break;
+        case 0x015A: base='S'; mark=2; break;
+        case 0x015B: base='s'; mark=2; break;
+        case 0x0160: base='S'; mark=3; break;
+        case 0x0161: base='s'; mark=3; break;
+        case 0x0179: base='Z'; mark=2; break;
+        case 0x017A: base='z'; mark=2; break;
+        case 0x017B: base='Z'; mark=5; break;
+        case 0x017C: base='z'; mark=5; break;
+        case 0x017D: base='Z'; mark=3; break;
+        case 0x017E: base='z'; mark=3; break;
+        default: break;
+    }
+    if(out_mark)*out_mark=mark;
+    return base;
+}
 static bool ui_zero_width_cp(uint32_t cp) {
     return cp==0xFE0F||cp==0xFE0E||cp==0x200D||cp==0x0304;
 }
@@ -1128,14 +1164,14 @@ static int ui_emoji_size(int scale) {
 static int ui_char_advance(uint32_t cp,int scale) {
     if(ui_zero_width_cp(cp))return 0;
     if(meshink_emoji_supported(cp))return ui_emoji_size(scale)+2;
-    cp=ui_font_base(cp);
+    cp=ui_extended_latin_base(ui_font_base(cp));
     if(scale>=3) {
         const UiSmoothFont face=ui_smooth_font(scale);
         const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
         return g?max(1,(int)((g->advanceX+8)>>4)):0;
     }
     if(cp==' ')return 3*scale;
-    const uint8_t* rows=glyph(ui_small_latin_base(cp)<=127?(char)ui_small_latin_base(cp):'?');
+    const uint8_t* rows=glyph(ui_small_latin_base(ui_extended_latin_base(cp))<=127?(char)ui_small_latin_base(ui_extended_latin_base(cp)):'?');
     int left=0,right=4;ui_glyph_bounds(rows,left,right);
     return (right>=left?(right-left+1):3)*scale+scale;
 }
@@ -1191,6 +1227,8 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
     }
     bool macron=false;
     cp=ui_font_base(cp,&macron);
+    uint8_t extended_mark=0;
+    cp=ui_extended_latin_base(cp,&extended_mark);
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
     if(!g)return;
@@ -1221,6 +1259,31 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
             const int px=start_x+dx,py=first_y+dy;
             if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
                 meshink_display_draw_pixel(px,py,color,fb);
+        }
+    }
+    if(extended_mark){
+        const int thickness=scale>=6?4:scale>=4?3:2;
+        const int middle=gx+(int)g->width/2;
+        const int top_y=gy-3-thickness;
+        auto point=[&](int px,int py){
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        };
+        if(extended_mark==1){ // lower-right ogonek hook
+            for(int t=0;t<thickness+3;++t){point(gx+g->width-3+t/2,gy+g->height+t);point(gx+g->width-4+t/2,gy+g->height+t);}
+        }else if(extended_mark==4){ // barred L/l
+            for(int t=-thickness*2;t<=thickness*2;++t)
+                for(int w=0;w<thickness;++w)point(middle+t,gy+g->height/2-t/2+w);
+        }else if(extended_mark==5){
+            for(int y=0;y<thickness+1;++y)for(int x=0;x<thickness+1;++x)point(middle+x,top_y+y);
+        }else if(extended_mark==2){
+            for(int t=0;t<thickness*2+2;++t)for(int w=0;w<thickness;++w)
+                point(middle-thickness+t,top_y+thickness*2-t/2+w);
+        }else if(extended_mark==3){
+            for(int t=0;t<thickness*2+2;++t)for(int w=0;w<thickness;++w){
+                point(middle-thickness*2+t,top_y+t/2+w);
+                point(middle+t,top_y+thickness+1-t/2+w);
+            }
         }
     }
 }
@@ -1261,7 +1324,8 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
         }
         bool macron=false;
         uint8_t accent=0;
-        const uint32_t cp=ui_small_latin_base(ui_font_base(c.codepoint,&macron),&accent);
+        uint8_t ext_mark=0;
+        const uint32_t cp=ui_small_latin_base(ui_extended_latin_base(ui_font_base(c.codepoint,&macron),&ext_mark),&accent);
         if(cp==' ') {x+=3*scale;continue;}
         const uint8_t* rows=glyph(ui_small_latin_base(cp)<=127?(char)ui_small_latin_base(cp):'?');
         int left=0,right=4;ui_glyph_bounds(rows,left,right);
@@ -1284,6 +1348,20 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
                 meshink_display_draw_pixel(mid-scale,y-2,color,fb);
             else if(accent==7)
                 meshink_display_draw_pixel(mid,y+7*scale,color,fb);
+        }
+        if(ext_mark){
+            const int middle=x+((right-left+1)*scale)/2;
+            const int stroke=max(1,scale);
+            for(int t=0;t<stroke+2;++t){
+                if(ext_mark==1)meshink_display_draw_pixel(x+(right-left+1)*scale-1+t/2,y+7*scale+t,color,fb);
+                else if(ext_mark==4)meshink_display_draw_pixel(middle-stroke+t,y+3*scale+t/2,color,fb);
+                else if(ext_mark==5)meshink_display_draw_pixel(middle+t/2,y-2-stroke,color,fb);
+                else if(ext_mark==2)meshink_display_draw_pixel(middle+t/2,y-2-stroke+t/2,color,fb);
+                else if(ext_mark==3){
+                    meshink_display_draw_pixel(middle-stroke+t,y-2-stroke+t/2,color,fb);
+                    meshink_display_draw_pixel(middle+t,y-2-t/2,color,fb);
+                }
+            }
         }
         x+=(right-left+1)*scale+scale;
     }
