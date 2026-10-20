@@ -1,4 +1,4 @@
-import { STATS_ENDPOINT } from "./stats-config.js";
+import { STATS_ENDPOINT } from "./stats-config.js?v=stats-20261020-2";
 
 const rows = document.getElementById("usage-rows");
 const status = document.getElementById("usage-status");
