@@ -32,7 +32,8 @@ int main() {
     assert(meshink_emoji_glyph(0x1F642,32));
     assert(meshink_emoji_glyph(0x2764,40));
     assert(meshink_emoji_glyph(0x1F44D,48));
-    assert(!meshink_emoji_supported(0x1F680)); // no glyph; use replacement
+    assert(meshink_emoji_supported(0x1F680)); // rocket added in expanded set
+    assert(!meshink_emoji_supported(0x1F6F8)); // flying saucer still uses replacement
     for(const uint32_t cp : {0x1F642U,0x1F60AU,0x1F602U,0x2764U,0x1F44DU,0x1F44BU,0x2705U,0x1F600U,0x1F601U,0x1F923U,0x1F60DU,0x1F618U,0x1F609U,0x1F605U,0x1F622U,0x1F62DU,0x1F62EU,0x1F60EU,0x1F914U,0x1F634U,0x1F621U,0x1F44EU,0x1F44CU,0x1F64FU,0x1F44FU,0x1F4AAU,0x1F389U,0x1F525U,0x2B50U,0x1F4AFU,0x1F680U,0x1F4CDU,0x274CU,0x26A0U}) {
         for(const uint8_t size : {16,32,40,48,56}) {
             const auto* glyph=meshink_emoji_glyph(cp,size);
