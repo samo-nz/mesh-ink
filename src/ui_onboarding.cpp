@@ -1742,8 +1742,8 @@ static void draw_keyboard_picker(){
         const int x=r.x+(i%8)*r.width/8;
         const int y=r.y+8+(i/8)*tile;
         char encoded[5];meshink_encode_utf8(picker_chars[i],encoded);
-        // Scale 2 uses the dedicated native 16-pixel emoji face.
-        const int scale=picker_emoji?2:3;
+        // Use native 32-pixel emoji artwork and normal Inter text size.
+        const int scale=3;
         ui_text(encoded,x+(r.width/8-ui_text_width(encoded,scale))/2,
                 y+(tile-ui_text_height(scale))/2,scale,0,false);
     }
