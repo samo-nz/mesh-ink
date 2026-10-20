@@ -1260,8 +1260,26 @@ static int ui_emoji_size(int scale) {
     if(scale<3||scale>=11)return 16;
     return scale==3?32:scale==4?40:scale==5?48:56;
 }
+// Metrics for characters synthesised from the native font instead of
+// silently falling back to '?'. Keep metrics identical in wrap and paint.
+static int ui_phase1_symbol_advance(uint32_t cp,int scale){
+    switch(cp){
+        case 0x0152:case 0x0153: return scale>=3?30:14; // OE ligatures
+        case 0x2013: return scale>=3?19:12;
+        case 0x2014: return scale>=3?29:20;
+        case 0x2026: return scale>=3?27:15;
+        case 0x2018:case 0x2019:case 0x201C:case 0x201D:
+        case 0x201E: return scale>=3?15:10;
+        case 0x20AC: return scale>=3?20:12;
+        case 0x2030: return scale>=3?29:19;
+        case 0x2260:case 0x2248: return scale>=3?23:14;
+        default:return 0;
+    }
+}
 static int ui_char_advance(uint32_t cp,int scale) {
     if(ui_zero_width_cp(cp))return 0;
+    const int special=ui_phase1_symbol_advance(cp,scale);
+    if(special)return special;
     if(meshink_emoji_supported(cp))return ui_emoji_size(scale)+2;
     cp=ui_phase1_latin_base(ui_extended_latin_base(ui_font_base(cp)));
     if(scale>=3) {
@@ -1322,6 +1340,82 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
     if(ui_zero_width_cp(cp))return;
     if(meshink_emoji_supported(cp)) {
         ui_draw_emoji(cp,x,y,scale,color,bold,clip_left,clip_top,clip_right,clip_bottom);
+        return;
+    }
+    // Draw otherwise unavailable punctuation and OE using the installed
+    // Inter glyphs and vector strokes; don't substitute question marks.
+    if(ui_phase1_symbol_advance(cp,scale)){
+        const int ht=ui_text_height(scale);
+        const int mid=y+ht/2;
+        auto dot=[&](int px,int py){
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        };
+        auto stroke=[&](int x0,int y0,int x1,int y1,int thick){
+            const int n=max(abs(x1-x0),abs(y1-y0));
+            for(int i=0;i<=n;++i){
+                int px=x0+(x1-x0)*i/max(1,n),py=y0+(y1-y0)*i/max(1,n);
+                for(int j=0;j<thick;++j)dot(px,py+j);
+            }
+        };
+        const int thick=scale>=4?3:2;
+        switch(cp){
+            case 0x0152:case 0x0153: {
+                // Tight O+E ligature; use the existing correct-case outlines.
+                char a=cp==0x0152?'O':'o',b=cp==0x0152?'E':'e';
+                ui_smooth_render_cp((uint32_t)a,x,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                ui_smooth_render_cp((uint32_t)b,x+14,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                break;
+            }
+            case 0x2013:case 0x2014:{
+                const int len=cp==0x2013?17:27;
+                stroke(x,mid,x+len,mid,thick);break;
+            }
+            case 0x2026:{
+                for(int i=0;i<3;++i)
+                    for(int a=0;a<3;++a)for(int b=0;b<3;++b)
+                        dot(x+3+i*9+a,y+ht-6+b);
+                break;
+            }
+            case 0x2018:case 0x2019:case 0x201C:case 0x201D:
+            case 0x201E:{
+                const bool double_quote=cp!=0x2018&&cp!=0x2019;
+                const int yy=cp==0x201E?y+ht-8:y+4;
+                for(int k=0;k<(double_quote?2:1);++k){
+                    int xx=x+3+k*7;
+                    stroke(xx+3,yy,xx,yy+7,thick);
+                }
+                break;
+            }
+            case 0x20AC:{
+                ui_smooth_render_cp('C',x,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                stroke(x+1,mid-4,x+14,mid-4,thick);
+                stroke(x+1,mid+1,x+14,mid+1,thick);break;
+            }
+            case 0x2030:{
+                ui_smooth_render_cp('%',x,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                stroke(x+20,mid+6,x+23,mid+6,3);break;
+            }
+            case 0x2260:case 0x2248:{
+                if(cp==0x2260){
+                    stroke(x+1,mid-4,x+20,mid-4,thick);
+                    stroke(x+1,mid+4,x+20,mid+4,thick);
+                    stroke(x+5,mid+9,x+16,mid-9,thick);
+                }else{
+                    for(int row=0;row<2;++row){
+                        int yy=mid-5+row*9;
+                        stroke(x+1,yy+1,x+6,yy-1,thick);
+                        stroke(x+6,yy-1,x+12,yy+2,thick);
+                        stroke(x+12,yy+2,x+20,yy,thick);
+                    }
+                }
+                break;
+            }
+        }
         return;
     }
     bool macron=false;
