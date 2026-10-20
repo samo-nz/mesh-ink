@@ -28,3 +28,10 @@ button[hidden]{display:none}
 .serial-stats{margin:6px 0 10px;color:var(--muted);font:12px/1.4 ui-monospace,Consolas,monospace}
 .serial-monitor-log{min-height:360px;max-height:62vh;white-space:pre;overflow-wrap:normal;overflow:auto}
 @media(max-width:560px){.serial-toolbar button,.serial-log-actions button{flex:1 1 42%}.serial-monitor-log{min-height:320px;max-height:56vh}}
+
+/* Compact version-level usage summary at bottom of the serial console. */
+.usage-table-scroll{max-width:100%;overflow-x:auto}
+.usage-table{width:100%;border-collapse:collapse;font-size:.85rem;font-variant-numeric:tabular-nums}
+.usage-table th,.usage-table td{padding:.6rem .45rem;text-align:right;border-bottom:1px solid rgba(150,170,190,.24);white-space:nowrap}
+.usage-table th:first-child,.usage-table td:first-child{text-align:left}
+.usage-table th{font-weight:600}
