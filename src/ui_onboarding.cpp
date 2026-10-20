@@ -5109,7 +5109,7 @@ static void touch_sampler_task(void*){
                     const bool mode_held=
                         meshink_keyboard::in_row(start_y,km.mode_key.y,km)&&
                         start_x<meshink_keyboard::mode_split(km);
-                    const bool letter_held=!keyboard_symbols&&
+                    const bool letter_held=
                         keyboard_character_at(start_x,start_y,false,pressed_char)&&
                         meshink_letter_alternatives(pressed_char);
                     if(mode_held||letter_held){
@@ -7425,25 +7425,23 @@ void ui_loop() {
                         queue_text_refresh();
                     }
                 }
-                if(!handled_picker&&tap.hold_ms>=450&&!keyboard_symbols){
-                    char letter=0;
+                if(!handled_picker&&tap.hold_ms>=450){
+                    char held_key=0;
                     if(meshink_keyboard::in_row(tap.y,m.mode_key.y,m)&&
                        tap.x<meshink_keyboard::mode_split(m)){
                         keyboard_picker_start(0,true);
-                    }else if(keyboard_character_at(tap.x,tap.y,keyboard_landscape,letter)&&
-                              meshink_letter_alternatives(letter)){
-                        keyboard_picker_start(letter,false);
+                    }else if(keyboard_character_at(tap.x,tap.y,keyboard_landscape,held_key)&&
+                              meshink_letter_alternatives(held_key)){
+                        // In symbols mode the number row displays emoji, not
+                        // numerals: don't open a hidden number alternative.
+                        if(!(keyboard_symbols&&
+                             meshink_keyboard::in_row(tap.y,m.number_top,m)))
+                            keyboard_picker_start(held_key,false);
                     }
                     if(picker_open){
                         draw_screen();refresh(MeshInkRefreshMode::Direct);
                         handled_picker=true;
                     }
-                }else if(!handled_picker&&tap.hold_ms>=450&&keyboard_symbols&&
-                         meshink_keyboard::in_row(tap.y,m.mode_key.y,m)&&
-                         tap.x<meshink_keyboard::mode_split(m)){
-                    keyboard_picker_start(0,true);
-                    draw_screen();refresh(MeshInkRefreshMode::Direct);
-                    handled_picker=true;
                 }
             }
             if(!handled_picker)handle_tap(tap.x,tap.y);
