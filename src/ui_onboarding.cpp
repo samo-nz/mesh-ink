@@ -26,6 +26,8 @@
 #include "t5_logging.h"
 #include "keyboard_geometry.h"
 #include "message_limits.h"
+#include "utf8_display.h"
+#include "fonts/meshink_emoji.h"
 #include "message_store.h"
 #include "timezone_service.h"
 #include "backup_restore.h"
@@ -1047,20 +1049,44 @@ static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint3
     if(codepoint!='?')return ui_smooth_glyph(font,'?');
     return nullptr;
 }
-static int ui_smooth_char_advance(char c,int scale) {
-    const UiSmoothFont face=ui_smooth_font(scale);
-    const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
-    if(!glyph_data)return 0;
-    return max(1,(int)((glyph_data->advanceX+8)>>4));
+// A small set of Maori precomposed letters can be drawn with the existing
+// monochrome Inter vowel plus a macron. No radio text is ever rewritten.
+static uint32_t ui_font_base(uint32_t cp,bool* macron=nullptr) {
+    bool mark=false;
+    uint32_t base=cp;
+    switch(cp) {
+        case 0x0100: base='A';mark=true;break;
+        case 0x0101: base='a';mark=true;break;
+        case 0x0112: base='E';mark=true;break;
+        case 0x0113: base='e';mark=true;break;
+        case 0x012A: base='I';mark=true;break;
+        case 0x012B: base='i';mark=true;break;
+        case 0x014C: base='O';mark=true;break;
+        case 0x014D: base='o';mark=true;break;
+        case 0x016A: base='U';mark=true;break;
+        case 0x016B: base='u';mark=true;break;
+        default: break;
+    }
+    if(macron)*macron=mark;
+    return base;
 }
-static int ui_legacy_char_advance(char c,int scale) {
-    if(c==' ')return 3*scale;
-    const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
-    const int pixels=right>=left?(right-left+1):3;
-    return pixels*scale+scale;
+static bool ui_zero_width_cp(uint32_t cp) {
+    return cp==0xFE0F||cp==0xFE0E||cp==0x200D||cp==0x0304;
 }
-static int ui_char_advance(char c,int scale) {
-    return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
+static int ui_emoji_factor(int scale) { return scale>=6?2:1; }
+static int ui_char_advance(uint32_t cp,int scale) {
+    if(ui_zero_width_cp(cp))return 0;
+    if(meshink_emoji_rows(cp))return 16*ui_emoji_factor(scale)+2;
+    cp=ui_font_base(cp);
+    if(scale>=3) {
+        const UiSmoothFont face=ui_smooth_font(scale);
+        const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
+        return g?max(1,(int)((g->advanceX+8)>>4)):0;
+    }
+    if(cp==' ')return 3*scale;
+    const uint8_t* rows=glyph(cp<=127?(char)cp:'?');
+    int left=0,right=4;ui_glyph_bounds(rows,left,right);
+    return (right>=left?(right-left+1):3)*scale+scale;
 }
 static int ui_text_height(int scale) {
     if(scale<3)return 7*scale;
@@ -1073,32 +1099,69 @@ static int ui_text_line_step(int scale) {
 static int ui_text_width_n(const char* s,size_t n,int scale) {
     if(!s||!n)return 0;
     int width=0;
-    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
+    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';) {
+        const meshink_utf8::Char cp=meshink_utf8::next(s+i,n-i);
+        if(!cp.bytes)break;
+        width+=ui_char_advance(cp.codepoint,scale);
+        i+=cp.bytes;
+    }
     return width&&scale<3?width-scale:width;
 }
 static int ui_text_width(const char* s,int scale) {
     return s?ui_text_width_n(s,strlen(s),scale):0;
 }
-static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
-    if(!s)return;
-    const UiSmoothFont face=ui_smooth_font(scale);
-    const int baseline=y+face.baseline_from_top;
-    while(*s&&*s!='\n'){
-        const char c=*s++;
-        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
-        if(!glyph_data)continue;
-        const int gx=x+glyph_data->left;
-        const int gy=baseline-glyph_data->top;
-        for(int sy=0;sy<glyph_data->height;++sy){
-            for(int sx=0;sx<glyph_data->width;++sx){
-                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
-                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
-                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
-                meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
-                if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
-            }
+static void ui_draw_emoji(uint32_t cp,int x,int y,int scale,uint8_t color,bool bold,
+                          int left,int top,int right,int bottom) {
+    const uint16_t* rows=meshink_emoji_rows(cp);
+    if(!rows)return;
+    const int factor=ui_emoji_factor(scale);
+    const int baseline=scale>=3?y+ui_smooth_font(scale).baseline_from_top:y+16;
+    const int start_y=baseline-16*factor;
+    for(int ry=0;ry<16;++ry)for(int rx=0;rx<16;++rx) {
+        if(!(rows[ry]&(uint16_t)(0x8000U>>rx)))continue;
+        for(int dy=0;dy<factor;++dy)for(int dx=0;dx<factor;++dx) {
+            const int px=x+rx*factor+dx,py=start_y+ry*factor+dy;
+            if(px>=left&&px<right&&py>=top&&py<bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+            if(bold&&px+1>=left&&px+1<right&&py>=top&&py<bottom)
+                meshink_display_draw_pixel(px+1,py,color,fb);
         }
-        x+=ui_smooth_char_advance(c,scale);
+    }
+}
+static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,bool bold,
+                                int clip_left,int clip_top,int clip_right,int clip_bottom) {
+    if(ui_zero_width_cp(cp))return;
+    if(meshink_emoji_rows(cp)) {
+        ui_draw_emoji(cp,x,y,scale,color,bold,clip_left,clip_top,clip_right,clip_bottom);
+        return;
+    }
+    bool macron=false;
+    cp=ui_font_base(cp,&macron);
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
+    if(!g)return;
+    const int gx=x+g->left,gy=y+face.baseline_from_top-g->top;
+    for(int sy=0;sy<g->height;++sy) {
+        const int py=gy+sy;
+        if(py<clip_top||py>=clip_bottom)continue;
+        for(int sx=0;sx<g->width;++sx) {
+            const int px=gx+sx;
+            if(px<clip_left||px>=clip_right)continue;
+            const uint32_t bit=(uint32_t)sy*g->width+(uint32_t)sx;
+            const uint8_t packed=face.font->bitmap[g->dataOffset+(bit>>3)];
+            if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+            meshink_display_draw_pixel(px,py,color,fb);
+            if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
+        }
+    }
+    if(macron) {
+        // Draw a clear horizontal macron without altering any stored UTF-8 bytes.
+        const int my=gy-3;
+        for(int dx=1;dx<max(2,(int)g->width-1);++dx) {
+            const int px=gx+dx;
+            if(px>=clip_left&&px<clip_right&&my>=clip_top&&my<clip_bottom)
+                meshink_display_draw_pixel(px,my,color,fb);
+        }
     }
 }
 static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
@@ -1106,47 +1169,50 @@ static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
                                    int clip_left,int clip_top,
                                    int clip_right,int clip_bottom) {
     if(!s||clip_right<=clip_left||clip_bottom<=clip_top)return;
-    const UiSmoothFont face=ui_smooth_font(scale);
-    const int baseline=y+face.baseline_from_top;
-    while(*s&&*s!='\n'){
-        const char c=*s++;
-        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
-        if(!glyph_data)continue;
-        const int gx=x+glyph_data->left;
-        const int gy=baseline-glyph_data->top;
-        for(int sy=0;sy<glyph_data->height;++sy){
-            const int py=gy+sy;
-            if(py<clip_top||py>=clip_bottom)continue;
-            for(int sx=0;sx<glyph_data->width;++sx){
-                const int px=gx+sx;
-                if(px<clip_left||px>=clip_right)continue;
-                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
-                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
-                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
-                meshink_display_draw_pixel(px,py,color,fb);
-                if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
-            }
-        }
-        x+=ui_smooth_char_advance(c,scale);
+    const size_t n=strlen(s);
+    for(size_t i=0;i<n&&s[i]!='\n';) {
+        const meshink_utf8::Char c=meshink_utf8::next(s+i,n-i);
+        if(!c.bytes)break;
+        ui_smooth_render_cp(c.codepoint,x,y,scale,color,bold,
+                            clip_left,clip_top,clip_right,clip_bottom);
+        x+=ui_char_advance(c.codepoint,scale);
+        i+=c.bytes;
     }
+}
+static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
+    ui_smooth_text_clipped(s,x,y,scale,color,bold,-32768,-32768,32767,32767);
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
-    if(scale>=3){
+    if(scale>=3) {
         ui_smooth_text(s,x,y,scale,color,bold);
         return;
     }
-    while(*s&&*s!='\n'){
-        const char c=*s++;
-        if(c==' '){x+=3*scale;continue;}
-        const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
-        if(right<left){x+=3*scale;continue;}
+    const size_t n=strlen(s);
+    for(size_t i=0;i<n&&s[i]!='\n';) {
+        const meshink_utf8::Char c=meshink_utf8::next(s+i,n-i);
+        if(!c.bytes)break;
+        i+=c.bytes;
+        if(ui_zero_width_cp(c.codepoint))continue;
+        if(meshink_emoji_rows(c.codepoint)) {
+            ui_draw_emoji(c.codepoint,x,y,scale,color,bold,-32768,-32768,32767,32767);
+            x+=ui_char_advance(c.codepoint,scale);
+            continue;
+        }
+        bool macron=false;
+        const uint32_t cp=ui_font_base(c.codepoint,&macron);
+        if(cp==' ') {x+=3*scale;continue;}
+        const uint8_t* rows=glyph(cp<=127?(char)cp:'?');
+        int left=0,right=4;ui_glyph_bounds(rows,left,right);
+        if(right<left) {x+=3*scale;continue;}
         for(int ry=0;ry<7;++ry)for(int rx=left;rx<=right;++rx)
             if(rows[ry]&(1U<<(4-rx)))
-                for(int dy=0;dy<scale;++dy)for(int dx=0;dx<scale;++dx){
+                for(int dy=0;dy<scale;++dy)for(int dx=0;dx<scale;++dx) {
                     meshink_display_draw_pixel(x+(rx-left)*scale+dx,y+ry*scale+dy,color,fb);
                     if(bold)meshink_display_draw_pixel(x+(rx-left)*scale+dx+1,y+ry*scale+dy,color,fb);
                 }
+        if(macron)for(int mx=0;mx<(right-left+1)*scale;++mx)
+            meshink_display_draw_pixel(x+mx,y-2,color,fb);
         x+=(right-left+1)*scale+scale;
     }
 }
@@ -1155,11 +1221,15 @@ static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
     if(!value||max_width<=0)return;
     if(ui_text_width(value,scale)<=max_width){ui_text(value,x,y,scale,color,bold);return;}
     char clipped[64]{};size_t out=0;int width=0;
+    const size_t n=strlen(value);
     const int dots=ui_text_width("...",scale);
-    while(value[out]&&out<sizeof(clipped)-4){
-        const int advance=ui_char_advance(value[out],scale);
+    while(out<n&&out<sizeof(clipped)-4) {
+        const meshink_utf8::Char cp=meshink_utf8::next(value+out,n-out);
+        if(!cp.bytes||out+cp.bytes>=sizeof(clipped)-4)break;
+        const int advance=ui_char_advance(cp.codepoint,scale);
         if(width+advance+dots>max_width)break;
-        clipped[out]=value[out];width+=advance;++out;
+        memcpy(clipped+out,value+out,cp.bytes);
+        width+=advance;out+=cp.bytes;
     }
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     ui_text(clipped,x,y,scale,color,bold);
@@ -1200,14 +1270,17 @@ static int ui_text_max_line_width(const char* value,int scale) {
 }
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
+    const size_t n=strlen(value);
     size_t count=0,last_space=0;int width=0;
-    while(value[count]&&value[count]!='\n'){
-        const int advance=ui_char_advance(value[count],scale);
+    while(count<n&&value[count]!='\n') {
+        const meshink_utf8::Char c=meshink_utf8::next(value+count,n-count);
+        if(!c.bytes)break;
+        const int advance=ui_char_advance(c.codepoint,scale);
         if(count&&width+advance>max_width)break;
-        if(!count&&advance>max_width)return 1;
+        if(!count&&advance>max_width)return c.bytes;
         width+=advance;
-        if(value[count]==' ')last_space=count;
-        ++count;
+        if(c.codepoint==' ')last_space=count;
+        count+=c.bytes;
     }
     if(!value[count]||value[count]=='\n')return count;
     return last_space?last_space:count;
@@ -1246,8 +1319,10 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         const bool truncated=(row==max_lines-1)&&*next;
         if(truncated){
             const int dots=ui_text_width("...",scale);
-            while(trim&&ui_text_width(line_text,scale)+dots>max_width)
-                line_text[--trim]=0;
+            while(trim&&ui_text_width(line_text,scale)+dots>max_width){
+                trim=meshink_utf8::prior(line_text,trim);
+                line_text[trim]=0;
+            }
             if(trim<sizeof(line_text)-4){
                 line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
                 line_text[trim]=0;
