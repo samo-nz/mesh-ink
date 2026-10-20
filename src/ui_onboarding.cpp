@@ -1273,7 +1273,7 @@ static int ui_phase1_symbol_advance(uint32_t cp,int scale){
         case 0x2018:case 0x2019:case 0x201C:case 0x201D:
         case 0x201E: return scale>=3?15:10;
         case 0x20AC: return scale>=3?20:12;
-        case 0x2030: return scale>=3?29:19;
+        case 0x2030: return scale>=3?35:23;
         case 0x2260:case 0x2248: return scale>=3?23:14;
         default:return 0;
     }
@@ -1400,7 +1400,15 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
             case 0x2030:{
                 ui_smooth_render_cp('%',x,y,scale,color,bold,
                                     clip_left,clip_top,clip_right,clip_bottom);
-                stroke(x+20,mid+6,x+23,mid+6,3);break;
+                // Per-mille is percent plus a THIRD hollow lower ring,
+                // not a dash. Draw a visible 8x9 outline inside the advance.
+                const int cx=x+28,cy=y+ht-8;
+                for(int dy=-4;dy<=4;++dy)
+                    for(int dx=-4;dx<=4;++dx){
+                        const int d=dx*dx+dy*dy;
+                        if(d>=10&&d<=20)dot(cx+dx,cy+dy);
+                    }
+                break;
             }
             case 0x2260:case 0x2248:{
                 if(cp==0x2260){
