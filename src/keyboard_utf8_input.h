@@ -42,17 +42,24 @@ inline void meshink_erase_utf8(char* text){
 }
 inline const char* meshink_letter_alternatives(char key){
     switch(key){
-      case 'a':return "áàâäãåāą"; case 'A':return "ÁÀÂÄÃÅĀĄ";
-      case 'c':return "çćč";case 'C':return "ÇĆČ";
-      case 'e':return "éèêëēę";case 'E':return "ÉÈÊËĒĘ";
-      case 'i':return "íìîïī";case 'I':return "ÍÌÎÏĪ";
-      case 'l':return "ł";case 'L':return "Ł";
-      case 'n':return "ñń";case 'N':return "ÑŃ";
-      case 'o':return "óòôöõøō";case 'O':return "ÓÒÔÖÕØŌ";
-      case 'r':return "ř";case 'R':return "Ř";
-      case 's':return "śš";case 'S':return "ŚŠ";
-      case 'u':return "úùûüū";case 'U':return "ÚÙÛÜŪ";
-      case 'y':return "ýÿ";case 'Y':return "Ý";
+      case 'a':return "áàâäãåāąăæ"; case 'A':return "ÁÀÂÄÃÅĀĄĂÆ";
+      case 'c':return "çćčĉċ";case 'C':return "ÇĆČĈĊ";
+      case 'd':return "ďđð";case 'D':return "ĎĐÐ";
+      case 'e':return "éèêëēęėě";case 'E':return "ÉÈÊËĒĘĖĚ";
+      case 'g':return "ğģġĝ";case 'G':return "ĞĢĠĜ";
+      case 'h':return "ħĥ";case 'H':return "ĦĤ";
+      case 'i':return "íìîïīı";case 'I':return "ÍÌÎÏĪİ";
+      case 'j':return "ĵ";case 'J':return "Ĵ";
+      case 'k':return "ķ";case 'K':return "Ķ";
+      case 'l':return "łļľ";case 'L':return "ŁĻĽ";
+      case 'n':return "ñńňņŋ";case 'N':return "ÑŃŇŅŊ";
+      case 'o':return "óòôöõøōœő";case 'O':return "ÓÒÔÖÕØŌŒŐ";
+      case 'r':return "řŕŗ";case 'R':return "ŘŔŖ";
+      case 's':return "śšßșşŝ";case 'S':return "ŚŠẞȘŞŜ";
+      case 't':return "ťțþŧ";case 'T':return "ŤȚÞŦ";
+      case 'u':return "úùûüūůűųŭ";case 'U':return "ÚÙÛÜŪŮŰŲŬ";
+      case 'w':return "ŵẁẃẅ";case 'W':return "ŴẀẂẄ";
+      case 'y':return "ýÿŷ";case 'Y':return "ÝŸŶ";
       case 'z':return "źżž";case 'Z':return "ŹŻŽ";
       default:return nullptr;
     }
