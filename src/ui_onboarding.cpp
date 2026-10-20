@@ -1945,7 +1945,12 @@ static void key(const char* label,const meshink_keyboard::Rect& rect) {
 static void keyboard_picker_start(char letter,bool emoji){
     picker_open=false;picker_emoji=emoji;picker_pending_key=emoji?0:letter;picker_count=0;
     if(emoji){
-        for(uint32_t cp:MESHINK_KEYBOARD_ALL_EMOJI)picker_chars[picker_count++]=cp;
+        for(uint32_t cp:MESHINK_KEYBOARD_ALL_EMOJI){
+            bool frequent=false;
+            if(keyboard_landscape)for(uint32_t shown:MESHINK_KEYBOARD_FREQUENT_EMOJI)
+                if(cp==shown){frequent=true;break;}
+            if(!frequent)picker_chars[picker_count++]=cp;
+        }
     }else{
         const char* alt=meshink_letter_alternatives(letter);
         if(!alt)return;
@@ -1962,10 +1967,13 @@ static void keyboard_picker_start(char letter,bool emoji){
 static meshink_keyboard::Rect keyboard_picker_rect(){
     const auto m=keyboard_metrics(keyboard_landscape);
     const int tile=keyboard_landscape?38:48;
-    const int rows=(picker_count+7)/8;
-    const int height=rows*tile+16;
+    const int columns=keyboard_landscape?12:8;
+    const int rows=(picker_count+columns-1)/columns;
+    const int height=keyboard_landscape?84:rows*tile+16;
     // Overlay the message history, ABOVE the fixed compose entry box.
-    return {m.entry.x,max(0,m.entry.y-height-8),m.entry.width,height};
+    return keyboard_landscape
+        ? meshink_keyboard::Rect{m.entry.x,8,m.entry.width,height}
+        : meshink_keyboard::Rect{m.entry.x,max(0,m.entry.y-height-8),m.entry.width,height};
 }
 static void keyboard_picker_clear_pixels(){
     if(!picker_open)return;
@@ -1978,8 +1986,9 @@ static int keyboard_picker_option(int x,int y){
     const auto r=keyboard_picker_rect();
     if(x<r.x||x>=r.x+r.width||y<r.y+8||y>=r.y+r.height)return -1;
     const int tile=keyboard_landscape?38:48;
-    const int col=(x-r.x)*8/r.width,row=(y-r.y-8)/tile;
-    const int index=row*8+col;
+    const int columns=keyboard_landscape?12:8;
+    const int col=(x-r.x)*columns/r.width,row=(y-r.y-8)/tile;
+    const int index=row*columns+col;
     return index<picker_count?index:-1;
 }
 static void draw_keyboard_picker(){
@@ -1989,12 +1998,13 @@ static void draw_keyboard_picker(){
     rounded_box(r.x,r.y,r.width,r.height,max(4,ui_w(5)));
     const int tile=keyboard_landscape?38:48;
     for(int i=0;i<picker_count;++i){
-        const int x=r.x+(i%8)*r.width/8;
-        const int y=r.y+8+(i/8)*tile;
+        const int columns=keyboard_landscape?12:8;
+        const int x=r.x+(i%columns)*r.width/columns;
+        const int y=r.y+8+(i/columns)*tile;
         char encoded[5];meshink_encode_utf8(picker_chars[i],encoded);
         // Use native 32-pixel emoji artwork and normal Inter text size.
         const int scale=3;
-        ui_text(encoded,x+(r.width/8-ui_text_width(encoded,scale))/2,
+        ui_text(encoded,x+(r.width/columns-ui_text_width(encoded,scale))/2,
                 y+(tile-ui_text_height(scale))/2,scale,0,false);
     }
 }
@@ -2091,7 +2101,8 @@ static void draw_landscape_keyboard(){
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
         char label[5]={numbers[i],0};
-        if(keyboard_symbols&&keyboard_message_mode)meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
+        if(keyboard_message_mode&&(keyboard_symbols||(picker_open&&picker_emoji)))
+            meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
         landscape_key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
     const char** rows=active_keyboard_rows();
@@ -5218,13 +5229,13 @@ static void touch_sampler_task(void*){
                    keyboard_message_mode&&keyboard_visible&&!keyboard_landscape&&
                    (screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                    !quick_panel_active&&millis()-pressed_at>=450){
-                    const auto km=keyboard_metrics(false);
+                    const auto km=keyboard_metrics(keyboard_landscape);
                     char pressed_char=0;
                     const bool mode_held=
                         meshink_keyboard::in_row(start_y,km.mode_key.y,km)&&
                         start_x<meshink_keyboard::mode_split(km);
                     const bool letter_held=
-                        keyboard_character_at(start_x,start_y,false,pressed_char)&&
+                        keyboard_character_at(start_x,start_y,keyboard_landscape,pressed_char)&&
                         meshink_letter_alternatives(pressed_char)&&
                         !(keyboard_symbols&&
                           meshink_keyboard::in_row(start_y,km.number_top,km));
@@ -7511,15 +7522,22 @@ void ui_loop() {
         }else {
             // Landscape entry begins 14px from the top: no room for a popup
             // ABOVE it. Keep landscape's proven touch/typing path unchanged.
-            const bool message_edit=keyboard_message_mode&&keyboard_visible&&!keyboard_landscape&&
+            const bool message_edit=keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
                 (screen==Screen::ContactChat||screen==Screen::ChannelChat);
             bool handled_picker=false;
             if(message_edit){
                 const auto m=keyboard_metrics(keyboard_landscape);
                 if(picker_open){
-                    const int choice=keyboard_picker_option(tap.x,tap.y);
+                    int choice=keyboard_picker_option(tap.x,tap.y);
+                    uint32_t selected=choice>=0?picker_chars[choice]:0;
+                    if(keyboard_landscape&&picker_emoji&&
+                       meshink_keyboard::in_row(tap.y,m.number_top,m)){
+                        const int index=meshink_keyboard::key_index_edge_extended(
+                            meshink_keyboard::numbers(m),tap.x,m.width);
+                        if(index>=0){choice=index;selected=MESHINK_KEYBOARD_FREQUENT_EMOJI[index];}
+                    }
                     if(choice>=0){
-                        if(meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,picker_chars[choice]))
+                        if(meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,selected))
                             queue_text_refresh();
                         keyboard_picker_clear_pixels();
                         picker_open=false;picker_pending_key=0;
@@ -7536,7 +7554,7 @@ void ui_loop() {
                         // originally held letter before normal typing continues.
                         char next_key=0;
                         const bool same_key=picker_pending_key&&
-                            keyboard_character_at(tap.x,tap.y,false,next_key)&&
+                            keyboard_character_at(tap.x,tap.y,keyboard_landscape,next_key)&&
                             next_key==picker_pending_key;
                         if(picker_pending_key&&!same_key)append(picker_pending_key);
                         keyboard_picker_clear_pixels();
