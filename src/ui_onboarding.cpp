@@ -1107,11 +1107,10 @@ static uint32_t ui_small_latin_base(uint32_t cp,uint8_t* mark=nullptr) {
         if(cp==0x00D1||cp==0x00F1)base=(cp==0x00D1?'N':'n');
         else if(cp==0x00C7||cp==0x00E7)base=(cp==0x00C7?'C':'c');
         else {
-            const uint32_t upper=(cp>=0x00C0&&cp<=0x00DE);
-            const uint32_t lower=cp+0x20;
-            const uint32_t v=upper?cp:lower-0x20;
-            const char* letter=v<=0x00C5?"A":v<=0x00CB?"E":v<=0x00CF?"I":v<=0x00D6?"O":"U";
-            base=letter[0]+(upper?0:32);
+            const bool upper=(cp>=0x00C0&&cp<=0x00DE);
+            const uint32_t v=upper?cp:cp-0x20;
+            const char letter=v<=0x00C5?'A':v<=0x00CB?'E':v<=0x00CF?'I':v<=0x00D6?'O':'U';
+            base=(uint32_t)(letter+(upper?0:32));
         }
     }
     if(mark)*mark=m;
