@@ -19,3 +19,7 @@ assert "ui_char_advance(ch.codepoint,scale)" in natural, "Bubble sizing must use
 assert "p+=ch.bytes;" in natural, "Bubble sizing must not advance one UTF-8 byte at a time"
 
 print("PASS: Unicode-aware composer wrapping and bubble width measurement")
+
+# The picker must be painted on top of the portrait chat after all other UI.
+portrait = source[source.index("static void draw_screen() {"):source.index("static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {")]
+assert "draw_toast();\n    draw_keyboard_picker();" in portrait, "Portrait long-press picker overlay must be rendered last"
