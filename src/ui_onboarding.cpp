@@ -4525,6 +4525,9 @@ static void draw_screen() {
             (settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
+    // Popup must be composed after the chat/history and entry surfaces.
+    // Its hitboxes were already active; previously this draw call was missing.
+    draw_keyboard_picker();
 }
 
 static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
