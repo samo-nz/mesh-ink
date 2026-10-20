@@ -1412,15 +1412,19 @@ static void ui_centred_fit(const char* value,int y,int max_width,int scale,
 static int ui_text_max_line_width(const char* value,int scale) {
     if(!value||!*value)return 0;
     int widest=0,current=0;
-    for(const char* p=value;;++p){
-        if(!*p||*p=='\n'){
-            if(current>0&&scale<3)current-=scale; // legacy bitmap keeps one trailing scale-wide gap
+    for(const char* p=value;*p;){
+        if(*p=='\n'){
+            if(current>0&&scale<3)current-=scale;
             widest=max(widest,current);current=0;
-            if(!*p)break;
-            continue;
+            ++p;continue;
         }
-        current+=ui_char_advance(*p,scale);
+        const meshink_utf8::Char ch=meshink_utf8::next(p,strlen(p));
+        if(!ch.bytes)break;
+        current+=ui_char_advance(ch.codepoint,scale);
+        p+=ch.bytes;
     }
+    if(current>0&&scale<3)current-=scale;
+    widest=max(widest,current);
     return widest;
 }
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
