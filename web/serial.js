@@ -1,4 +1,4 @@
-import { showUsageStatistics } from "./usage-stats.js?v=stats-20261020-2";
+import { showUsageStatistics } from "./usage-stats.js?v=current-release-only-1";
 import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";
 
 const $ = (id) => document.getElementById(id);
