@@ -102,6 +102,8 @@ jobs:
           g++ -std=c++11 -Wall -Wextra -Werror -Isrc \
             tests/test_ui_layout.cpp -o /tmp/ui-layout-test
           /tmp/ui-layout-test
+      - name: UTF-8 journal and backup preservation checks
+        run: python tools/check_utf8_data_integrity.py
       - name: UTF-8 decoding and emoji glyph regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
