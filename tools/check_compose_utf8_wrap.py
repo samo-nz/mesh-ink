@@ -30,3 +30,33 @@ assert "static void keyboard_picker_clear_pixels()" in source
 handler = source[source.index("int choice=keyboard_picker_option"): ]
 assert handler.count("keyboard_picker_clear_pixels();") >= 3
 assert "Repaint the erased history overlay after the key tap." in handler
+
+# Release-candidate guards for complete-codepoint label truncation and
+# touch-state continuity (source contracts, not a substitute for hardware tests).
+centred = source[source.index("static void ui_centred_fit("):source.index("static int ui_text_max_line_width(")]
+assert "meshink_utf8::next(value+out,value_bytes-out)" in centred
+assert "ui_char_advance(cp.codepoint,scale)" in centred
+assert "memcpy(clipped+out,value+out,cp.bytes)" in centred
+assert "out+=cp.bytes" in centred
+assert "clipped[out]=value[out]" not in centred
+
+picker = source[source.index("static void keyboard_picker_start("):source.index("static void draw_keyboard()")]
+assert "if(keyboard_landscape)for(uint32_t shown:MESHINK_KEYBOARD_FREQUENT_EMOJI)" in picker
+assert "if(!frequent)picker_chars[picker_count++]=cp;" in picker
+assert "const int columns=keyboard_landscape?12:8;" in picker
+assert "return index<picker_count?index:-1;" in picker
+
+touch = source[source.index("// Show optional characters while the finger is still held."):
+               source.index("if(keyboard_delete_hold&&!quick_panel_active",source.index("// Show optional characters while the finger is still held."))]
+assert "millis()-pressed_at>=450" in touch
+assert "keyboard_message_mode&&(keyboard_visible||keyboard_landscape)" in touch
+assert "if(queue_touch_event(hold))keyboard_long_emitted=true;" in touch
+assert "!keyboard_delete_hold" in touch
+
+picker_events = source[source.index("int choice=keyboard_picker_option"):source.index("if(!handled_picker)handle_tap(tap.x,tap.y);")]
+assert "if(keyboard_landscape&&picker_emoji&&" in picker_events
+assert "selected=MESHINK_KEYBOARD_FREQUENT_EMOJI[index];" in picker_events
+assert "picker_open=false;picker_pending_key=0;" in picker_events
+assert "if(picker_pending_key&&!same_key)append(picker_pending_key);" in picker_events
+assert "if(!handled_picker&&tap.hold_ms>=450)" in picker_events
+print("PASS: UTF-8 centred clipping and keyboard picker interaction contracts")
