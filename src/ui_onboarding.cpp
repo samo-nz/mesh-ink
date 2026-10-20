@@ -1636,10 +1636,14 @@ static void ui_centred_fit(const char* value,int y,int max_width,int scale,
     }
     char clipped[64]{};size_t out=0;int width=0;
     const int dots=ui_text_width("...",scale);
-    while(value[out]&&out<sizeof(clipped)-4){
-        const int advance=ui_char_advance(value[out],scale);
+    const size_t value_bytes=strlen(value);
+    while(out<value_bytes){
+        const meshink_utf8::Char cp=meshink_utf8::next(value+out,value_bytes-out);
+        if(!cp.bytes||out+cp.bytes>=sizeof(clipped)-4)break;
+        const int advance=ui_char_advance(cp.codepoint,scale);
         if(width+advance+dots>max_width)break;
-        clipped[out]=value[out];width+=advance;++out;
+        memcpy(clipped+out,value+out,cp.bytes);
+        width+=advance;out+=cp.bytes;
     }
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     const int clipped_width=ui_text_width(clipped,scale);
