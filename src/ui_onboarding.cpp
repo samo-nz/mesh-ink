@@ -5205,7 +5205,9 @@ static void touch_sampler_task(void*){
                         start_x<meshink_keyboard::mode_split(km);
                     const bool letter_held=
                         keyboard_character_at(start_x,start_y,false,pressed_char)&&
-                        meshink_letter_alternatives(pressed_char);
+                        meshink_letter_alternatives(pressed_char)&&
+                        !(keyboard_symbols&&
+                          meshink_keyboard::in_row(start_y,km.number_top,km));
                     if(mode_held||letter_held){
                         QueuedTap hold{start_x,start_y,0,0,false};
                         hold.hold_ms=(uint16_t)min((uint32_t)65535,
