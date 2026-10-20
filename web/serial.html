@@ -54,6 +54,19 @@
       <p>Use Chrome or Edge on desktop, or Chrome on Android. Android always uses the WebUSB serial compatibility layer; desktop browsers use native Web Serial when available. USB access requires HTTPS and explicit device permission.</p>
     </section>
 
+    <section class="panel" aria-labelledby="usage-heading">
+      <h2 id="usage-heading">Firmware downloads &amp; flashes</h2>
+      <p class="serial-stats">Reported web events are best-effort, not unique devices or verified boots. GitHub downloads count release assets separately, not firmware fetched by the web flasher.</p>
+      <div class="usage-table-scroll">
+        <table class="usage-table">
+          <thead><tr><th>Version</th><th>Web downloads</th><th>Successful flashes</th><th>GitHub downloads</th></tr></thead>
+          <tbody id="usage-rows"><tr><td colspan="4">Loading public release totals…</td></tr></tbody>
+        </table>
+      </div>
+      <p id="usage-status" class="serial-stats" role="status" aria-live="polite">Web event counting requires the optional statistics service.</p>
+      <p class="serial-stats"><strong>Web downloads:</strong> verified firmware downloads from the flasher. <strong>Flashes:</strong> browser-reported completed writes. <strong>GitHub downloads:</strong> official release update and full-wipe asset downloads. These totals can overlap.</p>
+    </section>
+
     <footer><a href="./">Back to Web Flasher</a> · <a href="https://github.com/samo-nz/mesh-ink" target="_blank" rel="noopener noreferrer">MeshInk on GitHub</a></footer>
   </main>
 </body>
