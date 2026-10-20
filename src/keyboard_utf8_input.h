@@ -61,6 +61,13 @@ inline const char* meshink_letter_alternatives(char key){
       case 'w':return "ŵẁẃẅ";case 'W':return "ŴẀẂẄ";
       case 'y':return "ýÿŷ";case 'Y':return "ÝŸŶ";
       case 'z':return "źżž";case 'Z':return "ŹŻŽ";
+      case '?':return "¿";case '!':return "¡";
+      case '\'':return "‘’";case '"':return "“”«»„";
+      case '-':return "–—";case '.':return "…·";
+      case ':return "€£¥";case '%':return "‰";
+      case '/':return "÷";case '=':return "≠≈";
+      case '0':return "°ºª";case '1':return "¹";
+      case '2':return "²";case '3':return "³";
       default:return nullptr;
     }
 }
