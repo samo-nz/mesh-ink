@@ -206,8 +206,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          [[ "$VERSION" =~ -test\.[0-9]+$ ]] || {
-            echo "Testing branch firmware must use a -test.N version, got: $VERSION"
+          [[ "$VERSION" =~ -(test|rc)\.[0-9]+$ ]] || {
+            echo "Testing branch firmware must use a -test.N or -rc.N version, got: $VERSION"
             exit 1
           }
       - name: Prepare testing firmware
