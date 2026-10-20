@@ -1221,7 +1221,7 @@ static void ui_draw_emoji(uint32_t cp,int x,int y,int scale,uint8_t color,bool b
 static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,bool bold,
                                 int clip_left,int clip_top,int clip_right,int clip_bottom) {
     if(ui_zero_width_cp(cp))return;
-    if(meshink_emoji_rows(cp)) {
+    if(meshink_emoji_supported(cp)) {
         ui_draw_emoji(cp,x,y,scale,color,bold,clip_left,clip_top,clip_right,clip_bottom);
         return;
     }
@@ -1317,7 +1317,7 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
         if(!c.bytes)break;
         i+=c.bytes;
         if(ui_zero_width_cp(c.codepoint))continue;
-        if(meshink_emoji_rows(c.codepoint)) {
+        if(meshink_emoji_supported(c.codepoint)) {
             ui_draw_emoji(c.codepoint,x,y,scale,color,bold,-32768,-32768,32767,32767);
             x+=ui_char_advance(c.codepoint,scale);
             continue;
