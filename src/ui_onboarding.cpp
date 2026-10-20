@@ -1244,6 +1244,8 @@ static uint32_t ui_phase1_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
         case 0x177: base='y'; mark=12; break;
         case 0x176: base='Y'; mark=12; break;
         case 0x178: base='Y'; mark=14; break;
+        case 0x1E4: base='G'; mark=4; break;
+        case 0x1E5: base='g'; mark=4; break;
         case 0x153: base='o'; mark=18; break;
         case 0x152: base='O'; mark=18; break;
         default:break;
