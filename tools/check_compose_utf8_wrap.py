@@ -24,3 +24,9 @@ print("PASS: Unicode-aware composer wrapping and bubble width measurement")
 portrait = source[source.index("static void draw_screen() {"):source.index("static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {")]
 assert "draw_toast();" in portrait and "draw_keyboard_picker();" in portrait, "Portrait picker must be rendered"
 assert portrait.rindex("draw_keyboard_picker();") > portrait.rindex("draw_toast();"), "Portrait picker must overlay chat, toast and keyboard"
+
+# An incremental chat redraw must explicitly erase popup pixels on dismissal.
+assert "static void keyboard_picker_clear_pixels()" in source
+handler = source[source.index("if(picker_open){\\n                    const int choice=".replace("\\n","\n")):]
+assert handler.count("keyboard_picker_clear_pixels();") >= 3
+assert "Repaint the erased history overlay after the key tap." in handler
