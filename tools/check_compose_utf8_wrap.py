@@ -22,4 +22,4 @@ print("PASS: Unicode-aware composer wrapping and bubble width measurement")
 
 # The picker must be painted on top of the portrait chat after all other UI.
 portrait = source[source.index("static void draw_screen() {"):source.index("static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {")]
-assert "draw_toast();\n    draw_keyboard_picker();" in portrait, "Portrait long-press picker overlay must be rendered last"
+assert "draw_toast();" in portrait and "draw_keyboard_picker();" in portrait, "Portrait picker must be rendered"\nassert portrait.rindex("draw_keyboard_picker();") > portrait.rindex("draw_toast();"), "Portrait picker must overlay chat, toast and keyboard"
