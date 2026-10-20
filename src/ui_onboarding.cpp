@@ -1448,7 +1448,7 @@ static int ui_wrapped_line_count(const char* value,int max_width,int scale) {
         if(*cursor=='\n'){++cursor;++lines;continue;}
         if(!*cursor)break;
         size_t take=ui_wrap_take(cursor,max_width,scale);
-        if(!take)take=1;
+        if(!take)take=meshink_utf8::next(cursor,strlen(cursor)).bytes;
         cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
         ++lines;
     }
@@ -1462,7 +1462,7 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         while(*cursor==' ')++cursor;
         if(*cursor=='\n'){++cursor;continue;}
         size_t take=ui_wrap_take(cursor,max_width,scale);
-        if(!take)take=1;
+        if(!take)take=meshink_utf8::next(cursor,strlen(cursor)).bytes;
         char line_text[160]{};
         size_t copy=min(take,sizeof(line_text)-4);
         // If the display line buffer is shorter than the measured text,
@@ -1504,7 +1504,7 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
         while(*cursor==' ')++cursor;
         if(!*cursor)break;
         if(*cursor=='\n'){lines[line_count++]={cursor,0};++cursor;continue;}
-        size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=1;
+        size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=meshink_utf8::next(cursor,strlen(cursor)).bytes;
         lines[line_count++]={cursor,take};cursor+=take;
         while(*cursor==' ')++cursor;
         if(*cursor=='\n')++cursor;
@@ -1539,11 +1539,13 @@ static int ui_compose_wrap_lines(const char* value,int max_width,int scale,
         const char* last_space=nullptr;
         int width=0;
         while(*scan&&*scan!='\n'){
-            const int advance=ui_char_advance(*scan,scale);
+            const meshink_utf8::Char ch=meshink_utf8::next(scan,strlen(scan));
+            if(!ch.bytes)break;
+            const int advance=ui_char_advance(ch.codepoint,scale);
             if(scan>start&&width+advance>max_width)break;
             width+=advance;
-            if(*scan==' ')last_space=scan;
-            ++scan;
+            if(ch.codepoint==' ')last_space=scan;
+            scan+=ch.bytes;
         }
         if(*scan=='\n'){
             lines[count++]={start,(size_t)(scan-start)};
