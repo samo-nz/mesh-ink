@@ -219,35 +219,25 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk $VERSION's headline feature is reliable deep-sleep standby
-          designed to maximise battery life while keeping the mesh useful.
+          MeshInk 3.0.0 brings **MeshCore and Meshtastic together in one
+          standalone e-paper communicator**. Choose your network at setup or
+          switch between them later, retaining separate settings and messages.
 
           Highlights:
-          - reliable deep-sleep standby retains the MeshCore/SX1262 receive runtime
-            and can wake headlessly for radio traffic without starting the interactive UI,
-            dramatically reducing the time the display/UI and higher-power services need to run
-          - long-BOOT promotion attaches the UI to the retained MeshCore runtime
-            without restarting the radio, while restored tabs fully replace the
-            persistent standby image on e-paper
-          - PCF8563 RTC handling now respects the shared I2C lifecycle: headless
-            contact-time bootstrap is deferred until I2C is available, avoiding
-            invalid early hardware transactions
-          - message persistence, unread/read handoff, retry state, delivery-path
-            reporting and history paging are hardened across local and companion use
-          - Maps has improved node-label placement with bounded collision avoidance,
-            priority ordering, leader lines, zoom-dependent density reduction, and
-            protection for node markers, map controls and the own-location bullseye
-          - repeaters are visually distinct with a bold radio-tower marker on Maps
-            and role icon in Contacts/Discovery; room servers use a house role icon
-          - map label leader lines are heavier for better e-paper legibility
-          - larger primary UI text uses bundled smooth Inter raster fonts while
-            compact/status text keeps the established small-font treatment
-          - status, standby, keyboard, touch, power, GPS and map rendering refinements
-            from the hardware-tested release-candidate series are included
+          - built-in messaging for private conversations and channels
+          - fast, responsive touchscreen operation with particular attention to keyboard input
+          - offline maps, node discovery, GPS and optional location sharing
+          - Bluetooth companion mode for the corresponding network's mobile app
+          - configurable radio, display, power and GPS settings
+          - low-power standby and SD-card backup and restore
 
-          The update image does not intentionally erase existing MeshCore
-          settings, contacts, current-format message history, saved Maps data,
-          or saved MeshInk credentials.
+          MeshCore and Meshtastic run one at a time, not simultaneously.
+          Both support normal standby; deep-sleep standby remains MeshCore-only.
+
+          A normal update does not intentionally erase existing saved settings
+          or current-format message history. A full-wipe install erases all
+          stored data. Earlier experimental Meshtastic v3 message journals are
+          not migrated to the newer format.
 
           Inter font raster data is distributed under the SIL Open Font License
           included as INTER_LICENSE.txt.
