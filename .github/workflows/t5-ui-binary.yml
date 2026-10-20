@@ -219,16 +219,16 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 3.0.0 brings **MeshCore and Meshtastic together in one
-          standalone e-paper communicator**. Choose your network at setup or
-          switch between them later, retaining separate settings and messages.
+          MeshInk 3.1.0 adds **international UTF-8 keyboard input and emoji
+          messaging** to the standalone MeshCore/Meshtastic e-paper communicator.
 
           Highlights:
-          - built-in messaging for private conversations and channels
-          - fast, responsive touchscreen operation with particular attention to keyboard input
+          - accented letters, international punctuation and long-press alternatives in portrait and landscape
+          - 34 emoji with frequently used shortcuts and a compact landscape picker
+          - Unicode-aware message wrapping, editing, deletion and safe text clipping
+          - real Meshtastic direct-message retry progress while awaiting an acknowledgement
           - offline maps, node discovery, GPS and optional location sharing
-          - Bluetooth companion mode for the corresponding network's mobile app
-          - configurable radio, display, power and GPS settings
+          - Bluetooth companion mode for the selected network's mobile app
           - low-power standby and SD-card backup and restore
 
           MeshCore and Meshtastic run one at a time, not simultaneously.
