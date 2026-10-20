@@ -79,6 +79,34 @@ int main() {
         }
         assert(count>0&&count<=40);
     }
+    // All 34 picker choices must split into ten frequent shortcuts and
+    // exactly 24 unique landscape popup choices.
+    constexpr size_t frequent_count=sizeof(MESHINK_KEYBOARD_FREQUENT_EMOJI)/sizeof(uint32_t);
+    constexpr size_t all_count=sizeof(MESHINK_KEYBOARD_ALL_EMOJI)/sizeof(uint32_t);
+    assert(frequent_count==10&&all_count==34);
+    size_t remainder=0;
+    bool retained_heart_eyes=false,frequent_smile=false;
+    for(size_t i=0;i<all_count;++i){
+        const uint32_t cp=MESHINK_KEYBOARD_ALL_EMOJI[i];
+        for(size_t j=0;j<i;++j)assert(MESHINK_KEYBOARD_ALL_EMOJI[j]!=cp);
+        bool frequent=false;
+        for(size_t j=0;j<frequent_count;++j)if(MESHINK_KEYBOARD_FREQUENT_EMOJI[j]==cp)frequent=true;
+        if(!frequent)++remainder;
+        if(cp==0x1F60D)retained_heart_eyes=true;
+    }
+    for(size_t i=0;i<frequent_count;++i){
+        if(MESHINK_KEYBOARD_FREQUENT_EMOJI[i]==0x1F642)frequent_smile=true;
+        assert(MESHINK_KEYBOARD_FREQUENT_EMOJI[i]!=0x1F60D);
+        for(size_t j=0;j<i;++j)assert(MESHINK_KEYBOARD_FREQUENT_EMOJI[i]!=MESHINK_KEYBOARD_FREQUENT_EMOJI[j]);
+    }
+    assert(remainder==24&&frequent_smile&&retained_heart_eyes);
+    // Failed append at the byte boundary must not alter valid UTF-8.
+    char bounded[8]="ABC";
+    assert(meshink_append_utf8(bounded,sizeof(bounded),7,0x1F642));
+    assert(!meshink_append_utf8(bounded,sizeof(bounded),7,'x'));
+    assert(strcmp(bounded,"ABC🙂")==0);
+    meshink_erase_utf8(bounded);
+    assert(strcmp(bounded,"ABC")==0);
     assert(MESHINK_KEYBOARD_FREQUENT_EMOJI[0]==0x1F602);
     puts("PASS: UTF-8 decoding, character boundaries and compact emoji glyphs");
 }
