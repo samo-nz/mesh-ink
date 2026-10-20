@@ -1190,7 +1190,7 @@ static uint32_t ui_phase1_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
         case 0x126: base='H'; mark=4; break;
         case 0x125: base='h'; mark=12; break;
         case 0x124: base='H'; mark=12; break;
-        case 0x131: base='i'; mark=0; break;
+        case 0x131: base='i'; mark=19; break;
         case 0x130: base='I'; mark=5; break;
         case 0x135: base='j'; mark=12; break;
         case 0x134: base='J'; mark=12; break;
@@ -1438,6 +1438,9 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
             const uint32_t bit=(uint32_t)sy*g->width+(uint32_t)sx;
             const uint8_t packed=face.font->bitmap[g->dataOffset+(bit>>3)];
             if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+            // The lowercase dotless i shares Inter's stem but must not
+            // inherit the isolated top dot from the ordinary i.
+            if(phase1_mark==19&&sy<g->height/4)continue;
             meshink_display_draw_pixel(px,py,color,fb);
             if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
         }
