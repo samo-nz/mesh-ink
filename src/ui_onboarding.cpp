@@ -4811,6 +4811,7 @@ static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
     bool map_multi=false,map_pinch_allowed=false;
     bool keyboard_delete_hold=false,keyboard_delete_repeated=false;
+    bool keyboard_long_emitted=false;
     uint32_t keyboard_delete_repeat_at=0;
     int16_t start_x=0,start_y=0,last_x=0,last_y=0;
     int16_t pinch_x=0,pinch_y=0;
@@ -4925,6 +4926,7 @@ static void touch_sampler_task(void*){
                 last_x=x;last_y=y;
                 if(!held){
                     held=true;start_x=x;start_y=y;pressed_at=millis();frontlight_event();
+                    keyboard_long_emitted=false;
                     keyboard_delete_hold=false;keyboard_delete_repeated=false;
                     if(keyboard_message_mode&&(keyboard_visible||keyboard_landscape)){
                         const auto delete_metrics=keyboard_metrics(keyboard_landscape);
@@ -4956,6 +4958,28 @@ static void touch_sampler_task(void*){
                     quick_slider_preview=(uint8_t)max(0,min(100,value));
                     frontlight_preview(quick_slider_preview);
                 }
+                // Show optional characters while the finger is still held.
+                // This is a separate one-shot event, not a modification to
+                // normal release-to-type or Delete's repeat path.
+                if(!keyboard_long_emitted&&!keyboard_delete_hold&&
+                   keyboard_message_mode&&keyboard_visible&&!keyboard_landscape&&
+                   (screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+                   !quick_panel_active&&millis()-pressed_at>=450){
+                    const auto km=keyboard_metrics(false);
+                    char pressed_char=0;
+                    const bool mode_held=
+                        meshink_keyboard::in_row(start_y,km.mode_key.y,km)&&
+                        start_x<meshink_keyboard::mode_split(km);
+                    const bool letter_held=!keyboard_symbols&&
+                        keyboard_character_at(start_x,start_y,false,pressed_char)&&
+                        meshink_letter_alternatives(pressed_char);
+                    if(mode_held||letter_held){
+                        QueuedTap hold{start_x,start_y,0,0,false};
+                        hold.hold_ms=(uint16_t)min((uint32_t)65535,
+                                                 (uint32_t)(millis()-pressed_at));
+                        if(queue_touch_event(hold))keyboard_long_emitted=true;
+                    }
+                }
                 if(keyboard_delete_hold&&!quick_panel_active&&
                    (int32_t)(millis()-keyboard_delete_repeat_at)>=0){
                     QueuedTap repeat{start_x,start_y,0,0,false};
@@ -4981,8 +5005,9 @@ static void touch_sampler_task(void*){
                     event_y=start_y;
                 }
                 const bool suppress_release=
-                    keyboard_delete_hold&&keyboard_delete_repeated;
+                    (keyboard_delete_hold&&keyboard_delete_repeated)||keyboard_long_emitted;
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                keyboard_long_emitted=false;
                 if(!suppress_release){
                     QueuedTap tap{event_x,event_y,dx,dy,false};
                     tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
