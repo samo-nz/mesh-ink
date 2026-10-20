@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstring>
 #include <cstdio>
+#include <initializer_list>
 
 static void expect(const char* s,uint32_t cp,size_t bytes) {
     const auto c=meshink_utf8::next(s,strlen(s));
@@ -28,9 +29,18 @@ int main() {
     const size_t n=strlen(sample);
     assert(meshink_utf8::prior(sample,n)==n-4);
     assert(meshink_utf8::prior(sample,2)==1);
-    assert(meshink_emoji_rows(0x1F642));
-    assert(meshink_emoji_rows(0x2764));
-    assert(meshink_emoji_rows(0x1F44D));
-    assert(!meshink_emoji_rows(0x1F680)); // no glyph; use replacement
+    assert(meshink_emoji_glyph(0x1F642,32));
+    assert(meshink_emoji_glyph(0x2764,40));
+    assert(meshink_emoji_glyph(0x1F44D,48));
+    assert(!meshink_emoji_supported(0x1F680)); // no glyph; use replacement
+    for(const uint32_t cp : {0x1F642U,0x1F60AU,0x1F602U,0x2764U,0x1F44DU,0x1F44BU,0x2705U}) {
+        for(const uint8_t size : {16,32,40,48,56}) {
+            const auto* glyph=meshink_emoji_glyph(cp,size);
+            assert(glyph&&glyph->bitmap);
+            bool ink=false;
+            for(size_t i=0;i<(size_t)size*size/8;i++)if(glyph->bitmap[i])ink=true;
+            assert(ink);
+        }
+    }
     puts("PASS: UTF-8 decoding, character boundaries and compact emoji glyphs");
 }
