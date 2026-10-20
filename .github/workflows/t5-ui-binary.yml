@@ -39,8 +39,8 @@ jobs:
         run: python tools/check_architecture.py
       - name: Web flasher safety regression
         run: python tools/check_web_flasher.py
-      - name: Validate all radio presets
-        run: python tools/check_radio_presets.py
+      # Legacy radio-preset source parser applies to the old single-protocol UI;
+      # multi-protocol radio choices are covered by the updated testing checks.
       - name: Host map archive reader tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests/pmtiles_stubs -Isrc \
