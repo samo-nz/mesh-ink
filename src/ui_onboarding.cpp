@@ -1157,6 +1157,100 @@ static uint32_t ui_extended_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
     if(out_mark)*out_mark=mark;
     return base;
 }
+
+// Additional Phase 1 Latin characters use the existing native Inter base
+// artwork, with drawn distinguishing strokes/diacritics just like macrons.
+// Original UTF-8 codepoints remain untouched in messages and storage.
+static uint32_t ui_phase1_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
+    uint32_t base=cp;uint8_t mark=0;
+    switch(cp){
+        case 0x103: base='a'; mark=6; break;
+        case 0x102: base='A'; mark=6; break;
+        case 0x109: base='c'; mark=6; break;
+        case 0x108: base='C'; mark=6; break;
+        case 0x10B: base='c'; mark=5; break;
+        case 0x10A: base='C'; mark=5; break;
+        case 0x10F: base='d'; mark=3; break;
+        case 0x10E: base='D'; mark=3; break;
+        case 0x111: base='d'; mark=4; break;
+        case 0x110: base='D'; mark=4; break;
+        case 0x117: base='e'; mark=5; break;
+        case 0x116: base='E'; mark=5; break;
+        case 0x11B: base='e'; mark=3; break;
+        case 0x11A: base='E'; mark=3; break;
+        case 0x11F: base='g'; mark=6; break;
+        case 0x11E: base='G'; mark=6; break;
+        case 0x123: base='g'; mark=9; break;
+        case 0x122: base='G'; mark=9; break;
+        case 0x121: base='g'; mark=5; break;
+        case 0x120: base='G'; mark=5; break;
+        case 0x11D: base='g'; mark=12; break;
+        case 0x11C: base='G'; mark=12; break;
+        case 0x127: base='h'; mark=4; break;
+        case 0x126: base='H'; mark=4; break;
+        case 0x125: base='h'; mark=12; break;
+        case 0x124: base='H'; mark=12; break;
+        case 0x131: base='i'; mark=0; break;
+        case 0x130: base='I'; mark=5; break;
+        case 0x135: base='j'; mark=12; break;
+        case 0x134: base='J'; mark=12; break;
+        case 0x137: base='k'; mark=9; break;
+        case 0x136: base='K'; mark=9; break;
+        case 0x13C: base='l'; mark=9; break;
+        case 0x13B: base='L'; mark=9; break;
+        case 0x13E: base='l'; mark=3; break;
+        case 0x13D: base='L'; mark=3; break;
+        case 0x148: base='n'; mark=3; break;
+        case 0x147: base='N'; mark=3; break;
+        case 0x146: base='n'; mark=9; break;
+        case 0x145: base='N'; mark=9; break;
+        case 0x14B: base='n'; mark=15; break;
+        case 0x14A: base='N'; mark=15; break;
+        case 0x151: base='o'; mark=8; break;
+        case 0x150: base='O'; mark=8; break;
+        case 0x155: base='r'; mark=2; break;
+        case 0x154: base='R'; mark=2; break;
+        case 0x157: base='r'; mark=9; break;
+        case 0x156: base='R'; mark=9; break;
+        case 0x219: base='s'; mark=9; break;
+        case 0x218: base='S'; mark=9; break;
+        case 0x15F: base='s'; mark=10; break;
+        case 0x15E: base='S'; mark=10; break;
+        case 0x15D: base='s'; mark=12; break;
+        case 0x15C: base='S'; mark=12; break;
+        case 0x1E9E: base='B'; mark=16; break;
+        case 0x165: base='t'; mark=3; break;
+        case 0x164: base='T'; mark=3; break;
+        case 0x21B: base='t'; mark=9; break;
+        case 0x21A: base='T'; mark=9; break;
+        case 0x167: base='t'; mark=4; break;
+        case 0x166: base='T'; mark=4; break;
+        case 0x16F: base='u'; mark=17; break;
+        case 0x16E: base='U'; mark=17; break;
+        case 0x171: base='u'; mark=8; break;
+        case 0x170: base='U'; mark=8; break;
+        case 0x173: base='u'; mark=1; break;
+        case 0x172: base='U'; mark=1; break;
+        case 0x16D: base='u'; mark=6; break;
+        case 0x16C: base='U'; mark=6; break;
+        case 0x175: base='w'; mark=12; break;
+        case 0x174: base='W'; mark=12; break;
+        case 0x1E81: base='w'; mark=13; break;
+        case 0x1E80: base='W'; mark=13; break;
+        case 0x1E83: base='w'; mark=2; break;
+        case 0x1E82: base='W'; mark=2; break;
+        case 0x1E85: base='w'; mark=14; break;
+        case 0x1E84: base='W'; mark=14; break;
+        case 0x177: base='y'; mark=12; break;
+        case 0x176: base='Y'; mark=12; break;
+        case 0x178: base='Y'; mark=14; break;
+        case 0x153: base='o'; mark=18; break;
+        case 0x152: base='O'; mark=18; break;
+        default:break;
+    }
+    if(out_mark)*out_mark=mark;
+    return base;
+}
 static bool ui_zero_width_cp(uint32_t cp) {
     return cp==0xFE0F||cp==0xFE0E||cp==0x200D||cp==0x0304;
 }
@@ -1169,7 +1263,7 @@ static int ui_emoji_size(int scale) {
 static int ui_char_advance(uint32_t cp,int scale) {
     if(ui_zero_width_cp(cp))return 0;
     if(meshink_emoji_supported(cp))return ui_emoji_size(scale)+2;
-    cp=ui_extended_latin_base(ui_font_base(cp));
+    cp=ui_phase1_latin_base(ui_extended_latin_base(ui_font_base(cp)));
     if(scale>=3) {
         const UiSmoothFont face=ui_smooth_font(scale);
         const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
@@ -1234,6 +1328,8 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
     cp=ui_font_base(cp,&macron);
     uint8_t extended_mark=0;
     cp=ui_extended_latin_base(cp,&extended_mark);
+    uint8_t phase1_mark=0;
+    cp=ui_phase1_latin_base(cp,&phase1_mark);
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
     if(!g)return;
@@ -1264,6 +1360,40 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
             const int px=start_x+dx,py=first_y+dy;
             if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
                 meshink_display_draw_pixel(px,py,color,fb);
+        }
+    }
+    if(phase1_mark){
+        const int thickness=scale>=6?4:scale>=4?3:2;
+        const int mid=gx+g->width/2, upper=gy-5-thickness;
+        auto dot=[&](int px,int py){
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        };
+        auto line=[&](int x1,int y1,int x2,int y2){
+            const int steps=max(abs(x2-x1),abs(y2-y1));
+            for(int q=0;q<=steps;++q)
+                for(int t=0;t<thickness;++t)
+                    dot(x1+(x2-x1)*q/max(1,steps),y1+(y2-y1)*q/max(1,steps)+t);
+        };
+        switch(phase1_mark){
+            case 1: // ogonek
+            case 9: // comma below
+            case 10: // cedilla
+                line(mid+2,gy+g->height-1,mid,gy+g->height+6);
+                line(mid,gy+g->height+6,mid+4,gy+g->height+8);break;
+            case 2:line(mid-4,upper+5,mid+3,upper-1);break; // acute
+            case 3:line(mid-5,upper,mid,upper+4);line(mid,upper+4,mid+5,upper);break;
+            case 4:line(mid-7,gy+g->height/2+2,mid+7,gy+g->height/2-2);break;
+            case 5:for(int y=0;y<3;++y)for(int x=0;x<3;++x)dot(mid+x,upper+y);break;
+            case 6:line(mid-5,upper,mid,upper+3);line(mid,upper+3,mid+5,upper);break; // breve
+            case 8:line(mid-7,upper+4,mid-3,upper-2);line(mid+1,upper+4,mid+5,upper-2);break;
+            case 12:line(mid-6,upper+4,mid,upper-2);line(mid,upper-2,mid+6,upper+4);break;
+            case 13:line(mid-4,upper-2,mid+3,upper+4);break;
+            case 14:for(int x=-5;x<=5;x+=10)for(int i=0;i<3;++i)for(int j=0;j<3;++j)dot(mid+x+i,upper+j);break;
+            case 15:line(gx+g->width-6,gy+3,gx+g->width-6,gy+g->height-3);break;
+            case 16:line(gx+3,gy+g->height/2,gx+g->width-3,gy+g->height/2);break;
+            case 17:line(mid-6,upper+2,mid-3,upper-3);line(mid-3,upper-3,mid+3,upper-3);line(mid+3,upper-3,mid+6,upper+2);break;
+            default:break;
         }
     }
     if(extended_mark){
