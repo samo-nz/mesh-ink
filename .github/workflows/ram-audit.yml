@@ -1,0 +1,49 @@
+name: MeshInk refinement firmware
+on:
+  push:
+    branches: [mesh-agnostic-refine]
+  workflow_dispatch:
+concurrency:
+  group: meshink-refine-build
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio Pillow
+      - name: Build firmware
+        run: python -m platformio run -e t5-unified-cache64-ram-audit
+      - name: Package update and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD=.pio/build/t5-unified-cache64-ram-audit
+          test -s "$BUILD/firmware.bin"
+          VERSION=$(python - <<'PY'
+          import pathlib,re
+          text=pathlib.Path("platformio.ini").read_text()
+          match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",text)
+          assert match,"Firmware version not found"
+          print(match.group(1))
+          PY
+          )
+          mkdir -p firmware-output
+          cp "$BUILD/firmware.bin" "firmware-output/meshink-$VERSION-update.bin"
+          (cd firmware-output && sha256sum "meshink-$VERSION-update.bin" > SHA256SUMS.txt)
+          echo "artifact=meshink-$VERSION-update" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact }}
+          path: firmware-output/
+          if-no-files-found: error
+          retention-days: 14

@@ -13,6 +13,7 @@ ui_header_source = (root / "src" / "ui_onboarding.h").read_text(encoding="utf-8"
 runtime_source = (root / "src" / "local_mesh_runtime.cpp").read_text(encoding="utf-8")
 message_store_source = (root / "src" / "message_store.cpp").read_text(encoding="utf-8")
 message_store_header = (root / "src" / "message_store.h").read_text(encoding="utf-8")
+backup_source = (root / "src" / "backup_restore.cpp").read_text(encoding="utf-8")
 message_limits_source = (root / "src" / "message_limits.h").read_text(encoding="utf-8")
 component_cmake_source = (root / "src" / "CMakeLists.txt").read_text(encoding="utf-8")
 data_source = (root / "src" / "ui_data.h").read_text(encoding="utf-8")
@@ -20,6 +21,9 @@ map_source = (root / "src" / "map_tiles.cpp").read_text(encoding="utf-8")
 pmtiles_source = (root / "src" / "pmtiles_reader.cpp").read_text(encoding="utf-8")
 pmtiles_header = (root / "src" / "pmtiles_reader.h").read_text(encoding="utf-8")
 unified_source = (root / "src" / "unified_main.cpp").read_text(encoding="utf-8")
+protocol_source = (root / "src" / "protocol" / "mesh_protocol.cpp").read_text(encoding="utf-8")
+protocol_header_source = (root / "src" / "protocol" / "mesh_protocol.h").read_text(encoding="utf-8")
+meshcore_protocol_source = (root / "src" / "protocol" / "meshcore_protocol.cpp").read_text(encoding="utf-8")
 standalone_source = (root / "src" / "ui_standalone_main.cpp").read_text(encoding="utf-8")
 board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding="utf-8")
 board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
@@ -28,6 +32,7 @@ companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(enco
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
+gps_types_source = (root / "src" / "hardware" / "gps_types.h").read_text(encoding="utf-8")
 wireless_selector_source = (root / "src" / "hardware" / "wireless.h").read_text(encoding="utf-8")
 wireless_types_source = (root / "src" / "hardware" / "wireless_types.h").read_text(encoding="utf-8")
 wireless_backend_source = (root / "src" / "board" / "t5_wireless_backend.h").read_text(encoding="utf-8")
@@ -42,6 +47,11 @@ radio_selector_source = (root / "src" / "hardware" / "radio.h").read_text(encodi
 radio_types_source = (root / "src" / "hardware" / "radio_types.h").read_text(encoding="utf-8")
 radio_backend_header = (root / "src" / "board" / "t5_radio_backend.h").read_text(encoding="utf-8")
 radio_backend_source = (root / "src" / "board" / "t5_radio_backend.cpp").read_text(encoding="utf-8")
+native_radio_source = (root / "src" / "protocol" / "meshtastic_radio.cpp").read_text(encoding="utf-8")
+meshtastic_runtime_source = (root / "src" / "protocol" / "meshtastic_runtime.cpp").read_text(encoding="utf-8")
+meshtastic_worker_source = (root / "src" / "protocol" / "meshtastic_worker.cpp").read_text(encoding="utf-8")
+meshtastic_protocol_source = (root / "src" / "protocol" / "meshtastic_protocol.cpp").read_text(encoding="utf-8")
+meshtastic_ui_source = (root / "src" / "protocol" / "meshtastic_ui_data.cpp").read_text(encoding="utf-8")
 storage_selector_source = (root / "src" / "hardware" / "storage.h").read_text(encoding="utf-8")
 storage_backend_header = (root / "src" / "board" / "t5_storage_backend.h").read_text(encoding="utf-8")
 storage_backend_source = (root / "src" / "board" / "t5_storage_backend.cpp").read_text(encoding="utf-8")
@@ -58,23 +68,88 @@ cache64_build_flags = platformio_source.split("[env:t5-unified-cache64]", 1)[1].
 def contains(fragment, label):
     assert fragment in source, f"{label}: expected code is missing"
 
+# Native Meshtastic cleanup: unsupported deep sleep must be neither drawn nor
+# touch-enabled. MeshCore retains its original control.
+display_page=source.split("static void draw_display_settings()",1)[1].split("static void draw_help()",1)[0]
+assert 'if(mesh_protocol_supports_deep_sleep_standby())' in display_page
+assert 'ui_action_button(deep_sleep_standby?"DEEP SLEEP":"NORMAL"' in display_page
+assert '"NORMAL ONLY"' not in display_page, "unsupported deep sleep must not be advertised"
+display_tap=source.split("case Screen::DisplaySettings:",2)[2].split("case Screen::NightSchedule:",1)[0]
+assert 'if(mesh_protocol_supports_deep_sleep_standby()&&' in display_tap, "hidden switch must not retain an invisible touch target"
+assert 'if(hit_outer_row(x,y,538))' in display_tap, "standby timeout remains configurable"
+
+# A MeshInk router subclass observes actual upstream retry decrements, never
+# simulates them by a wall clock. Only UI core changes flash journal/status.
+assert 'class MeshInkProgressRouter final : public ReliableRouter' in meshtastic_runtime_source
+assert 'const int32_t delay_ms=ReliableRouter::runOnce();' in meshtastic_runtime_source
+assert 'entry_state.initialNumRetransmissions!=NUM_RELIABLE_UNICAST_ATTEMPTS-1' in meshtastic_runtime_source
+assert 'const uint8_t completed=total-entry_state.numRetransmissions;' in meshtastic_runtime_source
+assert 'meshink_meshtastic_worker_note_retry(packet->id,completed,total)' in meshtastic_runtime_source
+assert 'router=new(std::nothrow) MeshInkProgressRouter();' in meshtastic_runtime_source
+assert 'xQueueCreate(kTxFrames,sizeof(RetryEvent))' in meshtastic_worker_source
+assert 'xQueueSend(retry_events,&event,0)' in meshtastic_worker_source
+assert 'xQueueReceive(retry_events,&event,0)' in meshtastic_worker_source
+assert 'meshink_meshtastic_worker_retry_status(retry_packet,retry_number,retry_total)' in meshtastic_protocol_source
+assert 'meshink_meshtastic_ui_retry_status(retry_packet,retry_number,retry_total);' in meshtastic_protocol_source
+assert meshtastic_protocol_source.index('meshink_meshtastic_ui_receive(data);') < meshtastic_protocol_source.index('meshink_meshtastic_ui_retry_status(retry_packet,retry_number,retry_total);'), "ACK/NAK updates precede queued retry labels"
+assert '"RETRYING %u/%u"' in meshtastic_ui_source
+assert 'm.row.network=m.retry_label[0]?m.retry_label:"";' in meshtastic_ui_source
+assert 'outgoing_awaiting_ack(m.row.state)' in meshtastic_ui_source
+assert 'meshink_message_store().update_state(m.journal_sequence,m.row.state)' in meshtastic_ui_source
+assert 'm.retry_label[0]=0;' in meshtastic_ui_source, "final routing verdict must clear transient retry wording"
+
 # First-install identity, setup text and guaranteed e-paper transitions.
 contains('#include <esp_random.h>', "hardware-generated first-install identity")
-contains('static char node_name[21] = "MeshInk-";', "default MeshInk identity prefix")
+contains('static char node_name[40] = "MeshInk-";', "protocol-aware node name capacity")
 contains('static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";', "new ID alphabet")
 contains('for(int i=0;i<4;++i)node_name[8+i]=alphabet[esp_random()%36];', "four randomized characters")
 contains('node_name[12]=0;', "generated name termination")
-contains('initial_name.putString("name",node_name);', "generated name persisted before setup save")
+assert 'initial_name.putString("name",node_name);' not in source, "name drafts must not be persisted on boot"
 contains('}else if(!setup_complete){', "existing completed identity is preserved")
 assert 'centred("SETTINGS SAVED",760,2,0,true);' not in source, "obsolete saved line below setup keyboard"
 assert 'show_toast(screen==Screen::Welcome?"SETTINGS SAVED"' not in source, "setup saved toast should not obscure first Contacts"
 contains('fast_full_redraw("FIRST_SETUP_SCREEN",false);', "full e-paper redraw on first setup")
-contains('fast_full_redraw("FIRST_CONTACTS_AFTER_SETUP",true);', "full e-paper redraw on first Contacts")
+assert "static void draw_welcome()" not in source, "legacy single-page onboarding has been removed"
+assert 'const bool new_setup_flags=prefs.isKey("setup_mc")||prefs.isKey("setup_mst");' in source and 'setup_meshcore_done=prefs.getBool("setup_mc",!new_setup_flags&&legacy_setup_complete);' in source, "legacy MeshCore setups migrate without marking a new Meshtastic-first install as MeshCore configured"
+assert 'setup_meshtastic_done=prefs.getBool("setup_mst",false);' in source, "Meshtastic setup is tracked independently"
+assert 'if(screen==Screen::SetupName||screen==Screen::SetupRadio){' in source, "standard keyboard ENTER is reused in the wizard"
+assert 'setup_return_protocol' in source and 'Screen::SetupCancel' in source, "second protocol setup can be cancelled"
+assert 'setup_load_core_preset(-1)' in source and 'const int source=index<0?17:index;' in source, "MeshCore CUSTOM starts with NZ Narrow radio values"
+assert 'setup_is_meshcore()?3U:4U' in source, "Shared wizard is three steps for protocol one, four for protocol two"
+assert 'setup_enter(setup_is_meshcore()?Screen::SetupPreset:Screen::SetupRegion);' in source, "MeshCore skips region screen without changing Meshtastic"
+assert 'setup_is_meshcore()?mesh_protocol_radio_preset_count()' in source, "MeshCore lists all radio presets"
+assert 'return selected==-1?"CUSTOM":' in source and 'if(visible==1)return 17;' in source, "MeshCore CUSTOM followed by NZ Narrow"
+assert 'setup_radio_return=Screen::SetupReview;' in source and 'ui_action_button("CUSTOMIZE"' in source, "review customizer returns to review"
+assert 'snprintf(setup_power,sizeof(setup_power),"%u",22U);' in source, "new MeshCore setup power defaults to 22 dBm"
+assert 'setup_rf_matches_selected_preset()' in source and 'return meshcore_rf_matches_preset(selected)?selected.title:"CUSTOM";' in source, "RF-incompatible changes are labelled CUSTOM"
+assert 'ui_action_button("RESTORE FROM SD",setup_restore_button_rect(),false);' in source, "both naming screens expose direct SD restore"
+assert 'if(hit(x,y,setup_restore_button_rect())){' in source and 'backup_open_files(Screen::SetupName);' in source, "restore from the naming screen uses the active protocol backup list"
+assert 'setup_restore_button_rect()' in source and 'ui_rect(60,650,420,74)' in source, "restore touch target and drawn target share geometry"
+assert 'ui_action_button("EDIT LONG NAME"' not in source and 'ui_action_button("EDIT SHORT NAME"' not in source and 'ui_action_button("EDIT NAME"' not in source, "tapping text fields is the sole name editor"
+assert 'setup_any_done?"CANCEL":nullptr' not in source and 'setup_any_done&&hit_header_action(x,y)' not in source, "shared wizard has no redundant top-right cancel action"
+assert 'setup_enter(setup_any_done?Screen::SetupCancel:Screen::Welcome);' in source, "name BACK can still safely return to the prior configured protocol"
+assert 'if(!keyboard_visible){\n        ui_action_button("RESTORE FROM SD",setup_restore_button_rect(),false);\n        setup_footer();' in source, "restore button is hidden while the name keyboard is open"
+assert 'setup_enter(Screen::SetupPreset);return true;' in source, "Shared review BACK returns to preset selection"
+assert 'meshink_suggest_short_name(node_name,setup_short_name);' in source, "Initial short name follows the shared suggestion algorithm"
+assert 'setup_short_manual=true;' in source and 'if(!setup_short_manual)' in source, "Manual short names are never overwritten"
+assert 'commit.putString("mt_short",setup_short_name)==strlen(setup_short_name)' in source and 'commit.putBool("mt_name_pending",true)==1' in source, "Confirmed identity is checked before native handoff"
+assert 'saved=(commit.putBool("setup_mst",false)==1)&&saved;' in source, "Meshtastic wizard never claims completion before native saved config"
+assert 'ui_sync_protocol_setup_result()' in unified_source, "post-native startup updates wizard after confirmed save"
+assert 'ui_centred(progress,ui_y(116),2,0,true);' in source, "Step label is below the shared title region"
+assert 'settings_info_row("SHORT NAME",setup_short_name' in source, "Review displays short name"
+assert 'setup_radio_preset=(int)i;' in source and 'setup_enter(Screen::SetupReview);' in source, "Preset selections lead to shared review"
+assert 'ui_action_button("CUSTOMIZE",ui_rect(60,716,420,66)' in source, "Optional hop-limit configuration remains available"
+assert 'mesh_protocol_setup_commit_radio' in source, "Meshtastic wizard explicitly saves its region and modem preset"
+assert "if(!setup_complete||setup_is_screen(screen)||standby_active)return;" in source, "setup screens cannot enter standby"
+assert "if(!setup_complete||setup_is_screen(screen)){" in source, "both short and long BOOT presses are inert during setup"
+assert "if(!setup_complete||setup_is_screen(screen))continue; // Home is inert during setup." in source, "Home gesture is inert during setup"
+assert 'p.putUChar("setup_choice",setup_protocol_choice);' in source, "protocol selection persists across the onboarding reboot"
+assert "static void draw_setup_protocol()" in source and "static void draw_setup_review()" in source, "shared setup has protocol selection and final review"
 contains('landscape_key(keyboard_password_mode?"LOGIN":(keyboard_message_mode?"SEND":"DONE"),metrics.action_key);', "landscape keyboard preserves DONE for name entry and LOGIN for repeater auth")
 assert 'if(was_setup)show_contacts_after_setup();' not in source, "landscape keyboard must not complete setup"
-assert source.count('save_node_name();')==1, "only the portrait SAVE may persist setup"
+assert source.count('if(!save_node_name())')==1, "only the portrait SAVE may submit a native identity edit"
 contains('keyboard_visible=true;set_keyboard_orientation(false);\n        return true;', "landscape DONE returns to portrait without saving")
-contains('if(was_setup){\n            show_contacts_after_setup();', "portrait setup SAVE opens Contacts")
+assert "if(wizard_entry){" in source and "keyboard_visible=false;" in source[source.index("static bool handle_name_keyboard"):], "wizard keyboard ENTER only collapses input"
 
 contains("frontlight_brightness=30;", "new-device frontlight default")
 contains('prefs.getUChar("light_level",30)', "first-install brightness load")
@@ -106,7 +181,7 @@ non_map_sampler = source.split("// Non-Maps keeps the legacy single-contact sema
     "vTaskDelay(pdMS_TO_TICKS(8));", 1
 )[0]
 assert "const bool pressed=sample.pressed&&!suppressed_home;" in non_map_sampler, "non-Maps preserves primary press semantics while fully suppressing keyboard Home"
-assert "held=false;keyboard_delete_hold=false;keyboard_delete_repeated=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
+assert "held=false;" in non_map_sampler and "keyboard_delete_hold=false;keyboard_delete_repeated=false;" in non_map_sampler, "Home must not become ordinary non-Maps tap release"
 assert "const bool keyboard_active=keyboard_visible||keyboard_landscape;" in non_map_sampler, "keyboard state gates capacitive Home"
 assert "const bool suppressed_home=sample.home&&keyboard_active;" in non_map_sampler, "keyboard-active Home frame is explicitly consumed"
 assert "const bool home=sample.home&&!keyboard_active;" in non_map_sampler, "capacitive Home navigation is disabled while either keyboard is active"
@@ -232,7 +307,7 @@ assert "retained diagnostics will replay" not in unified_source and "service_dee
 retained_wake_body = companion_source.split("static bool local_mesh_setup_retained_wake",1)[1].split("bool local_mesh_setup_rx_wake",1)[0]
 assert "frontlight" not in retained_wake_body, "retained MeshCore startup must not drive the frontlight"
 assert 'set_cpu_target(UI_IDLE_CPU_MHZ,"headless-alert-idle")' in source, "display-only alert returns CPU to the 80 MHz headless cruise"
-assert "local_mesh_service_startup();" in source, "final standby redraw services MeshCore while retaining the display session"
+assert "mesh_protocol_service_startup();" in source, "final standby redraw services MeshCore while retaining the display session"
 assert "headless display session retained through 40s cooldown" in source, "headless display remains initialized for later unread/channel redraws"
 assert "return headless_alert_requested||message_alert_active;" in source, "idle initialized headless display does not block deep sleep"
 assert "ui_quiesce_display_for_deep_sleep" in source and "panel HV/frontlight off" in source, "deep-sleep cleanup explicitly powers down the physical display while retaining reusable EPDiy state until reset"
@@ -273,6 +348,17 @@ assert "meshink_radio_gpio_isr" in epdiy_patch_source and "&& !meshink_radio_gpi
 assert "meshink_epdiy_owns_gpio_isr_service" in epdiy_patch_source, "EPDiy patch tracks global ISR ownership"
 assert "meshink_epdiy_note_gpio_isr_service" in epdiy_patch_source and "gpio_isr_service_ready" in board_target_source, "EPDiy and radio share explicit global ISR-service installed state"
 assert "if(gpio_isr_service_ready)return true;" in board_target_source, "radio skips duplicate gpio_install_isr_service calls when EPDiy already owns the service"
+assert "class MeshInkNativeRadioHal final : public LockingArduinoHal" in native_radio_source, "native Meshtastic HAL retains official SPI locking while overriding the IRQ binding"
+native_hal_body = native_radio_source.split("class MeshInkNativeRadioHal final",1)[1].split("std::unique_ptr<MeshInkNativeRadioHal> native_hal;",1)[0]
+assert "meshink_radio_native_attach_interrupt(pin,callback,mode)" in native_hal_body, "native DIO1 must use board-owned global ISR service"
+assert "meshink_radio_native_detach_interrupt(pin)" in native_hal_body, "native DIO1 must remove only its handler"
+assert "ArduinoHal::attachInterrupt" not in native_hal_body and "ArduinoHal::detachInterrupt" not in native_hal_body, "native HAL must not reinstall GPIO ISR via Arduino"
+assert "new(std::nothrow) MeshInkNativeRadioHal(" in native_radio_source, "native radio must actually construct shared-interrupt HAL"
+assert "t5_native_radio_attach_interrupt(pin,callback,mode)" in radio_backend_source and "t5_native_radio_detach_interrupt(pin)" in radio_backend_source, "board backend must delegate native interrupt to common owner"
+native_attach_body=board_target_source.split("bool t5_native_radio_attach_interrupt(",1)[1].split("void t5_native_radio_detach_interrupt(",1)[0]
+assert "radio_hal.attachInterrupt(pin,callback,mode)" in native_attach_body and "radio_hal.handlerActive(pin)" in native_attach_body, "native callback shares board-owned DIO1 ISR/ownership checks"
+assert "radio_hal.detachInterrupt(pin)" in board_target_source.split("void t5_native_radio_detach_interrupt(",1)[1].split("static CustomSX1262 radio",1)[0], "native callback unregistration retains the global ISR service"
+assert "gpio_uninstall_isr_service();" not in native_attach_body, "native driver must never tear down the global IRQ service"
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
 assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
 assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
@@ -287,7 +373,7 @@ assert 'pre-alert battery check' in companion_source and 'pre-UI battery check' 
 assert "ui_display_session_active()" in companion_source, "battery guard detects any already-owned EPDiy I2C bus"
 power_check_body = companion_source.split("static MeshInkPowerSleepCheck local_mesh_headless_power_check",1)[1].split("static void companion_set_low_power_cpu",1)[0]
 assert power_check_body.index("ui_display_session_active()") < power_check_body.index("meshink_power_begin_minimal_bus()"), "normal or headless EPDiy I2C is reused before attempting another driver install"
-assert "local_mesh_setup_button_wake" in unified_source and "local_mesh_promote_to_ui" in unified_source, "BOOT wake restores retained MeshCore before attaching full UI"
+assert "mesh_protocol_setup_button_wake" in unified_source and "mesh_protocol_promote_to_ui" in unified_source, "BOOT wake restores retained MeshCore before attaching full UI"
 assert "bool i2c_ready_ = false;" in board_target_header_source, "RTC tracks whether its shared I2C lifecycle has actually started"
 assert "uint32_t deferred_hardware_time_ = 0;" in board_target_header_source, "RTC retains one deferred bootstrap timestamp until interactive I2C exists"
 assert "i2c_ready_=true;" in board_target_source, "RTC marks I2C ready only from interactive/cold RTC begin"
@@ -299,7 +385,7 @@ assert "meshink_power_frontlight_begin();" in runtime_promotion_body and "meshin
 assert runtime_promotion_body.index("meshink_power_frontlight_set(100);") < runtime_promotion_body.index("local_mesh_headless_power_check"), "awake BOOT acknowledgement precedes promotion battery/startup work"
 deep_button_body = unified_source.split("if(button_wake){",1)[1].split("if(radio_wake){",1)[0]
 assert "meshink_power_frontlight_begin();" in deep_button_body and "meshink_power_frontlight_set(100);" in deep_button_body, "deep-sleep BOOT hold immediately acknowledges with full frontlight"
-assert deep_button_body.index("meshink_power_frontlight_set(100);") < deep_button_body.index("local_mesh_setup_button_wake()"), "deep-sleep BOOT acknowledgement precedes retained MeshCore restoration"
+assert deep_button_body.index("meshink_power_frontlight_set(100);") < deep_button_body.index("mesh_protocol_setup_button_wake()"), "deep-sleep BOOT acknowledgement precedes retained MeshCore restoration"
 promotion_body = source.split("bool ui_promote_headless_to_interactive()",1)[1].split("void ui_prepare_headless_rx_wake()",1)[0]
 assert "meshink_power_frontlight_set(100);" in promotion_body and "frontlight_lit=true;" in promotion_body, "interactive promotion keeps the BOOT acknowledgement lit through startup"
 assert "meshink_power_frontlight_set(0);" not in promotion_body, "interactive promotion must not extinguish accepted BOOT feedback"
@@ -307,10 +393,10 @@ assert "plan.sample_status=false;" in promotion_body, "retained promotion avoids
 assert "plan.display=!reuse_display;" in promotion_body, "retained promotion reuses an existing EPDiy session instead of initializing it twice"
 assert "ui_close_headless_display_session();" not in promotion_body, "BOOT promotion must not deinit/reinit EPDiy high-level singleton state"
 assert "interactive promotion reusing initialized EPDiy session" in promotion_body, "display-session transfer is observable in retained BOOT logs"
-assert "local_mesh_prepare_interactive_services();" in promotion_body, "retained promotion starts skipped RTC/GPS services without restarting radio"
-assert promotion_body.index("local_mesh_prepare_interactive_services();") < promotion_body.index("ui_mesh_ready();"), "RTC/GPS are ready before first interactive status sample"
+assert "mesh_protocol_prepare_interactive_services();" in promotion_body, "retained promotion starts skipped RTC/GPS services without restarting radio"
+assert promotion_body.index("mesh_protocol_prepare_interactive_services();") < promotion_body.index("ui_mesh_ready();"), "RTC/GPS are ready before first interactive status sample"
 assert "map_tiles_warm_storage();" in promotion_body and promotion_body.index("map_tiles_warm_storage();") < promotion_body.index("ui_finish_startup();"), "retained promotion warms map storage before revealing UI"
-assert "meshink_gps_prepare_runtime();" in companion_source and "retained UI promotion UART ready" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
+assert "meshink_gps_prepare_runtime();" in companion_source and "Serial1.begin(detected_gps_baud);" in board_target_source, "retained promotion opens the GNSS UART skipped by radio-first wake"
 assert "restarting into full UI boot" not in companion_source, "headless BOOT promotion must not restart the ESP32"
 assert "meshink_radio_resume_retained_wake" in companion_source, "button wake uses retained-radio recovery before UI startup"
 assert "meshink_board_restore_deep_sleep_wake_pads();" in unified_source, "deep-sleep wake restores EXT0/EXT1 RTC pads to normal digital GPIO"
@@ -414,11 +500,11 @@ assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in companion_notice_s
 
 contains("if(tap.map_sampled&&screen!=Screen::Maps)continue;", "discard stale Maps gestures after tab switch")
 contains("if(touch_queue)xQueueReset(touch_queue);", "home clears previous-page touches")
-contains("open_screen(setup_complete?Screen::Contacts:Screen::Welcome);", "home persists logical navigation")
+contains("open_screen(setup_complete?Screen::Contacts:(setup_any_done?Screen::SetupName:Screen::Welcome));", "home retains unfinished wizard navigation")
 contains("static constexpr size_t LIST_ITEMS_PER_PAGE = 5;", "contacts/channels use paged list rows")
 contains("contacts_page*LIST_ITEMS_PER_PAGE", "Contacts taps and rendering address later pages")
 contains("channels_page*LIST_ITEMS_PER_PAGE", "Channels taps and rendering address later pages")
-contains("(screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery)&&", "Contacts/Channels/Discovery vertical swipe changes pages")
+contains("(screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::ChannelManage||screen==Screen::Discovery)&&", "Contacts/Channels/manager/Discovery vertical swipe changes pages")
 contains("draw_list_page_footer(contacts_page,count);", "Contacts displays page count when multiple pages exist")
 contains("rounded_box(layout.outer_margin,y,layout.outer_width,layout.list_row_height,", "list cards use shared logical interior width with rounded treatment")
 contains("row*portrait_layout().list_row_stride", "list drawing/touch use shared row stride")
@@ -437,22 +523,23 @@ contains("chat_history_available_paged(),", "conversation paging gives older pag
 contains("draw_chat_page_indicator(chat_page,has_older,layout.height-ui_h(38));", "older history page indicator uses the reclaimed lower screen area")
 assert "chat_page_bounds(" not in source, "conversation drawing must not rescan all historical pages to calculate a total"
 assert 'text("OLDER"' not in source and 'text("NEWER"' not in source, "conversation paging buttons must stay removed"
-contains("static uint8_t node_info_page_count(uint8_t type){return node_has_status(type)?4:3;}", "Node Info page count is role-aware")
-contains("node_has_status(uint8_t type){return type==(uint8_t)UiNodeRole::Repeater||type==(uint8_t)UiNodeRole::Room;}", "Status is exposed for repeaters and room servers")
+contains("static uint8_t node_info_page_count(uint32_t capabilities)", "Node Info page count is capability-aware")
+contains("node_has_capability(capabilities,UI_NODE_CAP_STATUS)", "Node Info status pages are driven by helper capabilities")
+assert "capabilities|=UI_NODE_CAP_STATUS|UI_NODE_CAP_LOGIN;" in runtime_source, "MeshCore helper marks protected status nodes with status/login capabilities"
 contains("screen==Screen::ContactDetails&&!keyboard_visible&&abs(tap.dy)>60", "Node Info pages use vertical swipe paging")
 contains('UiNodeInfoRequest::Status,"REQUEST STATUS"', "Node Info exposes an individual status request")
 contains('UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"', "Node Info exposes an individual telemetry request")
 contains('UiNodeInfoRequest::Path,"DISCOVER PATH"', "Node Info exposes an individual path-discovery request")
 contains('UiNodeInfoRequest::Trace,"TRACE ROUTE"', "Node Info exposes an individual trace request")
 assert "REQUEST ALL INFO" not in source, "Node Info must not send every remote request at once"
-contains("draw_node_role_icon(item.node_type", "Contacts and Discovery show node role icons")
+contains("draw_node_role_icon(item.role", "Contacts and Discovery show generic node role icons")
 contains("const MeshInkUiRect row=meshink_outer_row_rect(layout,reference_y,112);", "settings rows use shared scalable geometry")
 contains("hit_outer_row(", "settings/list touch targets use shared interior geometry")
-contains('case (uint8_t)UiNodeRole::Repeater:return "REPEATER";', "Repeater role label")
-contains("Radio tower: tapered mast plus two signal arcs", "Contacts and Discovery repeater icon uses the radio-tower glyph")
-contains('case (uint8_t)UiNodeRole::Room:return "ROOM SERVER";', "Room Server role label")
-contains("Simple house silhouette: peaked roof", "Contacts and Discovery room-server icon uses the house glyph")
-contains('case (uint8_t)UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
+contains('case UiNodeRole::Relay:return "RELAY";', "Relay role label")
+contains("Relay node: tapered mast plus two signal arcs", "Contacts and Discovery relay icon uses the radio-tower glyph")
+contains('case UiNodeRole::Service:return "SERVICE";', "Service role label")
+contains("Service node: simple house silhouette", "Contacts and Discovery service icon uses the house glyph")
+contains('case UiNodeRole::Sensor:return "SENSOR";', "Sensor role label")
 contains('keyboard_password_mode?"LOGIN"', "protected-node password keyboard has a dedicated login action")
 assert "login_active_node(const char* password, bool save_password)" in data_source, "UI provider exposes protected-node login with save option"
 assert "frame[0]=26" in runtime_source, "protected-node login uses MeshCore CMD_SEND_LOGIN"
@@ -471,12 +558,16 @@ contains("static void thick_rect(int x,int y,int w,int h)", "role icons use thic
 contains("const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;", "received status text keeps scale 3 when it fits and scale 2 for long counter lines")
 contains("ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2", "received telemetry uses the largest scale that preserves all four visible lines")
 contains("const int path_lines=min(3,ui_wrapped_line_count(node.path,layout.section_width,3));", "received path text line count drives following layout")
-contains("const int trace_heading_y=max(", "trace heading moves down when the discovered path uses all three lines")
+contains("next_y=max(ui_y(360),path_text_y+path_lines*ui_text_line_step(3)+ui_h(10));", "trace heading moves down when the discovered path uses all three lines")
 contains("const int trace_lines=min(9,ui_wrapped_line_count(node.trace,layout.section_width,2));", "trace results reserve their actual wrapped height")
 contains('page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "status action touch follows shared control geometry")
-contains('page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))', "telemetry action touch follows shared control geometry")
-contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry")
-contains('page==NodeInfoPage::Path&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))', "trace touch follows shared right-action geometry")
+contains('page==NodeInfoPage::Telemetry&&', "telemetry action touch follows the selected protocol")
+contains('mesh_protocol_descriptor().id==2?', "Meshtastic telemetry has its own two-action layout")
+contains('hit(x,y,meshink_node_left_action_rect(portrait_layout()))||', "Meshtastic telemetry left action uses shared geometry")
+contains('hit(x,y,meshink_node_right_action_rect(portrait_layout()))):', "Meshtastic telemetry right action uses shared geometry")
+contains('hit(x,y,meshink_node_action_rect(portrait_layout())))){', "MeshCore telemetry retains the original full-width action")
+contains('can_path&&can_trace&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))', "path discovery touch follows shared left-action geometry when both actions are available")
+contains('can_path&&can_trace&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))', "trace touch follows shared right-action geometry when both actions are available")
 assert source.count("active_node_saved_password(remote_password,sizeof(remote_password))")>=2, "saved credentials should prefill from both Status and Telemetry login"
 
 contains('meshink_display_fill_rect({0,metrics.clear_top,layout.width,', "password keyboard clear area follows shared geometry")
@@ -514,8 +605,10 @@ contains("if(map_zoom>meshink_map_gestures::MIN_ZOOM)", "Maps minus button reach
 assert "if(map_zoom>8)" not in source, "stale Maps minimum zoom 8 must not return"
 contains("if(next==Screen::Maps&&screen!=Screen::Maps&&!preserve_map_centre)", "automatic map recenter")
 contains("open_screen(Screen::Maps,true);", "explicit node position preserved")
-contains('prefs.getBool("map_fix_saved",false)', "reload last known position")
-contains('location_store.putBool("map_fix_saved",true)', "persist verified last known position")
+contains('prefs.getBytesLength("map_fix_v2")', "reload checksummed last-known GPS record")
+contains('map_gps_record_valid(stored)', "reject corrupt saved GPS records")
+contains('location_store.putBytes("map_fix_v2",&record,sizeof(record))', "persist checksummed last-known GPS record")
+contains('map_gps_record_valid(verify)', "verify saved GPS record before accepting it")
 contains("if(enabled&&has_fix&&latitude>=-85051100L", "never replace last fix with disabled/no-fix coordinates")
 contains("centre_map_on_device();", "current or stale position recenter")
 contains('(current_fix?"CENTRED ON DEVICE":"CENTRED ON LAST FIX")', "stale position explicitly indicated")
@@ -543,7 +636,7 @@ assert "settings->gps_enabled=1;" in companion, "new setup GPS must default ON"
 assert "settings->gps_interval=0;" in companion, "new setup GPS must default continuous"
 assert 'initial_gps.putBool("gps_default_v1",true);' in companion, "GPS default marker missing"
 # Portrait keyboard ergonomics: message entry uses a wide space bar with no
-# adjacent HIDE key; Radio Settings name entry has a wide SAVE action and
+# adjacent HIDE key; Protocol Settings name entry has a wide SAVE action and
 # dismisses by tapping above the keyboard instead.
 # Keyboard drawing, touch and message entry now share one scalable geometry
 # source. The T5 reference remains exact while board profiles can tune offsets.
@@ -567,7 +660,7 @@ contains('key(keyboard_password_mode?"LOGIN":"SEND",metrics.action_key);', "mess
 contains('if(y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "message keyboard dismiss boundary follows shared geometry")
 assert source.count("x<meshink_keyboard::action_split(metrics)")>=3, "portrait/landscape SPACE boundaries come from shared geometry"
 contains('key("SAVE",metrics.wide_action_key);', "name entry uses the shared wide SAVE action instead of a dead space bar")
-contains('if(screen==Screen::RadioSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Radio Settings dismiss boundary follows shared geometry")
+contains('if(screen==Screen::ProtocolSettings&&y<metrics.dismiss_above){text_refresh_pending=false;keyboard_visible=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}', "Protocol Settings dismiss boundary follows shared geometry")
 assert 'key("HIDE",318,898,100);' not in source, "portrait HIDE key must be removed everywhere"
 
 # 1.8.4 interaction-latency fixes and sentence-style message keyboard.
@@ -579,10 +672,10 @@ contains("keyboard_upper=false;", "auto lowercase transition")
 contains("if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;", "fresh messages reopen uppercase")
 contains("if(text_refresh_pending)return;", "typing refresh is throttled/coalesced instead of indefinitely debounced")
 contains("static void draw_message_entry_fast()", "message typing avoids full chat redraw")
-contains("static void draw_radio_name_fast()", "Radio Settings name typing avoids full settings redraw")
-contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Radio Settings preserves the existing node name when editing")
+contains("static void draw_protocol_name_fast()", "Protocol Settings name typing avoids full settings redraw")
+contains("replace_name_on_type=false;keyboard_message_mode=false;keyboard_visible=true", "Protocol Settings preserves the existing node name when editing")
 
-contains("(settings_page&&!(screen==Screen::RadioSettings&&keyboard_visible))", "bottom tabs are hidden behind Radio Settings keyboard")
+contains("(settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible))", "bottom tabs are hidden behind Protocol Settings keyboard")
 contains("const bool text_refresh_due=text_refresh_pending", "text refresh is staged for coalescing")
 contains("if(status_dirty&&!message_alert_active)", "status redraw has priority for coalescing")
 contains("else if(text_refresh_due)", "text refresh runs only if status did not already redraw")
@@ -598,7 +691,7 @@ assert "T5_LOG_TOUCH" not in source and "T5_LOG_TOUCH" not in platformio_source,
 # cruise clock, restoring the previous clock immediately afterwards.
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-draw");', "full UI drawing temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-message-entry-draw");', "keyboard text redraw temporarily boosts CPU")
-contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-radio-name-draw");', "name-entry redraw temporarily boosts CPU")
+contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-protocol-name-draw");', "name-entry redraw temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-status-draw");', "standalone status-bar composition temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-quick-panel-draw");', "Quick Settings composition temporarily boosts CPU")
 contains('MeshInkCpuBoostScope draw_cpu_boost(!standby_active,"ui-toast-draw");', "standalone toast composition temporarily boosts CPU")
@@ -613,7 +706,7 @@ assert "parent-edge=%u parent-full=%u parent-px=%lu" in map_source, "map logs wh
 assert "[T5-MAP-PERF]" in map_source, "map emits detailed PMTiles cold-path timing"
 assert "preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu" in map_source, "map separates PMTiles sequential preload timing"
 assert "range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu" in map_source, "map retains callback range timing for preload fallback"
-assert "png.openRAM(pmt_png_buffer" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
+assert "png->openRAM(pmt_png_buffer" in map_source and "pmt_preloaded" in map_source, "PMTiles PNG payloads decode from reusable RAM preload"
 assert "meshink_display_blit_gray4_dithered(target,blit);" in map_source, "Maps delegates packed framebuffer composition to display backend"
 assert "physical_width" not in map_source and "physical_height" not in map_source, "Maps must not know physical panel geometry"
 assert "EPD_ROT_" not in map_source and "Epd" not in map_source, "Maps must not depend on EPDiy types"
@@ -662,7 +755,7 @@ print("PASS: 10 UI issue checks (icon strokes, controls, Home/primary button, la
 compat_source = (root / "src" / "cache64_compat.cpp").read_text(encoding="utf-8")
 assert ".global s3_rgb565" in compat_source and "ee.vld.128.ip" in compat_source, "cache64 uses PNGdec ESP32-S3 SIMD RGB565 assembly"
 assert "alignas(16) static uint16_t pixels[TILE_SIZE];" in map_source, "SIMD RGB565 destination row is 16-byte aligned"
-assert "alignas(16) PNG png;" in map_source, "PNG decoder object is 16-byte aligned for zero-copy SIMD source rows"
+assert "heap_caps_aligned_alloc(16,sizeof(PNG),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)" in map_source and "png=new(memory) PNG();" in map_source, "PNG decoder is 16-byte aligned in PSRAM for zero-copy SIMD source rows"
 assert "alignas(16) static uint8_t simd_source[TILE_SIZE*4];" in map_source, "misaligned PNG RGBA rows have an aligned SIMD staging buffer"
 assert "source_mod!=0U" in map_source and "[T5-PNG-SIMD] src-mod16=%u dst-mod16=%u staged=%u" in map_source, "cache64 logs and stages misaligned SIMD input rows"
 assert "if(zoom<=12)draw_cached_epdiy(*tile,draw);" not in map_source, "failed low-zoom compositor A/B removed"
@@ -784,7 +877,7 @@ for storage_api in ("meshink_storage_begin", "meshink_storage_end", "meshink_sto
 assert "T5_PIN_SD_CS" in storage_backend_source, "T5 SD chip select remains storage-backend-owned"
 assert "t5_shared_spi()" in storage_backend_source, "T5 shared SPI selection remains storage-backend-owned"
 assert "T5_STORAGE_SPI_HZ=25000000" in storage_backend_source, "field-tested 25 MHz SD access speed is preserved"
-assert "SD.begin(T5_PIN_SD_CS,t5_shared_spi(),T5_STORAGE_SPI_HZ)" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
+assert "sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ);" in storage_backend_source, "T5 storage backend binds CS, shared SPI and tuned clock"
 assert '#include "hardware/storage.h"' in map_source, "Maps consumes generic storage boundary"
 assert '#include "hardware/storage.h"' in pmtiles_header, "PMTiles consumes generic storage boundary"
 for leaked_storage_detail in ('#include <SD.h>', '#include "board/target.h"', "T5_PIN_SD_CS", "t5_shared_spi()", "MAP_SD_SPI_HZ", "SD.begin(", "SD.open(", "SD.exists(", "SD.end("):
@@ -884,14 +977,41 @@ assert "MeshInkGpsConstellationMode" in gps_types_source, "GPS tuning vocabulary
 assert '#include "hardware/gps.h"' in runtime_source, "local runtime must use generic GPS surface"
 assert '#include "hardware/gps.h"' in companion_source, "companion runtime must use generic GPS surface"
 assert "meshink_gps_background_tick();" in runtime_source, "GPS background servicing routes through generic backend"
-assert "meshink_gps_shutdown();" in runtime_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through generic backend"
+assert "meshink_gps_shutdown();" in protocol_source and "meshink_gps_shutdown();" in companion_source, "GPS shutdown routes through shared MeshInk/companion ownership"
 assert "Serial1" not in runtime_source and "Serial1" not in companion_source and "Serial1" not in source, "application code must not own the GPS UART"
 assert "t5_gps_" not in runtime_source and "t5_gps_" not in companion_source and "t5_gps_" not in source, "application code must not call T5-specific GPS APIs"
 assert "L76K" not in runtime_source and "L76K" not in source, "receiver model details must stay in the board GPS implementation"
 assert "PCAS03" not in runtime_source and "PCAS04" not in runtime_source and "PCAS03" not in source and "PCAS04" not in source, "receiver command syntax must stay in the board GPS implementation"
-assert "meshink_gps_next_constellation_mode(mode)" in source, "UI uses board-independent GPS constellation cycle"
-assert "local_mesh_gps_tuning_note()" in source, "GPS board-specific explanatory text comes from backend"
+assert "meshink_gps_constellation_mode_set(" in source and "GPS DISABLED" in source and "GPS ENABLED" in source, "UI uses board-independent GPS mode toggles including disabled state"
+assert 'draw_app_header("GPS MODE",true);' in source, "GPS mode page uses final user-facing wording"
+assert 'settings_row("GPS MODE",gps_mode_label(),120);' in source, "Location and GPS opens GPS MODE instead of a redundant power toggle"
+assert "GPS POWER" not in source, "GPS power row is removed because empty GPS mode owns disabled state"
+assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explains the empty-selection behavior"
+assert 'settings_row("GPS",gps_constellation_state(MeshInkGpsConstellation::Gps),118);' in source, "GPS constellation toggle row present"
+assert 'settings_row("BEIDOU",gps_constellation_state(MeshInkGpsConstellation::BeiDou),238);' in source, "BeiDou constellation toggle row present"
+assert 'settings_row("GLONASS",gps_constellation_state(MeshInkGpsConstellation::Glonass),358);' in source, "GLONASS constellation toggle row present"
+assert "GPS POWER SAVING" not in source, "final constellation UI must not present experimental power-saving wording"
 assert "meshink_gps_tuning_note" in t5_gps_backend_source, "T5 GPS backend exposes its board-specific tuning note"
+assert 'gps_send_pcas("PCAS04,2");' in board_target_source and 'gps_send_pcas("PCAS15,2,00000000");' in board_target_source and 'gps_send_pcas("PCAS15,3,00000000");' in board_target_source, "T5 deep sleep owns the proven BeiDou zero-mask low-work state"
+assert 'gps_send_pcas("PCAS15,2,FFFFFFFF");' in board_target_source and 'gps_send_pcas("PCAS15,3,FFFFFFFF");' in board_target_source, "T5 can restore full BeiDou masks after a known MeshInk zero-mask sleep"
+assert "gps_boot_mask_recovery_pending" not in board_target_source and 'gps_persisted_deep_sleep_masks' in board_target_source, "T5 mask recovery is driven only by MeshInk retained/persisted state rather than every boot"
+assert "t5_gps_prepare_deep_sleep_low_work();" in board_target_source, "T5 board deep-sleep handoff applies GNSS low-work state only at final sleep entry"
+assert "PCAS15" not in runtime_source and "PCAS15" not in companion_source and "PCAS15" not in source, "T5/L76K deep-sleep mask commands must not leak into generic runtime or UI"
+
+# Hardware-portability clock boundary and standalone manual time.
+rtc_header_source = (root / "src" / "hardware" / "rtc.h").read_text(encoding="utf-8")
+rtc_types_source = (root / "src" / "hardware" / "rtc_types.h").read_text(encoding="utf-8")
+assert "MESHINK_RTC_BACKEND_HEADER" in rtc_header_source, "RTC backend is compile-time selectable"
+assert "MeshInkTimeSource" in rtc_types_source, "time-source vocabulary is board independent"
+assert "mesh_protocol_set_manual_time" in protocol_source and "meshink_rtc_set_manual_time" in protocol_source, "manual time is owned by shared MeshInk RTC service"
+assert "meshink_rtc_expect_companion_time" in companion_source and "CMD_SET_DEVICE_TIME" in companion_source, "companion SET_DEVICE_TIME is explicitly identified before upstream handling"
+assert "T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL" in board_target_source, "trusted GPS time owns a 24-hour authority window"
+assert "trusted_companion" in board_target_source and "gpsAuthorityActive(current)" in board_target_source, "companion time is gated only by fresh GPS authority after upstream command validation"
+assert "setManualTime" in board_target_source and "MeshInkTimeSource::Manual" in board_target_source, "manual time bypass exists and records its source"
+assert '{"DATE & TIME","Clock, source and timezone",SettingsAction::DateTime}' in source, "Date and Time is available from Settings independently of GPS"
+assert 'draw_app_header("DATE & TIME",true);' in source and 'draw_app_header("SET DATE & TIME",true);' in source, "standalone clock pages are present"
+assert 'settings_row("TIMEZONE",zone,478);' in source and 'timezone_display_label(zone,sizeof(zone));' in source, "timezone belongs to Date and Time and supports dynamic AUTO/CUSTOM labels"
+assert "GPS is disabled when no satellite systems are selected." in source, "GPS mode explanatory text remains visible"
 
 # Logical UI geometry boundary preserves the field-tested T5 layout while
 # scaling both axes for other display dimensions.
@@ -953,7 +1073,7 @@ assert "[T5-STACK]" not in source, "temporary Maps stack diagnostic should be re
 
 # Maps marker rendering must keep complete UiMapNode records off loopTask stack.
 assert "Visible visible[50]" not in source, "Maps must not retain 50 complete node records on loopTask stack"
-assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.node_type};" in source, "Maps reuses compact projected marker storage and carries node role"
+assert "map_marker_hits[count++]={(int16_t)sx,(int16_t)sy,i,node.role};" in source, "Maps reuses compact projected marker storage and carries node role"
 assert "struct Bounds {int16_t x,y,w,h;};" in source, "Maps collision bounds use compact 16-bit coordinates"
 assert "RankedLabel ranked[50]" in source, "Maps ranks labels without copying full node records"
 assert "for(uint8_t candidate=0;candidate<12;++candidate)" in source, "Maps tries the bounded twelve-position label solver"
@@ -962,12 +1082,12 @@ assert "const size_t label_budget=" in source and "compact_labels=map_zoom<=10" 
 assert "draw_map_repeater_marker(n.x,n.y)" in source, "Repeater nodes use the dedicated tower marker"
 assert "Two bold broadcast arcs per side" in source and "meshink_display_fill_rect({x-13,y-14,27,29}" in source, "Map repeater marker uses the larger bold separated-wave tower glyph"
 assert "own_marker_reserved" in source and "own_marker_x+22" in source and "own_marker_y+22" in source, "Map labels reserve the own-location bullseye footprint"
-assert "const int radius=m.node_type==(uint8_t)UiNodeRole::Repeater?14:9;" in source, "Label solver protects the enlarged repeater marker"
+assert "const int radius=m.role==UiNodeRole::Relay?14:9;" in source, "Label solver protects the enlarged repeater marker"
 assert "thick_line(n.x,n.y,target_x,target_y);" in source, "Displaced map labels keep a three-pixel leader to their node"
 assert "map_marker_hit_count=count;" in source, "Maps publishes projected marker hit count after drawing"
-assert "uint8_t node_type=0;" in data_source, "Map node data carries the MeshCore role"
-assert "item.node_type=positioned.type;" in runtime_source, "Saved map contacts expose their role"
-assert "item.node_type=contact->type;" in runtime_source, "Telemetry-only map contacts expose their role"
+assert "UiNodeRole role" in data_source, "Map node data carries a protocol-neutral role"
+assert "item.role=meshcore_ui_role(positioned.type);" in runtime_source, "Saved map contacts map protocol type into shared role"
+assert "item.role=meshcore_ui_role(contact->type);" in runtime_source, "Telemetry-only map contacts map protocol type into shared role"
 
 # Shared X-axis interior geometry must derive from logical width.
 assert "form_width==480" in ui_layout_source, "T5 setup form width guard missing"
@@ -1002,7 +1122,7 @@ for release_power_debug_source in (source, runtime_source, unified_source, board
 assert "delay(12);" in source and "if(!standby_active)delay(12);" not in source, "UI restores the established unconditional 12 ms idle delay"
 
 # Test40 release serial policy: normal operation is quiet; actionable faults remain.
-assert '[T5-BOOT] MeshInk %s board=%s mode=%s' in unified_source, "release boot prints a concise version/board/mode header"
+assert '[T5-BOOT] MeshInk %s board=%s protocol=%s mode=%s' in unified_source, "release boot prints a concise version/board/protocol/mode header"
 assert '[T5-BLE] scan response name=' not in companion_source, "release companion mode must not print BLE setup chatter"
 assert 'companion shutdown complete elapsed=' not in companion_source, "release companion shutdown must not print routine timing"
 assert 'Serial.printf("[T5-RADIO]' not in board_target_source and 'Serial.println("[T5-RADIO]' not in board_target_source, "release radio bring-up must not print routine diagnostics"
@@ -1017,7 +1137,7 @@ assert "status_slot!=status_bar_painted_slot" in source, "standby keeps five-min
 assert '[T5-INIT] psram=OK' in unified_source, "startup reports PSRAM readiness"
 assert '[T5-INIT] display=initialized' in source and '[T5-INIT] touch=initialized' in source, "startup reports display/touch initialization without overclaiming verification"
 assert '[T5-INIT] radio=SX1262 OK' in board_target_source, "startup reports radio readiness"
-assert '[T5-INIT] gps=%s baud=%lu OK' in board_target_source and '[T5-WARN] gps=NMEA not confirmed; background retry active' in board_target_source, "startup reports confirmed GPS or explicit fallback warning"
+assert '[T5-INIT] gps=%s baud=%lu OK' in board_target_source and '[T5-ERROR] gps module not identified: no valid NMEA at supported baud; background retry active' in board_target_source, "startup reports confirmed GPS or explicit user-visible identification failure"
 assert '[T5-INIT] rtc=PCF8563 OK' in board_target_source and '[T5-WARN] rtc=' in board_target_source, "startup reports RTC success or fallback warning"
 assert '[T5-INIT] battery-gauge=OK voltage=%umV' in board_target_source, "startup reports battery gauge readiness"
 assert '[T5-INIT] storage=SPIFFS OK' in companion_source, "startup reports filesystem readiness"
@@ -1031,7 +1151,11 @@ assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startu
 
 # Test44: field standby redesign uses the full-size MeshInk bitmap and only
 # shows unread summary cards that contain unread messages.
-assert "const int logo_top=any_unread?ui_y(70):ui_y(165);" in source and "draw_meshink_logo(logo_top,false);" in source, "standby lowers the full-size MeshInk logo only when there are no unread cards"
+assert "draw_branding_stack(ui_y(48),any_unread?ui_y(433):ui_y(594)," in source and "ui_h(any_unread?18:28),ui_h(86)," in source and "ui_h(any_unread?0:35));" in source, "unread MeshInk position stays unchanged; other standby artwork moves up"
+assert "constexpr int kPreviousMeshInkHeight=257;" in source and "const int protocol_top=previous_mesh_top+previous_height+gap;" in source and "draw_protocol_logo(protocol_top,protocol_height);" in source, "protocol logos retain exact test.43 positions after image cropping"
+assert "const int mesh_top=protocol_top-gap-ui_h(MESHINK_LOGO_HEIGHT)-meshink_lift;" in source, "only MeshInk artwork is lifted"
+assert "draw_branding_stack(ui_y(92),ui_y(492),ui_h(22),ui_h(86),ui_h(30));" in source, "About raises only MeshInk by 30px"
+assert "draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125),ui_h(65));" in source, "boot raises only MeshInk by 65px"
 assert 'ui_centred("STANDBY",standby_state_y,5,0,true);' in source and '"DEEP SLEEP STANDBY"' in source, "standby keeps the large STANDBY identity and adds dedicated deep-sleep identity"
 assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
 assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
@@ -1046,7 +1170,8 @@ assert "ui_y(830)" in source and "HOLD %s FOR TWO SECONDS" in source and 'ui_cen
 
 # Test44b: unread state is journal authority without growing the v3 record.
 assert "MESHINK_MESSAGE_UNREAD" in message_store_header and "MESHINK_MESSAGE_READ_THROUGH" in message_store_header, "v3 record flags persist unread arrival and read-through boundary"
-assert "static_assert(sizeof(MeshInkStoredMessage)==188" in message_store_source, "persistent unread reuses existing flags without growing the record cache"
+assert "static_assert(sizeof(MeshInkStoredMessageV3)==188" in message_store_source, "MeshCore v3 unread storage retains its original 188-byte physical record"
+assert "static_assert(sizeof(MeshInkStoredMessage)==264" in message_store_source, "Meshtastic v4 record preserves 233 message bytes without changing the MeshCore file"
 assert "if(unread)item.flags|=MESHINK_MESSAGE_UNREAD;" in message_store_source, "incoming unread state is committed in the same append transaction"
 assert "MeshInkMessageStore::mark_read_through" in message_store_source and "MESHINK_MESSAGE_READ_THROUGH" in message_store_source, "opening a conversation persists a single read-through marker"
 assert "rebuild_unread_from_journal()" in runtime_source and "unread restored direct=" in runtime_source, "RAM unread counters are derived from journal state at startup"
@@ -1070,7 +1195,7 @@ assert "if(sequence&&journal_full)rebuild_unread_from_journal();" in runtime_sou
 # Test45: MeshCore network feedback is surfaced and its useful RF metadata is
 # persisted in the v2 device journal.
 assert "const char* network" in data_source, "message model exposes network metadata"
-assert "STORE_VERSION=3" in message_store_source, "message journal uses the 160-byte-text v3 format"
+assert "CORE_STORE_VERSION=3" in message_store_source and "MESHTASTIC_STORE_VERSION=4" in message_store_source, "MeshCore journal remains 160-byte v3; Meshtastic uses full-length v4"
 assert "int8_t snr_q4=0;" in message_store_header and "uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;" in message_store_header, "received SNR/path metadata lives in the persistent record"
 assert "uint8_t repeats=0;" in message_store_header and "MESHINK_MESSAGE_ROUTE_KNOWN" in message_store_header, "repeat and route metadata lives in the persistent record"
 assert "local_protocol_query[2]={22,3}" in companion_source, "standalone runtime negotiates MeshCore v3 receive frames"
@@ -1083,11 +1208,11 @@ assert "mesh::Utils::MACThenDecrypt" in runtime_source, "repeat matching validat
 assert "Trace=3" in data_source, "trace is a first-class node-info request"
 assert "frame[0]=36" in runtime_source and "frame[0]==0x89" in runtime_source, "trace command and response are wired through upstream MeshCore"
 assert "TRACE %u HOP%s" in runtime_source and "DEST  %.1f DB" in runtime_source, "trace result reports repeater hashes/SNR and destination SNR"
-assert 'settings_row("DIAGNOSTICS","Live MeshCore radio stats",650)' in source, "More exposes diagnostics with sentence-case subtitle"
-assert "local_mesh_request_diagnostics()" in source and "draw_diagnostics()" in source, "diagnostics UI requests and renders live MeshCore stats"
+assert "MESHINK_PROTOCOL_CAP_DIAGNOSTICS" in source and "Live protocol and radio stats" in source, "More exposes helper-advertised diagnostics"
+assert "mesh_protocol_request_diagnostics()" in source and "draw_diagnostics()" in source, "diagnostics UI requests and renders active-protocol stats"
 assert "frame[2]={56,type}" in runtime_source, "diagnostics uses upstream CMD_GET_STATS"
 assert "PACKETS RX/TX %lu / %lu" in runtime_source and "AIRTIME TX/RX %lu / %lu S" in runtime_source, "diagnostics decodes packet and radio counters"
-assert 'settings_row("HELP","Using MeshInk",780)' in source, "Help moves below Diagnostics without overlapping bottom navigation"
+assert '{"HELP","Using MeshInk",MoreAction::Help}' in source, "Help remains a shared More action after protocol-specific rows"
 
 # Test46: a message received while its conversation is visibly open is already
 # seen and must not create contact/channel or bottom-tab unread dots.
@@ -1123,7 +1248,7 @@ assert "local_mesh_flush_contacts_save_if_due();" in runtime_source, "local mesh
 assert "local_contacts_save_due=millis()+5000UL;" in companion_source, "Last Heard persistence coalesces writes on MeshCore's five-second cadence"
 assert "store.saveContacts(&the_mesh,local_persist_contact);" in companion_source, "deferred save persists MeshCore ContactInfo including lastmod"
 assert "return contact.type!=ADV_TYPE_NONE;" in companion_source, "transient anonymous contacts are not persisted by Last Heard saves"
-assert "if(local_mesh_is_running())local_mesh_flush_contacts_save_now();" in unified_source, "deliberate local reboot flushes pending Last Heard timestamps first"
+assert "b.flush_now = local_mesh_flush_contacts_save_now;" in meshcore_protocol_source and "mesh_protocol_flush_now();" in protocol_source, "protocol reboot path flushes backend state before restart"
 assert "last_advert_timestamp=heard" not in runtime_source, "Last Heard persistence must never rewrite Last Advert"
 
 
@@ -1140,20 +1265,15 @@ assert '"SAVED ADVERT %s"' not in runtime_source, "persisted telemetry coordinat
 # Test50: one 250-message v3 journal spans standalone and Bluetooth Companion
 # modes. The one-off pre-release v1/v2 migration path has been retired.
 assert "MESHINK_MESSAGE_CAPACITY=250" in message_store_header, "device journal capacity is 250 messages"
-assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk exposes the full MeshCore direct-message text limit"
-assert "STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessage)==188" in message_store_source, "current v3 fixed-record layout is pinned"
+assert "MESHINK_MESSAGE_TEXT_MAX=160" in message_limits_source, "MeshInk keeps the validated shared message editor/storage cap"
+assert "CORE_STORE_VERSION=3" in message_store_source and "sizeof(MeshInkStoredMessageV3)==188" in message_store_source, "MeshCore v3 physical layout remains pinned independently of Meshtastic v4"
 assert "migrate_legacy" not in message_store_source and "migrate_legacy" not in message_store_header, "legacy message migration code is removed"
 assert "LEGACY_STORE_VERSION" not in message_store_source and "LegacyStoredMessage" not in message_store_source, "legacy v1/v2 record formats are removed"
 assert "STORE_TEMP_PATH" not in message_store_source and "STORE_BACKUP_PATH" not in message_store_source, "migration temporary and rollback paths are removed"
-assert 'STORE_INVALID_PATH[]="/ui_messages.invalid.bak"' in message_store_source, "unsupported live journals get a non-destructive recovery backup"
-assert "journal unsupported" in message_store_source and "preserving before recreate" in message_store_source, "unsupported journal handling is explicit and non-destructive"
-# A failed rename must keep messaging usable without deleting the old journal.
-assert 'STORE_RECOVERY_PATH[]="/ui_messages.recovery.bin"' in message_store_source, "journal recovery has a persistent alternative SPIFFS file"
-assert 'active_store_path=SPIFFS.exists(STORE_RECOVERY_PATH)?STORE_RECOVERY_PATH:STORE_PATH;' in message_store_source, "reboot selects the previously active recovery journal"
-assert 'if(active_store_path==STORE_PATH&&!SPIFFS.exists(STORE_RECOVERY_PATH))' in message_store_source, "failed backup rename switches to recovery only when the fallback is unused"
-assert 'const bool recovered=create_empty();' in message_store_source and 'initialized_=recovered;' in message_store_source, "fallback journal is initialized after recovery"
-assert 'SPIFFS.remove(STORE_INVALID_PATH);' not in message_store_source, "recovery never deletes a previous invalid-journal backup"
-assert 'SPIFFS.open(STORE_PATH,' not in message_store_source, "all journal reopen and verification paths honor the selected recovery file"
+assert 'CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak"' in message_store_source and 'MESHTASTIC_INVALID_PATH[]="/meshtastic_messages.bad"' in message_store_source, "each protocol journal has an SPIFFS-compatible recovery backup"
+assert 'copy_legacy_meshcore_journal()' in message_store_source and 'memcmp(left,right,wanted)==0' in message_store_source, "original MeshCore journal is byte-verified and retained"
+assert 'mesh_protocol_descriptor().id==2?meshtastic_journal:meshcore_journal' in message_store_source, "each protocol uses a separate message journal"
+assert "existing journal invalid" in message_store_source and "preserving before recreate" in message_store_source, "existing invalid journal handling remains explicit and non-destructive"
 assert "static bool incomplete_direct_state(uint8_t state)" in message_store_source, "boot recovery identifies stale in-flight direct states"
 assert "item.kind!=(uint8_t)MeshInkMessageKind::Direct" in message_store_source, "boot recovery never rewrites channel sends"
 assert "write_record(physical,item)" in message_store_source, "stale in-flight direct sends are durably failed before history loads"
@@ -1174,15 +1294,17 @@ assert "record-cache=%s header=%uB" in message_store_source, "boot transcript re
 assert "uint16_t active_indices_[MESHINK_MESSAGE_CAPACITY]{};" in runtime_source, "active conversation keeps compact journal indices"
 assert "mutable MessageView active_message_view_{};" in runtime_source, "UI still formats only one scratch message at a time"
 assert "MessageView active_messages_[MAX_STORED_MESSAGES]" not in runtime_source and "MessageView* active_messages_" not in runtime_source, "formatted history is never prebuilt"
-assert "store_.read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
+assert "store().read(active_indices_[i],item)" in runtime_source, "on-demand message formatting reads the RAM-backed journal"
 assert "ui_setup();           // show boot logo while storage/radio initialize" in unified_source, "display still initializes before local message-store startup"
-assert "local_mesh_setup();   // includes first-boot SPIFFS mount / format" in unified_source, "journal startup remains after display initialization"
+assert 'if(selected_protocol_ready_for_boot())mesh_protocol_setup();' in unified_source, "configured protocol starts after display initialization; unconfigured native wizard stays offline"
+assert unified_source.index('ui_setup();') < unified_source.index('if(selected_protocol_ready_for_boot())mesh_protocol_setup();'), "interactive UI is prepared before native startup"
+assert 'setup_meshcore_done=setup_meshcore_done' not in source, "reverse protocol setup never invents MeshCore completion"
 
 
 # Test52: page history stays on-demand. Only tiny anchors and lazy per-message
 # geometry metadata are retained; pages themselves are never materialized.
 assert "uint32_t revision() const" in message_store_header, "journal exposes a cheap append revision for cache invalidation"
-assert "conversation_store_revision_!=store_.revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
+assert "conversation_store_revision_!=store().revision()" in runtime_source, "conversation summaries rebuild only after message history changes"
 assert "conversation_contacts_signature_!=contact_signature" in runtime_source, "contact/name changes invalidate summaries without periodic journal scans"
 assert "void rebuild_conversations(uint32_t contact_signature)" in runtime_source, "conversation previews use one linear RAM-backed journal pass"
 assert "last_for(" not in runtime_source, "per-contact full-journal scans are removed"
@@ -1303,11 +1425,11 @@ assert "PCAS02" not in platformio_source, "build flags do not introduce a GPS up
 # mounting is independent of the LoRa/GPS rail, so do it while the rail is
 # still settling; MeshCore datastore/core lifecycle remains behind radio init.
 local_setup_body=companion_source[companion_source.index("void local_mesh_setup()"):companion_source.index("static bool local_mesh_setup_retained_wake(")]
-assert local_setup_body.index("SPIFFS.begin(false)") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
+assert local_setup_body.index("meshink_storage_mount_internal_safe()") < local_setup_body.index("meshink_board_begin_local();"), "internal SPIFFS mount overlaps the remaining radio-rail settle interval"
 radio_ready_pos=local_setup_body.index("const bool radio_ready=meshink_radio_initialize();")
 assert radio_ready_pos < local_setup_body.index("store.begin();"), "MeshCore datastore initialization stays after radio initialization"
 assert radio_ready_pos < local_setup_body.index("the_mesh.begin(true);"), "MeshCore core initialization stays after radio initialization"
-assert local_setup_body.count("SPIFFS.begin(false)") == 1, "local startup mounts existing SPIFFS exactly once"
+assert local_setup_body.count("meshink_storage_mount_internal_safe()") == 1, "local startup mounts SPIFFS through the data-preserving board service exactly once"
 assert "delay(200)" not in ui_setup_boot, "local UI no longer burns a fixed 200 ms serial delay before useful startup work"
 assert "Serial.begin(115200);" in ui_setup_boot, "standalone UI target still initializes Serial without the fixed wait"
 
@@ -1362,7 +1484,7 @@ assert "const MessageBubbleGeometry geometry=chat_message_geometry(i);" in sourc
 
 # Test55: the chat/contact visual language extends across the rest of the UI
 # without changing touch geometry or adding heavyweight rendering state.
-render_body = source[source.index("static void draw_welcome()"):]
+render_body = source[source.index("static void draw_setup_protocol()"):]
 assert "ui_section_card(row);" in source[source.index("static void settings_row"):], "settings use shared rounded cards"
 assert "ui_action_button(" in source, "screens share one rounded action-button treatment"
 assert "rounded_box(rect.x,rect.y,rect.width,rect.height" in source[source.index("static void key("):source.index("static void draw_keyboard")], "portrait keyboard keys are rounded without changing key rectangles"
@@ -1370,7 +1492,7 @@ assert "rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.
 assert "rounded_box(zoom_in" in source and "rounded_box(zoom_out" in source and "rounded_box(locate" in source, "map controls use the same rounded style"
 assert "ui_section_card(core);ui_section_card(radio);ui_section_card(packets);" in source, "diagnostics is grouped into readable cards"
 assert "ui_section_card(quick);ui_section_card(button);ui_section_card(keyboard);" in source, "Help uses readable grouped cards"
-assert "ui_action_button(\"ADVERT FLOOD\",advert_button,true);" in source and "ui_action_button(\"POWER OFF\",power_button,false);" in source, "Quick Settings actions use shared polished buttons"
+assert 'ui_action_button_two_lines("ADVERT","FLOOD",advert_button,true);' in source and 'ui_action_button("POWER OFF",power_button,false);' in source, "Quick Settings advert and power retain equal text scale"
 assert "rounded_box(start_rect" in source and "ui_action_button(\"SAVE SCHEDULE\",save_rect,true);" in source, "Night Schedule uses rounded selected fields and action"
 assert "ui_section_card(info);" in source[source.index("static void draw_about"):], "About metadata is grouped into a rounded card"
 assert "static void box(int x" not in source and "box(" not in render_body.replace("rounded_box(", ""), "legacy square box primitive is fully removed from screen rendering"
@@ -1391,8 +1513,13 @@ assert "const int compose_y=chat_compose_top();" in source, "message composer dr
 assert source.count("chat_compose_top()")>=3, "current-page composer draw and touch paths share the same top edge"
 assert source.count("const int text_width=ui_text_width(page_text,2);")>=2, "list and chat page arrows use proportional label width"
 assert "const int subtitle_scale=ui_text_width(subtitle,3)<=subtitle_width?3:2;" in source, "long settings subtitles shrink before clipping"
-assert "const int detail_scale=ui_text_width(PRESETS[index].detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
-assert "if(!keyboard_visible)settings_row(\"PATH HASH MODE\",path_hash_label(),510);" in source, "Radio Settings does not draw a row beneath the portrait keyboard"
+assert "const int detail_scale=ui_text_width(mesh_protocol_radio_preset_at(index).detail,3)<=detail_width?3:2;" in source, "long radio preset technical details shrink before clipping"
+assert '"PATH HASH MODE"' not in source, "shared UI must not hard-code MeshCore path-hash settings"
+assert '"PATH HASH MODE"' in meshcore_protocol_source and "MESHCORE_SETTING_PATH_HASH" in meshcore_protocol_source, "MeshCore helper owns path-hash settings"
+assert "mesh_protocol_setting_item(" in source and "mesh_protocol_activate_setting(" in source, "Protocol Settings renders and activates helper-owned rows"
+assert "draw_list_page_footer(protocol_settings_page,count);" in source, "Protocol Settings uses the same PAGE X OF Y arrow footer as Contacts"
+assert "screen==Screen::ProtocolSettings&&!keyboard_visible" in source and "clamp_list_page(protocol_settings_page,count);" in source, "Protocol Settings uses the shared vertical swipe paging model"
+assert "const size_t first=protocol_settings_page*LIST_ITEMS_PER_PAGE;" in source, "Protocol Settings keeps the shared five-row page size"
 assert 'if(value>99)strcpy(out,"99+");' in source, "status unread counters are visually bounded"
 assert source.count("text(count,left,ui_y(13),3,0,true);")>=2, "direct and channel status counters use the same primary numeric face/size as clock and battery"
 assert "text(satellites,ui_x(43),ui_y(13),3,0,true);" in source, "GPS satellite count uses the same primary numeric face/size"
@@ -1411,11 +1538,11 @@ assert "const int status_scale=ui_text_max_line_width(node.status,3)<=layout.sec
 assert "ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2" in source, "dense telemetry shrinks only when needed to keep its allotted four lines"
 assert "layout.section_width,2,0,true,9" in source, "Trace Route uses the safe extra vertical room for two more lines"
 assert "overview_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "two-line Overview position reserves explicit space before its source label"
-assert "overview_source_y+ui_text_height(2)+ui_h(18)" in source, "Overview source label keeps breathing room before Last Heard"
+assert "overview_source_y+ui_text_height(3)+ui_h(18)" in source, "Overview source label keeps breathing room before Last Heard at scale 3"
 assert "telemetry_position_lines*ui_text_line_step(3)+ui_h(8)" in source, "Telemetry position reserves explicit space before provenance"
 assert "static size_t discovery_page = 0;" in source, "Discovered adverts have independent paging state"
 assert "const size_t first=discovery_page*LIST_ITEMS_PER_PAGE;" in source, "Discovered adverts render every page rather than only the first five"
-assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::Discovery" in source, "Discovery shares vertical swipe paging with Contacts and Channels"
+assert "screen==Screen::Contacts||screen==Screen::Channels||screen==Screen::ChannelManage||screen==Screen::Discovery" in source, "Discovery and channel manager share vertical swipe paging with Contacts and Channels"
 assert "ui_data->open_advert(index)" in source, "Discovery touch indexing follows the visible page"
 
 assert "ui_text_fit(short_name,best_x+4,best_y+2,w-ui_w(8),2,0,true);" in source, "capped map label backings also clip long node names"
@@ -1446,7 +1573,7 @@ assert "memcmp(active.id.pub_key,pending_direct.key,6)==0" in runtime_source, "f
 assert "ui_restore_failed_compose(pending_direct.text)" in runtime_source, "terminal direct failure offers the original message back to the composer"
 assert 'fail_pending_direct("retry limit")' in runtime_source, "retry exhaustion marks failed and restores safely"
 assert 'fail_pending_direct("retry queue busy")' in runtime_source and 'fail_pending_direct("initial queue busy")' in runtime_source, "local queue failures share the same safe terminal-failure path"
-assert "if(!local_mesh_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
+assert "if(!mesh_protocol_send_active(compose_text))return true;" in source, "landscape keeps rejected text editable instead of rotating away"
 
 assert 'case UiMessageState::Retrying1:return "RETRYING 1/2"' in runtime_source, "legacy retry states remain readable after upgrading"
 assert 'case UiMessageState::Retrying3:return "SENDING"' in runtime_source, "final retry state remains route-neutral until actual route metadata is applied"
@@ -1460,7 +1587,7 @@ assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.tra
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
-assert "if(!sequence||!store_.update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
+assert "if(!sequence||!store().update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
 assert "return write_record(p,item);" in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
@@ -1496,13 +1623,15 @@ assert "ack_refs_[next_ack_ref_]={ack,sequence,route_flood}" not in companion_so
 # Test60/Test61: test20/21 refinements keep refresh/layout/text behaviour explicit.
 button_body=source[source.index("static void service_primary_button()"):source.index("void ui_setup()",source.index("static void service_primary_button()"))]
 map_short=button_body[button_body.index('if(screen==Screen::Maps){'):button_body.index('            }else{',button_body.index('if(screen==Screen::Maps){'))]
-assert "local_mesh_refresh_ui_data();" in map_short, "physical Maps refresh obtains current node marker data"
+assert "mesh_protocol_refresh_ui_data();" in map_short, "physical Maps refresh obtains current node marker data"
 assert "meshink_display_fill_framebuffer(&display,0x00);" in map_short and '"SHORT_BUTTON_MAP_BLACK"' in map_short, "physical Maps refresh flashes the ready screen black"
 assert 'draw_screen();' in map_short and 'fast_full_redraw("SHORT_BUTTON_MAP_REFRESH",true);' in map_short, "physical Maps refresh restores the cached viewport with fresh overlays"
 assert "map_base_valid=false" not in map_short and "open_screen(Screen::Maps)" not in map_short and "load_map_with_feedback" not in map_short, "physical Maps refresh never invalidates or reloads decoded terrain"
 assert "ui_draw_compose_tail(compose_text,text_x,text_y,text_width,text_height,3);" in source, "portrait composer uses the clipped bottom-tail entry renderer"
 assert "metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2" in source, "single-line portrait composer text is vertically centred"
-assert 'settings_row("SETTINGS","Device and radio",390)' in source and 'settings_row("DISPLAY & POWER","Frontlight, refresh, standby",478)' in source, "More/Settings subtitles use calmer sentence case"
+assert '{"SETTINGS","Device and protocol configuration",MoreAction::Settings}' in source and '{"DISPLAY & POWER","Frontlight, refresh and standby",SettingsAction::DisplayPower}' in source, "More/Settings subtitles describe the reorganized device/protocol split"
+assert '{"PROTOCOL",mesh_protocol_name(),SettingsAction::Protocol}' in source, "Settings exposes the active protocol selector"
+assert '{"PROTOCOL SETTINGS","Identity, radio and protocol features",SettingsAction::ProtocolSettings}' in source, "Settings exposes one protocol-specific submenu"
 
 # Test62: native smooth tiers are deliberately a little larger than the old
 # 5x7 primary sizes (21/28/35/42px) without any bitmap enlargement.
@@ -1554,8 +1683,8 @@ assert "layout.height-ui_h(38)" in history_branch, "older history pages retain o
 # Test65: native-size typography layout audit.
 assert "rect.y+(rect.height-ui_text_height(scale))/2" in source, "keyboard key labels use native font height for vertical centring"
 assert "rect.height-7*scale" not in source, "no interactive label still centres using the old 5x7 primary-font height"
-assert "meshink_outer_row_rect(layout,490,180)" in source, "Advert explanatory card has safe padding for four native scale-three lines"
-assert "saved_route_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic trace extent"
+assert 'title=action==0?"ZERO-HOP ADVERT":"FLOOD ADVERT";' in source and 'protocol_settings_row_y(row)' in source, "MeshCore advertising uses paginated Protocol Settings rows rather than a separate card"
+assert "next_y+ui_h(34)" in source, "Node Path saved-route block follows the dynamic capability-driven extent"
 
 
 # Test66: release cleanup retires the one-off pre-release message migrator.
@@ -1597,7 +1726,7 @@ assert "MESHINK_MESSAGE_READ_THROUGH" not in message_store_source[message_store_
 assert "if(queued==len)mark_synced_message_read(src,len);" in companion_source, "BLE sync responses clear unread only after the frame is accepted for transmit"
 assert companion_source.count("MESHINK_MESSAGE_PATH_UNKNOWN,true);")>=2 and "pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);" in companion_source, "companion receives start unread"
 assert '"TELEMETRY POSITION %s"' in runtime_source, "requested location is labelled as telemetry position rather than a verified live fix"
-assert 'ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);' in source, "telemetry page names the coordinate source explicitly"
+assert 'ui_text(meshtastic_node_ui?"LAST KNOWN POSITION":"TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);' in source, "telemetry page identifies Meshtastic last-known versus MeshCore telemetry positions"
 assert "const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);" in runtime_source, "successful repeater/room login immediately requests status"
 assert "auto-status=%u" in runtime_source, "automatic post-login status request is diagnosable"
 assert "meshink_power_retain_ui_tab" in power_backend_header and "meshink_power_get_retained_ui_tab" in power_backend_header and "meshink_power_clear_retained_ui_tab" in power_backend_header, "power boundary exposes RTC-retained top-tab handoff"
@@ -1605,9 +1734,389 @@ assert "esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_UNDEFINED" in power_backe
 assert "retained_tab_for_screen" in source and "screen_for_retained_tab" in source, "UI maps nested screens to stable top-level tabs"
 assert "meshink_power_retain_ui_tab(retained_tab);" in source, "deep-sleep entry stores the current top-level tab"
 assert "if(meshink_power_get_retained_ui_tab(retained_tab)){" in source, "wake reads the retained top-level tab"
-assert "if(!setup_complete)screen=Screen::Welcome;" in source, "headless promotion preserves a restored existing-user tab"
+assert "if(!setup_complete)screen=(setup_any_done||" in source and "setup_protocol_choice==mesh_protocol_descriptor().id)?Screen::SetupName:Screen::Welcome;" in source, "headless promotion restores the correct first-use protocol setup"
 assert "retained_wake_tab_valid=true;" in source and "retained_wake_tab_valid=false;" in source, "retained tab survives headless display reinitialization only until interactive wake completes"
 assert "meshink_power_clear_retained_ui_tab();" in source, "interactive wake consumes the RTC-retained tab only after the screen is visible"
 assert "meshink_power_clear_retained_ui_tab();" in power_backend_source and "A normal reset/cold boot must never replay stale RTC UI state." in power_backend_source, "cold boot clears stale retained UI state"
-versions=re.findall(r"""-DT5_(?:FIRMWARE|UI)_VERSION='"([^"]+)"'""",platformio_source)
-assert len(versions)==2 and versions[0]==versions[1], "firmware and UI versions stay aligned"
+
+# 2.1.1-test.2: GNSS identity survives deep sleep, resume verifies NMEA without
+# delaying UI promotion, and Location & GPS exposes backend failures directly.
+assert "enum class MeshInkGpsError" in gps_types_source and "ModuleNotIdentified" in gps_types_source and "NmeaUnavailable" in gps_types_source, "generic GPS status carries explicit receiver failures"
+assert "GPS_RETAINED_IDENTITY_MAGIC" in board_target_source and "RTC_DATA_ATTR uint32_t gps_retained_identity_magic" in board_target_source, "T5 retains GNSS identity in RTC memory"
+assert "gps_retain_identity();" in board_target_source[board_target_source.index("static bool t5_gps_prepare_deep_sleep_low_work"):board_target_source.index("static uint32_t gps_sleep_requested_at")], "deep-sleep handoff retains known GNSS identity"
+prepare_gps_runtime=board_target_source[board_target_source.index("void meshink_gps_prepare_runtime()"):board_target_source.index("void meshink_gps_service_begin()")]
+assert "gps_restore_retained_identity()" in prepare_gps_runtime and "gps_apply_tuning();" in prepare_gps_runtime, "interactive resume restores GNSS identity and tuning before provider startup"
+assert "gps_resume_verify_pending=restored;" in prepare_gps_runtime and "millis()+2500UL" in prepare_gps_runtime, "deep-sleep GNSS NMEA verification is bounded and asynchronous"
+assert "MeshInkGpsError::NmeaUnavailable" in board_target_source and "MeshInkGpsError::ModuleNotIdentified" in board_target_source, "GNSS detection/watchdog failures become status errors"
+assert 'current_status="ERROR - MODULE NOT IDENTIFIED"' in source and 'current_status="ERROR - NO VALID NMEA"' in source and 'current_status="ERROR - GPS PROVIDER UNAVAILABLE"' in source, "GPS CURRENT STATUS displays receiver/backend failures"
+assert "draw_gps_error_icon" in source and "status_gps_error!=MeshInkGpsError::None" in source, "status bar distinguishes GPS errors from normal searching"
+assert "ui_status_set_gps(enabled,stable_fix,stable_sats,stable_lat,stable_lon,stable_stamp,location.error);" in runtime_source, "runtime propagates GPS backend errors to UI"
+assert "if(gps_error){" in runtime_source and "stable_fix=false;" in runtime_source, "GPS errors immediately suppress stale fixed state"
+assert "talker_g" not in board_target_source, "GNSS identification must not reject valid non-G talker IDs such as BD"
+assert "hasStandardNmeaHeader()" in board_target_source and "sentence_header[0] != 'P'" in board_target_source, "GNSS probe accepts standard multi-constellation NMEA while excluding proprietary command echoes"
+assert "sentence_valid = hasStandardNmeaHeader() && checksum == expected;" in board_target_source, "GNSS identification requires a standard checksum-valid NMEA sentence independent of talker prefix"
+
+
+# 2.1.1-test.4: early deep-sleep wake evidence survives slow phone USB CDC
+# enumeration and can be replayed on every serial reconnect without flash wear.
+assert "RTC_DATA_ATTR T5WakeLogState t5_wake_log_state" in board_target_source and "T5_WAKE_LOG_BYTES=2048" in board_target_source, "early wake transcript is retained in RTC RAM rather than flash"
+assert "t5_wake_log_reset_for_sleep();" in board_target_source, "a new transcript is armed only for an actual next deep-sleep interval"
+assert "meshink_board_wake_log_appendf(" in board_target_source and "deep-sleep GNSS identity restored" in board_target_source and "deep-sleep GNSS resume verified" in board_target_source, "GNSS restore and NMEA verification are captured in the retained wake transcript"
+assert "retained SX1262 runtime restored" in companion_source and "MeshCore retained runtime READY" in companion_source and "interactive peripherals ready" in companion_source, "retained radio, MeshCore and interactive-service milestones are captured"
+assert "if(serial_connected&&!terminal_serial_connected)" in unified_source and "meshink_board_wake_log_replay();" in unified_source, "retained wake transcript replays automatically when USB serial reconnects"
+assert 'strcmp(terminal_line,"wakelog")' in unified_source and "screenshot | shot | wakelog | help" in unified_source, "wake transcript can also be replayed manually without reconnecting"
+assert "SPIFFS" not in board_target_source[board_target_source.index("static constexpr uint32_t T5_WAKE_LOG_MAGIC"):board_target_source.index("static constexpr uint8_t PCA9535_ADDR")], "RTC wake transcript implementation performs no flash writes"
+
+
+# 2.1.1-test.5: explicit AUTO/MANUAL clock policy, compact date/time editor,
+# GPS-derived timezone mode and fixed custom UTC offsets.
+rtc_types_source = (root / "src" / "hardware" / "rtc_types.h").read_text(encoding="utf-8")
+assert "enum class MeshInkTimeMode" in rtc_types_source, "RTC contract exposes AUTO/MANUAL policy"
+assert 'if(time_mode_==MeshInkTimeMode::Manual)' in board_target_source and 'manual mode rejected external set' in board_target_source, "manual clock policy rejects GPS/companion/MeshCore writes in backend"
+assert 'time_mode_=MeshInkTimeMode::Manual;' in board_target_source and 'setTimeMode(MeshInkTimeMode mode)' in board_target_source, "manual save and explicit mode changes persist in RTC metadata"
+assert 'AUTO (%s)' in source and 'source=mesh_protocol_name()' in source and 'GPS FIX' in source and 'VALID RTC' in source, "AUTO mode reports the last accepted clock origin"
+assert 'ui_action_button("CANCEL",manual_time_action_rect(false),false);' in source and 'ui_action_button("SAVE",manual_time_action_rect(true),true);' in source, "manual date/time editor has cancel and save"
+assert 'manual_time_adjust_button_rect(uint8_t field,bool plus)' in source and 'draw_manual_time_field(0,"YEAR"' in source and 'draw_manual_time_field(3,"HOUR"' in source, "date/time fields use vertical plus/value/minus controls"
+assert 'AUTO (GPS-DERIVED)' in source and 'resolve_gps_timezone' in source and 'update_auto_timezone_from_gps(latitude,longitude);' in source, "timezone list supports offline GPS-derived resolution"
+assert 'CUSTOM UTC OFFSET' in source and 'custom_timezone_minutes' in source and 'FIXED OFFSET - NO DST' in source, "timezone list supports fixed custom UTC offset"
+assert 'timezone_v2' in source and 'timezone_index=(uint8_t)min((int)7,(int)timezone_index+1);' in source, "legacy timezone indexes migrate without changing selected zone"
+
+
+# 2.1.1-test.6: AUTO mode refreshes stale/non-GPS RTC time on the first
+# valid GPS fix rather than waiting up to an hour after boot/wake.
+assert 'const bool gps_time_stale = !t5_rtc_clock().gpsAuthoritative();' in board_target_source, "GPS time freshness uses persisted 24-hour authority metadata"
+assert 'if (rtc_needs_time || gps_time_stale || hourly_correction_due)' in board_target_source, "first valid GPS fix immediately refreshes stale or never-GPS RTC time"
+assert 'first fresh fix accepted because GPS clock authority was stale' in board_target_source, "stale GPS-authority refresh remains diagnosable"
+
+
+# 2.1.1-test.7: user-facing radio/GPS/time cleanup.
+assert 'static const char* active_radio_label()' in source and 'mesh_protocol_radio_matches(' in source, "radio menu resolves actual settings back to a known preset"
+assert 'draw_app_header("SELECT PROTOCOL",true);' in source and "mesh_protocol_available_count()" in source, "protocol selection lists compiled backends"
+assert "if(!mesh_protocol_restart_into(protocol->id)){" in source, "choosing a different protocol performs one verified persist-and-restart transaction"
+assert "mesh_protocol_supports_radio_presets()" in source, "legacy MeshInk radio preset picker appears only for helpers that support it"
+assert '"AUTO ADD CONTACTS"' in meshcore_protocol_source and '"PACKET REPEATING"' in meshcore_protocol_source, "MeshCore helper contributes its privacy/repeating settings"
+assert 'return mesh_protocol_radio_summary();' in source and '"%.3f / SF%u / BW%.1f / CR%u"' in runtime_source, "unmatched radio settings use compact raw numbers without a CUSTOM prefix"
+assert 'NMEA OUTPUT' not in source and 'RMC + GGA (AUTOMATIC)' not in source, "non-actionable NMEA output row is removed"
+assert 'case MeshInkTimeSource::Protocol:source=mesh_protocol_name();break;' in source, "protocol time source uses the active helper name"
+assert 'MESHCORE FALLBACK' not in source, "oversized MeshCore fallback wording is removed"
+assert "Screen::PrivacySettings" not in source and "draw_privacy_settings" not in source, "MeshCore privacy controls no longer occupy a shared Settings screen"
+
+assert 'static volatile bool display_slider_dragging=false;' in source, "Display & Power brightness slider has live drag state"
+assert 'quick_slider_dragging||display_slider_dragging' in source and 'frontlight_preview(quick_slider_preview);' in source, "quick and Display sliders share immediate PWM preview while dragging"
+assert 'screen==Screen::DisplaySettings' in source and 'meshink_display_slider_touch_rect(layout)' in source and 'display_set_brightness(value);' in source, "Display slider commits its clamped release value from the original touch-down gesture"
+assert 'static void commit_brightness(int value)' in source and 'quick_set_brightness(int value)' in source and 'display_set_brightness(int value)' in source, "both brightness sliders share the same commit semantics"
+
+
+# 2.1.1-test.8: GPS deep-sleep power saving is explicit, persisted, and
+# defaults OFF so the L76K can retain a hot tracking state across ESP sleep.
+assert 'static bool gps_deep_sleep_power_save=false;' in board_target_source, "GPS deep-sleep power save defaults OFF"
+assert 'pref.getBool("ds_power_save",false)' in board_target_source and 'pref.putBool("ds_power_save",enabled)' in board_target_source, "GPS deep-sleep power-save preference persists"
+assert 'if(!gps_deep_sleep_power_save)' in board_target_source and 'receiver tracking retained' in board_target_source, "OFF skips the L76K zero-mask sleep handoff"
+assert 'deep-sleep GNSS power save ON: BeiDou zero mask' in board_target_source, "ON retains the existing zero-mask battery-saving behavior"
+assert 'deep-sleep GNSS tracking retained; receiver reconfiguration skipped' in board_target_source, "retained wake preserves hot GNSS configuration when power save is OFF"
+assert 'settings_row("DEEP SLEEP POWER SAVE",mesh_protocol_gps_deep_sleep_power_save()?"ON":"OFF",474);' in source, "GPS settings exposes the shared hardware power-save toggle"
+assert '"GPS INTERVAL"' not in source and '"POSITION ADVERT"' not in source, "shared GPS screen must not expose protocol transmission policy"
+assert '"GPS PUBLISH INTERVAL"' in meshcore_protocol_source and "local_mesh_cycle_gps_interval()" in meshcore_protocol_source, "MeshCore helper owns GPS publication cadence"
+assert 'pref.getBool("ds_masks_zero",false)' in board_target_source and 'pref.putBool("ds_masks_zero",active)' in board_target_source, "zero-mask recovery survives ESP reboot while GNSS backup state remains powered"
+assert 'gps_set_deep_sleep_mask_marker(true);' in board_target_source and 'gps_set_deep_sleep_mask_marker(false);' in board_target_source, "mask marker is set before zero-mask commands and cleared only after full-mask restore"
+assert '!gps_persisted_deep_sleep_masks' in board_target_source, "hot retained wake is disabled while persistent mask recovery is pending"
+assert 'mesh_protocol_gps_set_deep_sleep_power_save(enabled)' in source, "GPS settings toggle writes through the protocol helper"
+
+firmware_version_match=re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'",platformio_source)
+ui_version_match=re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'",platformio_source)
+assert firmware_version_match and ui_version_match and firmware_version_match.group(1)==ui_version_match.group(1), "firmware/UI identity stays aligned"
+
+assert "channel_management_available()const override{return true;}" in runtime_source, "MeshCore channel management is enabled"
+assert "channel_removable(size_t index)const override" in runtime_source, "MeshCore identifies protected public channels"
+assert "if(slot==0)return false;" in runtime_source, "MeshCore cannot delete public slot zero"
+assert 'case Screen::ChannelDelete:' in source and 'if(hit(x,y,meshink_confirm_right_rect(portrait_layout(),650)))' in source, "deletion requires a distinct confirmation screen and confirmation tap"
+assert "if(!ui_data||!ui_data->channel_removable(channel_delete_index))" in source, "UI checks per-channel deletion permission"
+assert '"WARNING: CHANNEL KEY WILL BE LOST"' in source and '"YES, REMOVE"' in source, "confirmation warns about secret loss and requires an affirmative action"
+assert 'ui_text("PRIVATE KEY (32 HEX DIGITS)"' in source, "MeshCore channel UI uses BLE companion-compatible 128-bit keys"
+assert "strlen(channel_form_key_hex)!=32" in source, "channel UI validates 128-bit key before creation"
+assert "key_hex[0]&&strlen(key_hex)!=32" in (root / "src/local_mesh_runtime.cpp").read_text(encoding="utf-8"), "MeshCore provider rejects BLE-incompatible keys"
+assert '"CANCEL"' in source[source.index("static void draw_channel_delete()"):source.index("// Bold radio-tower marker")], "cancel is always available"
+
+# Protocol-specific recovery: no cross-protocol journal replacement or destructive
+# first-run restore without a verified SD manifest.
+assert '"backup_restore.cpp"' in component_cmake_source, "backup engine is linked in the hybrid firmware"
+assert '+<backup_restore.cpp>' in platformio_source, "backup engine is compiled in the Arduino firmware"
+assert 'meshink_backup_list(' in source and 'meshink_backup_schedule(' in source, "setup and settings expose one-shot SD restore"
+assert 'static void draw_backup_options()' in source and 'static void draw_backup_files()' in source, "shared backup list and category UI present"
+assert 'static bool draw_backup_filename_lines(' in source and 'name+split' in source, "display complete long backup basename including distinct -NN suffix"
+assert 'draw_backup_filename_lines(entry.filename' in source and 'draw_backup_filename_lines(backup_filename' in source, "list selection and final restore confirmation show the entire filename"
+assert 'ui_text("SELECTED SD ARCHIVE"' in source, "show chosen archive before destructive confirmation"
+assert 'candidate.filename' in backup_source and 'meshink_backup_filename::compare(' in backup_source, "latest 24 backups selected regardless of directory order"
+assert 'static void draw_backup_confirm()' in source and 'static void draw_backup_progress()' in source, "backup and restore show confirmation followed by persistent operation notice"
+progress=source.split('static void draw_backup_progress(){',1)[1].split('static void draw_backup_result(){',1)[0]
+assert 'backup_restore_mode?"RESTORING...":"BACKING UP..."' in progress, "waiting notice identifies the selected operation"
+assert 'THIS MAY TAKE A FEW MINUTES' in progress and 'The screen will not update until' in progress, "both operations explain the long e-paper pause"
+assert 'REBOOTING...' not in progress, "maintenance wait must not claim to be only rebooting"
+assert 'if(screen==Screen::BackupProgress)return true;' in source, "reboot progress screen refuses unintended touch"
+assert source.index('open_screen(Screen::BackupProgress);',source.index('if(screen==Screen::BackupConfirm){')) < source.index('mesh_protocol_restart_into(protocol)',source.index('if(screen==Screen::BackupConfirm){')), "reboot notice is rendered before Meshtastic flush/shutdown"
+assert 'if(!has_backup_result&&!setup_complete&&backup_restore_pending){' in source, "first-boot SD restore resumes without mandatory setup completion"
+assert 'if(!meshink_storage_rename(temp,path))' in backup_source, "SD backup is committed after temporary write"
+assert 'if(!inspect(filename,protocol,hdr,parts.entries,true))' in backup_source, "restore validates every selected source before replacement"
+assert 'rollback_transaction(count)' in backup_source and 'meshink_backup_recover_pending()' in backup_source, "restore failure and interrupted boot roll back selected protocol files and NVS"
+assert 'if(!offline_operation)return fail("Backup must run before protocol startup");' in backup_source, "backup never reads a live protocol's writable files"
+
+assert 'static bool sd_writable()' in backup_source and 'memcmp(sample,actual,sizeof(sample))==0' in backup_source, "backup tests SD write/read readiness without overwriting user files"
+assert 'if(!sd_writable())return false;' in backup_source, "backup refuses unverified or write-protected SD"
+assert 'ui_action_button("RETRY SD"' in source, "empty or absent SD restore list can retry without reboot"
+
+# Device Settings are independent of protocol identity and radio settings.
+device_settings_source=(root/"src"/"device_settings_snapshot.cpp").read_text(encoding="utf-8")
+assert 'MESHINK_BACKUP_DEVICE_SETTINGS = 8' in (root/"src"/"backup_restore.h").read_text(), "Device Settings is a fourth selectable category"
+assert 'if(cat==MESHINK_BACKUP_DEVICE_SETTINGS)return !strcmp(path,DEVICE_NVS);' in backup_source, "device settings have their own snapshot entry"
+assert 'meshink_device_settings::apply(snapshot)' in backup_source, "device snapshot uses versioned validated restore"
+assert 'device_settings_snapshot.cpp' in component_cmake_source, "unified firmware builds device snapshot"
+assert '+<device_settings_snapshot.cpp>' in platformio_source, "PlatformIO builds device snapshot"
+assert 'constexpr const char* names[]={"MESSAGES","NODES / CONTACTS","PROTOCOL SETTINGS","DEVICE SETTINGS"};' in source, "four category checkboxes are rendered"
+assert 'MESHCORE' not in device_settings_source and 'MESHTASTIC' not in device_settings_source, "device preference snapshot has no protocol dependency"
+assert 'deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();' in source, "unsupported protocol deep sleep falls back without retry"
+assert 'active_backend().enter_deep_sleep_standby != nullptr' in (root/"src"/"protocol"/"mesh_protocol.cpp").read_text(), "deep sleep ability is a backend capability"
+
+# 2.1.1-test.15: backup paths, deferred NVS, failed PMTiles and menu moves.
+assert 'const char* path=file.path();' in backup_source, "MeshCore node blobs use full SPIFFS paths, not basenames"
+assert 'const String name=item.path();' in backup_source, "node restore enumerates full SPIFFS paths"
+assert 'BackupWorkspace workspace(true,false);' in backup_source and 'MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT' in backup_source, "backup working data is transient PSRAM"
+assert 'MeshInkMessageStore& store() const {return meshink_message_store();}' in runtime_source, "global MeshCore provider defers NVS-dependent journal selection"
+assert 'if (!selected_protocol_id(selected)) return *first_backend();' in protocol_source, "an NVS-open failure does not cache the wrong protocol"
+assert 'verify.getUChar("active",0)==protocol_id' in protocol_source, "protocol switch verifies committed NVS readback"
+assert 'mesh_protocol_select_for_next_boot(protocol->id)' not in source, "protocol selector avoids duplicate NVS writes"
+assert 'pmtiles_archive_failed(archive_paths[i])' in map_source and 'if(!archive_unavailable)mark_absent(z,x,y);' in map_source, "failed archives do not repeatedly decompress or poison missing-tile cache"
+assert 'if(!ok)pmtiles_disable_archive(path);' in pmtiles_source, "failed startup PMTiles archive stays disabled"
+assert 'failed_count=0;' in pmtiles_source, "SD remount resets failed PMTiles archives"
+assert 'tinfl_decompressor* decoder = (tinfl_decompressor*)map_alloc(sizeof(tinfl_decompressor));' in pmtiles_source, "PMTiles ROM decoder scratch must use PSRAM in both protocol modes"
+assert 'output=(uint8_t*)map_alloc(wanted);' in pmtiles_source, "PMTiles decompressed output must use PSRAM"
+assert 'uint8_t* compressed = (uint8_t*)map_alloc((size_t)size);' in pmtiles_source, "PMTiles compressed directory staging must use PSRAM"
+assert 'Entry* entries = (Entry*)map_alloc(' in pmtiles_source, "PMTiles long-lived index cache must use PSRAM"
+assert 'oldest->bits=(uint8_t*)heap_caps_malloc(TILE_BYTES,' in map_source and 'MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT' in map_source, "decoded map tile cache stays in PSRAM"
+# Meshtastic identity requests follow real RF discovery, not timer-only polling.
+mt_ui=(root/"src"/"protocol"/"meshtastic_ui_data.cpp").read_text(encoding="utf-8")
+mt_proto=(root/"src"/"protocol"/"meshtastic_protocol.cpp").read_text(encoding="utf-8")
+assert 'snprintf(n.name,sizeof(n.name),"unknown (%s)",n.identity);' in mt_ui, "unknown Meshtastic contacts identify their permanent node ID"
+assert 'else snprintf(out.name,sizeof(out.name),"(!%06lx)",' in mt_ui, "unknown map labels use a compact six-digit node ID"
+assert 'state->config_complete=true;\n        // No write-back on PhoneAPI replay.' in mt_ui, "PhoneAPI startup must not reconfigure Meshtastic channels"
+assert 'state->config_complete=true;\n        reconcile_sharing();' not in mt_ui, "never reconcile channel settings on config-complete"
+assert '        reconcile_sharing();\n    }\n    changed();' not in mt_ui, "never write native channel configuration from a replayed channel snapshot"
+assert 'if(!enabled)apply_pending_location_sharing();\n    // The touch handler draws' in mt_ui, "settings edit must not cause a redundant EPD refresh"
+assert 'meshtastic_PortNum_NODEINFO_APP' in mt_ui and 'update_node_user(*n,user)' in mt_ui, "Meshtastic live User announcements update contact names"
+assert 'n->name_request_pending=true;' in mt_ui and 'case meshtastic_FromRadio_packet_tag:' in mt_ui, "discovery only follows actual incoming mesh traffic"
+assert 'kNodeInfoEarlyRetryMs=5UL*60UL*1000UL' in mt_ui and 'n->name_request_count<2' in mt_ui, "a node gets one event-triggered retry after five minutes"
+assert 'kNodeInfoRetryMs=12UL*60UL*60UL*1000UL' in mt_ui, "per-node identity requests respect upstream 12-hour reply suppression"
+assert '(uint32_t)(now-n->first_name_request_ms)>=kNodeInfoRetryMs' in mt_ui, "name request budget resets only after a 12-hour window"
+assert 'if(!n->name_known&&!n->name_request_pending&&' in mt_ui, "known names never trigger retransmission"
+assert 'kNodeInfoGlobalSpacingMs=60UL*1000UL' in mt_ui, "identity traffic is globally spaced"
+assert 'name_request_sent=true;' in mt_ui and 'n->name_request_pending=false;' in mt_ui, "successful queue submission clears one pending identity request"
+assert 'p.channel<kMaxChannels?(uint8_t)p.channel:0' in mt_ui, "raw RF channel hashes cannot select invalid channel slots"
+assert 'req.packet.decoded.want_response=true;' in mt_proto and 'req.packet.decoded.portnum=meshtastic_PortNum_NODEINFO_APP;' in mt_proto, "identity query uses official Meshtastic NodeInfo request semantics"
+assert 'meshink_meshtastic_worker_submit(' in mt_proto, "identity query uses existing independent radio worker"
+assert '{"BACKUP / RESTORE","Save or restore data on SD card",MoreAction::Backup}' in source, "More menu replaces Advertise with Backup / Restore"
+assert 'MoreAction::Advertise' not in source and 'Screen::AdvertMenu' not in source, "obsolete Advertise page has been removed"
+assert 'ProtocolSettingsRowKind::AdvertZero' in source and 'ProtocolSettingsRowKind::AdvertFlood' in source, "MeshCore Protocol Settings contains two advert actions"
+assert 'mesh_protocol_has(MESHINK_PROTOCOL_CAP_ADVERTISE)?2:0' in source, "advert rows appear only with protocol advertising capability"
+
+# 2.1.1-test.16: Meshtastic first-use skips radio init, but SD/PMTiles warmup
+# still runs. Shared SPI must explicitly use H752 board pins rather than the
+# Arduino SPI defaults, and do so before SD.begin triggers card init/cleanup.
+storage_mount=storage_backend_source.split("bool meshink_storage_begin()",1)[1].split("bool meshink_storage_media_ready()",1)[0]
+assert "SPIClass& shared_spi=t5_shared_spi();" in storage_mount, "SD and LoRa use the same board-owned SPI peripheral"
+assert "shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);" in storage_mount, "SD can initialize SPI without LoRa or a completed Meshtastic wizard"
+assert storage_mount.index("shared_spi.begin(")<storage_mount.index("sd_started=SD.begin("), "T5 pin mapping must be installed before SD init"
+assert 'if(sd_started){SD.end();sd_started=false;}' in storage_mount, "SD is only unmounted after a prior successful mount"
+assert storage_mount.index('if(root&&root.isDirectory())') < storage_mount.index('SD.end();'), "already-mounted SD is reused before any SPI teardown"
+assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage_mount, "successful first SD mount persists across B+R and Maps warmup"
+
+# 2.1.1-test.17: Meshtastic first-use journal recovery must not get stuck
+# on a filename that exceeds SPIFFS_OBJ_NAME_LEN (32 including NUL).
+assert 'static_assert(sizeof(MESHTASTIC_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in message_store_source, "Meshtastic recovery archive name is bounded at compile time"
+assert 'static_assert(sizeof(CORE_INVALID_PATH)<=SPIFFS_PATH_CAPACITY' in message_store_source, "MeshCore recovery archive name remains valid"
+assert '"/meshtastic_messages.bad"' in message_store_source, "corrupt first-use Meshtastic journal has a short recovery path"
+assert 'if(!SPIFFS.exists(archived)){archive_available=true;break;}' in message_store_source, "journal recovery never replaces a previous archived copy"
+assert 'SPIFFS.remove(invalid_path_);' not in message_store_source, "existing recovery archive is never removed"
+assert 'if(!SPIFFS.rename(active_path_,archived))' in message_store_source, "unsupported journal is preserved using its selected active path"
+assert 'if(!SPIFFS.rename(archived,active_path_))' in message_store_source, "failed initialization rolls back whichever journal path was active"
+
+# 2.1.1-test.18: First-use Meshtastic journal must be created when missing,
+# not routed into invalid-file preservation. An inaccessible existing journal
+# must not be overwritten, and incomplete fresh creations are not retained.
+journal_begin=message_store_source.split("bool MeshInkMessageStore::begin()",1)[1].split("bool MeshInkMessageStore::read(",1)[0]
+assert 'active_path_=SPIFFS.exists(recovery_path())?recovery_path():path_;' in journal_begin, "each protocol selects its durable recovery journal on boot"
+assert 'if(!SPIFFS.exists(active_path_)){' in journal_begin, "explicit active-file existence check before journal open"
+assert journal_begin.index("if(!SPIFFS.exists(active_path_))") < journal_begin.index('File f=SPIFFS.open(active_path_,"r");'), "existence check precedes any active journal open"
+absent_branch=journal_begin.split("if(!SPIFFS.exists(active_path_)){",1)[1].split('File f=SPIFFS.open(active_path_,"r");',1)[0]
+assert "const bool ok=create_empty();" in absent_branch and "return ok;" in absent_branch, "missing active journal initializes without archival"
+assert "SPIFFS.rename" not in absent_branch and "SPIFFS.remove" not in absent_branch, "missing journal must not be archived or removed"
+assert "unreadable primary" in journal_begin and "active_path_=recovery_path();" in journal_begin, "unreadable primary switches to a separate recovery file without truncation"
+assert journal_begin.index("if(!SPIFFS.exists(active_path_))") < journal_begin.index("existing journal invalid"), "invalid-file recovery is only reachable for an existing file"
+assert 'if(active_path_==path_&&!SPIFFS.exists(recovery_path()))' in journal_begin, "rename failure enables recovery only when the fallback is not already occupied"
+assert 'constexpr char CORE_RECOVERY_PATH[]="/mc_messages_recovery.bin";' in message_store_source, "MeshCore has its own persistent fallback journal"
+assert 'constexpr char MESHTASTIC_RECOVERY_PATH[]="/mt_messages_recovery.bin";' in message_store_source, "Meshtastic has a separate persistent fallback journal"
+assert 'LEGACY_CORE_RECOVERY_PATH[]="/ui_messages.recovery.bin"' in message_store_source, "legacy main hotfix recovery journal is migrated when present"
+new_journal=message_store_source.split("bool MeshInkMessageStore::create_empty()",1)[1].split("void MeshInkMessageStore::write_header()",1)[0]
+assert "const bool verified=verify&&verify.size()==expected_bytes" in new_journal, "newly created journal size and header checked"
+assert "removing incomplete new file" in new_journal, "partial first-use initialization is cleaned up so it can retry"
+
+
+# Upstream-only replacement: do not reintroduce the discarded Leaf dependency.
+assert "libmeshtastic-leaf.git" not in platformio_source, "Leaf must be removed"
+
+# 2.1.1-test.33: prevent Meshtastic storage commits across display refreshes.
+io_source = (root / "src" / "hardware" / "io_coordinator.cpp").read_text(encoding="utf-8")
+mt_runtime = (root / "src" / "protocol" / "meshtastic_runtime.cpp").read_text(encoding="utf-8")
+mt_prepare = (root / "tools" / "prepare_meshtastic_library.py").read_text(encoding="utf-8")
+assert "meshink_io_display_begin();" in display_backend_source
+assert "meshink_io_display_end();" in display_backend_source
+assert "display_requests" in io_source and "meshink_io_flash_try_begin()" in io_source
+assert "meshink_io_take_deferred_meshtastic_save()" in mt_runtime
+assert "meshink_io_defer_meshtastic_save(saveWhat)" in mt_prepare
+assert "meshink_io_flash_begin_wait(3000)" in mt_prepare
+assert "TransmitHistory::saveToDisk()" in mt_prepare
+assert "hardware/io_coordinator.cpp" in component_cmake_source
+
+# Test.60: native Meshtastic serial output must be readable in PIO monitor.
+# Guard both compile-time logging paths, including vprintf() and the prefix.
+assert "MESHINK_MESHTASTIC_PLAIN_LOGS=1" in platformio_source, "plain native serial logs enabled"
+assert 'redirectable.count(uncolored_new) != 2' in mt_prepare, "patch both upstream ANSI logger paths"
+assert 'report_warmstore_file("/prefs/warm.dat");' in mt_runtime, "inspect native warm store without destructive recovery"
+assert 'report_warmstore_file("/prefs/warm.dat.tmp");' in mt_runtime, "inspect possible in-flight SafeFile recovery copy"
+assert 'f.read(header,sizeof(header))' in mt_runtime, "read only native warm-store header"
+
+# Test.61: Official Meshtastic logs are assembled as a single buffer and
+# submitted through ONE HWCDC write, rather than mixing byte-by-byte printf
+# fragments with MeshInk T5/MT records. Do not suppress severity or content.
+assert "MESHINK_MESHTASTIC_ATOMIC_LOGS=1" in platformio_source, "atomic Meshtastic serial logging enabled"
+assert "meshtastic_atomic_log.h" in mt_prepare, "build-only official logger adapter included"
+assert "atomic_text.replace(atomic_anchor, atomic_anchor + atomic_bridge, 1)" in mt_prepare, "atomic output applied to official log_to_serial"
+assert "dest->write((const uint8_t*)line, bytes);" in mt_prepare, "one buffer write per native serial line"
+assert "void RedirectablePrint::log_to_serial" in mt_prepare, "official log entry point preserved"
+
+
+# Test.62: HWCDC partial writes under PhoneAPI burst no longer choke on a
+# 256-byte default TX ring. Format full >160-byte Meshtastic RF diagnostics.
+assert "Serial.setTxBufferSize(4096)" in unified_source, "pre-USB-begin TX buffer enlarged"
+assert unified_source.index("Serial.setTxBufferSize(4096)") < unified_source.index("Serial.begin(115200)"), "USB TX ring allocated before CDC starts"
+assert "char body[384]{};" in mt_prepare, "native logger preserves long RF packet messages"
+assert "constexpr size_t CAPACITY=512;" in (root/"src"/"protocol"/"meshtastic_atomic_log.h").read_text(), "atomic line buffer carries long logs"
+
+# Test.63 onboarding: do not render or activate restore/next until a
+# protocol is explicitly chosen after full wipe.
+assert 'if(setup_protocol_choice){\n        ui_action_button("RESTORE FROM SD"' in source
+assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(60,760,420,62)))' in source
+assert 'if(setup_protocol_choice&&hit(x,y,ui_rect(284,850,232,74)))' in source
+
+# Test.75: protocol identity changes only through explicit user-authorised paths.
+assert 'mesh_protocol_apply_name(node_name);' not in source, 'boot cannot rewrite native names'
+assert 'mesh_protocol_read_identity(actual,sizeof(actual),short_name,sizeof(short_name))' in source
+assert 'mesh_protocol_descriptor().id==2?"mt_long":"mc_name"' in source
+assert 'ProtocolSettingsRowKind::NodeShort' in source
+assert 'mesh_protocol_update_identity(node_name,' in source
+assert 'mesh_protocol_read_identity(about_long,sizeof(about_long),about_short,sizeof(about_short))' in source
+assert 'const bool migrate_default=' not in meshtastic_runtime_source
+assert 'if(identity_pending&&name.length()&&short_name.length())' in meshtastic_runtime_source
+
+assert 'if(!setup_complete&&mesh_protocol_descriptor().id==1)' in source, 'unconfigured native default cannot overwrite name draft'
+
+# Test.80: name keyboards need an opaque background; otherwise protocol
+# setting rows bleed through gaps between portrait keys after direct refresh.
+name_keyboard_source=source.split('static void draw_keyboard() {',1)[1].split('static void landscape_key(',1)[0]
+assert 'screen==Screen::ProtocolSettings||screen==Screen::SetupName' in name_keyboard_source
+assert 'screen==Screen::SetupRadio' in name_keyboard_source
+assert 'const int top=max(0,metrics.number_top-metrics.row_gap);' in name_keyboard_source, 'keyboard background must begin one normal vertical key gap above the numbers'
+assert 'const int top=metrics.clear_top;' not in name_keyboard_source, 'keyboard must not cover options above the number keys'
+assert 'meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);' in name_keyboard_source
+assert 'meshink_display_fill_rect({0,top,metrics.width,max(1,ui_h(2))},0,fb);' in name_keyboard_source, 'opaque keyboard backdrop needs a black top border'
+assert name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,metrics.height-top},0xFF,fb);') < name_keyboard_source.index('meshink_display_fill_rect({0,top,metrics.width,max(1,ui_h(2))},0,fb);') < name_keyboard_source.index('key(label,{digits.start'), 'background and top divider must be drawn before keys'
+assert 'else if(screen==Screen::ProtocolSettings&&keyboard_visible&&!keyboard_landscape&&!keyboard_message_mode)' in source, 'name input retains optimized drawing path'
+
+# Test.82: protocol-specific Quick Settings, native radio and privacy gates.
+assert 'ui_action_button_two_lines("BROADCAST",' in source
+assert 'send_location?"LOCATION":"NODE INFO"' in source
+assert 'const bool queued=available&&mesh_protocol_quick_broadcast(send_location);' in source
+two_line_source=source.split('static void ui_action_button_two_lines(',1)[1].split('static void ui_section_card(',1)[0]
+assert 'constexpr int scale=3;' in two_line_source, 'multiline quick actions match POWER OFF font'
+assert 'mesh_protocol_send_advert(true)' in source, 'original MeshCore advert preserved'
+assert 'mesh_protocol_quick_broadcast(bool location)' in protocol_source
+assert 'quick_broadcast)(bool location)' in (root / "src" / "protocol" / "mesh_protocol_backend.h").read_text(encoding="utf-8")
+mt_worker=(root / "src" / "protocol" / "meshtastic_worker.cpp").read_text(encoding="utf-8")
+assert 'meshink_meshtastic_native_quick_broadcast(quick==1)' in mt_worker
+assert 'quick_location_allowed.load(std::memory_order_acquire)' in mt_worker
+assert 'quick_broadcast_request.compare_exchange_strong' in mt_worker
+assert 'meshink_meshtastic_worker_allow_quick_location(enabled);' in meshtastic_ui_source
+assert '(location&&!sharing)' in meshtastic_protocol_source
+assert 'quick_ever_sent&&' in mt_worker and 'last_quick_sent_ms)<30000UL' in mt_worker
+mt_native=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_broadcast(bool location){',1)[1].split('void meshink_meshtastic_native_loop(){',1)[0]
+assert 'findPositionChannel(channel)' in mt_native
+assert 'meshink_meshtastic_native_quick_position_available()' in mt_native
+assert 'positionModule->sendOurPosition(NODENUM_BROADCAST,false,channel)' in mt_native
+assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false,0,true)' in mt_native
+assert 'isTxAllowedChannelUtil(!tracker)' in mt_native and 'isTxAllowedAirUtil()' in mt_native
+
+# Test.83: a GNSS fix gates location labels/requests, and SENT toasts are
+# emitted exclusively from the native SX1262 packet completion result.
+assert source.count('available&&sharing&&mesh_protocol_quick_position_available()')==2
+assert 'POSITION REQUEST QUEUED' not in source and 'NODE INFO REQUEST QUEUED' not in source
+assert 'ui_notify_meshtastic_quick_result(uint8_t result)' in source
+result_handler=source.split('void ui_notify_meshtastic_quick_result(uint8_t result){',1)[1].split('void ui_notify_advert_result(',1)[0]
+assert all(s in result_handler for s in ('"LOCATION SENT"','"NODE INFO SENT"','"FAILED"','"RADIO BUSY - TRY LATER"'))
+assert 'quick_broadcast_request.exchange(0,std::memory_order_acq_rel)' in mt_worker
+assert 'meshink_meshtastic_radio_quick_finish(native_accepted);' in mt_worker
+assert 'meshink_meshtastic_radio_quick_result(result_kind,transmitted)' in mt_worker
+assert 'result=transmitted?result_kind:3' in mt_worker
+assert 'ui_notify_meshtastic_quick_result(quick_result)' in meshtastic_protocol_source
+mt_radio=(root/"src"/"protocol"/"meshtastic_radio.cpp").read_text(encoding="utf-8")
+assert 'class MeshInkQuickTxHook final : public RadioTxHook' in mt_radio
+assert 'ErrorCode send(meshtastic_MeshPacket* packet) override' in mt_radio
+assert 'quick_trace.packet_id=packet_id' in mt_radio
+assert 'tx_good_count()!=quick_trace.tx_good_before' in mt_radio
+assert 'void MeshInkQuickTxHook::packetReleased(' in mt_radio
+assert '60000UL' in mt_radio, 'silent/no-completion packets time out as failed'
+
+# Test.84: Meshtastic native NodeDB (not MeshInk GPS icon) determines which
+# Quick Settings action is offered, including valid native fixed positions.
+assert 'mesh_protocol_quick_position_available()' in protocol_source
+assert 'quick_position_available)( ' not in (root/"src"/"protocol"/"mesh_protocol_backend.h").read_text(encoding="utf-8")
+assert 'quick_position_available)() = nullptr;' in (root/"src"/"protocol"/"mesh_protocol_backend.h").read_text(encoding="utf-8")
+assert 'meshink_meshtastic_worker_quick_position_available()' in meshtastic_protocol_source
+assert 'meshink_meshtastic_native_quick_position_available()' in mt_worker
+assert 'quick_native_position_available.load(std::memory_order_acquire)' in mt_worker
+native_ready=meshtastic_runtime_source.split('bool meshink_meshtastic_native_quick_position_available(){',1)[1].split('bool meshink_meshtastic_native_quick_broadcast(',1)[0]
+assert 'config.position.fixed_position' in native_ready
+assert '!nodeDB->hasLocalPositionSinceBoot()' in native_ready
+assert 'nodeDB->hasValidPosition(own_node)' in native_ready
+assert 'findPositionChannel(channel)' in native_ready
+
+# Test.85: a successful upstream TX counter can also be incremented for a
+# failed startTransmit; our radio subclass must explicitly reject that case.
+assert 'uint32_t tx_start_time() const {return lastTxStart;}' in mt_radio
+assert 'tx_start_time()!=quick_trace.tx_start_before' in mt_radio
+assert 'meshink_meshtastic_worker_quick_location_allowed()' in mt_radio
+assert 'return PRETX_DROP;' in mt_radio
+assert 'bool meshink_meshtastic_worker_quick_location_allowed()' in mt_worker
+
+# Test.86: official startSend() is private; use its protected successful-TX
+# timestamp rather than illegally invoking the private native method.
+assert 'bool startSend(meshtastic_MeshPacket* packet) override' not in mt_radio
+assert 'quick_trace.tx_start_before=active_native_radio->tx_start_time();' in mt_radio
+
+# Test.87: upstream interactive NodeInfo override and build acceleration.
+assert 'nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST,false,0,true)' in meshtastic_runtime_source
+assert 'bool meshink_meshtastic_native_quick_nodeinfo_busy()' in meshtastic_runtime_source
+assert 'Throttle::isWithinTimespanMs(last,60UL*1000UL)' in meshtastic_runtime_source
+assert 'quick==2&&meshink_meshtastic_native_quick_nodeinfo_busy()' in mt_worker
+assert 'python tools/check_build_warnings.py /tmp/meshink-cache64-build.log' in testing_workflow_source
+assert 'python -m platformio run -e t5-unified-cache64-warnings' not in testing_workflow_source, 'duplicate full firmware build removed'
+assert 'meshink-${{ github.sha }}-symbols' not in testing_workflow_source, 'symbols artifact disabled'
+assert 'actions/cache@v4' in testing_workflow_source, 'testing build caches toolchains and objects'
+assert 'build_src_flags =\n    -Wall\n    -Wextra' in (root/"platformio.ini").read_text(encoding="utf-8")
+
+# Test.89: immediate Quick Settings feedback while waiting for native RF
+# completion, with success deliberately reserved for worker TX outcome.
+quick_touch=source.split('if(hit(x,y,meshink_quick_advert_rect(layout))){',1)[1].split('if(hit(x,y,meshink_quick_power_rect(layout)))',1)[0]
+assert '"Sending Location.."' in quick_touch and '"Sending Info.."' in quick_touch
+assert 'const bool queued=available&&mesh_protocol_quick_broadcast(send_location);' in quick_touch
+assert 'show_toast(!queued?' in quick_touch
+assert 'draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);' in quick_touch
+assert '"LOCATION SENT"' not in quick_touch and '"NODE INFO SENT"' not in quick_touch
+assert '"LOCATION SENT"' in result_handler and '"NODE INFO SENT"' in result_handler

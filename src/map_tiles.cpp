@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "t5_logging.h"
 #include <PNGdec.h>
+#include <new>
 #include "hardware/display.h"
 #include "hardware/storage.h"
 #include <esp_heap_caps.h>
@@ -30,11 +31,21 @@ Tile tile_cache[CACHE_SLOTS]{};
 AbsentTile absent_tiles[ABSENT_SLOTS]{};
 size_t absent_cursor=0;
 uint32_t cache_age=0;
-// PNGdec's S3 SIMD path assumes its internal RGBA row buffer is 16-byte
-// aligned. In the hybrid cache64 link a normally declared PNG object landed
-// at +8 mod 16, making every vector source row misaligned. Align the whole
-// decoder object so PNGdec's internal ucPixels row remains vector-safe.
-alignas(16) PNG png;
+// Keep the decoder alive for the entire local UI session. Its internal SIMD
+// row must remain 16-byte aligned, including when the object lives in PSRAM.
+PNG* png=nullptr;
+void init_png_decoder_psram(){
+    if(png)return;
+    void* memory=heap_caps_aligned_alloc(16,sizeof(PNG),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!memory || ((uintptr_t)memory & 15U)){
+        Serial.println("[T5-MAP] FATAL: aligned PSRAM PNG decoder allocation failed");
+        Serial.flush();
+        abort();
+    }
+    png=new(memory) PNG();
+    Serial.printf("[T5-MAP] PNG decoder PSRAM bytes=%u align=%u ptr=%p\n",
+                  (unsigned)sizeof(PNG),(unsigned)((uintptr_t)png&15U),(void*)png);
+}
 #if T5_CACHE64_EXPERIMENT
 extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
 #endif
@@ -499,7 +510,7 @@ int png_draw(PNGDRAW* row) {
     } else
 #endif
     {
-        png.getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
+        png->getLineAsRGB565(row,pixels,PNG_RGB565_LITTLE_ENDIAN,0xffffffff);
     }
     if(decode_bits) {
         for(int sx=0;sx<TILE_SIZE;++sx) {
@@ -616,7 +627,12 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     if(!loose_present) {
         discover_archives();
         bool found=false;
+        bool archive_unavailable=false;
         for(size_t i=0;i<archive_count;++i) {
+            if(pmtiles_archive_failed(archive_paths[i])){
+                archive_unavailable=true;
+                continue; // Do not reopen or gunzip an archive that already failed.
+            }
             ++result.sd_checks;
             const uint32_t lookup_started=map_perf_now_us();
             const bool found_in_archive=pmtiles_find_png(archive_paths[i],z,x,y,range);
@@ -627,6 +643,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 selected_pmtiles=true;
                 break;
             }
+            if(pmtiles_archive_failed(archive_paths[i])){
+                archive_unavailable=true;
+                continue; // A decode/metadata failure is not a missing tile.
+            }
             if(pmtiles_had_io_error()){
                 Serial.printf("[T5-MAP] archive lookup I/O failed: %s z=%d x=%d y=%d\n",
                               archive_paths[i],z,x,y);
@@ -634,7 +654,10 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 return false;
             }
         }
-        if(!found){mark_absent(z,x,y);return false;}
+        if(!found){
+            if(!archive_unavailable)mark_absent(z,x,y);
+            return false;
+        }
     }
     bool pmt_preloaded=false;
     if(selected_pmtiles&&range.length) {
@@ -648,17 +671,17 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     png_range_start=range.offset;
     png_range_length=range.length;
     const int open_status=pmt_preloaded
-        ? png.openRAM(pmt_png_buffer,(int)range.length,png_draw)
-        : png.open(path,png_open,png_close,png_read,png_seek,png_draw);
+        ? png->openRAM(pmt_png_buffer,(int)range.length,png_draw)
+        : png->open(path,png_open,png_close,png_read,png_seek,png_draw);
     if(open_status!=PNG_SUCCESS) {
         if(!pmt_preloaded)
             png_close(nullptr); // only closes a loose-file handle, not PMTiles
         png_range_active=false;
         return false;
     }
-    if(png.getWidth()!=TILE_SIZE||png.getHeight()!=TILE_SIZE) {
+    if(png->getWidth()!=TILE_SIZE||png->getHeight()!=TILE_SIZE) {
         Serial.printf("[T5-MAP] wrong PNG size: %s\n",path);
-        png.close();
+        png->close();
         png_range_active=false;
         return false;
     }
@@ -666,11 +689,11 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
     const uint32_t decode_started=map_perf_now_us();
-    const int decode_status=png.decode(nullptr,0);
+    const int decode_status=png->decode(nullptr,0);
     const uint32_t decode_elapsed=(uint32_t)(map_perf_now_us()-decode_started);
     if(selected_pmtiles)perf_pmt_decode_us+=decode_elapsed;
     else perf_loose_decode_us+=decode_elapsed;
-    png.close();
+    png->close();
     png_range_active=false;
     decode_bits=nullptr;
     if(map_io_failed) {
@@ -768,6 +791,7 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
 
 bool map_tiles_media_ready(){return media_ready(true);}
 void map_tiles_warm_storage(){
+    init_png_decoder_psram();
     const uint32_t started=millis();
     if(!media_ready(false)){
         Serial.println("[T5-MAP-WARM] SD unavailable; deferred until Maps");

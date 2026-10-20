@@ -6,6 +6,7 @@
 #include <string.h>
 #include "hardware/display_types.h"
 #include "board/t5_packed_framebuffer.h"
+#include "hardware/io_coordinator.h"
 
 // Field-tested LILYGO T5 H752-01 / EPDiy v7 backend.
 //
@@ -142,8 +143,14 @@ inline MeshInkDisplayResult meshink_display_update_area(
         meshink_display_native_rect(area));
 }
 
-inline void meshink_display_poweron(){epd_poweron();}
-inline void meshink_display_poweroff(){epd_poweroff();}
+inline void meshink_display_poweron(){
+    meshink_io_display_begin();
+    epd_poweron();
+}
+inline void meshink_display_poweroff(){
+    epd_poweroff();
+    meshink_io_display_end();
+}
 inline void meshink_display_clear(){epd_clear();}
 inline void meshink_display_draw_pixel(int x,int y,uint8_t color,uint8_t* framebuffer) {
     epd_draw_pixel(x,y,color,framebuffer);

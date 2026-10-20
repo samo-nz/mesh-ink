@@ -13,6 +13,7 @@
 #include <driver/rtc_io.h>
 #include <esp_sleep.h>
 #include <sys/time.h>
+#include <stdarg.h>
 #include <RTClib.h>
 #include "target.h"
 #include "t5_board_backend.h"
@@ -28,6 +29,63 @@
 #define T5_GPS_TRACE(...) T5_DEBUGF(T5_LOG_GPS, "[T5] " __VA_ARGS__)
 
 T5Board board;
+
+// A small RTC-retained transcript captures the early deep-sleep wake path while
+// native USB CDC is still disconnected. It is never written to flash. The
+// transcript survives serial reconnects and is replaced only when the device
+// enters the next deep-sleep interval.
+static constexpr uint32_t T5_WAKE_LOG_MAGIC=0x574C4731; // "WLG1"
+static constexpr size_t T5_WAKE_LOG_BYTES=2048;
+struct T5WakeLogState {
+    uint32_t magic=0;
+    uint16_t length=0;
+    uint16_t dropped=0;
+    char data[T5_WAKE_LOG_BYTES]{};
+};
+RTC_DATA_ATTR T5WakeLogState t5_wake_log_state{};
+
+static void t5_wake_log_reset_for_sleep(){
+    t5_wake_log_state.magic=T5_WAKE_LOG_MAGIC;
+    t5_wake_log_state.length=0;
+    t5_wake_log_state.dropped=0;
+    t5_wake_log_state.data[0]=0;
+}
+void meshink_board_wake_log_append(const char* line){
+    if(!line||t5_wake_log_state.magic!=T5_WAKE_LOG_MAGIC)return;
+    const size_t input_len=strlen(line);
+    size_t copied=0;
+    while(copied<input_len&&t5_wake_log_state.length+1<T5_WAKE_LOG_BYTES){
+        t5_wake_log_state.data[t5_wake_log_state.length++]=line[copied++];
+    }
+    if(copied<input_len)++t5_wake_log_state.dropped;
+    if(t5_wake_log_state.length+1<T5_WAKE_LOG_BYTES&&
+       (t5_wake_log_state.length==0||t5_wake_log_state.data[t5_wake_log_state.length-1]!='\n'))
+        t5_wake_log_state.data[t5_wake_log_state.length++]='\n';
+    t5_wake_log_state.data[t5_wake_log_state.length]=0;
+}
+void meshink_board_wake_log_appendf(const char* format,...){
+    if(!format||t5_wake_log_state.magic!=T5_WAKE_LOG_MAGIC)return;
+    char line[256]{};
+    va_list args;
+    va_start(args,format);
+    vsnprintf(line,sizeof(line),format,args);
+    va_end(args);
+    meshink_board_wake_log_append(line);
+}
+void meshink_board_wake_log_replay(){
+    if(t5_wake_log_state.magic!=T5_WAKE_LOG_MAGIC||!t5_wake_log_state.length){
+        Serial.println("[T5-WAKELOG] no retained wake transcript");
+        return;
+    }
+    Serial.println("[T5-WAKELOG] ---- retained wake transcript ----");
+    Serial.write(reinterpret_cast<const uint8_t*>(t5_wake_log_state.data),
+                 t5_wake_log_state.length);
+    if(t5_wake_log_state.data[t5_wake_log_state.length-1]!='\n')Serial.println();
+    if(t5_wake_log_state.dropped)
+        Serial.printf("[T5-WAKELOG] WARNING: %u transcript fragments truncated\n",
+                      (unsigned)t5_wake_log_state.dropped);
+    Serial.println("[T5-WAKELOG] ---- end retained wake transcript ----");
+}
 
 static constexpr uint8_t PCA9535_ADDR=0x20;
 static bool pca_read(uint8_t reg,uint8_t& value){
@@ -48,10 +106,76 @@ static bool idf_write(uint8_t address,uint8_t reg,const uint8_t* data,size_t len
 static uint8_t from_bcd(uint8_t v){return (uint8_t)((v>>4)*10+(v&0x0F));}
 static uint8_t to_bcd(uint8_t v){return (uint8_t)(((v/10)<<4)|(v%10));}
 
+static constexpr uint32_t T5_GPS_TIME_AUTHORITY_SECONDS=24UL*60UL*60UL;
+
+void T5RTCClock::loadMetadata(){
+    if(metadata_loaded_)return;
+    metadata_loaded_=true;
+    Preferences pref;
+    if(pref.begin("t5-rtc",true)){
+        last_gps_sync_utc_=pref.getULong("gps_sync",0);
+        const uint8_t raw_source=pref.getUChar("source",(uint8_t)MeshInkTimeSource::Unknown);
+        time_source_=raw_source<=(uint8_t)MeshInkTimeSource::Manual
+            ?(MeshInkTimeSource)raw_source:MeshInkTimeSource::Unknown;
+        const uint8_t default_mode=time_source_==MeshInkTimeSource::Manual
+            ?(uint8_t)MeshInkTimeMode::Manual:(uint8_t)MeshInkTimeMode::Auto;
+        const uint8_t raw_mode=pref.getUChar("mode",default_mode);
+        time_mode_=raw_mode<=(uint8_t)MeshInkTimeMode::Manual
+            ?(MeshInkTimeMode)raw_mode:MeshInkTimeMode::Auto;
+        pref.end();
+    }
+}
+void T5RTCClock::saveMetadata(){
+    Preferences pref;
+    if(pref.begin("t5-rtc",false)){
+        pref.putULong("gps_sync",last_gps_sync_utc_);
+        pref.putUChar("source",(uint8_t)time_source_);
+        pref.putUChar("mode",(uint8_t)time_mode_);
+        pref.end();
+    }
+}
+bool T5RTCClock::gpsAuthorityActive(uint32_t current) const{
+    return last_gps_sync_utc_&&current>=last_gps_sync_utc_&&
+           current-last_gps_sync_utc_<=T5_GPS_TIME_AUTHORITY_SECONDS;
+}
+bool T5RTCClock::writeAcceptedTime(uint32_t utc,MeshInkTimeSource source){
+    timeval tv{(time_t)utc,0};
+    settimeofday(&tv,nullptr);
+
+    if(source==MeshInkTimeSource::Gps)last_gps_sync_utc_=utc;
+    else if(source==MeshInkTimeSource::Manual)last_gps_sync_utc_=0;
+    time_source_=source;
+    saveMetadata();
+
+    if(!i2c_ready_){
+        // MeshCore bootstraps a plausible clock from contact timestamps during
+        // retained radio-first startup. Keep that as system time only: the
+        // headless path deliberately has no shared I2C driver yet.
+        deferred_hardware_time_=utc;
+        T5_TRACE("rtc: deferred hardware write UTC=%lu source=%u; I2C lifecycle not initialized\n",
+            (unsigned long)utc,(unsigned)source);
+        return true;
+    }
+
+    const DateTime dt(utc);
+    if(dt.year()<2000||dt.year()>2099){
+        Serial.printf("[T5-WARN] rtc write outside PCF8563 year range UTC=%lu\n",
+                      (unsigned long)utc);
+        return false;
+    }
+    const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
+        to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),
+        to_bcd((uint8_t)(dt.year()-2000))};
+    valid_=idf_write(0x51,0x02,r,sizeof(r));
+    if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
+    return valid_;
+}
+
 void T5RTCClock::begin(){
     // begin() is only reached once the shared I2C lifecycle is active.
     // Retained headless wakes intentionally skip it.
     i2c_ready_=true;
+    loadMetadata();
     uint8_t r[7]{};
     const bool read_ok=idf_read(0x51,0x02,r,sizeof(r));
     if(read_ok){
@@ -63,6 +187,10 @@ void T5RTCClock::begin(){
             deferred_hardware_time_=0;
             const uint32_t utc=DateTime(2000+year,month,day,hour,minute,second).unixtime();
             timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
+            if(time_source_==MeshInkTimeSource::Unknown){
+                time_source_=MeshInkTimeSource::HardwareRtc;
+                saveMetadata();
+            }
             Serial.println("[T5-INIT] rtc=PCF8563 OK");
             return;
         }
@@ -72,8 +200,7 @@ void T5RTCClock::begin(){
 
     // MeshCore may already have bootstrapped software time from saved contact
     // timestamps while this retained wake was headless. Only use that deferred
-    // value when the hardware RTC itself is unavailable/invalid; a valid RTC
-    // above always remains authoritative.
+    // value when the hardware RTC itself is unavailable/invalid.
     const uint32_t deferred=deferred_hardware_time_;
     deferred_hardware_time_=0;
     if(deferred){
@@ -99,34 +226,92 @@ uint32_t T5RTCClock::getCurrentTime(){
         from_bcd(r[2]&0x3F),from_bcd(r[1]&0x7F),from_bcd(r[0]&0x7F)).unixtime();
 }
 void T5RTCClock::setCurrentTime(uint32_t utc){
+    loadMetadata();
+    const uint32_t now_ms=millis();
     const uint32_t current=getCurrentTime();
-    const bool trusted_gps=trusted_gps_time_&&millis()<=trusted_gps_until_&&
+    const bool trusted_gps=trusted_gps_time_&&now_ms<=trusted_gps_until_&&
         (utc>trusted_gps_time_?utc-trusted_gps_time_:trusted_gps_time_-utc)<=3;
+    const bool trusted_companion=expected_companion_time_&&now_ms<=expected_companion_until_&&
+        (utc>expected_companion_time_?utc-expected_companion_time_:expected_companion_time_-utc)<=3;
     trusted_gps_time_=0;trusted_gps_until_=0;
-    if(valid_&&!trusted_gps){
-        // Once the hardware RTC is known-good, generic MeshCore/system time
-        // sources must not overwrite it. GPS corrections are explicitly
-        // authorised by expectGpsTime() above.
-        T5_TRACE("rtc: ignored non-GPS set UTC=%lu current=%lu (RTC already valid)\n",
+    expected_companion_time_=0;expected_companion_until_=0;
+
+    if(time_mode_==MeshInkTimeMode::Manual){
+        T5_TRACE("rtc: manual mode rejected external set UTC=%lu\n",(unsigned long)utc);
+        return;
+    }
+
+    if(trusted_gps){
+        writeAcceptedTime(utc,MeshInkTimeSource::Gps);
+        return;
+    }
+
+    if(trusted_companion){
+        if(valid_&&gpsAuthorityActive(current)){
+            T5_TRACE("rtc: ignored companion UTC=%lu; GPS authority age=%lus\n",
+                (unsigned long)utc,(unsigned long)(current-last_gps_sync_utc_));
+            return;
+        }
+        writeAcceptedTime(utc,MeshInkTimeSource::Companion);
+        return;
+    }
+
+    // Preserve MeshInk's protection against unsolicited provider/bootstrap
+    // writes once the hardware RTC is valid. Companion time is the explicit
+    // exception above, and keeps MeshCore's own command validation intact.
+    if(valid_){
+        T5_TRACE("rtc: ignored untrusted set UTC=%lu current=%lu\n",
             (unsigned long)utc,(unsigned long)current);
         return;
     }
-    timeval tv{(time_t)utc,0};settimeofday(&tv,nullptr);
-    if(!i2c_ready_){
-        // MeshCore bootstraps a plausible clock from contact timestamps during
-        // retained radio-first startup. Keep that as system time only: the
-        // headless path deliberately has no shared I2C driver yet.
-        deferred_hardware_time_=utc;
-        T5_TRACE("rtc: deferred hardware write UTC=%lu; I2C lifecycle not initialized\n",
-            (unsigned long)utc);
-        return;
-    }
-    const DateTime dt(utc);const uint8_t r[7]={to_bcd(dt.second()),to_bcd(dt.minute()),to_bcd(dt.hour()),
-        to_bcd(dt.day()),to_bcd(dt.dayOfTheWeek()),to_bcd(dt.month()),to_bcd((uint8_t)(dt.year()-2000))};
-    valid_=idf_write(0x51,0x02,r,sizeof(r));
-    if(!valid_)Serial.println("[T5-WARN] rtc hardware write failed; system time remains active");
+    writeAcceptedTime(utc,MeshInkTimeSource::Protocol);
 }
-void T5RTCClock::expectGpsTime(uint32_t utc){trusted_gps_time_=utc;trusted_gps_until_=millis()+1500;}
+void T5RTCClock::expectGpsTime(uint32_t utc){
+    loadMetadata();
+    if(time_mode_==MeshInkTimeMode::Manual)return;
+    trusted_gps_time_=utc;
+    trusted_gps_until_=millis()+1500;
+}
+void T5RTCClock::expectCompanionTime(uint32_t utc){
+    loadMetadata();
+    if(time_mode_==MeshInkTimeMode::Manual)return;
+    expected_companion_time_=utc;
+    expected_companion_until_=millis()+1500;
+}
+bool T5RTCClock::setManualTime(uint32_t utc){
+    loadMetadata();
+    trusted_gps_time_=0;trusted_gps_until_=0;
+    expected_companion_time_=0;expected_companion_until_=0;
+    time_mode_=MeshInkTimeMode::Manual;
+    return writeAcceptedTime(utc,MeshInkTimeSource::Manual);
+}
+bool T5RTCClock::setTimeMode(MeshInkTimeMode mode){
+    loadMetadata();
+    if(mode!=MeshInkTimeMode::Auto&&mode!=MeshInkTimeMode::Manual)return false;
+    trusted_gps_time_=0;trusted_gps_until_=0;
+    expected_companion_time_=0;expected_companion_until_=0;
+    time_mode_=mode;
+    if(mode==MeshInkTimeMode::Manual){
+        last_gps_sync_utc_=0;
+        time_source_=MeshInkTimeSource::Manual;
+    }else if(time_source_==MeshInkTimeSource::Manual){
+        time_source_=valid_?MeshInkTimeSource::HardwareRtc:MeshInkTimeSource::Unknown;
+    }
+    saveMetadata();
+    return true;
+}
+MeshInkTimeMode T5RTCClock::timeMode(){loadMetadata();return time_mode_;}
+MeshInkTimeSource T5RTCClock::timeSource(){
+    loadMetadata();
+    if(time_source_==MeshInkTimeSource::Unknown&&valid_)
+        return MeshInkTimeSource::HardwareRtc;
+    return time_source_;
+}
+bool T5RTCClock::gpsAuthoritative(){
+    loadMetadata();
+    if(!valid_||time_mode_==MeshInkTimeMode::Manual)return false;
+    return gpsAuthorityActive(getCurrentTime());
+}
 
 static bool t5_set_radio_gps_rail(bool enabled,uint32_t settle_ms){
 #if !T5_BOARD_H752_01
@@ -356,9 +541,42 @@ void (*T5RadioHal::callbacks_[GPIO_NUM_MAX])(void)={};
 bool T5RadioHal::attached_[GPIO_NUM_MAX]={};
 
 static T5RadioHal radio_hal(radio_spi);
+// The native RadioLib HAL must NOT call Arduino attachInterrupt here: EPDiy
+// already installed the global IDF GPIO ISR service on interactive boots.
+// Both protocols share the board's one well-defined DIO1 IRQ lifetime.
+static bool native_radio_irq_owned=false;
+bool t5_native_radio_attach_interrupt(uint32_t pin,void (*callback)(void),
+                                      uint32_t mode){
+    if(pin!=(uint32_t)P_LORA_DIO_1||!callback){
+        Serial.printf("[T5-ERROR] invalid native DIO1 attach pin=%lu\\n",
+                      (unsigned long)pin);
+        return false;
+    }
+    if(radio_hal.handlerActive(pin)&&!native_radio_irq_owned){
+        // A different radio owner still has the pin; never steal its ISR.
+        Serial.println("[T5-ERROR] DIO1 interrupt owned by another runtime");
+        return false;
+    }
+    radio_hal.attachInterrupt(pin,callback,mode);
+    native_radio_irq_owned=radio_hal.handlerActive(pin);
+    return native_radio_irq_owned;
+}
+void t5_native_radio_detach_interrupt(uint32_t pin){
+    if(pin!=(uint32_t)P_LORA_DIO_1||!native_radio_irq_owned)return;
+    radio_hal.detachInterrupt(pin);
+    native_radio_irq_owned=false;
+}
 static CustomSX1262 radio = new Module(
     &radio_hal,P_LORA_NSS,P_LORA_DIO_1,P_LORA_RESET,P_LORA_BUSY);
 MeshInkSX1262Wrapper radio_driver(radio, board);
+
+PhysicalLayer* t5_radio_physical_layer() {
+    return &radio;
+}
+
+bool t5_radio_set_lora_crc(uint8_t bytes) {
+    return radio.setCRC(bytes)==RADIOLIB_ERR_NONE;
+}
 
 void MeshInkSX1262Wrapper::stageWakePacket(const uint8_t* data,uint16_t len,float rssi,float snr) {
     if(!data||!len){
@@ -443,10 +661,28 @@ void meshink_rtc_begin(){t5_rtc_clock().begin();}
 void meshink_rtc_tick(){t5_rtc_clock().tick();}
 uint32_t meshink_rtc_current_time(){return t5_rtc_clock().getCurrentTime();}
 bool meshink_rtc_valid(){return t5_rtc_clock().isValid();}
+bool meshink_rtc_set_manual_time(uint32_t utc){return t5_rtc_clock().setManualTime(utc);}
+bool meshink_rtc_set_time_mode(MeshInkTimeMode mode){return t5_rtc_clock().setTimeMode(mode);}
+MeshInkTimeMode meshink_rtc_time_mode(){return t5_rtc_clock().timeMode();}
+void meshink_rtc_expect_companion_time(uint32_t utc){t5_rtc_clock().expectCompanionTime(utc);}
+MeshInkTimeSource meshink_rtc_time_source(){return t5_rtc_clock().timeSource();}
+bool meshink_rtc_gps_authoritative(){return t5_rtc_clock().gpsAuthoritative();}
 static uint32_t detected_gps_baud = 9600;
 static bool gps_baud_locked = false;
 enum class GpsModule : uint8_t { Unknown, L76K, MiaM10Q };
 static GpsModule detected_gps_module = GpsModule::Unknown;
+static MeshInkGpsError gps_error = MeshInkGpsError::None;
+
+// GNSS identity is a hardware fact worth retaining across ESP32 deep sleep.
+// It lets an interactive resume restore the correct UART/tuning immediately,
+// while a short bounded NMEA verification still catches a receiver that failed
+// to resume cleanly.
+static constexpr uint32_t GPS_RETAINED_IDENTITY_MAGIC=0x47504931; // "GPI1"
+RTC_DATA_ATTR uint32_t gps_retained_identity_magic=0;
+RTC_DATA_ATTR uint8_t gps_retained_module=0;
+RTC_DATA_ATTR uint32_t gps_retained_baud=0;
+static bool gps_resume_verify_pending=false;
+static uint32_t gps_resume_verify_deadline=0;
 // Tracks the MeshCore provider's stopped state. GPS is NOT electrically
 // switched off: LoRa and GPS share the same power rail.
 static bool gps_command_sleeping = false;
@@ -455,29 +691,94 @@ static uint32_t gps_last_byte_at = 0;
 // LoRa and GPS share VCC3V3. Constellation selection remains user-controlled;
 // compact GGA+RMC NMEA output is always configured on the inferred L76K.
 // Neither setting shuts down receiver power or changes the 1 Hz fix rate.
-// 0 leaves the receiver constellation unchanged; 1/3/5/7 are PCAS04 modes.
+// The generic 1..7 GPS/BDS/GLO bitmask maps directly to documented PCAS04;
+// generic mode 0 means disabled and is parked with the proven BeiDou-zero state.
 #ifndef T5_GPS_FULL_NMEA_DIAGNOSTIC
 #define T5_GPS_FULL_NMEA_DIAGNOSTIC 0
 #endif
-static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::Unchanged;
+#ifndef T5_GPS_ACQUISITION_DIAG
+#define T5_GPS_ACQUISITION_DIAG 0
+#endif
+static MeshInkGpsConstellationMode gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
 static bool gps_tuning_loaded=false;
+static bool gps_deep_sleep_power_save=false; // default OFF: retain live tracking
+static bool gps_persisted_deep_sleep_masks=false;
 static bool gps_constellation_dirty=false;
+// Defensive T5/L76K boot recovery: the receiver can retain PCAS15 satellite
+// masks across an ESP reset while its shared rail remains powered.
+static bool gps_receiver_masks_zeroed=false;
 static bool gps_nmea_dirty=true;  // apply automatic compact output each boot
+
+// T5/L76K zero-mask recovery state. PCAS15 has no documented readback/query
+// form, and the receiver can retain configuration while V_BCKP remains alive.
+// RTC state handles normal deep sleep; Preferences covers an ESP reboot/reset
+// while the GNSS backup domain still remembers the masks.
+static constexpr uint32_t GPS_DEEP_SLEEP_LOW_WORK_MAGIC=0x47505A31; // "GPZ1"
+RTC_DATA_ATTR uint32_t gps_deep_sleep_low_work_magic=0;
+
+static const char* gps_module_name();
+
+static bool gps_supported_identity(GpsModule module,uint32_t baud){
+    return (module==GpsModule::L76K&&baud==9600UL)||
+           (module==GpsModule::MiaM10Q&&baud==38400UL);
+}
+static void gps_clear_retained_identity(){
+    gps_retained_identity_magic=0;
+    gps_retained_module=(uint8_t)GpsModule::Unknown;
+    gps_retained_baud=0;
+}
+static void gps_retain_identity(){
+    if(!gps_supported_identity(detected_gps_module,detected_gps_baud)){
+        gps_clear_retained_identity();
+        return;
+    }
+    gps_retained_module=(uint8_t)detected_gps_module;
+    gps_retained_baud=detected_gps_baud;
+    gps_retained_identity_magic=GPS_RETAINED_IDENTITY_MAGIC;
+}
+static bool gps_restore_retained_identity(){
+    if(esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_UNDEFINED||
+       gps_retained_identity_magic!=GPS_RETAINED_IDENTITY_MAGIC)return false;
+    const GpsModule retained=(GpsModule)gps_retained_module;
+    if(!gps_supported_identity(retained,gps_retained_baud)){
+        gps_clear_retained_identity();
+        return false;
+    }
+    detected_gps_module=retained;
+    detected_gps_baud=gps_retained_baud;
+    gps_baud_locked=true;
+    gps_error=MeshInkGpsError::None;
+    return true;
+}
 
 static void gps_load_tuning(){
     if(gps_tuning_loaded)return;
     gps_tuning_loaded=true;
     Preferences pref;
-    if(pref.begin("t5-gnss",true)){
-        const auto mode=static_cast<MeshInkGpsConstellationMode>(
-            pref.getUChar("constellation",0));
-        gps_constellation_mode=meshink_gps_constellation_mode_valid(mode)
-            ? mode : MeshInkGpsConstellationMode::Unchanged;
+    if(pref.begin("t5-gnss",false)){
+        const bool mode_v2=pref.getBool("mode_v2",false);
+        gps_deep_sleep_power_save=pref.getBool("ds_power_save",false);
+        gps_persisted_deep_sleep_masks=pref.getBool("ds_masks_zero",false);
+        const auto stored=pref.getUChar(
+            "constellation",(uint8_t)MeshInkGpsConstellationMode::GpsBeiDou);
+        const auto mode=static_cast<MeshInkGpsConstellationMode>(stored);
+        if(!mode_v2&&stored==0){
+            // Pre-GPS-MODE firmware used zero to mean "unchanged". Migrate that
+            // one ambiguous legacy value to the previous effective default.
+            gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
+            pref.putUChar("constellation",(uint8_t)gps_constellation_mode);
+        }else if(meshink_gps_constellation_mode_valid(mode)){
+            gps_constellation_mode=mode;
+        }else{
+            gps_constellation_mode=MeshInkGpsConstellationMode::GpsBeiDou;
+            pref.putUChar("constellation",(uint8_t)gps_constellation_mode);
+        }
+        pref.putBool("mode_v2",true);
         pref.end();
     }
     // Ignore the pre-1.5.0 "compact" preference: full output is now a
     // developer-only diagnostic build option, not an on-device toggle.
-    gps_constellation_dirty=gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged;
+    gps_constellation_dirty=true;
     gps_nmea_dirty=true;
 }
 static void gps_send_pcas(const char* payload) {
@@ -487,17 +788,61 @@ static void gps_send_pcas(const char* payload) {
     Serial1.flush();
     T5_GPS_TRACE("gps tuning: TX $%s*%02X (receiver acceptance not confirmed)\n",payload,checksum);
 }
+static void gps_set_deep_sleep_mask_marker(bool active){
+    gps_deep_sleep_low_work_magic=active?GPS_DEEP_SLEEP_LOW_WORK_MAGIC:0;
+    if(gps_persisted_deep_sleep_masks==active)return;
+    Preferences pref;
+    if(pref.begin("t5-gnss",false)){
+        if(pref.putBool("ds_masks_zero",active)==1)
+            gps_persisted_deep_sleep_masks=active;
+        pref.end();
+    }
+}
+static void gps_restore_full_bds_masks(){
+    gps_send_pcas("PCAS15,2,FFFFFFFF");
+    gps_send_pcas("PCAS15,3,FFFFFFFF");
+    gps_receiver_masks_zeroed=false;
+    gps_set_deep_sleep_mask_marker(false);
+}
+static void gps_apply_low_work(bool deep_sleep){
+    // Mark first so an ESP reset between the marker write and the GNSS command
+    // is recoverable. A false-positive restore is harmless; an unmarked
+    // retained zero mask is not.
+    if(deep_sleep)gps_set_deep_sleep_mask_marker(true);
+    gps_send_pcas("PCAS04,2");
+    gps_send_pcas("PCAS15,2,00000000");
+    gps_send_pcas("PCAS15,3,00000000");
+    gps_receiver_masks_zeroed=true;
+}
 static void gps_apply_tuning(){
     if(detected_gps_module!=GpsModule::L76K||!gps_baud_locked)return;
-    if(gps_constellation_dirty){
-        gps_constellation_dirty=false;
-        if(gps_constellation_mode!=MeshInkGpsConstellationMode::Unchanged){
+
+    if(gps_deep_sleep_low_work_magic==GPS_DEEP_SLEEP_LOW_WORK_MAGIC||
+       gps_persisted_deep_sleep_masks){
+        // Restore only when MeshInk's retained/persisted marker says it may
+        // have applied the zero masks before deep sleep.
+        gps_restore_full_bds_masks();
+        gps_deep_sleep_low_work_magic=0;
+        gps_constellation_dirty=true;
+        Serial.println("[T5-GPS] startup GNSS satellite masks restored");
+        meshink_board_wake_log_append("[T5-GPS] startup GNSS satellite masks restored");
+    }
+
+    if(gps_constellation_mode==MeshInkGpsConstellationMode::None){
+        if(gps_constellation_dirty||!gps_receiver_masks_zeroed){
+            gps_constellation_dirty=false;
+            gps_apply_low_work(false);
+            Serial.println("[T5-GPS] GPS mode disabled; receiver parked in BeiDou zero-mask state");
+        }
+    }else{
+        if(gps_receiver_masks_zeroed)gps_restore_full_bds_masks();
+        if(gps_constellation_dirty){
+            gps_constellation_dirty=false;
             char payload[16];
             snprintf(payload,sizeof(payload),"PCAS04,%u",
                      (unsigned)static_cast<uint8_t>(gps_constellation_mode));
             gps_send_pcas(payload);
         }
-        // "UNCHANGED" does not restore factory configuration; it sends nothing.
     }
     if(gps_nmea_dirty){
         gps_nmea_dirty=false;
@@ -510,7 +855,7 @@ static void gps_apply_tuning(){
 }
 const char* meshink_gps_backend_name(){return "T5 GNSS";}
 const char* meshink_gps_tuning_note(){
-    return "COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION POWER SAVINGS ARE UNMEASURED. GPS STAYS POWERED WHILE LORA IS ON.";
+    return "COMPACT NMEA IS AUTOMATIC FOR L76K. CONSTELLATION SELECTION IS APPLIED LIVE. GPS STAYS POWERED WHILE LORA IS ON.";
 }
 MeshInkGpsConstellationMode meshink_gps_constellation_mode(){
     gps_load_tuning();
@@ -524,14 +869,64 @@ bool meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode mode){
     Preferences pref;
     if(!pref.begin("t5-gnss",false))return false;
     const bool saved=pref.putUChar("constellation",stored)==1;
+    if(saved)pref.putBool("mode_v2",true);
     pref.end();
     if(!saved)return false;
     gps_constellation_mode=mode;
-    gps_constellation_dirty=mode!=MeshInkGpsConstellationMode::Unchanged;
-    if(mode==MeshInkGpsConstellationMode::Unchanged)
-        T5_GPS_TRACE("gps tuning: constellation UNCHANGED; no command sent\n");
-    else gps_apply_tuning();
+    gps_constellation_dirty=true;
+    gps_apply_tuning();
     return true;
+}
+bool meshink_gps_deep_sleep_power_save(){
+    gps_load_tuning();
+    return gps_deep_sleep_power_save;
+}
+bool meshink_gps_set_deep_sleep_power_save(bool enabled){
+    gps_load_tuning();
+    if(gps_deep_sleep_power_save==enabled)return true;
+    Preferences pref;
+    if(!pref.begin("t5-gnss",false))return false;
+    const bool saved=pref.putBool("ds_power_save",enabled)==1;
+    pref.end();
+    if(!saved)return false;
+    gps_deep_sleep_power_save=enabled;
+    return true;
+}
+
+static bool t5_gps_prepare_deep_sleep_low_work(){
+#if ENV_INCLUDE_GPS == 1
+    // Preserve a previously identified receiver even though the ESP32 process
+    // state will be rebuilt on the next deep-sleep wake.
+    gps_retain_identity();
+    gps_load_tuning();
+
+    // Default behavior keeps GNSS tracking alive across ESP32 deep sleep.
+    // The radio/GPS rail remains powered, so no receiver command is needed.
+    if(!gps_deep_sleep_power_save){
+        if(!gps_persisted_deep_sleep_masks)
+            gps_deep_sleep_low_work_magic=0;
+        if(gps_constellation_mode==MeshInkGpsConstellationMode::None)
+            Serial.println("[T5-GPS] deep-sleep GNSS power save OFF; GPS mode already disabled");
+        else
+            Serial.println("[T5-GPS] deep-sleep GNSS power save OFF; receiver tracking retained");
+        return true;
+    }
+
+    // The final handoff is allowed to be a no-op if this boot never identified
+    // an L76K. Never send L76K-specific commands to an unknown receiver.
+    if(!gps_baud_locked||detected_gps_module!=GpsModule::L76K){
+        if(!gps_persisted_deep_sleep_masks)
+            gps_deep_sleep_low_work_magic=0;
+        Serial.printf("[T5-GPS] deep-sleep GNSS low-work skipped locked=%u module=%s\n",
+                      gps_baud_locked?1U:0U,gps_module_name());
+        return false;
+    }
+    gps_apply_low_work(true);
+    Serial.println("[T5-GPS] deep-sleep GNSS power save ON: BeiDou zero mask");
+    return true;
+#else
+    return false;
+#endif
 }
 
 static uint32_t gps_sleep_requested_at = 0;
@@ -590,12 +985,26 @@ class NMEAProbeStream : public Stream {
     HardwareSerial& serial;
     bool collecting = false;
     bool after_star = false;
-    bool talker_g = false;
     bool sentence_valid = false;
     uint8_t checksum = 0;
     uint8_t expected = 0;
     uint8_t checksum_digits = 0;
     uint8_t payload_chars = 0;
+    char sentence_header[5]{};
+
+    static bool upperAlpha(char c) {
+        return c >= 'A' && c <= 'Z';
+    }
+    bool hasStandardNmeaHeader() const {
+        // Standard NMEA sentences use a two-character talker ID followed by a
+        // three-character sentence type (for example GPGGA, GNRMC, BDGGA).
+        // Proprietary messages begin with P and must not identify a receiver
+        // merely because their checksum is valid.
+        return payload_chars >= 5 && sentence_header[0] != 'P' &&
+            upperAlpha(sentence_header[0]) && upperAlpha(sentence_header[1]) &&
+            upperAlpha(sentence_header[2]) && upperAlpha(sentence_header[3]) &&
+            upperAlpha(sentence_header[4]);
+    }
 
     static int hexValue(char c) {
         if (c >= '0' && c <= '9') return c - '0';
@@ -607,15 +1016,17 @@ class NMEAProbeStream : public Stream {
         if (c == '$') {
             collecting = true;
             after_star = false;
-            talker_g = false;
+            sentence_valid = false;
             checksum = expected = checksum_digits = payload_chars = 0;
+            memset(sentence_header,0,sizeof(sentence_header));
             return;
         }
         if (!collecting) return;
         if (!after_star) {
             if (c == '*') { after_star = true; return; }
             if (c == '\r' || c == '\n' || c < 32 || c > 126) { collecting = false; return; }
-            if (payload_chars++ == 0) talker_g = (c == 'G');
+            if(payload_chars<sizeof(sentence_header))sentence_header[payload_chars]=c;
+            ++payload_chars;
             checksum ^= static_cast<uint8_t>(c);
             return;
         }
@@ -623,7 +1034,7 @@ class NMEAProbeStream : public Stream {
         if (nibble < 0 || checksum_digits >= 2) { collecting = false; return; }
         expected = static_cast<uint8_t>((expected << 4) | nibble);
         if (++checksum_digits == 2) {
-            sentence_valid = talker_g && checksum == expected;
+            sentence_valid = hasStandardNmeaHeader() && checksum == expected;
             collecting = false;
         }
     }
@@ -636,7 +1047,11 @@ public:
     int peek() override { return serial.peek(); }
     void flush() override { serial.flush(); }
     size_t write(uint8_t value) override { return serial.write(value); }
-    void clearValidation() { sentence_valid = collecting = after_star = talker_g = false; checksum = expected = checksum_digits = payload_chars = 0; }
+    void clearValidation() {
+        sentence_valid=collecting=after_star=false;
+        checksum=expected=checksum_digits=payload_chars=0;
+        memset(sentence_header,0,sizeof(sentence_header));
+    }
     bool hasValidSentence() const { return sentence_valid; }
 };
 
@@ -678,25 +1093,53 @@ public:
         }
 #endif
         // MeshCore's provider may call RTCClock::setCurrentTime whenever it sees
-        // valid GPS time. Only mark a GPS write as trusted when the RTC is
-        // invalid, or when our deliberate hourly correction is due.
+        // valid GPS time. Trust the first valid fix immediately when the RTC has
+        // never had a GPS correction, or its persisted GPS authority is older
+        // than 24 hours. Once GPS is fresh again, keep the normal hourly
+        // correction cadence to avoid rewriting the RTC for every fix.
         static uint32_t last_gps_clock_sync_ms = 0;
         if (!last_gps_clock_sync_ms) {
-            // Start the hourly correction window at boot. A valid RTC
-            // must not be reset merely because the first GPS fix arrived.
             last_gps_clock_sync_ms = millis() ? millis() : 1;
         }
         if (isValid()) {
             const uint32_t now_ms = millis();
             const bool rtc_needs_time = !t5_rtc_clock().isValid();
+            const bool gps_time_stale = !t5_rtc_clock().gpsAuthoritative();
             const bool hourly_correction_due = last_gps_clock_sync_ms == 0 ||
                 now_ms - last_gps_clock_sync_ms >= 3600000UL;
-            if (rtc_needs_time || hourly_correction_due) {
+            if (rtc_needs_time || gps_time_stale || hourly_correction_due) {
                 t5_rtc_clock().expectGpsTime((uint32_t)getTimestamp());
                 last_gps_clock_sync_ms = now_ms ? now_ms : 1;
+                if(gps_time_stale)
+                    T5_GPS_TRACE("gps: first fresh fix accepted because GPS clock authority was stale\n");
             }
         }
         MicroNMEALocationProvider::loop();
+#if T5_GPS_ACQUISITION_DIAG
+        // Receiver/baud success does not mean satellite acquisition. Expose
+        // the actual state at low frequency for hardware field debugging in
+        // BOTH protocols; no new NMEA configuration or writes are performed.
+        static uint32_t last_acquisition_report=0;
+        static bool first_fix_reported=false;
+        if(active&&isValid()&&!first_fix_reported){
+            first_fix_reported=true;
+            Serial.printf("[T5-GPS] FIRST FIX module=%s baud=%lu sats=%ld\n",
+                          gps_module_name(),(unsigned long)Serial1.baudRate(),
+                          (long)satellitesCount());
+        }
+        if(active&&!isValid() &&
+           (uint32_t)(millis()-last_acquisition_report)>=60000UL){
+            last_acquisition_report=millis();
+            Serial.printf("[T5-GPS] SEARCHING module=%s baud=%lu NMEA=%u sats_used=%ld last_rx_age_ms=%lu mode=%u masks_zero=%u\n",
+                          gps_module_name(),(unsigned long)Serial1.baudRate(),
+                          gps_stream.hasValidSentence()?1U:0U,
+                          (long)satellitesCount(),
+                          (unsigned long)(gps_last_byte_at?
+                              millis()-gps_last_byte_at:0UL),
+                          (unsigned)gps_constellation_mode,
+                          gps_receiver_masks_zeroed?1U:0U);
+        }
+#endif
 #if T5_LOG_GPS
         if (gps_wake_started_at && !gps_wake_logged_nmea && gps_stream.hasValidSentence()) {
             gps_wake_logged_nmea=true;
@@ -710,10 +1153,37 @@ public:
                 (unsigned long)(millis()-gps_wake_started_at),(long)satellitesCount());
         }
 #endif
+        if(active&&gps_resume_verify_pending){
+            if(gps_stream.hasValidSentence()){
+                gps_resume_verify_pending=false;
+                gps_resume_verify_deadline=0;
+                gps_error=MeshInkGpsError::None;
+                gps_last_byte_at=millis();
+                gps_retain_identity();
+                Serial.printf("[T5-GPS] deep-sleep GNSS resume verified module=%s baud=%lu\n",
+                              gps_module_name(),(unsigned long)detected_gps_baud);
+                meshink_board_wake_log_appendf(
+                    "[T5-GPS] deep-sleep GNSS resume verified module=%s baud=%lu",
+                    gps_module_name(),(unsigned long)detected_gps_baud);
+            }else if((int32_t)(millis()-gps_resume_verify_deadline)>=0){
+                gps_resume_verify_pending=false;
+                gps_resume_verify_deadline=0;
+                gps_error=MeshInkGpsError::NmeaUnavailable;
+                gps_baud_locked=false;
+                next_baud_retry=millis();
+                Serial.printf("[T5-ERROR] deep-sleep GNSS resume has no valid NMEA module=%s baud=%lu; reprobe active\n",
+                              gps_module_name(),(unsigned long)Serial1.baudRate());
+                meshink_board_wake_log_appendf(
+                    "[T5-ERROR] deep-sleep GNSS resume has no valid NMEA module=%s baud=%lu; reprobe active",
+                    gps_module_name(),(unsigned long)Serial1.baudRate());
+            }
+        }
         if (active && !gps_baud_locked && gps_stream.hasValidSentence()) {
             gps_baud_locked = true;
             detected_gps_baud = Serial1.baudRate();
             detected_gps_module = detected_gps_baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+            gps_error = MeshInkGpsError::None;
+            gps_retain_identity();
             T5_GPS_TRACE("gps: background probe locked %u baud module=%s with valid NMEA\n", detected_gps_baud, gps_module_name());
             gps_apply_tuning();
         } else if (active && !gps_baud_locked && millis() >= next_baud_retry) {
@@ -726,6 +1196,7 @@ public:
         }
         if (active && gps_baud_locked && !gps_command_sleeping && gps_last_byte_at && millis() - gps_last_byte_at > 30000) {
             T5_GPS_TRACE("gps: NMEA watchdog expired after %lu ms; waking and reprobe enabled\n", (unsigned long)(millis() - gps_last_byte_at));
+            gps_error=MeshInkGpsError::NmeaUnavailable;
             // Loss of NMEA is not proof of standby. Retry baud detection
             // without sending any unverified GPS wake or sleep command.
             gps_stream.clearValidation();
@@ -768,14 +1239,106 @@ T5EnvironmentSensorManager sensors(gps);
 
 void meshink_gps_prepare_runtime(){
 #if ENV_INCLUDE_GPS == 1
-    // Retained radio wake skips T5Board::beginLocal(), so restore the GNSS UART
-    // only. The running SX1262 and its shared rail remain untouched.
+    // Retained radio wake skips T5Board::beginLocal(). Restore the receiver
+    // identity first so UART/tuning are correct before MeshCore starts its GPS
+    // provider. Verification is asynchronous so UI promotion is never blocked.
+    const bool restored=gps_restore_retained_identity();
     Serial1.setPins(PIN_GPS_TX,PIN_GPS_RX);
     Serial1.begin(detected_gps_baud);
     gps_stream.clearValidation();
     gps_last_byte_at=millis();
-    T5_GPS_TRACE("gps: retained UI promotion UART ready baud=%lu\n",
-                 (unsigned long)Serial1.baudRate());
+    gps_resume_verify_pending=restored;
+    gps_resume_verify_deadline=restored?millis()+2500UL:0;
+    if(restored){
+        gps_load_tuning();
+        const bool tracking_retained=
+            !gps_deep_sleep_power_save&&
+            gps_deep_sleep_low_work_magic!=GPS_DEEP_SLEEP_LOW_WORK_MAGIC&&
+            !gps_persisted_deep_sleep_masks;
+        if(tracking_retained){
+            // The shared rail never went down and we deliberately left the
+            // receiver tracking. Preserve that hot state: do not resend masks,
+            // constellation selection, or NMEA configuration before verifying
+            // the already-running stream.
+            gps_constellation_dirty=false;
+            gps_nmea_dirty=false;
+            Serial.println("[T5-GPS] deep-sleep GNSS tracking retained; receiver reconfiguration skipped");
+            meshink_board_wake_log_append(
+                "[T5-GPS] deep-sleep GNSS tracking retained; receiver reconfiguration skipped");
+        }
+        gps_apply_tuning();
+        Serial.printf("[T5-GPS] deep-sleep GNSS identity restored module=%s baud=%lu; NMEA verification armed\n",
+                      gps_module_name(),(unsigned long)Serial1.baudRate());
+        meshink_board_wake_log_appendf(
+            "[T5-GPS] deep-sleep GNSS identity restored module=%s baud=%lu; NMEA verification armed",
+            gps_module_name(),(unsigned long)Serial1.baudRate());
+    }else{
+        gps_error=MeshInkGpsError::ModuleNotIdentified;
+        Serial.println("[T5-ERROR] deep-sleep GNSS identity unavailable; live NMEA identification required");
+        meshink_board_wake_log_append(
+            "[T5-ERROR] deep-sleep GNSS identity unavailable; live NMEA identification required");
+    }
+#endif
+}
+
+void meshink_gps_probe_after_radio(bool radio_ready){
+#if ENV_INCLUDE_GPS == 1
+    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
+    // ensures power is available before probing GPS. T5 boards carry either
+    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
+    // upstream sensors.begin() owns the UART, without changing radio state.
+    if (radio_ready) {
+        bool found = false;
+        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
+            for (const uint32_t baud : {9600UL, 38400UL}) {
+                Serial1.updateBaudRate(baud);
+                gps_stream.clearValidation();
+                const uint32_t started = millis();
+                while (millis() - started < 1800) {
+                    while (gps_stream.available()) gps_stream.read();
+                    if (gps_stream.hasValidSentence()) { found = true; break; }
+                    delay(5);
+                }
+                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
+                              (unsigned)(pass+1),(unsigned long)baud,found);
+                if (found) {
+                    detected_gps_baud = baud;
+                    gps_baud_locked = true;
+                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
+                    gps_error = MeshInkGpsError::None;
+                    gps_retain_identity();
+                    gps_last_byte_at = millis();
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            detected_gps_baud = 9600;
+            gps_baud_locked = false;
+            detected_gps_module = GpsModule::Unknown;
+            gps_error = MeshInkGpsError::ModuleNotIdentified;
+            gps_clear_retained_identity();
+            Serial1.updateBaudRate(detected_gps_baud);
+            gps_stream.clearValidation();
+            Serial.println("[T5-ERROR] gps module not identified: no valid NMEA at supported baud; background retry active");
+        } else {
+            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
+                gps_module_name(),(unsigned long)Serial1.baudRate());
+            // Apply saved mode during the board probe, not only when MeshCore's
+            // provider starts. This keeps explicit GPS MODE=DISABLED parked
+            // correctly after a cold boot and performs defensive mask recovery.
+            gps_load_tuning();
+            gps_apply_tuning();
+        }
+        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
+            gps_module_name(),(unsigned long)Serial1.baudRate(),
+            gps_baud_locked?"":" (NMEA not yet confirmed)");
+        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshInk owns receiver and settings\n",
+                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
+    }
+#endif
+#if ENV_INCLUDE_GPS != 1
+    (void)radio_ready;
 #endif
 }
 
@@ -796,8 +1359,9 @@ MeshInkGpsStatus meshink_gps_read_status(){
 #if ENV_INCLUDE_GPS == 1
     auto* location=sensors.getLocationProvider();
     status.available=location!=nullptr;
+    status.error=location?gps_error:MeshInkGpsError::ProviderUnavailable;
     if(location){
-        status.valid=location->isValid();
+        status.valid=location->isValid()&&status.error==MeshInkGpsError::None;
         status.waiting_time_sync=location->waitingTimeSync();
         status.satellites=(int32_t)location->satellitesCount();
         status.latitude=location->getLatitude();
@@ -916,6 +1480,10 @@ void meshink_board_restore_deep_sleep_wake_pads() {
     Serial.printf("[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d\n",
                   digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
                   (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] wake pads restored dio1=%d boot=%d hold=%d/%d deinit=%d/%d",
+        digitalRead(P_LORA_DIO_1),digitalRead(T5_PIN_BOOT_BUTTON),
+        (int)radio_hold,(int)button_hold,(int)radio_pad,(int)button_pad);
 }
 
 void meshink_board_prepare_retained_aux_wake() {
@@ -1026,6 +1594,15 @@ bool meshink_board_enter_deep_sleep_standby() {
         return false;
     }
 
+    // All sleep-deferral/race checks have passed. Start a fresh RTC transcript
+    // only when this deep-sleep interval is definitely going ahead. A deferred
+    // attempt must not erase the previous wake evidence.
+    t5_wake_log_reset_for_sleep();
+
+    // Only now alter the GNSS receiver, so a failed/deferred sleep attempt
+    // never changes the user's active constellation configuration.
+    t5_gps_prepare_deep_sleep_low_work();
+
     Serial.printf("[T5-DEEPSLEEP] entering: DIO1 EXT1 GPIO%d=LOW BOOT EXT0 GPIO%d=HIGH NSS/RESET=held-high\n",
                   P_LORA_DIO_1,T5_PIN_BOOT_BUTTON);
     Serial.flush();
@@ -1065,6 +1642,9 @@ bool meshink_board_return_to_retained_deep_sleep() {
         return false;
     }
 
+    // This is a new deep-sleep interval; discard the prior wake transcript
+    // only after every re-sleep race/deferral check has passed.
+    t5_wake_log_reset_for_sleep();
     Serial.println("[T5-DEEPSLEEP] retained radio untouched; re-entering deep sleep (battery timer 1h)");
     Serial.flush();
     delay(20);
@@ -1340,50 +1920,7 @@ bool radio_init() {
     T5_TRACE("radio: SX1262 init=%d, heap=%u\n", ready, ESP.getFreeHeap());
     if(ready)Serial.println("[T5-INIT] radio=SX1262 OK");
     else Serial.println("[T5-ERROR] SX1262 radio initialization failed after recovery attempts");
-#if ENV_INCLUDE_GPS == 1
-    // LoRa and GPS share the PCA9535-controlled rail; radio initialization
-    // ensures power is available before probing GPS. T5 boards carry either
-    // a 9600-baud L76K or a 38400-baud MIA-M10Q. Sample NMEA here before
-    // upstream sensors.begin() owns the UART, without changing radio state.
-    if (ready) {
-        bool found = false;
-        for (uint8_t pass = 0; pass < 2 && !found; ++pass) {
-            for (const uint32_t baud : {9600UL, 38400UL}) {
-                Serial1.updateBaudRate(baud);
-                gps_stream.clearValidation();
-                const uint32_t started = millis();
-                while (millis() - started < 1800) {
-                    while (gps_stream.available()) gps_stream.read();
-                    if (gps_stream.hasValidSentence()) { found = true; break; }
-                    delay(5);
-                }
-                T5_GPS_TRACE("gps: probe pass=%u baud=%lu valid-NMEA=%d\n",
-                              (unsigned)(pass+1),(unsigned long)baud,found);
-                if (found) {
-                    detected_gps_baud = baud;
-                    gps_baud_locked = true;
-                    detected_gps_module = baud == 9600 ? GpsModule::L76K : GpsModule::MiaM10Q;
-                    gps_last_byte_at = millis();
-                    break;
-                }
-            }
-        }
-        if (!found) {
-            detected_gps_baud = 9600;
-            Serial1.updateBaudRate(detected_gps_baud);
-            gps_stream.clearValidation();
-            Serial.println("[T5-WARN] gps=NMEA not confirmed; background retry active");
-        } else {
-            Serial.printf("[T5-INIT] gps=%s baud=%lu OK\n",
-                gps_module_name(),(unsigned long)Serial1.baudRate());
-        }
-        T5_GPS_TRACE("gps: module=%s baud=%lu%s\n",
-            gps_module_name(),(unsigned long)Serial1.baudRate(),
-            gps_baud_locked?"":" (NMEA not yet confirmed)");
-        T5_GPS_TRACE("gps: selected baud=%u locked=%d module=%s; MeshCore owns position and settings\n",
-                 Serial1.baudRate(), gps_baud_locked, gps_module_name());
-    }
-#endif
+    meshink_gps_probe_after_radio(ready);
     return ready;
 }
 
@@ -1429,4 +1966,14 @@ mesh::LocalIdentity radio_new_identity() {
     T5_TRACE("identity: collecting SX1262 radio noise\n");
     RadioNoiseListener rng(radio);
     return mesh::LocalIdentity(&rng);
+}
+
+// Native SX1262 pre-init: the same board preparation and chip-select
+// deselection used by radio_init(), without initializing MeshCore's wrapper.
+void t5_prepare_native_radio_spi(){
+    meshink_rtc_begin();
+    t5_radio_shared_bus_idle(true);
+    pinMode(P_LORA_DIO_1,INPUT);
+    pinMode(P_LORA_BUSY,INPUT);
+    radio_spi.begin(P_LORA_SCLK,P_LORA_MISO,P_LORA_MOSI);
 }

@@ -1,11 +1,15 @@
 #pragma once
 
-#include <Mesh.h>
 #include "../hardware/radio_types.h"
+
+class PhysicalLayer;
+namespace mesh { class Radio; }
 
 // Generic runtime-facing radio surface. The selected board backend owns the
 // concrete LoRa chip/wrapper, initialization, statistics and power mechanics.
 mesh::Radio& meshink_radio_meshcore();
+PhysicalLayer* meshink_radio_radiolib();
+bool meshink_radio_set_lora_crc(uint8_t bytes);
 bool meshink_radio_initialize();
 bool meshink_radio_resume_rx_wake();
 bool meshink_radio_resume_retained_wake();
@@ -15,3 +19,15 @@ void meshink_radio_power_off();
 MeshInkRadioStats meshink_radio_stats();
 MeshInkRadioFailureClass meshink_radio_classify_failure();
 const char* meshink_radio_name();
+
+// Shared board services for the *native* Meshtastic SX1262Interface.
+// Unlike meshink_radio_initialize(), these do not initialize MeshCore's
+// CustomSX1262Wrapper. Only the reboot-selected protocol controls the chip.
+class SPIClass;
+MeshInkSX126xModuleConfig meshink_radio_native_module_config();
+SPIClass& meshink_radio_native_spi_bus();
+void meshink_radio_prepare_native_spi_bus();
+// Board-owned global GPIO ISR service, with protocol-specific per-pin handler.
+// These are called by the native HAL; they do not initialize or reset SX1262.
+bool meshink_radio_native_attach_interrupt(uint32_t pin,void (*callback)(void),uint32_t mode);
+void meshink_radio_native_detach_interrupt(uint32_t pin);

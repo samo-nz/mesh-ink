@@ -6,6 +6,9 @@
 #include <SPI.h>
 #include "board_profile.h"
 #include "../hardware/radio_types.h"
+#include "../hardware/rtc_types.h"
+
+class PhysicalLayer;
 
 class T5RTCClock : public mesh::RTCClock {
     bool valid_ = false;
@@ -15,11 +18,28 @@ class T5RTCClock : public mesh::RTCClock {
     uint32_t deferred_hardware_time_ = 0;
     uint32_t trusted_gps_time_ = 0;
     uint32_t trusted_gps_until_ = 0;
+    uint32_t expected_companion_time_ = 0;
+    uint32_t expected_companion_until_ = 0;
+    uint32_t last_gps_sync_utc_ = 0;
+    MeshInkTimeSource time_source_ = MeshInkTimeSource::Unknown;
+    MeshInkTimeMode time_mode_ = MeshInkTimeMode::Auto;
+    bool metadata_loaded_ = false;
+
+    void loadMetadata();
+    void saveMetadata();
+    bool gpsAuthorityActive(uint32_t current) const;
+    bool writeAcceptedTime(uint32_t utc,MeshInkTimeSource source);
 public:
     void begin();
     uint32_t getCurrentTime() override;
     void setCurrentTime(uint32_t time) override;
     void expectGpsTime(uint32_t time);
+    void expectCompanionTime(uint32_t time);
+    bool setManualTime(uint32_t time);
+    bool setTimeMode(MeshInkTimeMode mode);
+    MeshInkTimeMode timeMode();
+    MeshInkTimeSource timeSource();
+    bool gpsAuthoritative();
     bool isValid() const { return valid_; }
 };
 
@@ -73,3 +93,13 @@ bool radio_resume_rx_wake();
 bool radio_resume_retained_wake();
 MeshInkRadioFailureClass t5_classify_radio_failure();
 mesh::LocalIdentity radio_new_identity();
+PhysicalLayer* t5_radio_physical_layer();
+bool t5_radio_set_lora_crc(uint8_t bytes);
+
+// T5-only implementation, called exclusively by the generic hardware/radio API.
+void t5_prepare_native_radio_spi();
+// The GPIO ISR service belongs to the board, not to either radio protocol.
+// Native Meshtastic uses the same per-pin DIO1 handler lifetime as MeshCore,
+// without attempting to reinstall the already-active process-wide service.
+bool t5_native_radio_attach_interrupt(uint32_t pin,void (*callback)(void),uint32_t mode);
+void t5_native_radio_detach_interrupt(uint32_t pin);

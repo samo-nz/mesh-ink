@@ -2,27 +2,54 @@
 #include <Preferences.h>
 #include <string.h>
 #include "ui_onboarding.h"
-#include "companion_runtime.h"
+#include "protocol/mesh_protocol.h"
+#include "backup_restore.h"
 #include "map_tiles.h"
 #include "hardware/wireless.h"
 #include "hardware/buttons.h"
 #include "hardware/board.h"
 #include "hardware/power.h"
 #include "hardware/performance.h"
+#include "hardware/ram_audit.h"
+#include "hardware/storage.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
 #endif
 
+// The official network must not be started merely to draw an unconfigured
+// first-time wizard. A completed or pending native setup may boot the core;
+// new unconfigured devices instead use the offline native region/preset map.
+static bool selected_protocol_ready_for_boot(){
+    if(mesh_protocol_descriptor().id!=2)return true;
+    Preferences ui;
+    bool configured=false;
+    if(ui.begin("t5-ui",true)){
+        configured=ui.getBool("setup_mst",false);
+        ui.end();
+    }
+    Preferences staged;
+    bool pending=false;
+    if(staged.begin("mt-onboard",true)){
+        pending=staged.getBool("pending",false);
+        staged.end();
+    }
+    if(!configured&&!pending)
+        Serial.println("[MT-SETUP] offline onboarding; native worker/radio not started");
+    return configured||pending;
+}
+
 static bool companion_mode = false;
 static bool deep_sleep_rx_mode = false;
 static bool cache64_psram_blocked = false;
+static bool backup_boot_blocked = false;
 
 
 static char terminal_line[48]{};
 static uint8_t terminal_length=0;
 static bool screenshot_capture_mode=false;
 static bool terminal_last_was_cr=false;
+static bool terminal_serial_connected=false;
 
 static void terminal_screenshot_prompt() {
     Serial.println("[T5-CMD] Press Enter to save a screenshot");
@@ -38,6 +65,11 @@ static void terminal_save_screenshot() {
 }
 
 static void service_local_terminal() {
+    const bool serial_connected=(bool)Serial;
+    if(serial_connected&&!terminal_serial_connected)
+        meshink_board_wake_log_replay();
+    terminal_serial_connected=serial_connected;
+
     // Native USB CDC reports false once the host closes/disconnects the port.
     // Capture mode is deliberately session-scoped, so a reconnect starts clean.
     if(screenshot_capture_mode&&!Serial) {
@@ -77,8 +109,10 @@ static void service_local_terminal() {
                 Serial.println("[T5-CMD] Screenshot mode armed");
                 terminal_screenshot_prompt();
                 Serial.println("[T5-CMD] Disconnect serial to exit screenshot mode");
+            } else if(!strcmp(terminal_line,"wakelog")) {
+                meshink_board_wake_log_replay();
             } else if(!strcmp(terminal_line,"help")) {
-                Serial.println("[T5-CMD] commands: screenshot | shot | help");
+                Serial.println("[T5-CMD] commands: screenshot | shot | wakelog | help");
             } else {
                 Serial.printf("[T5-CMD] unknown command: %s (try 'help')\n",terminal_line);
             }
@@ -142,32 +176,12 @@ static MeshInkPowerSleepCheck minimal_battery_check(
     return result;
 }
 
-void request_companion_mode() {
-    if(local_mesh_is_running())local_mesh_flush_contacts_save_now();
-    Preferences mode;
-    if (mode.begin("t5-boot", false)) {
-        mode.putBool("companion_once", true);
-        mode.end();
-    }
-    delay(150);
-    ESP.restart();
-}
-
-static bool consume_companion_request() {
-    Preferences mode;
-    if (!mode.begin("t5-boot", false)) return false;
-    const bool requested = mode.getBool("companion_once", false);
-    if (requested) mode.remove("companion_once");
-    mode.end();
-    return requested;
-}
-
 static void companion_exit_button() {
     static uint32_t pressed_at = 0;
     const bool pressed = meshink_primary_button_pressed();
     if (pressed && pressed_at == 0) pressed_at = millis();
     if (pressed && pressed_at != 0 && millis() - pressed_at >= 2000) {
-        companion_prepare_exit();
+        mesh_protocol_companion_prepare_exit();
         delay(50);
         ESP.restart();
     }
@@ -179,19 +193,40 @@ void setup() {
     // until the local UI becomes interactive (or companion setup completes).
     // The steady-state policies then drop back to their validated 80 MHz cruise.
     meshink_performance_set_cpu_mhz(240);
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE && \
+    defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+    // HWCDC defaults to a 256-byte transmit ring. Even a complete, atomic
+    // log write can be partially accepted during PhoneAPI startup flooding.
+    // Allocate before begin(), never tear down a live USB ring buffer.
+    const size_t usb_tx_size=Serial.setTxBufferSize(4096);
+#endif
     Serial.begin(115200);
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE && \
+    defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+    if(usb_tx_size!=4096)
+        Serial.printf("[T5-LOG] WARN: USB TX ring allocation failed (%u); using fallback\n",
+                      (unsigned)usb_tx_size);
+#endif
     meshink_buttons_begin();
+    meshink_ram_snapshot("early-after-buttons");
 
 
     bool radio_wake=meshink_board_woke_from_radio();
-    const bool button_wake=meshink_board_woke_from_primary_button();
-    const bool timer_wake=meshink_board_woke_from_timer();
+    bool button_wake=meshink_board_woke_from_primary_button();
+    bool timer_wake=meshink_board_woke_from_timer();
+    const bool backup_requested=meshink_backup_has_pending_request();
 
     // EXT0/EXT1 route their wake pads through RTC IO. Capture the wake cause
     // first, then restore DIO1/BOOT to digital GPIO before RadioLib ISR setup
     // or another deep-sleep cycle.
     if(radio_wake||button_wake||timer_wake)
         meshink_board_restore_deep_sleep_wake_pads();
+    if(backup_requested){
+        // An interrupted reboot must never enter retained RX/radio mode before
+        // its pending backup/restore has been recovered or executed.
+        radio_wake=button_wake=timer_wake=false;
+        Serial.println("[T5-BACKUP] queued maintenance overrides retained wake");
+    }
 
     // A timer can win the ESP32 wake-cause race just as DIO1 asserts. Release
     // only the automatic pad hold, then let a pending radio packet take priority
@@ -204,9 +239,13 @@ void setup() {
         }
     }
 
-    if(radio_wake||button_wake||timer_wake)
+    if(radio_wake||button_wake||timer_wake){
         Serial.printf("[T5-DEEPSLEEP] reset wake radio=%u button=%u timer=%u\n",
                       radio_wake?1U:0U,button_wake?1U:0U,timer_wake?1U:0U);
+        meshink_board_wake_log_appendf(
+            "[T5-DEEPSLEEP] reset wake radio=%u button=%u timer=%u",
+            radio_wake?1U:0U,button_wake?1U:0U,timer_wake?1U:0U);
+    }
 
     if(timer_wake&&!radio_wake){
         MeshInkPowerCriticalState timer_power{};
@@ -239,24 +278,28 @@ void setup() {
         const bool long_hold=meshink_primary_button_pressed()&&millis()-hold_started>=2000UL;
         if(long_hold){
             // Give the user immediate confirmation as soon as the long hold is
-            // accepted. Retained MeshCore/radio restoration may take a moment.
+            // accepted. Retained protocol/radio restoration may take a moment.
             meshink_power_frontlight_begin();
             meshink_power_frontlight_set(100);
-            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; frontlight=100%; restoring retained radio/MeshCore before UI");
+            Serial.println("[T5-DEEPSLEEP] BOOT wake confirmed by 2s hold; frontlight=100%; restoring retained radio/protocol before UI");
+            meshink_board_wake_log_append(
+                "[T5-DEEPSLEEP] BOOT wake confirmed; restoring retained radio/protocol before UI");
             deep_sleep_rx_mode=true;
             companion_mode=false;
             check_local_wireless_state("deep-button-pre",
                 meshink_wireless_force_local_radios_off());
-            if(!local_mesh_setup_button_wake()){
+            if(!mesh_protocol_setup_button_wake()){
                 Serial.println("[T5-DEEPSLEEP] retained BOOT startup failed; restarting into normal recovery boot");
                 Serial.flush();delay(100);ESP.restart();return;
             }
-            if(local_mesh_promote_to_ui("deep-button-wake")){
+            if(mesh_protocol_promote_to_ui("deep-button-wake")){
                 deep_sleep_rx_mode=false;
                 Serial.println("[T5-DEEPSLEEP] BOOT wake interactive UI ready; retained radio runtime preserved");
+                meshink_board_wake_log_append(
+                    "[T5-DEEPSLEEP] BOOT wake interactive UI ready; retained radio runtime preserved");
                 return;
             }
-            Serial.println("[T5-DEEPSLEEP] BOOT wake UI promotion failed; remaining in headless MeshCore mode");
+            Serial.println("[T5-DEEPSLEEP] BOOT wake UI promotion failed; remaining in headless protocol mode");
             return;
         }else{
             Serial.printf("[T5-DEEPSLEEP] BOOT released after %lums; treating as accidental/short wake and re-sleeping\n",
@@ -275,7 +318,7 @@ void setup() {
                       T5_FIRMWARE_VERSION,meshink_board_name());
         check_local_wireless_state("deep-rx-pre",
             meshink_wireless_force_local_radios_off());
-        if(!local_mesh_setup_rx_wake()){
+        if(!mesh_protocol_setup_rx_wake()){
             Serial.println("[T5-DEEPSLEEP] FATAL: minimal RX-wake startup failed; restarting into normal recovery boot");
             Serial.flush();delay(100);ESP.restart();return;
         }
@@ -283,7 +326,7 @@ void setup() {
         return;
     }
 
-    // Validate battery state before display/touch/MeshCore startup. This is
+    // Validate battery state before display/touch/protocol startup. This is
     // intentionally independent of the later UI runtime guard so battery-only
     // cold boots exercise a real early cutoff path.
     MeshInkPowerCriticalState boot_power{};
@@ -292,9 +335,34 @@ void setup() {
     if(boot_check==MeshInkPowerSleepCheck::Critical)
         ui_minimal_low_battery_shutdown(boot_power,"cold-boot");
 
-    companion_mode = consume_companion_request();
-    Serial.printf("[T5-BOOT] MeshInk %s board=%s mode=%s\n",
-                  T5_FIRMWARE_VERSION,meshink_board_name(),
+    // Keep the existing persistent operation notice during backup/restore,
+    // and avoid starting the local-UI splash in Bluetooth companion mode.
+    // This read-only check does NOT consume the companion one-shot NVS key.
+    Preferences early_mode;
+    bool companion_pending=false;
+    if(early_mode.begin("t5-boot",true)){
+        companion_pending=early_mode.getBool("companion_once",false);
+        early_mode.end();
+    }
+    const bool early_local_splash=!backup_requested&&!companion_pending;
+    if(early_local_splash){
+        // After the battery guard but BEFORE the potentially long filesystem
+        // mount/format. Only the display is initialized; no radio, journal,
+        // touch, GPS or writable application NVS state is started.
+        ui_show_cold_boot_splash();
+    }
+    meshink_storage_set_first_format_notice(
+        early_local_splash?ui_show_first_format_preparation:nullptr);
+    // One-shot maintenance runs BEFORE any core, journal writer or shared UI
+    // state initializes. A failed rollback/mount never boots a live radio.
+    if(!meshink_backup_run_pending_on_boot()){
+        Serial.println("[T5-BOOT] FATAL: backup storage recovery unsafe; protocol startup blocked");
+        backup_boot_blocked=true;
+        return;
+    }
+    companion_mode = mesh_protocol_consume_companion_request();
+    Serial.printf("[T5-BOOT] MeshInk %s board=%s protocol=%s mode=%s\n",
+                  T5_FIRMWARE_VERSION,meshink_board_name(),mesh_protocol_name(),
                   companion_mode?"companion":"local");
 #if defined(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE)
     Serial.printf("[T5-BOOT] cache-line=%dB\n",CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE);
@@ -314,7 +382,7 @@ void setup() {
         const MeshInkWirelessState before=meshink_wireless_force_wifi_off();
         if(!before.wifi_off)
             Serial.println("[T5-ERROR] companion startup could not disable Wi-Fi");
-        companion_setup();
+        mesh_protocol_companion_setup();
         const MeshInkWirelessState companion_ready=meshink_wireless_read_state();
         check_companion_wireless_state("companion-ready",companion_ready);
         if(meshink_wireless_companion_radios_ready(companion_ready))
@@ -323,15 +391,21 @@ void setup() {
     } else {
         // Standalone UI never uses the ESP32-S3 2.4 GHz radios. Explicitly
         // stop/deinitialize both stacks before local startup, then enforce and
-        // verify the policy again after MeshCore setup in case a dependency
+        // verify the policy again after protocol setup in case a dependency
         // changes in a future build. Returning from companion mode always
         // reboots through this same path.
         check_local_wireless_state("local-pre",
             meshink_wireless_force_local_radios_off());
 
+        meshink_ram_snapshot("before-ui-setup");
         ui_setup();           // show boot logo while storage/radio initialize
+        meshink_ram_snapshot("after-ui-setup");
 
-        local_mesh_setup();   // includes first-boot SPIFFS mount / format
+        // An unconfigured native protocol must not create a live worker,
+        // radio identity or persistent defaults while the wizard is open.
+        if(selected_protocol_ready_for_boot())mesh_protocol_setup();
+        ui_sync_protocol_setup_result();
+        meshink_ram_snapshot("after-protocol-setup");
 
 
         const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
@@ -342,26 +416,28 @@ void setup() {
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
 
         ui_finish_startup();  // only now show a tappable setup/home screen
+        meshink_ram_snapshot("after-ui-finish");
 
-        if(local_mesh_is_running())Serial.println("[T5-INIT] startup=READY");
+        if(mesh_protocol_is_running())Serial.println("[T5-INIT] startup=READY");
     }
 
 
 }
 
 void loop() {
-    if(cache64_psram_blocked){delay(1000);return;}
+    meshink_ram_audit_periodic();
+    if(cache64_psram_blocked||backup_boot_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
-        local_mesh_rx_wake_loop();
-        if(local_mesh_rx_wake_promoted())deep_sleep_rx_mode=false;
+        mesh_protocol_rx_wake_loop();
+        if(mesh_protocol_rx_wake_promoted())deep_sleep_rx_mode=false;
         return;
     }
     if (companion_mode) {
-        companion_loop();
+        mesh_protocol_companion_loop();
         companion_exit_button();
     } else {
         service_local_terminal();
-        if(local_mesh_is_running())local_mesh_loop();
+        if(mesh_protocol_is_running())mesh_protocol_loop();
         ui_loop();
     }
 }

@@ -1,0 +1,252 @@
+#include "meshtastic_radio.h"
+#include "meshtastic_worker.h"
+#include "meshtastic_sx1262_instance.cpp" // actual official SX1262 implementation
+#include "../hardware/radio.h"
+#include "../../lib/Meshtastic/src/mesh/SX1262Interface.h"
+#include "../../lib/Meshtastic/src/mesh/Router.h"
+#include "../../lib/Meshtastic/src/mesh/RadioTxHook.h"
+#include "../../lib/Meshtastic/src/SPILock.h"
+#include <Arduino.h>
+#include <memory>
+#include <new>
+
+namespace {
+// RadioLib's HAL is borrowed by the official native radio instance and must
+// outlive it. The normal ArduinoHal IRQ path would attempt to install its own
+// global GPIO service AFTER EPDiy has already installed one for the display.
+// Share the board-owned DIO1 service instead; only the callback changes for
+// RX/TX, never the process-wide service or the SX1262 chip state.
+class MeshInkNativeRadioHal final : public LockingArduinoHal {
+public:
+    using LockingArduinoHal::LockingArduinoHal;
+    void attachInterrupt(uint32_t pin,void (*callback)(void),uint32_t mode) override {
+        if(!meshink_radio_native_attach_interrupt(pin,callback,mode))
+            Serial.printf("[MeshInk/MT] DIO1 callback attach FAILED pin=%lu\\n",
+                          (unsigned long)pin);
+    }
+    void detachInterrupt(uint32_t pin) override {
+        meshink_radio_native_detach_interrupt(pin);
+    }
+};
+std::unique_ptr<MeshInkNativeRadioHal> native_hal;
+class MeshInkNativeSX1262;
+MeshInkNativeSX1262* active_native_radio=nullptr;
+
+struct QuickRadioTrace {
+    uint32_t packet_id=0,requested_at=0,tx_good_before=0,tx_start_before=0;
+    uint8_t kind=0;
+    bool active=false,capturing=false,before_tx=false,finished=false,transmitted=false;
+};
+QuickRadioTrace quick_trace{};
+class MeshInkQuickTxHook final : public RadioTxHook {
+public:
+    PreTxAction beforeTransmit(RadioInterface* iface,meshtastic_MeshPacket* packet) override;
+    void packetReleased(RadioInterface* iface,const meshtastic_MeshPacket* packet) override;
+};
+MeshInkQuickTxHook quick_tx_hook;
+
+// The T5 RF switch must be enabled AFTER SX1262 begin(), as in MeshCore's
+// proven LilyGO post-init sequence. Keep upstream RF modem/IRQ logic intact.
+// Board capabilities are supplied by the MeshInk generic radio descriptor,
+// never hardcoded to a GPIO or chip frequency in a protocol helper.
+class MeshInkNativeSX1262 final : public SX1262Interface {
+    bool dio2_switch_;
+    float board_tcxo_voltage_;
+    bool apply_board_settings() {
+        // Match the working MeshCore H752 sequence exactly: start the chip
+        // on RadioLib's 1.6 V TCXO, change the fitted TCXO to 2.4 V, and
+        // finally enable the DIO2-controlled RF switch.
+        const int16_t tcxo=lora.setTCXO(board_tcxo_voltage_);
+        if(tcxo!=RADIOLIB_ERR_NONE){
+            Serial.printf("[MeshInk/MT] Post-init TCXO error %d\\n",(int)tcxo);
+            return false;
+        }
+        setTCXOVoltage(board_tcxo_voltage_); // reconfigure/recovery setting
+        if(!dio2_switch_){startReceive();return true;}
+        const int16_t rf=lora.setDio2AsRfSwitch(true);
+        if(rf!=RADIOLIB_ERR_NONE)
+            Serial.printf("[MeshInk/MT] Post-init DIO2 switch error %d\\n",(int)rf);
+        if(rf!=RADIOLIB_ERR_NONE)return false;
+        // Start listening *after* the fitted TCXO and RF switch are set.
+        // The stock init() arms RX early; re-arm with final board electrical state.
+        startReceive();
+        return true;
+    }
+  protected:
+    // Upstream's chip recovery re-runs begin(), clearing DIO2 switching.
+    // Reapply the board electrical settings on recovery too, without changing
+    // the initial begin-before-DIO2 ordering shared with working MeshCore.
+    bool recoverChipStateLoss() override {
+        // Upstream's private chip-recovery helper cannot be called from a
+        // board subclass. Its public reconfigure() has the same guarded
+        // standby -> modem-params -> full-reinit fallback used by recovery.
+        if(!SX1262Interface::reconfigure())return false;
+        return apply_board_settings();
+    }
+public:
+    uint32_t tx_good_count() const {return txGood;}
+    // The upstream startSend() method is private. This protected base stamp is
+    // updated only AFTER RadioLib accepts startTransmit(), unlike txGood,
+    // which also advances for unsuccessful startup cleanup.
+    uint32_t tx_start_time() const {return lastTxStart;}
+    ErrorCode send(meshtastic_MeshPacket* packet) override {
+        // The upstream module allocates a unique ID; capture it from the
+        // actual router-to-radio handoff, not from another pending broadcast.
+        const bool capture=quick_trace.active&&quick_trace.capturing&&
+            !quick_trace.packet_id&&packet&&packet->id&&
+            packet->to==NODENUM_BROADCAST;
+        const uint32_t packet_id=capture?packet->id:0;
+        const ErrorCode result=SX1262Interface::send(packet);
+        if(capture&&result==ERRNO_OK)quick_trace.packet_id=packet_id;
+        return result;
+    }
+    void report() const {
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.printf("[MT-TEST] radio stats rx_ok=%lu rx_bad=%lu tx_ok=%lu tx_relay=%lu tx_drop=%u rx_armed=%u rx_offline=%u recovery_attempts=%u\n",
+                      (unsigned long)rxGood,(unsigned long)rxBad,(unsigned long)txGood,
+                      (unsigned long)txRelay,(unsigned)txDrop,isReceiving?1U:0U,
+                      rxOffline?1U:0U,(unsigned)chipRecoveryFailures);
+#endif
+    }
+    MeshInkNativeSX1262(LockingArduinoHal* hal,RADIOLIB_PIN_TYPE cs,
+                        RADIOLIB_PIN_TYPE irq,RADIOLIB_PIN_TYPE rst,
+                        RADIOLIB_PIN_TYPE busy,float tcxo,bool dio2)
+        : SX1262Interface(hal,cs,irq,rst,busy),dio2_switch_(dio2),
+          board_tcxo_voltage_(tcxo){}
+    bool init() override {
+        setTCXOVoltage(1.6f);
+        if(!SX1262Interface::init())return false;
+        return apply_board_settings();
+    }
+    bool reconfigure() override {
+        if(!SX1262Interface::reconfigure())return false;
+        return apply_board_settings();
+    }
+};
+
+RadioTxHook::PreTxAction MeshInkQuickTxHook::beforeTransmit(
+    RadioInterface* iface,meshtastic_MeshPacket* packet){
+    if(iface==active_native_radio&&packet&&quick_trace.active&&
+       quick_trace.packet_id&&packet->id==quick_trace.packet_id){
+        // A queued position may be waiting for CAD when the user disables
+        // sharing. Native pre-TX hook must revoke it before radio airtime.
+        if(quick_trace.kind==1&&!meshink_meshtastic_worker_quick_location_allowed())
+            return PRETX_DROP;
+        if(!quick_trace.before_tx){
+            quick_trace.before_tx=true;
+            quick_trace.tx_good_before=active_native_radio->tx_good_count();
+            quick_trace.tx_start_before=active_native_radio->tx_start_time();
+        }
+    }
+    return PRETX_SEND;
+}
+void MeshInkQuickTxHook::packetReleased(
+    RadioInterface* iface,const meshtastic_MeshPacket* packet){
+    if(iface!=active_native_radio||!packet||!quick_trace.active||
+       !quick_trace.packet_id||packet->id!=quick_trace.packet_id)return;
+    // The native driver increments txGood BEFORE invoking packetReleased
+    // on completion. Drop/cancel hooks do not increment the counter.
+    quick_trace.transmitted=quick_trace.before_tx&&
+        active_native_radio->tx_good_count()!=quick_trace.tx_good_before&&
+        active_native_radio->tx_start_time()!=quick_trace.tx_start_before;
+    quick_trace.finished=true;
+    Serial.printf("[MT-QUICK] radio released id=%08lx tx_complete=%u\n",
+                  (unsigned long)packet->id,quick_trace.transmitted?1U:0U);
+}
+}
+
+bool meshink_meshtastic_radio_quick_begin(uint8_t kind){
+    if(!active_native_radio||quick_trace.active||(kind!=1&&kind!=2))return false;
+    quick_trace=QuickRadioTrace{};
+    quick_trace.active=true;
+    quick_trace.capturing=true;
+    quick_trace.kind=kind;
+    quick_trace.requested_at=millis();
+    return true;
+}
+void meshink_meshtastic_radio_quick_finish(bool native_accepted){
+    if(!quick_trace.active)return;
+    quick_trace.capturing=false;
+    if(!native_accepted||!quick_trace.packet_id)quick_trace.finished=true;
+    Serial.printf("[MT-QUICK] kind=%u native_accepted=%u radio_id=%08lx\n",
+                  (unsigned)quick_trace.kind,native_accepted?1U:0U,
+                  (unsigned long)quick_trace.packet_id);
+}
+bool meshink_meshtastic_radio_quick_result(uint8_t& kind,bool& transmitted){
+    if(!quick_trace.active)return false;
+    // A radio packet can remain in CAD backoff, be superseded, or disappear
+    // without a completion callback. Time out as failure, never as sent.
+    if(!quick_trace.finished&&(uint32_t)(millis()-quick_trace.requested_at)>=60000UL){
+        quick_trace.finished=true;
+        Serial.printf("[MT-QUICK] radio timeout id=%08lx\n",
+                      (unsigned long)quick_trace.packet_id);
+    }
+    if(!quick_trace.finished)return false;
+    kind=quick_trace.kind;
+    transmitted=quick_trace.transmitted;
+    quick_trace=QuickRadioTrace{};
+    return true;
+}
+
+std::unique_ptr<RadioInterface> meshink_meshtastic_create_radio() {
+    // The selected protocol must own the SX1262. Do not call MeshCore's
+    // meshink_radio_initialize(), CustomSX1262Wrapper, or the shared PhysicalLayer.
+    if (!spiLock) {
+        Serial.println("[MeshInk/MT] SPI locking service is not initialized");
+        return nullptr;
+    }
+    meshink_radio_prepare_native_spi_bus();
+    const MeshInkSX126xModuleConfig hw=meshink_radio_native_module_config();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.printf("[MT-TEST] SX1262 board SPI ready cs=%d irq=%d rst=%d busy=%d tcxo=%.1fV dio2_rf=%u heap=%u\n",
+                  hw.chip_select,hw.dio1,hw.reset,hw.busy,(double)hw.tcxo_voltage,
+                  hw.dio2_rf_switch?1U:0U,(unsigned)ESP.getFreeHeap());
+#endif
+    if(hw.chip_select<0||hw.dio1<0||hw.reset<0||hw.busy<0||
+       hw.tcxo_voltage<=0.0f){
+        Serial.println("[MeshInk/MT] Invalid SX1262 hardware description");
+        return nullptr;
+    }
+    if(!native_hal){
+        native_hal.reset(new(std::nothrow) MeshInkNativeRadioHal(
+            meshink_radio_native_spi_bus(),
+            SPISettings(4000000,MSBFIRST,SPI_MODE0)));
+        if(!native_hal)return nullptr;
+    }
+    std::unique_ptr<MeshInkNativeSX1262> radio(new(std::nothrow) MeshInkNativeSX1262(
+        native_hal.get(),(RADIOLIB_PIN_TYPE)hw.chip_select,
+        (RADIOLIB_PIN_TYPE)hw.dio1,(RADIOLIB_PIN_TYPE)hw.reset,
+        (RADIOLIB_PIN_TYPE)hw.busy,hw.tcxo_voltage,hw.dio2_rf_switch));
+    if(!radio)return nullptr;
+    // The native wrapper applies the board TCXO voltage only after begin().
+    // Upstream init() configures and arms native IRQ-driven RX, and applies
+    // the Meshtastic modem's own synchronisation, CAD and transmission rules.
+    if(!radio->init()){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+        Serial.printf("[MT-TEST] SX1262 initialization failed heap=%u; inspect upstream RadioLib errors\n",
+                      (unsigned)ESP.getFreeHeap());
+#endif
+        Serial.println("[MeshInk/MT] Official SX1262 radio init failed");
+        return nullptr;
+    }
+    active_native_radio=radio.get();
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    Serial.println("[MT-TEST] SX1262 initialized, post-init TCXO/DIO2 set, native RX re-armed");
+    active_native_radio->report();
+#endif
+    return std::unique_ptr<RadioInterface>(std::move(radio));
+}
+
+bool meshink_meshtastic_attach_radio(Router& native_router) {
+    std::unique_ptr<RadioInterface> radio=meshink_meshtastic_create_radio();
+    if(!radio)return false;
+    native_router.addInterface(std::move(radio));
+    Serial.println("[MeshInk/MT] Official SX1262 driver attached to Router");
+    return true;
+}
+
+void meshink_meshtastic_radio_report(){
+#if MESHINK_MESHTASTIC_HW_TEST_LOG
+    if(active_native_radio)active_native_radio->report();
+#endif
+}

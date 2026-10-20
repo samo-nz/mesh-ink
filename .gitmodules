@@ -1,3 +1,7 @@
 [submodule "lib/MeshCore"]
     path = lib/MeshCore
     url = https://github.com/meshcore-dev/MeshCore.git
+
+[submodule "lib/Meshtastic"]
+    path = lib/Meshtastic
+    url = https://github.com/meshtastic/firmware.git

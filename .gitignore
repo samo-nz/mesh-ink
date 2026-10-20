@@ -4,3 +4,6 @@
 
 # Generated at build time from docs/ original PNG
 src/meshink_logo_bitmap.h
+
+# Generated from upstream source and Git pins at build time
+include/core_build_versions.h

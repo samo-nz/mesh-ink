@@ -1,0 +1,608 @@
+#include <Arduino.h>
+#include <Preferences.h>
+
+#include "mesh_protocol.h"
+
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+#include "../hardware/rtc.h"
+#if ENV_INCLUDE_GPS == 1
+#include "../hardware/gps.h"
+#endif
+#endif
+
+namespace {
+
+using BackendSlot = const MeshInkProtocolBackend* (*)();
+
+static BackendSlot backend_slots[] = {
+#if defined(MESHINK_PROTOCOL_SLOT_1_ENABLED)
+    meshink_protocol_backend_slot_1,
+#else
+    nullptr,
+#endif
+#if defined(MESHINK_PROTOCOL_SLOT_2_ENABLED)
+    meshink_protocol_backend_slot_2,
+#else
+    nullptr,
+#endif
+#if defined(MESHINK_PROTOCOL_SLOT_3_ENABLED)
+    meshink_protocol_backend_slot_3,
+#else
+    nullptr,
+#endif
+#if defined(MESHINK_PROTOCOL_SLOT_4_ENABLED)
+    meshink_protocol_backend_slot_4,
+#else
+    nullptr,
+#endif
+};
+
+static const MeshInkProtocolBackend& fallback_backend() {
+    static const MeshInkProtocolBackend value = [] {
+        MeshInkProtocolBackend b{};
+        b.descriptor.id = 0;
+        b.descriptor.name = "NO PROTOCOL";
+        b.descriptor.core_name = "NO CORE";
+        b.descriptor.core_version = "";
+        b.descriptor.capabilities = 0;
+        return b;
+    }();
+    return value;
+}
+
+static const MeshInkProtocolBackend* slot_backend(size_t index) {
+    if (index >= sizeof(backend_slots) / sizeof(backend_slots[0])) return nullptr;
+    BackendSlot slot = backend_slots[index];
+    return slot ? slot() : nullptr;
+}
+
+static const MeshInkProtocolBackend* first_backend() {
+    for (size_t i = 0; i < sizeof(backend_slots) / sizeof(backend_slots[0]); ++i) {
+        if (const auto* backend = slot_backend(i)) return backend;
+    }
+    return &fallback_backend();
+}
+
+static bool selected_protocol_id(uint8_t& id) {
+    id=0;
+    Preferences prefs;
+    if (!prefs.begin("mesh-protocol", true)) return false;
+    id=prefs.getUChar("active", 0);
+    prefs.end();
+    return true;
+}
+
+static const MeshInkProtocolBackend* find_backend(uint8_t id) {
+    if (!id) return nullptr;
+    for (size_t i = 0; i < sizeof(backend_slots) / sizeof(backend_slots[0]); ++i) {
+        const auto* backend = slot_backend(i);
+        if (backend && backend->descriptor.id == id) return backend;
+    }
+    return nullptr;
+}
+
+static const MeshInkProtocolBackend& active_backend() {
+    static const MeshInkProtocolBackend* cached = nullptr;
+    if (!cached) {
+        uint8_t selected=0;
+        // If NVS cannot be opened, do not cache the fallback. A subsequent
+        // lookup after framework startup must be able to resolve Meshtastic.
+        if (!selected_protocol_id(selected)) return *first_backend();
+        cached=find_backend(selected);
+        if (!cached) cached=first_backend();
+        Serial.printf("[T5-PROTOCOL] persisted=%u selected=%u\n",
+                      (unsigned)selected,(unsigned)cached->descriptor.id);
+    }
+    return *cached;
+}
+
+static const char* safe_text(const char* value) {
+    return value ? value : "";
+}
+
+}  // namespace
+
+const MeshInkProtocolDescriptor& mesh_protocol_descriptor() {
+    return active_backend().descriptor;
+}
+
+const char* mesh_protocol_name() {
+    return safe_text(active_backend().descriptor.name);
+}
+
+const char* mesh_protocol_core_name() {
+    return safe_text(active_backend().descriptor.core_name);
+}
+
+const char* mesh_protocol_core_version() {
+    return safe_text(active_backend().descriptor.core_version);
+}
+
+bool mesh_protocol_has(uint32_t capability) {
+    return (active_backend().descriptor.capabilities & capability) == capability;
+}
+
+size_t mesh_protocol_available_count() {
+    size_t count = 0;
+    for (size_t i = 0; i < sizeof(backend_slots) / sizeof(backend_slots[0]); ++i)
+        if (slot_backend(i)) ++count;
+    return count;
+}
+
+const MeshInkProtocolDescriptor* mesh_protocol_available(size_t index) {
+    size_t found = 0;
+    for (size_t i = 0; i < sizeof(backend_slots) / sizeof(backend_slots[0]); ++i) {
+        const auto* backend = slot_backend(i);
+        if (!backend) continue;
+        if (found++ == index) return &backend->descriptor;
+    }
+    return nullptr;
+}
+
+size_t mesh_protocol_radio_preset_count() {
+    return active_backend().radio_preset_count?active_backend().radio_preset_count():0;
+}
+const MeshInkRadioPreset& mesh_protocol_radio_preset_at(size_t index) {
+    static const MeshInkRadioPreset empty{"","",0,0.0f,0,0,0};
+    if(!active_backend().radio_preset_at)return empty;
+    const auto* preset=active_backend().radio_preset_at(index);
+    return preset?*preset:empty;
+}
+size_t mesh_protocol_setup_region_count() { return active_backend().setup_region_count ? active_backend().setup_region_count() : 0; }
+const char* mesh_protocol_setup_region_name(size_t index) { return active_backend().setup_region_name ? safe_text(active_backend().setup_region_name(index)) : ""; }
+size_t mesh_protocol_setup_preset_count(size_t region) {
+    return active_backend().setup_preset_count_for_region
+        ?active_backend().setup_preset_count_for_region(region)
+        :(active_backend().setup_preset_count?active_backend().setup_preset_count():0);
+}
+const char* mesh_protocol_setup_preset_name(size_t region,size_t index) {
+    return active_backend().setup_preset_name_for_region
+        ?safe_text(active_backend().setup_preset_name_for_region(region,index))
+        :(active_backend().setup_preset_name? safe_text(active_backend().setup_preset_name(index)):"");
+}
+int mesh_protocol_setup_preset_index(size_t region,size_t index) {
+    return active_backend().setup_preset_index_for_region
+        ?active_backend().setup_preset_index_for_region(region,index):(int)index;
+}
+bool mesh_protocol_setup_validate_radio(size_t region,float frequency_mhz,float bandwidth_khz,
+        uint8_t sf,uint8_t cr,uint8_t hash,uint8_t power) {
+    return active_backend().setup_validate_radio
+        ?active_backend().setup_validate_radio(region,frequency_mhz,bandwidth_khz,
+                                               sf,cr,hash,power):false;
+}
+bool mesh_protocol_setup_commit_radio(size_t region,size_t preset,uint8_t hops) { return active_backend().setup_commit_radio ? active_backend().setup_commit_radio(region,preset,hops) : false; }
+
+bool mesh_protocol_select_for_next_boot(uint8_t protocol_id) {
+    if (!find_backend(protocol_id)) return false;
+    Preferences prefs;
+    if (!prefs.begin("mesh-protocol", false)) return false;
+    const bool written = prefs.putUChar("active", protocol_id) == 1;
+    prefs.end();
+    if(!written)return false;
+    // putUChar commits the NVS transaction; verify from a fresh handle.
+    Preferences verify;
+    if(!verify.begin("mesh-protocol",true))return false;
+    const bool ok=verify.isKey("active")&&verify.getUChar("active",0)==protocol_id;
+    verify.end();
+    if(!ok)Serial.printf("[T5-PROTOCOL] NVS readback failed target=%u\n",(unsigned)protocol_id);
+    return ok;
+}
+
+bool mesh_protocol_restart_into(uint8_t protocol_id) {
+    const uint8_t original_id=active_backend().descriptor.id;
+    if (!mesh_protocol_select_for_next_boot(protocol_id)) return false;
+    mesh_protocol_flush_now();
+    // Quiesce the native worker before restarting into a different core.
+    // Never treat a timed-out native flash save as a successful switch.
+    if(active_backend().prepare_switch_shutdown &&
+       !active_backend().prepare_switch_shutdown()) {
+        Serial.println("[T5-PROTOCOL] ERROR: protocol switch cancelled (shutdown timeout)");
+        if(!mesh_protocol_select_for_next_boot(original_id))
+            Serial.println("[T5-PROTOCOL] ERROR: original boot selection could not be restored");
+        return false;
+    }
+    mesh_protocol_prepare_shutdown();
+    delay(100);
+    ESP.restart();
+    return true;
+}
+
+void mesh_protocol_restart_after_restore() {
+    delay(100);
+    ESP.restart();
+}
+
+void mesh_protocol_setup() {
+    if (active_backend().setup) active_backend().setup();
+}
+
+bool mesh_protocol_setup_rx_wake() {
+    return active_backend().setup_rx_wake ? active_backend().setup_rx_wake() : false;
+}
+
+bool mesh_protocol_setup_button_wake() {
+    return active_backend().setup_button_wake ? active_backend().setup_button_wake() : false;
+}
+
+void mesh_protocol_loop() {
+    if (active_backend().loop) active_backend().loop();
+}
+
+void mesh_protocol_service_startup() {
+    if (active_backend().service_startup) active_backend().service_startup();
+}
+
+void mesh_protocol_rx_wake_loop() {
+    if (active_backend().rx_wake_loop) active_backend().rx_wake_loop();
+}
+
+bool mesh_protocol_rx_wake_promoted() {
+    return active_backend().rx_wake_promoted ? active_backend().rx_wake_promoted() : false;
+}
+
+void mesh_protocol_prepare_interactive_services() {
+    if (active_backend().prepare_interactive_services) active_backend().prepare_interactive_services();
+}
+
+bool mesh_protocol_promote_to_ui(const char* source) {
+    return active_backend().promote_to_ui ? active_backend().promote_to_ui(source) : false;
+}
+
+bool mesh_protocol_supports_deep_sleep_standby(){
+    return active_backend().enter_deep_sleep_standby != nullptr;
+}
+
+bool mesh_protocol_enter_deep_sleep_standby() {
+    return active_backend().enter_deep_sleep_standby
+        ? active_backend().enter_deep_sleep_standby()
+        : false;
+}
+
+bool mesh_protocol_is_running() {
+    return active_backend().is_running ? active_backend().is_running() : false;
+}
+
+void mesh_protocol_flush_now() {
+    if (active_backend().flush_now) active_backend().flush_now();
+}
+
+void mesh_protocol_prepare_shutdown() {
+    if (active_backend().prepare_shutdown) active_backend().prepare_shutdown();
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    meshink_gps_shutdown();
+#endif
+}
+
+void mesh_protocol_request_companion_mode() {
+    if (active_backend().request_companion_mode) active_backend().request_companion_mode();
+}
+
+bool mesh_protocol_consume_companion_request() {
+    return active_backend().consume_companion_request
+        ? active_backend().consume_companion_request()
+        : false;
+}
+
+void mesh_protocol_companion_setup() {
+    if (active_backend().companion_setup) active_backend().companion_setup();
+}
+
+void mesh_protocol_companion_loop() {
+    if (active_backend().companion_loop) active_backend().companion_loop();
+}
+
+void mesh_protocol_companion_prepare_exit() {
+    if (active_backend().companion_prepare_exit) active_backend().companion_prepare_exit();
+}
+
+UiDataProvider* mesh_protocol_provider() {
+    return active_backend().provider ? active_backend().provider() : nullptr;
+}
+
+void mesh_protocol_refresh_ui_data() {
+    if (active_backend().refresh_ui_data) active_backend().refresh_ui_data();
+}
+
+bool mesh_protocol_send_active(const char* text) {
+    return active_backend().send_active ? active_backend().send_active(text) : false;
+}
+
+bool mesh_protocol_send_advert(bool flood) {
+    return active_backend().send_advert ? active_backend().send_advert(flood) : false;
+}
+bool mesh_protocol_quick_broadcast(bool location){
+    return active_backend().quick_broadcast ? active_backend().quick_broadcast(location) : false;
+}
+bool mesh_protocol_quick_position_available(){
+    return active_backend().quick_position_available ? active_backend().quick_position_available() : false;
+}
+
+bool mesh_protocol_apply_radio(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t path_hash_mode) {
+    return active_backend().apply_radio
+        ? active_backend().apply_radio(freq, bw, sf, cr, path_hash_mode)
+        : false;
+}
+
+void mesh_protocol_apply_name(const char* name) {
+    if (active_backend().apply_name) active_backend().apply_name(name);
+}
+bool mesh_protocol_read_identity(char* long_name,size_t long_size,char* short_name,size_t short_size){
+    return active_backend().read_identity &&
+        active_backend().read_identity(long_name,long_size,short_name,short_size);
+}
+bool mesh_protocol_update_identity(const char* long_name,const char* short_name){
+    return active_backend().update_identity &&
+        active_backend().update_identity(long_name,short_name);
+}
+
+bool mesh_protocol_name_character_allowed(char c) {
+    if (active_backend().name_character_allowed)
+        return active_backend().name_character_allowed(c);
+    return c >= 32 && c < 127;
+}
+
+size_t mesh_protocol_node_name_max_length() {
+    return active_backend().node_name_max_length
+        ? active_backend().node_name_max_length()
+        : 20;
+}
+
+const char* mesh_protocol_radio_summary() {
+    return active_backend().radio_summary ? safe_text(active_backend().radio_summary()) : "";
+}
+
+bool mesh_protocol_radio_matches(float frequency_mhz, float bandwidth_khz, uint8_t spreading_factor,
+                                 uint8_t coding_rate, uint8_t path_hash_bytes) {
+    return active_backend().radio_matches
+        ? active_backend().radio_matches(frequency_mhz, bandwidth_khz, spreading_factor,
+                                         coding_rate, path_hash_bytes)
+        : false;
+}
+
+bool mesh_protocol_supports_radio_presets() {
+    return active_backend().apply_radio && active_backend().radio_matches;
+}
+
+size_t mesh_protocol_setting_count() {
+    return active_backend().settings_count ? active_backend().settings_count() : 0;
+}
+
+bool mesh_protocol_setting_item(size_t index, MeshInkProtocolSettingItem& item) {
+    item = MeshInkProtocolSettingItem{};
+    return active_backend().settings_item
+        ? active_backend().settings_item(index, item)
+        : false;
+}
+
+MeshInkProtocolSettingResult mesh_protocol_activate_setting(uint16_t id) {
+    return active_backend().settings_activate
+        ? active_backend().settings_activate(id)
+        : MeshInkProtocolSettingResult::Failed;
+}
+
+bool mesh_protocol_setup_save_tx_power(uint8_t dbm) { return active_backend().setup_save_tx_power ? active_backend().setup_save_tx_power(dbm) : false; }
+uint8_t mesh_protocol_setup_current_tx_power() { return active_backend().setup_current_tx_power ? active_backend().setup_current_tx_power() : 0; }
+
+void mesh_protocol_cycle_path_hash() {
+    if (active_backend().cycle_path_hash) active_backend().cycle_path_hash();
+}
+
+uint8_t mesh_protocol_path_hash_mode() {
+    return active_backend().path_hash_mode ? active_backend().path_hash_mode() : 0;
+}
+
+void mesh_protocol_apply_gps(bool enabled) {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    const auto current = meshink_gps_constellation_mode();
+    const auto requested = enabled
+        ? (current == MeshInkGpsConstellationMode::None
+            ? MeshInkGpsConstellationMode::GpsBeiDou
+            : current)
+        : MeshInkGpsConstellationMode::None;
+    (void)mesh_protocol_gps_set_constellation_mode(requested);
+#else
+    (void)enabled;
+#endif
+}
+
+bool mesh_protocol_location_sharing_get(bool& enabled,bool& public_approximate,uint8_t& interval){
+    return active_backend().location_sharing_get &&
+           active_backend().location_sharing_get(enabled,public_approximate,interval);
+}
+bool mesh_protocol_location_sharing_set(bool enabled,bool public_approximate,uint8_t interval){
+    return active_backend().location_sharing_set &&
+           active_backend().location_sharing_set(enabled,public_approximate,interval);
+}
+
+bool mesh_protocol_gps_enabled() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_constellation_mode() != MeshInkGpsConstellationMode::None;
+#else
+    return false;
+#endif
+}
+
+bool mesh_protocol_gps_fix() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_read_status().valid;
+#else
+    return false;
+#endif
+}
+
+uint32_t mesh_protocol_gps_interval() {
+    return active_backend().gps_interval ? active_backend().gps_interval() : 0;
+}
+
+bool mesh_protocol_gps_advert_location() {
+    return active_backend().gps_advert_location
+        ? active_backend().gps_advert_location()
+        : false;
+}
+
+bool mesh_protocol_my_location(long& latitude, long& longitude) {
+    return active_backend().my_location
+        ? active_backend().my_location(latitude, longitude)
+        : false;
+}
+
+void mesh_protocol_cycle_gps_interval() {
+    if (active_backend().cycle_gps_interval) active_backend().cycle_gps_interval();
+}
+
+MeshInkGpsConstellationMode mesh_protocol_gps_constellation_mode() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_constellation_mode();
+#else
+    return MeshInkGpsConstellationMode::None;
+#endif
+}
+
+bool mesh_protocol_gps_set_constellation_mode(MeshInkGpsConstellationMode mode) {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    if (!meshink_gps_set_constellation_mode(mode)) return false;
+    if (active_backend().gps_mode_changed) active_backend().gps_mode_changed(mode);
+    return true;
+#else
+    (void)mode;
+    return false;
+#endif
+}
+
+bool mesh_protocol_gps_deep_sleep_power_save() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_deep_sleep_power_save();
+#else
+    return false;
+#endif
+}
+
+bool mesh_protocol_gps_set_deep_sleep_power_save(bool enabled) {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return meshink_gps_set_deep_sleep_power_save(enabled);
+#else
+    (void)enabled;
+    return false;
+#endif
+}
+
+const char* mesh_protocol_gps_tuning_note() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED) && ENV_INCLUDE_GPS == 1
+    return safe_text(meshink_gps_tuning_note());
+#else
+    return "";
+#endif
+}
+
+void mesh_protocol_toggle_gps_advert_location() {
+    if (active_backend().toggle_gps_advert_location)
+        active_backend().toggle_gps_advert_location();
+}
+
+uint32_t mesh_protocol_current_time() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_current_time();
+#else
+    return 0;
+#endif
+}
+
+bool mesh_protocol_time_valid() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_valid();
+#else
+    return false;
+#endif
+}
+
+bool mesh_protocol_set_manual_time(uint32_t utc) {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_set_manual_time(utc);
+#else
+    (void)utc;
+    return false;
+#endif
+}
+
+bool mesh_protocol_set_time_mode(MeshInkTimeMode mode) {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_set_time_mode(mode);
+#else
+    (void)mode;
+    return false;
+#endif
+}
+
+MeshInkTimeMode mesh_protocol_time_mode() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_time_mode();
+#else
+    return MeshInkTimeMode::Auto;
+#endif
+}
+
+MeshInkTimeSource mesh_protocol_time_source() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_time_source();
+#else
+    return MeshInkTimeSource::Unknown;
+#endif
+}
+
+bool mesh_protocol_gps_time_authoritative() {
+#if defined(MESHINK_DEVICE_SERVICES_ENABLED)
+    return meshink_rtc_gps_authoritative();
+#else
+    return false;
+#endif
+}
+
+const char* mesh_protocol_privacy_value(uint8_t item) {
+    return active_backend().privacy_value
+        ? safe_text(active_backend().privacy_value(item))
+        : "NOT AVAILABLE";
+}
+
+void mesh_protocol_toggle_privacy(uint8_t item) {
+    if (active_backend().toggle_privacy) active_backend().toggle_privacy(item);
+}
+
+bool mesh_protocol_request_diagnostics() {
+    return active_backend().request_diagnostics
+        ? active_backend().request_diagnostics()
+        : false;
+}
+
+bool mesh_protocol_diagnostics_busy() {
+    return active_backend().diagnostics_busy
+        ? active_backend().diagnostics_busy()
+        : false;
+}
+
+const char* mesh_protocol_diagnostics_core() {
+    return active_backend().diagnostics_core
+        ? safe_text(active_backend().diagnostics_core())
+        : "NOT AVAILABLE";
+}
+
+const char* mesh_protocol_diagnostics_radio() {
+    return active_backend().diagnostics_radio
+        ? safe_text(active_backend().diagnostics_radio())
+        : "NOT AVAILABLE";
+}
+
+const char* mesh_protocol_diagnostics_packets() {
+    return active_backend().diagnostics_packets
+        ? safe_text(active_backend().diagnostics_packets())
+        : "NOT AVAILABLE";
+}
+
+uint16_t mesh_protocol_direct_unread_total() {
+    UiDataProvider* provider = mesh_protocol_provider();
+    return provider ? provider->direct_unread_total() : 0;
+}
+
+uint16_t mesh_protocol_channel_unread_total() {
+    UiDataProvider* provider = mesh_protocol_provider();
+    return provider ? provider->channel_unread_total() : 0;
+}

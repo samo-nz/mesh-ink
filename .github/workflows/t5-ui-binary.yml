@@ -219,28 +219,25 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          This is a focused bug-fix update to MeshInk 2.1.0, without changes
-          to the journal format or the device's radio protocol.
+          MeshInk 3.0.0 brings **MeshCore and Meshtastic together in one
+          standalone e-paper communicator**. Choose your network at setup or
+          switch between them later, retaining separate settings and messages.
 
-          Fixes:
-          - repair the invalid-message-journal recovery path that could
-            prevent newly received messages from appearing when SPIFFS
-            refused to rename the damaged journal
-          - preserve the original damaged journal and older backups
-            instead of deleting them during recovery
-          - keep using the alternative recovery journal after reboot so
-            messages received following recovery remain visible
+          Highlights:
+          - built-in messaging for private conversations and channels
+          - fast, responsive touchscreen operation with particular attention to keyboard input
+          - offline maps, node discovery, GPS and optional location sharing
+          - Bluetooth companion mode for the corresponding network's mobile app
+          - configurable radio, display, power and GPS settings
+          - low-power standby and SD-card backup and restore
 
-          The update image does not intentionally erase existing MeshCore
-          settings, contacts, current-format message history, saved Maps data,
-          or saved MeshInk credentials. If an existing journal is unreadable,
-          its original file is retained for possible later recovery.
+          MeshCore and Meshtastic run one at a time, not simultaneously.
+          Both support normal standby; deep-sleep standby remains MeshCore-only.
 
-          Current firmware already supports initial timezone configuration
-          under More > Settings > Location & GPS > GPS Power Saving > Timezone.
-
-          A larger MeshInk update with multi-protocol support and a cleaner,
-          reorganized Settings interface is being developed separately.
+          A normal update does not intentionally erase existing saved settings
+          or current-format message history. A full-wipe install erases all
+          stored data. Earlier experimental Meshtastic v3 message journals are
+          not migrated to the newer format.
 
           Inter font raster data is distributed under the SIL Open Font License
           included as INTER_LICENSE.txt.

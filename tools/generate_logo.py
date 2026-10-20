@@ -18,7 +18,13 @@ except ImportError as exc:
 ROOT = Path(env.subst("$PROJECT_DIR")).resolve()
 SOURCE = ROOT / "docs" / "file_00000000248c820a81311144dc2df47d.png"
 OUTPUT = ROOT / "src" / "meshink_logo_bitmap.h"
-WIDTH, HEIGHT = 520, 347
+# At 520x347 the actual mountain artwork starts at row 51. Test.43
+# cropped only 18px and left 33 invisible rows above the visible pixels.
+# Crop precisely to the first visible row without resizing the artwork.
+# The footer remains removed; one white row is left below the wordmark.
+WIDTH, ORIGINAL_HEIGHT = 520, 347
+CROP_TOP, CROP_BOTTOM = 51, 72
+HEIGHT = ORIGINAL_HEIGHT - CROP_TOP - CROP_BOTTOM
 
 
 def generate():
@@ -31,8 +37,8 @@ def generate():
         white = Image.new("RGBA", rgba.size, "white")
         white.alpha_composite(rgba)
         grayscale = white.convert("L").resize(
-            (WIDTH, HEIGHT), Image.Resampling.LANCZOS
-        )
+            (WIDTH, ORIGINAL_HEIGHT), Image.Resampling.LANCZOS
+        ).crop((0, CROP_TOP, WIDTH, ORIGINAL_HEIGHT - CROP_BOTTOM))
         pixels = grayscale.tobytes()
 
     packed = bytearray((len(pixels) + 3) // 4)

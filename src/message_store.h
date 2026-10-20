@@ -6,11 +6,21 @@
 #include "ui_data.h"
 #include "message_limits.h"
 
+// Meshtastic can carry 233 bytes in its native Data payload. Keep a separate
+// on-flash journal record format while retaining MeshCore v3 unmodified.
+constexpr size_t MESHINK_MESHTASTIC_MESSAGE_TEXT_MAX=233;
+constexpr size_t MESHINK_MESHTASTIC_MESSAGE_TEXT_BYTES=MESHINK_MESHTASTIC_MESSAGE_TEXT_MAX+1;
+
 constexpr size_t MESHINK_MESSAGE_CAPACITY=250;
 constexpr uint8_t MESHINK_MESSAGE_PATH_UNKNOWN=0xFF;
 
 enum class MeshInkMessageKind:uint8_t { Direct=0, Channel=1 };
 enum class MeshInkMessageOrigin:uint8_t { LocalUi=0, CompanionApp=1 };
+
+constexpr uint8_t MESHINK_MESSAGE_PROTOCOL_SHIFT=4;
+constexpr uint8_t MESHINK_MESSAGE_ORIGIN_MASK=0x0F;
+constexpr uint8_t MESHINK_MESSAGE_PROTOCOL_MASK=0x0F;
+
 
 enum MeshInkMessageFlags:uint8_t {
     MESHINK_MESSAGE_HAS_RX       = 1U<<0,
@@ -27,14 +37,22 @@ struct MeshInkStoredMessage {
     uint8_t kind=0;
     uint8_t state=0;
     uint8_t key[7]{};
-    char text[MESHINK_MESSAGE_TEXT_BYTES]{};
+    char text[MESHINK_MESHTASTIC_MESSAGE_TEXT_BYTES]{};
     int8_t snr_q4=0;
     int8_t repeat_snr_q4=0;
     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN;
     uint8_t repeats=0;
     uint8_t flags=0;
-    uint8_t origin=0;
+    uint8_t origin=0; // low nibble origin, high nibble protocol id
 };
+
+inline uint8_t meshink_message_protocol(const MeshInkStoredMessage& message) {
+    return (uint8_t)((message.origin>>MESHINK_MESSAGE_PROTOCOL_SHIFT)&MESHINK_MESSAGE_PROTOCOL_MASK);
+}
+
+inline MeshInkMessageOrigin meshink_message_origin(const MeshInkStoredMessage& message) {
+    return (MeshInkMessageOrigin)(message.origin&MESHINK_MESSAGE_ORIGIN_MASK);
+}
 
 struct MeshInkMessageStoreHeader {
     uint32_t magic;
@@ -54,6 +72,13 @@ class MeshInkMessageStore {
     MeshInkStoredMessage* records_=nullptr;
     bool cache_in_psram_=false;
     bool initialized_=false;
+    const char* path_;
+    const char* invalid_path_;
+    bool expanded_records_=false;
+    const char* active_path_; // may point at a durable per-protocol recovery journal
+    const char* recovery_path() const;
+    size_t disk_record_size() const;
+    uint16_t disk_version() const;
 
     bool ensure_cache();
     bool load_cache(File& source);
@@ -63,7 +88,12 @@ class MeshInkMessageStore {
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
+    MeshInkMessageStore(const char* path,const char* invalid_path,bool expanded_records=false)
+        : path_(path),invalid_path_(invalid_path),expanded_records_(expanded_records),
+          active_path_(path) {}
     bool begin();
+    const char* active_path() const { return active_path_; }
+    void prepare_for_restore();
     size_t count() const { return initialized_?header_.count:0; }
     uint32_t revision() const { return initialized_?header_.sequence:0; }
     bool read(size_t logical,MeshInkStoredMessage& out) const;
@@ -74,20 +104,24 @@ public:
                     MeshInkMessageOrigin origin=MeshInkMessageOrigin::LocalUi,
                     bool has_rx=false,int8_t snr_q4=0,
                     uint8_t path_len=MESHINK_MESSAGE_PATH_UNKNOWN,
-                    bool unread=false);
+                    bool unread=false,uint8_t protocol_id=0);
+    // Erase all direct-message records for a Meshtastic node, leaving channel history intact.
+    // Zeroed records remain harmless holes in the bounded v3 ring until overwritten.
+    bool erase_direct_peer(uint32_t node_id,uint8_t protocol_id);
     bool update_state(uint32_t sequence,UiMessageState state);
-    bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len);
+    bool mark_read_through(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
+                           uint8_t protocol_id=0);
     bool mark_matching_received_read(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-                                     uint32_t timestamp,const char* text);
+                                     uint32_t timestamp,const char* text,uint8_t protocol_id=0);
     void update_ack(uint32_t sequence,uint32_t ack);
     void update_rx(uint32_t sequence,int8_t snr_q4,uint8_t path_len);
     void update_route(uint32_t sequence,bool flood);
     void update_repeat(uint32_t sequence,uint8_t repeats,int8_t snr_q4);
     void update_outgoing(uint32_t sequence,UiMessageState state,uint32_t ack,bool route_flood);
-    bool mark_delivered_by_ack(uint32_t ack);
+    bool mark_delivered_by_ack(uint32_t ack,uint8_t protocol_id=0);
     bool sync_and_verify_for_deep_sleep(uint32_t& disk_sequence,size_t& disk_count);
     uint32_t find_matching_outgoing(MeshInkMessageKind kind,const uint8_t* key,size_t key_len,
-                                    uint32_t timestamp,const char* text) const;
+                                    uint32_t timestamp,const char* text,uint8_t protocol_id=0) const;
 };
 
 MeshInkMessageStore& meshink_message_store();

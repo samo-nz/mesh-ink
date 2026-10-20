@@ -4,14 +4,26 @@
 
 enum class UiMessageState : uint8_t { Received=0, Sending, Sent, Delivered, Failed, Retrying1, Retrying2, Retrying3, Retrying4, Retrying5 };
 enum class UiNodeInfoRequest : uint8_t { Status=0, Telemetry=1, Path=2, Trace=3, None=255 };
-enum class UiNodeRole : uint8_t { Unknown=0, Chat=1, Repeater=2, Room=3, Sensor=4 };
+enum class UiNodeRole : uint8_t { Unknown=0, Client=1, Relay=2, Service=3, Sensor=4 };
+
+enum UiNodeCapability : uint32_t {
+    UI_NODE_CAP_STATUS    = 1u << 0,
+    UI_NODE_CAP_TELEMETRY = 1u << 1,
+    UI_NODE_CAP_PATH      = 1u << 2,
+    UI_NODE_CAP_TRACE     = 1u << 3,
+    UI_NODE_CAP_LOGIN     = 1u << 4,
+};
+
+inline bool ui_node_has_capability(uint32_t capabilities, UiNodeCapability capability) {
+    return (capabilities & (uint32_t)capability) != 0;
+}
 
 struct UiListEntry {
     const char* title;
     const char* subtitle;
     const char* time;
     uint8_t unread;
-    uint8_t node_type; // MeshCore advert type; unknown future values are preserved.
+    UiNodeRole role;
 };
 
 struct UiMessage {
@@ -39,7 +51,9 @@ struct UiNodeDetails {
     bool login_active;
     bool authenticated;
     const char* access_level;
-    uint8_t node_type; // Raw MeshCore advert type for future role support.
+    const char* role_label; // Protocol-provided user-facing role name; shared role drives icons/behavior.
+    UiNodeRole role;
+    uint32_t capabilities; // Optional node-detail pages/actions exposed by the active protocol helper.
     bool saved_contact;
     const char* advert_age;       // time since the last saved advertisement
     const char* position_source;  // last advert vs GPS reply receipt age
@@ -50,8 +64,8 @@ struct UiMapNode {
     uint8_t key[7];
     int32_t latitude;
     int32_t longitude;
-    uint8_t node_type=0; // Raw MeshCore advert type; repeaters get a distinct map marker.
-    uint32_t advertised_at; // MeshCore last advert, not a GPS fix timestamp.
+    UiNodeRole role = UiNodeRole::Unknown;
+    uint32_t advertised_at; // Protocol-reported advertisement/last-seen timestamp when available.
     uint32_t gps_received_millis=0; // local reception of GPS telemetry
     bool gps_from_reply=false;
 };
@@ -71,6 +85,15 @@ public:
     virtual size_t channel_count() const = 0;
     virtual const UiListEntry& channel(size_t index) const = 0;
     virtual bool open_channel(size_t index) = 0;
+    // Shared channel management: keys are supplied as 32/64 hex digits, or
+    // empty to generate a fresh private key. Providers own encryption and storage.
+    virtual size_t channel_name_limit() const { return 12; }
+    virtual size_t channel_capacity() const { return 0; }
+    // False means channel controls are visible previews only, with no writes.
+    virtual bool channel_management_available() const { return false; }
+    virtual bool channel_removable(size_t index) const { (void)index; return false; }
+    virtual bool create_channel(const char* name, const char* key_hex) { (void)name; (void)key_hex; return false; }
+    virtual bool delete_channel(size_t index) { (void)index; return false; }
     virtual size_t advert_count() const = 0;
     virtual const UiListEntry& advert(size_t index) const = 0;
     virtual bool open_advert(size_t index) = 0;
@@ -84,6 +107,11 @@ public:
     virtual bool active_is_channel() const = 0;
     virtual size_t active_message_count() const = 0;
     virtual const UiMessage& active_message(size_t index) const = 0;
+    // Unread totals are a shared MeshInk concept. Protocol providers supply
+    // the counts from their translated message journal rather than adding
+    // backend-specific unread callbacks to the protocol helper.
+    virtual uint16_t direct_unread_total() const { return 0; }
+    virtual uint16_t channel_unread_total() const { return 0; }
     // Changes whenever the active conversation or its displayed metadata
     // changes, allowing small UI layout caches to invalidate safely.
     virtual uint32_t active_message_revision() const { return 0; }

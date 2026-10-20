@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - testing
+      - mesh-agnostic
+      - feature/meshtastic-bt-companion
   # Always test pull requests. MeshCore submodule, build-system and integration
   # changes are too important to depend on a hand-maintained path allow-list.
   pull_request: {}
@@ -26,9 +28,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Restore ESP-IDF/platform/compiler downloads and prior build outputs.
+      # Stable configuration cache key lets incremental rebuilds work even
+      # though every testing firmware bumps its embedded version.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            ~/.platformio/.cache
+            .pio
+          key: meshink-testing-cache64-${{ runner.os }}-${{ hashFiles('sdkconfig.cache64', 'tools/prepare_meshtastic_library.py', 'tools/select_crypto_provider.py') }}
+          restore-keys: |
+            meshink-testing-cache64-${{ runner.os }}-
       - run: python -m pip install platformio Pillow
+      - name: Official Meshtastic source and crypto pin integrity
+        run: python tools/check_official_meshtastic_pin.py
       - name: MeshCore submodule pin integrity
         run: python tools/check_meshcore_pin.py
+      - name: Release integration guards and About versions
+        run: python tools/check_release_integration.py
+      - name: Offline backup and restore integration guards
+        run: python tools/check_backup_integration.py
       - name: Architecture boundary checks
         run: python tools/check_architecture.py
       - name: Web flasher safety regression
@@ -40,6 +61,37 @@ jobs:
             src/pmtiles_reader.cpp tests/test_pmtiles_reader.cpp \
             -lz -o /tmp/map-archive-test
           /tmp/map-archive-test
+      - name: Shared channel key validation
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_channel_key.cpp -o /tmp/channel-key-test
+          /tmp/channel-key-test
+      - name: SD backup wire format and corruption tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_format.cpp -o /tmp/meshink-backup-format-test
+          /tmp/meshink-backup-format-test
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_integrity.cpp -o /tmp/meshink-backup-integrity-test
+          /tmp/meshink-backup-integrity-test
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_filename.cpp -o /tmp/meshink-backup-filename-test
+          /tmp/meshink-backup-filename-test
+      - name: Suggested setup short name regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_setup_short_name.cpp -o /tmp/meshink-short-name-test
+          /tmp/meshink-short-name-test
+      - name: Restore scratch cleanup pathname regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_backup_restore_scratch.cpp -o /tmp/meshink-restore-scratch-test
+          /tmp/meshink-restore-scratch-test
+      - name: Native Meshtastic atomic serial record regression
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/test_meshtastic_atomic_log.cpp -o /tmp/meshink-atomic-log-test
+          /tmp/meshink-atomic-log-test
       - name: Maps-only gesture geometry regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
@@ -99,8 +151,11 @@ jobs:
             -Itests/touch_backend_stubs -Isrc \
             tests/test_t5_touch_backend.cpp -o /tmp/meshink-t5-touch-backend-test
           /tmp/meshink-t5-touch-backend-test
-      - name: Build primary cache64 firmware
-        run: python -m platformio run -e t5-unified-cache64
+      - name: Build primary cache64 firmware and audit project warnings
+        run: |
+          set -o pipefail
+          python -m platformio run -e t5-unified-cache64 2>&1 | tee /tmp/meshink-cache64-build.log
+          python tools/check_build_warnings.py /tmp/meshink-cache64-build.log
       - name: Verify cache64 SDK config
         run: |
           test -f .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -114,6 +169,8 @@ jobs:
           grep -q '#define CONFIG_SPIRAM_MODE_OCT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_SPIRAM_BOOT_INIT 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_SPIRAM_USE_MALLOC 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_LFN_HEAP 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
+          grep -q '#define CONFIG_FATFS_MAX_LFN 96' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_USE_FASTSEEK 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE 1024' .pio/build/t5-unified-cache64/config/sdkconfig.h
           grep -q '#define CONFIG_BOOTLOADER_LOG_LEVEL_WARN 1' .pio/build/t5-unified-cache64/config/sdkconfig.h
@@ -136,6 +193,14 @@ jobs:
           PY
           )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify testing version label
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          [[ "$VERSION" =~ -test\.[0-9]+$ ]] || {
+            echo "Testing branch firmware must use a -test.N version, got: $VERSION"
+            exit 1
+          }
       - name: Prepare testing firmware
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -154,11 +219,8 @@ jobs:
           test "$(stat -c%s "meshink-$VERSION-full-wipe.bin")" -eq 16777216
           sha256sum "meshink-$VERSION-full-wipe.bin" >> SHA256SUMS.txt
 
-      - name: Warnings-visible cache64 firmware audit
-        run: |
-          set -o pipefail
-          python -m platformio run -e t5-unified-cache64-warnings 2>&1 | tee /tmp/meshink-cache64-warnings.log
-          python tools/check_build_warnings.py /tmp/meshink-cache64-warnings.log
+      # Project-owned -Wall/-Wextra warnings are checked in the PRIMARY
+      # compile above: no second cold firmware compilation is necessary.
       - name: Verify testing version is embedded
         env:
           VERSION: ${{ steps.version.outputs.version }}

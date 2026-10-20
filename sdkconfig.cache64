@@ -73,5 +73,7 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE=64
 # repeated long/random seeks. ESP-IDF fast-seek builds a CLMT so lseek can
 # avoid walking the FAT chain for each tile range. Keep FAT buffer placement
 # unchanged in this build so the speed difference is attributable to fast-seek.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=96
 CONFIG_FATFS_USE_FASTSEEK=y
 CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE=1024

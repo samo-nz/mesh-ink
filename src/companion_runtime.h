@@ -18,5 +18,7 @@ bool local_mesh_enter_deep_sleep_standby();
 bool local_mesh_is_running();
 bool local_mesh_enqueue_command(const uint8_t* frame, size_t len);
 void local_mesh_schedule_contacts_save();
+// Persist channel mutations through MeshInk's existing MeshCore datastore.
+void local_mesh_save_channels_now();
 void local_mesh_flush_contacts_save_if_due();
 void local_mesh_flush_contacts_save_now();

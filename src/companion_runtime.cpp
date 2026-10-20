@@ -22,6 +22,8 @@
 #include "companion_notice.h"
 #include "local_mesh_runtime.h"
 #include "message_store.h"
+#include "backup_restore.h"
+#include "hardware/storage.h"
 #include "ui_onboarding.h"
 #include "t5_logging.h"
 #include "hardware/board.h"
@@ -213,7 +215,17 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
 public:
     size_t checkRecvFrame(uint8_t* dest) override {
         const size_t len=SerialBLEInterface::checkRecvFrame(dest);
-        if(len)remember_app_send(dest,len);
+        if(len){
+            remember_app_send(dest,len);
+            if(dest[0]==CMD_SET_DEVICE_TIME&&len>=5){
+                uint32_t utc=0;
+                memcpy(&utc,dest+1,4);
+                // Mark this exact timestamp as an explicit companion request.
+                // Upstream MyMesh still decides whether the command itself is
+                // legal (including its no-backwards-time stipulation).
+                meshink_rtc_expect_companion_time(utc);
+            }
+        }
         return len;
     }
     size_t writeFrame(const uint8_t* src,size_t len) override {
@@ -448,6 +460,9 @@ static uint32_t local_contacts_save_due=0;
 static bool local_persist_contact(const ContactInfo& contact) {
     return contact.type!=ADV_TYPE_NONE;
 }
+void local_mesh_save_channels_now() {
+    store.saveChannels(&the_mesh);
+}
 void local_mesh_schedule_contacts_save() {
     // Match upstream MeshCore's lazy contact-write cadence to coalesce bursts
     // of messages/telemetry and avoid unnecessary flash writes.
@@ -473,9 +488,13 @@ void companion_setup() {
         while (true) delay(1000);
     }
     fast_rng.begin(meshink_radio_rng_seed());
-    const bool storage_mounted=SPIFFS.begin(true);
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
+    if(storage_mounted&&!meshink_backup_recover_pending()){
+        Serial.println("[T5-ERROR] interrupted restore requires recovery; refusing companion startup");
+        while(true)delay(1000);
+    }
     if(storage_mounted&&!meshink_message_store().begin())
         Serial.println("[T5-ERROR] MeshInk message journal unavailable in companion mode");
     store.begin();
@@ -557,6 +576,24 @@ void companion_prepare_exit() {
 
 }
 
+#if ENV_INCLUDE_GPS == 1
+static void reconcile_gps_mode_with_meshcore_enabled(){
+    auto* settings=the_mesh.getNodePrefs();
+    if(!settings)return;
+    const bool meshcore_enabled=settings->gps_enabled!=0;
+    const auto mode=meshink_gps_constellation_mode();
+    if(!meshcore_enabled&&mode!=MeshInkGpsConstellationMode::None){
+        // Migrate an old explicit MeshCore GPS-OFF preference into the new
+        // single-source GPS MODE model, and honor companion-side OFF changes.
+        meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode::None);
+    }else if(meshcore_enabled&&mode==MeshInkGpsConstellationMode::None){
+        // A companion-side ON request has no constellation detail; restore the
+        // conservative default and let the on-device GPS MODE refine it later.
+        meshink_gps_set_constellation_mode(MeshInkGpsConstellationMode::GpsBeiDou);
+    }
+}
+#endif
+
 void local_mesh_setup() {
     companion_mode_active=false;
     local_rx_wake_runtime=false;
@@ -568,14 +605,15 @@ void local_mesh_setup() {
     // so this independent flash work consumes the otherwise idle remainder of
     // LilyGO's required 1500 ms rail delay. Keep MeshCore datastore/core
     // lifecycle ordering unchanged.
-    bool storage_mounted=SPIFFS.begin(false);
-    if(!storage_mounted){
-        T5_DEBUGLN(T5_LOG_MESH,"[T5-STORE] SPIFFS mount failed; showing storage initialization splash");
-        ui_show_storage_initializing();
-        storage_mounted=SPIFFS.begin(true);
-    }
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
+    if(!storage_mounted)ui_show_storage_initializing();
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable after recovery attempt");
+    if(!storage_mounted||!meshink_backup_recover_pending()){
+        Serial.println("[T5-ERROR] storage or interrupted restore recovery failed; refusing core startup");
+        ui_show_storage_initializing();
+        return;
+    }
 
     meshink_board_begin_local();
     const bool radio_ready=meshink_radio_initialize();
@@ -615,6 +653,7 @@ void local_mesh_setup() {
         }
         initial_gps.end();
     }
+    reconcile_gps_mode_with_meshcore_enabled();
     the_mesh.applyGpsPrefs();
 #endif
     local_interactive_services_ready=true;
@@ -636,6 +675,9 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
     local_runtime_ready=false;
     Serial.printf("[T5-DEEPSLEEP] retained startup: reason=%s require-packet=%u\n",
                   reason?reason:"unknown",require_packet?1U:0U);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] retained startup reason=%s require-packet=%u",
+        reason?reason:"unknown",require_packet?1U:0U);
 
     meshink_board_begin_local_rx_wake(require_packet);
     const bool radio_ready=require_packet
@@ -643,14 +685,17 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
         :meshink_radio_resume_retained_wake();
     if(!radio_ready){
         Serial.println("[T5-DEEPSLEEP] retained startup failed before MeshCore");
+        meshink_board_wake_log_append("[T5-DEEPSLEEP] retained SX1262 restore FAILED");
         return false;
     }
+    meshink_board_wake_log_append("[T5-DEEPSLEEP] retained SX1262 runtime restored");
 
     if(!SPIFFS.begin(false)){
         Serial.println("[T5-DEEPSLEEP] retained startup failed: SPIFFS mount unavailable");
         return false;
     }
     Serial.printf("[T5-DEEPSLEEP] SPIFFS mounted +%lums\n",(unsigned long)(millis()-started));
+    if(!meshink_backup_recover_pending())return false;
 
     ui_prepare_headless_rx_wake();
 
@@ -682,6 +727,13 @@ static bool local_mesh_setup_retained_wake(bool require_packet,const char* reaso
                   (unsigned long)local_rx_wake_stats.receive_errors,
                   (unsigned long)local_rx_wake_stats.packets_sent,
                   local_rx_wake_stats.continuous_rx?1U:0U);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] MeshCore retained runtime READY +%lums rx=%lu err=%lu tx=%lu rxmode=%u",
+        (unsigned long)(millis()-started),
+        (unsigned long)local_rx_wake_stats.packets_received,
+        (unsigned long)local_rx_wake_stats.receive_errors,
+        (unsigned long)local_rx_wake_stats.packets_sent,
+        local_rx_wake_stats.continuous_rx?1U:0U);
     return true;
 }
 
@@ -709,12 +761,14 @@ void local_mesh_prepare_interactive_services() {
     // Radio-first retained wake skipped RTC/GNSS startup. At UI promotion the
     // display has already installed the shared I2C bus, so restore only the
     // interactive RTC/GPS services without touching the running SX1262.
+    meshink_board_wake_log_append("[T5-DEEPSLEEP] interactive peripheral restore begin");
     meshink_rtc_begin();
 #if ENV_INCLUDE_GPS == 1
     meshink_gps_prepare_runtime();
 #endif
     meshink_gps_service_begin();
 #if ENV_INCLUDE_GPS == 1
+    reconcile_gps_mode_with_meshcore_enabled();
     the_mesh.applyGpsPrefs();
 #endif
     meshink_gps_service_loop();
@@ -722,6 +776,10 @@ void local_mesh_prepare_interactive_services() {
     Serial.printf("[T5-DEEPSLEEP] interactive peripherals ready rtc=%u gps=%u\n",
                   meshink_rtc_valid()?1U:0U,
                   meshink_gps_read_status().available?1U:0U);
+    meshink_board_wake_log_appendf(
+        "[T5-DEEPSLEEP] interactive peripherals ready rtc=%u gps=%u",
+        meshink_rtc_valid()?1U:0U,
+        meshink_gps_read_status().available?1U:0U);
 }
 
 bool local_mesh_promote_to_ui(const char* source) {
@@ -753,6 +811,8 @@ bool local_mesh_promote_to_ui(const char* source) {
     local_rx_wake_runtime=false;
     local_rx_wake_promoted_to_ui=true;
     Serial.println("[T5-DEEPSLEEP] retained MeshCore promoted to interactive UI without radio restart");
+    meshink_board_wake_log_append(
+        "[T5-DEEPSLEEP] retained MeshCore promoted to interactive UI without radio restart");
     return true;
 }
 

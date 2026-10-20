@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "hardware/radio_types.h"
 #include "hardware/power_types.h"
+#include "hardware/gps_types.h"
 class UiDataProvider;
 
 struct MeshInkUiStartupPlan {
@@ -19,6 +20,13 @@ struct MeshInkUiStartupPlan {
 
 void ui_startup(const MeshInkUiStartupPlan& plan);
 void ui_setup();
+void ui_sync_protocol_setup_result(); // adopt native first-boot commit before first interactive frame
+// Cold-boot-only display: after battery guard, before SPIFFS mount.
+// Reuses the exact same EPDiy high-level state throughout UI startup.
+void ui_show_cold_boot_splash();
+// Invoked only after storage proves SPIFFS is fully erased; replaces the
+// initial splash with the first-format notice and stays until setup is ready.
+void ui_show_first_format_preparation();
 void ui_prepare_headless_rx_wake();
 bool ui_headless_message_alert_pending();
 bool ui_service_headless_message_alert();
@@ -34,16 +42,20 @@ void ui_finish_startup(); // reveal interactive UI after storage/mesh initializa
 void ui_loop();
 void ui_status_set_unread(uint16_t count);
 void ui_status_set_channel_unread(uint16_t count);
-void ui_status_set_gps(bool enabled, bool has_fix, int satellites, long latitude, long longitude, uint32_t timestamp);
+void ui_status_set_gps(bool enabled, bool has_fix, int satellites, long latitude, long longitude, uint32_t timestamp, MeshInkGpsError error);
 void ui_notify_message_received(bool channel);
 bool ui_restore_failed_compose(const char* text);
 void ui_notify_advert_result(bool flood, bool ok);
+// Called on the UI task only after native SX1262 completion/rejection.
+void ui_notify_meshtastic_quick_result(uint8_t result);
 void ui_notify_node_position_unavailable();
 void ui_request_data_refresh(const char* reason);
 void ui_apply_initial_radio_preset(); // sync first-time setup radio before showing UI
 void ui_mesh_ready();
 void ui_use_data_provider(UiDataProvider* provider);
 bool ui_is_standby();
+// Read-only hint for protocol-to-UI event batching. Never blocks radio work.
+bool ui_is_message_composing();
 bool ui_chat_is_visible(bool channel); // true only for the currently displayed chat type
 void ui_show_radio_failure(MeshInkRadioFailureClass failure);
 bool ui_save_screenshot(char* path_out,size_t path_len);
