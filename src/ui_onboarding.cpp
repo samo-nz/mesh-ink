@@ -1070,6 +1070,53 @@ static uint32_t ui_font_base(uint32_t cp,bool* macron=nullptr) {
     if(macron)*macron=mark;
     return base;
 }
+// Compact technical labels use a 5x7 ASCII face. Approximate common Latin
+// accents with an ASCII base and a distinguishing monochrome mark.
+static uint32_t ui_small_latin_base(uint32_t cp,uint8_t* mark=nullptr) {
+    uint8_t m=0;
+    uint32_t base=cp;
+    switch(cp){
+        case 0x00C0:case 0x00E0: m=1;break; // grave
+        case 0x00C1:case 0x00E1: m=2;break; // acute
+        case 0x00C2:case 0x00E2: m=3;break;
+        case 0x00C3:case 0x00E3: m=4;break;
+        case 0x00C4:case 0x00E4: m=5;break;
+        case 0x00C5:case 0x00E5: m=6;break;
+        case 0x00C8:case 0x00E8: m=1;break;
+        case 0x00C9:case 0x00E9: m=2;break;
+        case 0x00CA:case 0x00EA: m=3;break;
+        case 0x00CB:case 0x00EB: m=5;break;
+        case 0x00CC:case 0x00EC: m=1;break;
+        case 0x00CD:case 0x00ED: m=2;break;
+        case 0x00CE:case 0x00EE: m=3;break;
+        case 0x00CF:case 0x00EF: m=5;break;
+        case 0x00D2:case 0x00F2: m=1;break;
+        case 0x00D3:case 0x00F3: m=2;break;
+        case 0x00D4:case 0x00F4: m=3;break;
+        case 0x00D5:case 0x00F5: m=4;break;
+        case 0x00D6:case 0x00F6: m=5;break;
+        case 0x00D9:case 0x00F9: m=1;break;
+        case 0x00DA:case 0x00FA: m=2;break;
+        case 0x00DB:case 0x00FB: m=3;break;
+        case 0x00DC:case 0x00FC: m=5;break;
+        case 0x00D1:case 0x00F1: m=4;break;
+        case 0x00C7:case 0x00E7: m=7;break;
+        default: break;
+    }
+    if(m){
+        if(cp==0x00D1||cp==0x00F1)base=(cp==0x00D1?'N':'n');
+        else if(cp==0x00C7||cp==0x00E7)base=(cp==0x00C7?'C':'c');
+        else {
+            const uint32_t upper=(cp>=0x00C0&&cp<=0x00DE);
+            const uint32_t lower=cp+0x20;
+            const uint32_t v=upper?cp:lower-0x20;
+            const char* letter=v<=0x00C5?"A":v<=0x00CB?"E":v<=0x00CF?"I":v<=0x00D6?"O":"U";
+            base=letter[0]+(upper?0:32);
+        }
+    }
+    if(mark)*mark=m;
+    return base;
+}
 static bool ui_zero_width_cp(uint32_t cp) {
     return cp==0xFE0F||cp==0xFE0E||cp==0x200D||cp==0x0304;
 }
@@ -1084,7 +1131,7 @@ static int ui_char_advance(uint32_t cp,int scale) {
         return g?max(1,(int)((g->advanceX+8)>>4)):0;
     }
     if(cp==' ')return 3*scale;
-    const uint8_t* rows=glyph(cp<=127?(char)cp:'?');
+    const uint8_t* rows=glyph(ui_small_latin_base(cp)<=127?(char)ui_small_latin_base(cp):'?');
     int left=0,right=4;ui_glyph_bounds(rows,left,right);
     return (right>=left?(right-left+1):3)*scale+scale;
 }
@@ -1201,9 +1248,10 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
             continue;
         }
         bool macron=false;
-        const uint32_t cp=ui_font_base(c.codepoint,&macron);
+        uint8_t accent=0;
+        const uint32_t cp=ui_small_latin_base(ui_font_base(c.codepoint,&macron),&accent);
         if(cp==' ') {x+=3*scale;continue;}
-        const uint8_t* rows=glyph(cp<=127?(char)cp:'?');
+        const uint8_t* rows=glyph(ui_small_latin_base(cp)<=127?(char)ui_small_latin_base(cp):'?');
         int left=0,right=4;ui_glyph_bounds(rows,left,right);
         if(right<left) {x+=3*scale;continue;}
         for(int ry=0;ry<7;++ry)for(int rx=left;rx<=right;++rx)
@@ -1212,8 +1260,18 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
                     meshink_display_draw_pixel(x+(rx-left)*scale+dx,y+ry*scale+dy,color,fb);
                     if(bold)meshink_display_draw_pixel(x+(rx-left)*scale+dx+1,y+ry*scale+dy,color,fb);
                 }
-        if(macron)for(int mx=0;mx<(right-left+1)*scale;++mx)
-            meshink_display_draw_pixel(x+mx,y-2,color,fb);
+        if(macron||accent){
+            const int mid=x+((right-left+1)*scale)/2;
+            if(macron||accent==4||accent==5||accent==6)
+                for(int mx=0;mx<(right-left+1)*scale;++mx)
+                    meshink_display_draw_pixel(x+mx,y-2,color,fb);
+            else if(accent==2||accent==3)
+                meshink_display_draw_pixel(mid+scale,y-2,color,fb);
+            else if(accent==1)
+                meshink_display_draw_pixel(mid-scale,y-2,color,fb);
+            else if(accent==7)
+                meshink_display_draw_pixel(mid,y+7*scale,color,fb);
+        }
         x+=(right-left+1)*scale+scale;
     }
 }
