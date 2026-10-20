@@ -46,7 +46,7 @@ inline const char* meshink_letter_alternatives(char key){
       case 'c':return "çćčĉċ";case 'C':return "ÇĆČĈĊ";
       case 'd':return "ďđð";case 'D':return "ĎĐÐ";
       case 'e':return "éèêëēęėě";case 'E':return "ÉÈÊËĒĘĖĚ";
-      case 'g':return "ğģġĝ";case 'G':return "ĞĢĠĜ";
+      case 'g':return "ğģġĝǥ";case 'G':return "ĞĢĠĜǤ";
       case 'h':return "ħĥ";case 'H':return "ĦĤ";
       case 'i':return "íìîïīı";case 'I':return "ÍÌÎÏĪİ";
       case 'j':return "ĵ";case 'J':return "Ĵ";
