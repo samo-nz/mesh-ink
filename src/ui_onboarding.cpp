@@ -1122,13 +1122,12 @@ static bool ui_zero_width_cp(uint32_t cp) {
 // Size emoji to the native text face rather than drawing tiny 16px symbols.
 // The chat's Inter-15 tier is 23px high, so emoji render at 24px there.
 static int ui_emoji_size(int scale) {
-    if(scale<3)return 12;
-    if(scale>=11)return 16; // large numeric standby face is not a text face
-    return scale==3?24:scale==4?32:scale==5?40:48;
+    if(scale<3||scale>=11)return 16;
+    return scale==3?32:scale==4?40:scale==5?48:56;
 }
 static int ui_char_advance(uint32_t cp,int scale) {
     if(ui_zero_width_cp(cp))return 0;
-    if(meshink_emoji_rows(cp))return ui_emoji_size(scale)+2;
+    if(meshink_emoji_supported(cp))return ui_emoji_size(scale)+2;
     cp=ui_font_base(cp);
     if(scale>=3) {
         const UiSmoothFont face=ui_smooth_font(scale);
@@ -1164,19 +1163,18 @@ static int ui_text_width(const char* s,int scale) {
 }
 static void ui_draw_emoji(uint32_t cp,int x,int y,int scale,uint8_t color,bool bold,
                           int left,int top,int right,int bottom) {
-    const uint16_t* rows=meshink_emoji_rows(cp);
-    if(!rows)return;
     const int size=ui_emoji_size(scale);
+    const MeshInkEmojiGlyph* g=meshink_emoji_glyph(cp,(uint8_t)size);
+    if(!g)return;
     const int baseline=scale>=3?y+ui_smooth_font(scale).baseline_from_top:y+12;
     const int start_y=baseline-size;
-    // Nearest-neighbour enlargement preserves the crisp black/white e-paper
-    // output, and the exact same size is used for measuring text advances.
+    // Native resolution, one-bit raster: no interpolation or scaling.
     for(int dy=0;dy<size;++dy){
         const int py=start_y+dy;
         if(py<top||py>=bottom)continue;
-        const uint16_t bits=rows[(dy*16)/size];
         for(int dx=0;dx<size;++dx){
-            if(!(bits&(uint16_t)(0x8000U>>((dx*16)/size))))continue;
+            const uint32_t bit=(uint32_t)dy*size+dx;
+            if(!(g->bitmap[bit>>3]&(uint8_t)(0x80U>>(bit&7))))continue;
             const int px=x+dx;
             if(px>=left&&px<right)meshink_display_draw_pixel(px,py,color,fb);
             if(bold&&px+1>=left&&px+1<right)
