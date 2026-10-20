@@ -4156,10 +4156,12 @@ static bool handle_quick_panel_tap(int16_t x,int16_t y,int16_t start_x=-1,int16_
             // Queue acceptance is not a radio transmission. The worker reports
             // actual completion back to the UI through a separate event.
             const bool queued=available&&mesh_protocol_quick_broadcast(send_location);
-            if(!queued){
-                show_toast(available?"RADIO BUSY - TRY LATER":"FAILED");
-                draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);
-            }
+            // Give immediate visible touch feedback while the native worker
+            // waits for radio airtime. This is progress, NEVER confirmation:
+            // only ui_notify_meshtastic_quick_result() can report SENT.
+            show_toast(!queued?(available?"RADIO BUSY - TRY LATER":"FAILED"):
+                       (send_location?"Sending Location..":"Sending Info.."));
+            draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);
             return true;
         }
     }

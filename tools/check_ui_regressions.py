@@ -2110,3 +2110,13 @@ assert 'python -m platformio run -e t5-unified-cache64-warnings' not in testing_
 assert 'meshink-${{ github.sha }}-symbols' not in testing_workflow_source, 'symbols artifact disabled'
 assert 'actions/cache@v4' in testing_workflow_source, 'testing build caches toolchains and objects'
 assert 'build_src_flags =\n    -Wall\n    -Wextra' in (root/"platformio.ini").read_text(encoding="utf-8")
+
+# Test.89: immediate Quick Settings feedback while waiting for native RF
+# completion, with success deliberately reserved for worker TX outcome.
+quick_touch=source.split('if(hit(x,y,meshink_quick_advert_rect(layout))){',1)[1].split('if(hit(x,y,meshink_quick_power_rect(layout)))',1)[0]
+assert '"Sending Location.."' in quick_touch and '"Sending Info.."' in quick_touch
+assert 'const bool queued=available&&mesh_protocol_quick_broadcast(send_location);' in quick_touch
+assert 'show_toast(!queued?' in quick_touch
+assert 'draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);' in quick_touch
+assert '"LOCATION SENT"' not in quick_touch and '"NODE INFO SENT"' not in quick_touch
+assert '"LOCATION SENT"' in result_handler and '"NODE INFO SENT"' in result_handler
