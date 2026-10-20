@@ -104,6 +104,8 @@ jobs:
           /tmp/ui-layout-test
       - name: UTF-8 journal and backup preservation checks
         run: python tools/check_utf8_data_integrity.py
+      - name: UTF-8 composer line wrapping regression
+        run: python tools/check_compose_utf8_wrap.py
       - name: UTF-8 decoding and emoji glyph regression
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
