@@ -64,7 +64,7 @@ inline const char* meshink_letter_alternatives(char key){
       case '?':return "¿";case '!':return "¡";
       case '\'':return "‘’";case '"':return "“”«»„";
       case '-':return "–—";case '.':return "…·";
-      case ':return "€£¥";case '%':return "‰";
+      case 0x24:return "€£¥";case '%':return "‰";
       case '/':return "÷";case '=':return "≠≈";
       case '0':return "°ºª";case '1':return "¹";
       case '2':return "²";case '3':return "³";
