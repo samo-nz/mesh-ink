@@ -2,78 +2,85 @@ import { STATS_ENDPOINT } from "./stats-config.js?v=stats-20261020-2";
 
 const rows = document.getElementById("usage-rows");
 const status = document.getElementById("usage-status");
-const GITHUB_LATEST = "https://api.github.com/repos/samo-nz/mesh-ink/releases/latest";
+const GITHUB_RELEASES = "https://api.github.com/repos/samo-nz/mesh-ink/releases?per_page=100";
+const FIRST_TRACKED = [3, 1, 0];
 
-function cell(text) {
-  const el = document.createElement("td");
-  el.textContent = String(text);
-  return el;
-}
-function versionOrder(a, b) {
-  const parts = (v) => v.replace(/^v/, "").split(/[.-]/).map((n) => Number(n) || 0);
-  const x = parts(a), y = parts(b);
-  for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    if ((x[i] || 0) !== (y[i] || 0)) return (y[i] || 0) - (x[i] || 0);
+function eligible(version) {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
+  const n = version.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (n[i] !== FIRST_TRACKED[i]) return n[i] > FIRST_TRACKED[i];
   }
+  return true;
+}
+function compareVersions(a, b) {
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return y[i] - x[i];
   return 0;
 }
-function onlyFirmwareAssets(release, version) {
-  const names = new Set([
-    `meshink-${version}-update.bin`,
-    `meshink-${version}-full-wipe.bin`
-  ]);
-  return (release.assets || []).filter((asset) => names.has(asset.name))
-    .reduce((sum, asset) => sum + (Number(asset.download_count) || 0), 0);
+function cell(value) {
+  const td = document.createElement("td");
+  td.textContent = String(value);
+  return td;
 }
 async function getJSON(url) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
+function emptyTotals() {
+  return { updateDownloads: 0, wipeDownloads: 0, updateFlashes: 0, wipeFlashes: 0,
+    githubUpdate: 0, githubWipe: 0 };
+}
 
 export async function showUsageStatistics() {
-  const webEnabled = !!STATS_ENDPOINT;
+  const webEnabled = Boolean(STATS_ENDPOINT);
   const [github, web] = await Promise.allSettled([
-    getJSON(GITHUB_LATEST),
+    getJSON(GITHUB_RELEASES),
     webEnabled ? getJSON(STATS_ENDPOINT.replace(/\/$/, "") + "/stats") : Promise.resolve(null)
   ]);
 
   const totals = new Map();
-  // The table is deliberately scoped to the current published stable release.
-  // Older events remain in D1 for historical auditing, but are not displayed.
-  let currentVersion = null;
-  if (github.status === "fulfilled" && github.value?.tag_name) {
-    const version = String(github.value.tag_name).replace(/^v/, "");
-    if (/^\d+\.\d+\.\d+$/.test(version)) {
-      currentVersion = version;
-      totals.set(version, {
-        downloads: 0,
-        flashes: 0,
-        github: onlyFirmwareAssets(github.value, version)
-      });
+  if (github.status === "fulfilled" && Array.isArray(github.value)) {
+    for (const release of github.value) {
+      if (release.draft || release.prerelease) continue;
+      const version = String(release.tag_name || "").replace(/^v/, "");
+      if (!eligible(version)) continue;
+      if (!totals.has(version)) totals.set(version, emptyTotals());
+      const t = totals.get(version);
+      for (const asset of release.assets || []) {
+        if (asset.name === `meshink-${version}-update.bin`) t.githubUpdate += Number(asset.download_count) || 0;
+        if (asset.name === `meshink-${version}-full-wipe.bin`) t.githubWipe += Number(asset.download_count) || 0;
+      }
     }
   }
-  if (web.status === "fulfilled" && web.value && Array.isArray(web.value.counts)) {
+  if (web.status === "fulfilled" && Array.isArray(web.value?.counts)) {
     for (const event of web.value.counts) {
-      if (!currentVersion || event.version !== currentVersion) continue;
+      if (!eligible(event.version || "")) continue;
       if (!["download", "flash"].includes(event.event) || !["update", "wipe"].includes(event.mode)) continue;
       if (!Number.isSafeInteger(event.count) || event.count < 0) continue;
-      totals.get(event.version)[event.event === "download" ? "downloads" : "flashes"] += event.count;
+      // Only display published stable releases; do not expose arbitrary reported version strings.
+      if (!totals.has(event.version)) continue;
+      const t = totals.get(event.version);
+      const key = event.mode + (event.event === "download" ? "Downloads" : "Flashes");
+      t[key] += event.count;
     }
   }
+
   rows.replaceChildren();
-  for (const version of [...totals.keys()].sort(versionOrder)) {
+  for (const version of [...totals.keys()].sort(compareVersions)) {
     const t = totals.get(version);
+    const webValue = (value) => webEnabled && web.status === "fulfilled" ? value : "—";
     const tr = document.createElement("tr");
-    tr.append(cell(version), cell(webEnabled && web.status === "fulfilled" ? t.downloads : "—"),
-      cell(webEnabled && web.status === "fulfilled" ? t.flashes : "—"),
-      cell(t.github === null ? "—" : t.github));
+    tr.append(cell(version), cell(webValue(t.updateDownloads)), cell(webValue(t.wipeDownloads)),
+      cell(webValue(t.updateFlashes)), cell(webValue(t.wipeFlashes)),
+      cell(t.githubUpdate), cell(t.githubWipe));
     rows.append(tr);
   }
   if (!totals.size) {
     const tr = document.createElement("tr");
-    const td = cell("Counts unavailable");
-    td.colSpan = 4;
+    const td = cell("Release counts unavailable");
+    td.colSpan = 7;
     tr.append(td);
     rows.append(tr);
   }
