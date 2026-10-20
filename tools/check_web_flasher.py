@@ -164,7 +164,7 @@ else:
     require(args.version is not None and re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.\d+)?", args.version),
             "invalid release version")
     build = args.build
-    for name in ("index.html", "style.css", "flasher.js", "serial.html", "serial.js",
+    for name in ("index.html", "style.css", "flasher.js", "serial.html", "serial.js", "flash-stats.js", "usage-stats.js", "stats-config.js",
                  "vendor/esptool-js.js", "vendor/web-serial-polyfill.js",
                  "vendor/web-serial-polyfill-LICENSE.txt"):
         require((build / name).is_file() and (build / name).stat().st_size > 0,
@@ -195,3 +195,9 @@ else:
 
 for forbidden in ["GPS power-test workflow","GPS Power Saving","power experiment","Replay Last Log"]:
     require(forbidden not in serial_html, f"serial console must stay generic: {forbidden}")
+
+# Statistics are optional and must not interfere with USB flashing.
+require('reportFlashEvent(activeManifest.version, mode, "download")' in js, "verified flasher download event")
+require('reportFlashEvent(activeManifest.version, mode, "flash")' in js, "completed flasher write event")
+require('id="usage-rows"' in serial_html and 'id="usage-status"' in serial_html, "serial console usage table")
+require('showUsageStatistics' in serial_js, "serial console loads usage data")
