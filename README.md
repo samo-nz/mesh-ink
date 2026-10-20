@@ -16,7 +16,7 @@ Send private or channel messages, explore offline maps, discover nodes and share
   <tr>
     <td align="center"><img src="screenshots/contacts.webp" width="220"><br><sub>Contacts</sub></td>
     <td align="center"><img src="screenshots/maps1.webp" width="220"><br><sub>Map</sub></td>
-    <td align="center"><img src="screenshots/about.webp" width="220"><br><sub>About</sub></td>
+    <td align="center"><img src="screenshots/about-meshcore.webp" width="220"><br><sub>About — MeshCore</sub></td>
   </tr>
 </table>
 
@@ -27,7 +27,7 @@ Send private or channel messages, explore offline maps, discover nodes and share
 
 <table>
   <tr>
-    <td align="center"><img src="screenshots/message.webp" width="220"><br><sub>Message</sub></td>
+    <td align="center"><img src="screenshots/about-meshtastic.webp" width="220"><br><sub>About — Meshtastic</sub></td>
     <td align="center"><img src="screenshots/message-keyboard.webp" width="220"><br><sub>Message keyboard</sub></td>
     <td align="center"><img src="screenshots/channel-message.webp" width="220"><br><sub>Channel message</sub></td>
   </tr>
