@@ -4985,6 +4985,7 @@ static void touch_sampler_task(void*){
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
                 if(!suppress_release){
                     QueuedTap tap{event_x,event_y,dx,dy,false};
+                    tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                     queue_touch_event(tap);
                 }
             }
