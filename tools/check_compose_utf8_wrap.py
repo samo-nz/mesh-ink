@@ -10,4 +10,12 @@ assert "meshink_utf8::next(scan,strlen(scan))" in wrap, "Composer must decode a 
 assert "scan+=ch.bytes;" in wrap, "Composer must advance by the UTF-8 codepoint length"
 assert "ui_char_advance(ch.codepoint,scale)" in wrap, "Composer width must measure Unicode codepoints"
 assert "++scan;" not in wrap, "Byte-wise compose wrapping splits multibyte characters"
-print("PASS: compose wrapping advances by complete UTF-8 codepoints")
+
+natural_start = source.index("static int ui_text_max_line_width(")
+natural_end = source.index("static size_t ui_wrap_take(", natural_start)
+natural = source[natural_start:natural_end]
+assert "meshink_utf8::next(p,strlen(p))" in natural, "Bubble width must decode complete UTF-8 codepoints"
+assert "ui_char_advance(ch.codepoint,scale)" in natural, "Bubble sizing must use glyph pixel advance"
+assert "p+=ch.bytes;" in natural, "Bubble sizing must not advance one UTF-8 byte at a time"
+
+print("PASS: Unicode-aware composer wrapping and bubble width measurement")
