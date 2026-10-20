@@ -25,7 +25,10 @@
 #include "ui_layout.h"
 #include "t5_logging.h"
 #include "keyboard_geometry.h"
+#include "keyboard_utf8_input.h"
 #include "message_limits.h"
+#include "utf8_display.h"
+#include "fonts/meshink_emoji.h"
 #include "message_store.h"
 #include "timezone_service.h"
 #include "backup_restore.h"
@@ -198,6 +201,10 @@ static bool keyboard_upper = true;
 static bool keyboard_symbols = false;
 static bool message_keyboard_case_dirty = false;
 static bool keyboard_landscape = false;
+static bool picker_open=false,picker_emoji=false;
+static char picker_pending_key=0;
+static uint32_t picker_chars[40]={};
+static int picker_count=0;
 static bool standby_restore_landscape = false;
 static uint16_t status_unread = 0;
 static uint16_t status_channel_unread = 0;
@@ -1047,20 +1054,245 @@ static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint3
     if(codepoint!='?')return ui_smooth_glyph(font,'?');
     return nullptr;
 }
-static int ui_smooth_char_advance(char c,int scale) {
-    const UiSmoothFont face=ui_smooth_font(scale);
-    const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
-    if(!glyph_data)return 0;
-    return max(1,(int)((glyph_data->advanceX+8)>>4));
+// A small set of Maori precomposed letters can be drawn with the existing
+// monochrome Inter vowel plus a macron. No radio text is ever rewritten.
+static uint32_t ui_font_base(uint32_t cp,bool* macron=nullptr) {
+    bool mark=false;
+    uint32_t base=cp;
+    switch(cp) {
+        case 0x0100: base='A';mark=true;break;
+        case 0x0101: base='a';mark=true;break;
+        case 0x0112: base='E';mark=true;break;
+        case 0x0113: base='e';mark=true;break;
+        case 0x012A: base='I';mark=true;break;
+        case 0x012B: base='i';mark=true;break;
+        case 0x014C: base='O';mark=true;break;
+        case 0x014D: base='o';mark=true;break;
+        case 0x016A: base='U';mark=true;break;
+        case 0x016B: base='u';mark=true;break;
+        default: break;
+    }
+    if(macron)*macron=mark;
+    return base;
 }
-static int ui_legacy_char_advance(char c,int scale) {
-    if(c==' ')return 3*scale;
-    const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
-    const int pixels=right>=left?(right-left+1):3;
-    return pixels*scale+scale;
+// Compact technical labels use a 5x7 ASCII face. Approximate common Latin
+// accents with an ASCII base and a distinguishing monochrome mark.
+static uint32_t ui_small_latin_base(uint32_t cp,uint8_t* mark=nullptr) {
+    uint8_t m=0;
+    uint32_t base=cp;
+    switch(cp){
+        case 0x00C0:case 0x00E0: m=1;break; // grave
+        case 0x00C1:case 0x00E1: m=2;break; // acute
+        case 0x00C2:case 0x00E2: m=3;break;
+        case 0x00C3:case 0x00E3: m=4;break;
+        case 0x00C4:case 0x00E4: m=5;break;
+        case 0x00C5:case 0x00E5: m=6;break;
+        case 0x00C8:case 0x00E8: m=1;break;
+        case 0x00C9:case 0x00E9: m=2;break;
+        case 0x00CA:case 0x00EA: m=3;break;
+        case 0x00CB:case 0x00EB: m=5;break;
+        case 0x00CC:case 0x00EC: m=1;break;
+        case 0x00CD:case 0x00ED: m=2;break;
+        case 0x00CE:case 0x00EE: m=3;break;
+        case 0x00CF:case 0x00EF: m=5;break;
+        case 0x00D2:case 0x00F2: m=1;break;
+        case 0x00D3:case 0x00F3: m=2;break;
+        case 0x00D4:case 0x00F4: m=3;break;
+        case 0x00D5:case 0x00F5: m=4;break;
+        case 0x00D6:case 0x00F6: m=5;break;
+        case 0x00D9:case 0x00F9: m=1;break;
+        case 0x00DA:case 0x00FA: m=2;break;
+        case 0x00DB:case 0x00FB: m=3;break;
+        case 0x00DC:case 0x00FC: m=5;break;
+        case 0x00D1:case 0x00F1: m=4;break;
+        case 0x00C7:case 0x00E7: m=7;break;
+        default: break;
+    }
+    if(m){
+        if(cp==0x00D1||cp==0x00F1)base=(cp==0x00D1?'N':'n');
+        else if(cp==0x00C7||cp==0x00E7)base=(cp==0x00C7?'C':'c');
+        else {
+            const bool upper=(cp>=0x00C0&&cp<=0x00DE);
+            const uint32_t v=upper?cp:cp-0x20;
+            const char letter=v<=0x00C5?'A':v<=0x00CB?'E':v<=0x00CF?'I':v<=0x00D6?'O':'U';
+            base=(uint32_t)(letter+(upper?0:32));
+        }
+    }
+    if(mark)*mark=m;
+    return base;
 }
-static int ui_char_advance(char c,int scale) {
-    return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
+// Additional Central European letters, drawn as native-font base glyphs
+// plus robust diacritics. Return the original character when unsupported.
+// mark: 1 ogonek, 2 acute, 3 caron, 4 L stroke, 5 overdot.
+static uint32_t ui_extended_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
+    uint8_t mark=0;
+    uint32_t base=cp;
+    switch(cp){
+        case 0x0104: base='A'; mark=1; break;
+        case 0x0105: base='a'; mark=1; break;
+        case 0x0106: base='C'; mark=2; break;
+        case 0x0107: base='c'; mark=2; break;
+        case 0x010C: base='C'; mark=3; break;
+        case 0x010D: base='c'; mark=3; break;
+        case 0x0118: base='E'; mark=1; break;
+        case 0x0119: base='e'; mark=1; break;
+        case 0x0141: base='L'; mark=4; break;
+        case 0x0142: base='l'; mark=4; break;
+        case 0x0143: base='N'; mark=2; break;
+        case 0x0144: base='n'; mark=2; break;
+        case 0x0158: base='R'; mark=3; break;
+        case 0x0159: base='r'; mark=3; break;
+        case 0x015A: base='S'; mark=2; break;
+        case 0x015B: base='s'; mark=2; break;
+        case 0x0160: base='S'; mark=3; break;
+        case 0x0161: base='s'; mark=3; break;
+        case 0x0179: base='Z'; mark=2; break;
+        case 0x017A: base='z'; mark=2; break;
+        case 0x017B: base='Z'; mark=5; break;
+        case 0x017C: base='z'; mark=5; break;
+        case 0x017D: base='Z'; mark=3; break;
+        case 0x017E: base='z'; mark=3; break;
+        default: break;
+    }
+    if(out_mark)*out_mark=mark;
+    return base;
+}
+
+// Additional Phase 1 Latin characters use the existing native Inter base
+// artwork, with drawn distinguishing strokes/diacritics just like macrons.
+// Original UTF-8 codepoints remain untouched in messages and storage.
+static uint32_t ui_phase1_latin_base(uint32_t cp,uint8_t* out_mark=nullptr){
+    uint32_t base=cp;uint8_t mark=0;
+    switch(cp){
+        case 0x103: base='a'; mark=6; break;
+        case 0x102: base='A'; mark=6; break;
+        case 0x109: base='c'; mark=6; break;
+        case 0x108: base='C'; mark=6; break;
+        case 0x10B: base='c'; mark=5; break;
+        case 0x10A: base='C'; mark=5; break;
+        case 0x10F: base='d'; mark=3; break;
+        case 0x10E: base='D'; mark=3; break;
+        case 0x111: base='d'; mark=4; break;
+        case 0x110: base='D'; mark=4; break;
+        case 0x117: base='e'; mark=5; break;
+        case 0x116: base='E'; mark=5; break;
+        case 0x11B: base='e'; mark=3; break;
+        case 0x11A: base='E'; mark=3; break;
+        case 0x11F: base='g'; mark=6; break;
+        case 0x11E: base='G'; mark=6; break;
+        case 0x123: base='g'; mark=9; break;
+        case 0x122: base='G'; mark=9; break;
+        case 0x121: base='g'; mark=5; break;
+        case 0x120: base='G'; mark=5; break;
+        case 0x11D: base='g'; mark=12; break;
+        case 0x11C: base='G'; mark=12; break;
+        case 0x127: base='h'; mark=4; break;
+        case 0x126: base='H'; mark=4; break;
+        case 0x125: base='h'; mark=12; break;
+        case 0x124: base='H'; mark=12; break;
+        case 0x131: base='i'; mark=19; break;
+        case 0x130: base='I'; mark=5; break;
+        case 0x135: base='j'; mark=12; break;
+        case 0x134: base='J'; mark=12; break;
+        case 0x137: base='k'; mark=9; break;
+        case 0x136: base='K'; mark=9; break;
+        case 0x13C: base='l'; mark=9; break;
+        case 0x13B: base='L'; mark=9; break;
+        case 0x13E: base='l'; mark=3; break;
+        case 0x13D: base='L'; mark=3; break;
+        case 0x148: base='n'; mark=3; break;
+        case 0x147: base='N'; mark=3; break;
+        case 0x146: base='n'; mark=9; break;
+        case 0x145: base='N'; mark=9; break;
+        case 0x14B: base='n'; mark=15; break;
+        case 0x14A: base='N'; mark=15; break;
+        case 0x151: base='o'; mark=8; break;
+        case 0x150: base='O'; mark=8; break;
+        case 0x155: base='r'; mark=2; break;
+        case 0x154: base='R'; mark=2; break;
+        case 0x157: base='r'; mark=9; break;
+        case 0x156: base='R'; mark=9; break;
+        case 0x219: base='s'; mark=9; break;
+        case 0x218: base='S'; mark=9; break;
+        case 0x15F: base='s'; mark=10; break;
+        case 0x15E: base='S'; mark=10; break;
+        case 0x15D: base='s'; mark=12; break;
+        case 0x15C: base='S'; mark=12; break;
+        case 0x1E9E: base='B'; mark=16; break;
+        case 0x165: base='t'; mark=3; break;
+        case 0x164: base='T'; mark=3; break;
+        case 0x21B: base='t'; mark=9; break;
+        case 0x21A: base='T'; mark=9; break;
+        case 0x167: base='t'; mark=4; break;
+        case 0x166: base='T'; mark=4; break;
+        case 0x16F: base='u'; mark=17; break;
+        case 0x16E: base='U'; mark=17; break;
+        case 0x171: base='u'; mark=8; break;
+        case 0x170: base='U'; mark=8; break;
+        case 0x173: base='u'; mark=1; break;
+        case 0x172: base='U'; mark=1; break;
+        case 0x16D: base='u'; mark=6; break;
+        case 0x16C: base='U'; mark=6; break;
+        case 0x175: base='w'; mark=12; break;
+        case 0x174: base='W'; mark=12; break;
+        case 0x1E81: base='w'; mark=13; break;
+        case 0x1E80: base='W'; mark=13; break;
+        case 0x1E83: base='w'; mark=2; break;
+        case 0x1E82: base='W'; mark=2; break;
+        case 0x1E85: base='w'; mark=14; break;
+        case 0x1E84: base='W'; mark=14; break;
+        case 0x177: base='y'; mark=12; break;
+        case 0x176: base='Y'; mark=12; break;
+        case 0x178: base='Y'; mark=14; break;
+        case 0x1E4: base='G'; mark=4; break;
+        case 0x1E5: base='g'; mark=4; break;
+        case 0x153: base='o'; mark=18; break;
+        case 0x152: base='O'; mark=18; break;
+        default:break;
+    }
+    if(out_mark)*out_mark=mark;
+    return base;
+}
+static bool ui_zero_width_cp(uint32_t cp) {
+    return cp==0xFE0F||cp==0xFE0E||cp==0x200D||cp==0x0304;
+}
+// Size emoji to the native text face rather than drawing tiny 16px symbols.
+// The chat's Inter-15 tier is 23px high, so emoji render at 24px there.
+static int ui_emoji_size(int scale) {
+    if(scale<3||scale>=11)return 16;
+    return scale==3?32:scale==4?40:scale==5?48:56;
+}
+// Metrics for characters synthesised from the native font instead of
+// silently falling back to '?'. Keep metrics identical in wrap and paint.
+static int ui_phase1_symbol_advance(uint32_t cp,int scale){
+    switch(cp){
+        case 0x0152:case 0x0153: return scale>=3?30:14; // OE ligatures
+        case 0x2013: return scale>=3?19:12;
+        case 0x2014: return scale>=3?29:20;
+        case 0x2026: return scale>=3?27:15;
+        case 0x2018:case 0x2019:case 0x201C:case 0x201D:
+        case 0x201E: return scale>=3?15:10;
+        case 0x20AC: return scale>=3?20:12;
+        case 0x2030: return scale>=3?35:23;
+        case 0x2260:case 0x2248: return scale>=3?23:14;
+        default:return 0;
+    }
+}
+static int ui_char_advance(uint32_t cp,int scale) {
+    if(ui_zero_width_cp(cp))return 0;
+    const int special=ui_phase1_symbol_advance(cp,scale);
+    if(special)return special;
+    if(meshink_emoji_supported(cp))return ui_emoji_size(scale)+2;
+    cp=ui_phase1_latin_base(ui_extended_latin_base(ui_font_base(cp)));
+    if(scale>=3) {
+        const UiSmoothFont face=ui_smooth_font(scale);
+        const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
+        return g?max(1,(int)((g->advanceX+8)>>4)):0;
+    }
+    if(cp==' ')return 3*scale;
+    const uint8_t* rows=glyph(ui_small_latin_base(ui_extended_latin_base(cp))<=127?(char)ui_small_latin_base(ui_extended_latin_base(cp)):'?');
+    int left=0,right=4;ui_glyph_bounds(rows,left,right);
+    return (right>=left?(right-left+1):3)*scale+scale;
 }
 static int ui_text_height(int scale) {
     if(scale<3)return 7*scale;
@@ -1073,32 +1305,228 @@ static int ui_text_line_step(int scale) {
 static int ui_text_width_n(const char* s,size_t n,int scale) {
     if(!s||!n)return 0;
     int width=0;
-    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
+    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';) {
+        const meshink_utf8::Char cp=meshink_utf8::next(s+i,n-i);
+        if(!cp.bytes)break;
+        width+=ui_char_advance(cp.codepoint,scale);
+        i+=cp.bytes;
+    }
     return width&&scale<3?width-scale:width;
 }
 static int ui_text_width(const char* s,int scale) {
     return s?ui_text_width_n(s,strlen(s),scale):0;
 }
-static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
-    if(!s)return;
-    const UiSmoothFont face=ui_smooth_font(scale);
-    const int baseline=y+face.baseline_from_top;
-    while(*s&&*s!='\n'){
-        const char c=*s++;
-        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
-        if(!glyph_data)continue;
-        const int gx=x+glyph_data->left;
-        const int gy=baseline-glyph_data->top;
-        for(int sy=0;sy<glyph_data->height;++sy){
-            for(int sx=0;sx<glyph_data->width;++sx){
-                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
-                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
-                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
-                meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);
-                if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
+static void ui_draw_emoji(uint32_t cp,int x,int y,int scale,uint8_t color,bool bold,
+                          int left,int top,int right,int bottom) {
+    const int size=ui_emoji_size(scale);
+    const MeshInkEmojiGlyph* g=meshink_emoji_glyph(cp,(uint8_t)size);
+    if(!g)return;
+    const int baseline=scale>=3?y+ui_smooth_font(scale).baseline_from_top:y+12;
+    const int start_y=baseline-size;
+    // Native resolution, one-bit raster: no interpolation or scaling.
+    for(int dy=0;dy<size;++dy){
+        const int py=start_y+dy;
+        if(py<top||py>=bottom)continue;
+        for(int dx=0;dx<size;++dx){
+            const uint32_t bit=(uint32_t)dy*size+dx;
+            if(!(g->bitmap[bit>>3]&(uint8_t)(0x80U>>(bit&7))))continue;
+            const int px=x+dx;
+            if(px>=left&&px<right)meshink_display_draw_pixel(px,py,color,fb);
+            if(bold&&px+1>=left&&px+1<right)
+                meshink_display_draw_pixel(px+1,py,color,fb);
+        }
+    }
+}
+static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,bool bold,
+                                int clip_left,int clip_top,int clip_right,int clip_bottom) {
+    if(ui_zero_width_cp(cp))return;
+    if(meshink_emoji_supported(cp)) {
+        ui_draw_emoji(cp,x,y,scale,color,bold,clip_left,clip_top,clip_right,clip_bottom);
+        return;
+    }
+    // Draw otherwise unavailable punctuation and OE using the installed
+    // Inter glyphs and vector strokes; don't substitute question marks.
+    if(ui_phase1_symbol_advance(cp,scale)){
+        const int ht=ui_text_height(scale);
+        const int mid=y+ht/2;
+        auto dot=[&](int px,int py){
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        };
+        auto stroke=[&](int x0,int y0,int x1,int y1,int thick){
+            const int n=max(abs(x1-x0),abs(y1-y0));
+            for(int i=0;i<=n;++i){
+                int px=x0+(x1-x0)*i/max(1,n),py=y0+(y1-y0)*i/max(1,n);
+                for(int j=0;j<thick;++j)dot(px,py+j);
+            }
+        };
+        const int thick=scale>=4?3:2;
+        switch(cp){
+            case 0x0152:case 0x0153: {
+                // Tight O+E ligature; use the existing correct-case outlines.
+                char a=cp==0x0152?'O':'o',b=cp==0x0152?'E':'e';
+                ui_smooth_render_cp((uint32_t)a,x,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                ui_smooth_render_cp((uint32_t)b,x+14,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                break;
+            }
+            case 0x2013:case 0x2014:{
+                const int len=cp==0x2013?17:27;
+                stroke(x,mid,x+len,mid,thick);break;
+            }
+            case 0x2026:{
+                for(int i=0;i<3;++i)
+                    for(int a=0;a<3;++a)for(int b=0;b<3;++b)
+                        dot(x+3+i*9+a,y+ht-6+b);
+                break;
+            }
+            case 0x2018:case 0x2019:case 0x201C:case 0x201D:
+            case 0x201E:{
+                const bool double_quote=cp!=0x2018&&cp!=0x2019;
+                const int yy=cp==0x201E?y+ht-8:y+4;
+                for(int k=0;k<(double_quote?2:1);++k){
+                    int xx=x+3+k*7;
+                    stroke(xx+3,yy,xx,yy+7,thick);
+                }
+                break;
+            }
+            case 0x20AC:{
+                ui_smooth_render_cp('C',x,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                stroke(x+1,mid-4,x+14,mid-4,thick);
+                stroke(x+1,mid+1,x+14,mid+1,thick);break;
+            }
+            case 0x2030:{
+                ui_smooth_render_cp('%',x,y,scale,color,bold,
+                                    clip_left,clip_top,clip_right,clip_bottom);
+                // Per-mille is percent plus a THIRD hollow lower ring,
+                // not a dash. Draw a visible 8x9 outline inside the advance.
+                const int cx=x+28,cy=y+ht-8;
+                for(int dy=-4;dy<=4;++dy)
+                    for(int dx=-4;dx<=4;++dx){
+                        const int d=dx*dx+dy*dy;
+                        if(d>=10&&d<=20)dot(cx+dx,cy+dy);
+                    }
+                break;
+            }
+            case 0x2260:case 0x2248:{
+                if(cp==0x2260){
+                    stroke(x+1,mid-4,x+20,mid-4,thick);
+                    stroke(x+1,mid+4,x+20,mid+4,thick);
+                    stroke(x+5,mid+9,x+16,mid-9,thick);
+                }else{
+                    for(int row=0;row<2;++row){
+                        int yy=mid-5+row*9;
+                        stroke(x+1,yy+1,x+6,yy-1,thick);
+                        stroke(x+6,yy-1,x+12,yy+2,thick);
+                        stroke(x+12,yy+2,x+20,yy,thick);
+                    }
+                }
+                break;
             }
         }
-        x+=ui_smooth_char_advance(c,scale);
+        return;
+    }
+    bool macron=false;
+    cp=ui_font_base(cp,&macron);
+    uint8_t extended_mark=0;
+    cp=ui_extended_latin_base(cp,&extended_mark);
+    uint8_t phase1_mark=0;
+    cp=ui_phase1_latin_base(cp,&phase1_mark);
+    const UiSmoothFont face=ui_smooth_font(scale);
+    const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
+    if(!g)return;
+    const int baseline=y+face.baseline_from_top;
+    const int gx=x+g->left,gy=baseline-g->top;
+    for(int sy=0;sy<g->height;++sy) {
+        const int py=gy+sy;
+        if(py<clip_top||py>=clip_bottom)continue;
+        for(int sx=0;sx<g->width;++sx) {
+            const int px=gx+sx;
+            if(px<clip_left||px>=clip_right)continue;
+            const uint32_t bit=(uint32_t)sy*g->width+(uint32_t)sx;
+            const uint8_t packed=face.font->bitmap[g->dataOffset+(bit>>3)];
+            if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
+            // The lowercase dotless i shares Inter's stem but must not
+            // inherit the isolated top dot from the ordinary i.
+            if(phase1_mark==19&&sy<g->height/4)continue;
+            meshink_display_draw_pixel(px,py,color,fb);
+            if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
+        }
+    }
+    if(macron) {
+        // Scale the macron's weight and gap with the native font. A single
+        // pixel line disappears on the larger glyphs and e-paper refresh.
+        const int thickness=scale>=6?4:scale>=4?3:2;
+        const int gap=scale>=5?4:3;
+        const int length=max(3,(int)g->width-2);
+        const int start_x=gx+((int)g->width-length)/2;
+        const int first_y=gy-gap-thickness+1;
+        for(int dy=0;dy<thickness;++dy)for(int dx=0;dx<length;++dx){
+            const int px=start_x+dx,py=first_y+dy;
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        }
+    }
+    if(phase1_mark){
+        const int thickness=scale>=6?4:scale>=4?3:2;
+        const int mid=gx+g->width/2, upper=gy-5-thickness;
+        auto dot=[&](int px,int py){
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        };
+        auto line=[&](int x1,int y1,int x2,int y2){
+            const int steps=max(abs(x2-x1),abs(y2-y1));
+            for(int q=0;q<=steps;++q)
+                for(int t=0;t<thickness;++t)
+                    dot(x1+(x2-x1)*q/max(1,steps),y1+(y2-y1)*q/max(1,steps)+t);
+        };
+        switch(phase1_mark){
+            case 1: // ogonek
+            case 9: // comma below
+            case 10: // cedilla
+                line(mid+2,gy+g->height-1,mid,gy+g->height+6);
+                line(mid,gy+g->height+6,mid+4,gy+g->height+8);break;
+            case 2:line(mid-4,upper+5,mid+3,upper-1);break; // acute
+            case 3:line(mid-5,upper,mid,upper+4);line(mid,upper+4,mid+5,upper);break;
+            case 4:line(mid-7,gy+g->height/2+2,mid+7,gy+g->height/2-2);break;
+            case 5:for(int y=0;y<3;++y)for(int x=0;x<3;++x)dot(mid+x,upper+y);break;
+            case 6:line(mid-5,upper,mid,upper+3);line(mid,upper+3,mid+5,upper);break; // breve
+            case 8:line(mid-7,upper+4,mid-3,upper-2);line(mid+1,upper+4,mid+5,upper-2);break;
+            case 12:line(mid-6,upper+4,mid,upper-2);line(mid,upper-2,mid+6,upper+4);break;
+            case 13:line(mid-4,upper-2,mid+3,upper+4);break;
+            case 14:for(int x=-5;x<=5;x+=10)for(int i=0;i<3;++i)for(int j=0;j<3;++j)dot(mid+x+i,upper+j);break;
+            case 15:line(gx+g->width-6,gy+3,gx+g->width-6,gy+g->height-3);break;
+            case 16:line(gx+3,gy+g->height/2,gx+g->width-3,gy+g->height/2);break;
+            case 17:line(mid-6,upper+2,mid-3,upper-3);line(mid-3,upper-3,mid+3,upper-3);line(mid+3,upper-3,mid+6,upper+2);break;
+            default:break;
+        }
+    }
+    if(extended_mark){
+        const int thickness=scale>=6?4:scale>=4?3:2;
+        const int middle=gx+(int)g->width/2;
+        const int top_y=gy-3-thickness;
+        auto point=[&](int px,int py){
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
+        };
+        if(extended_mark==1){ // lower-right ogonek hook
+            for(int t=0;t<thickness+3;++t){point(gx+g->width-3+t/2,gy+g->height+t);point(gx+g->width-4+t/2,gy+g->height+t);}
+        }else if(extended_mark==4){ // barred L/l
+            for(int t=-thickness*2;t<=thickness*2;++t)
+                for(int w=0;w<thickness;++w)point(middle+t,gy+g->height/2-t/2+w);
+        }else if(extended_mark==5){
+            for(int y=0;y<thickness+1;++y)for(int x=0;x<thickness+1;++x)point(middle+x,top_y+y);
+        }else if(extended_mark==2){
+            for(int t=0;t<thickness*2+2;++t)for(int w=0;w<thickness;++w)
+                point(middle-thickness+t,top_y+thickness*2-t/2+w);
+        }else if(extended_mark==3){
+            for(int t=0;t<thickness*2+2;++t)for(int w=0;w<thickness;++w){
+                point(middle-thickness*2+t,top_y+t/2+w);
+                point(middle+t,top_y+thickness+1-t/2+w);
+            }
+        }
     }
 }
 static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
@@ -1106,47 +1534,77 @@ static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
                                    int clip_left,int clip_top,
                                    int clip_right,int clip_bottom) {
     if(!s||clip_right<=clip_left||clip_bottom<=clip_top)return;
-    const UiSmoothFont face=ui_smooth_font(scale);
-    const int baseline=y+face.baseline_from_top;
-    while(*s&&*s!='\n'){
-        const char c=*s++;
-        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
-        if(!glyph_data)continue;
-        const int gx=x+glyph_data->left;
-        const int gy=baseline-glyph_data->top;
-        for(int sy=0;sy<glyph_data->height;++sy){
-            const int py=gy+sy;
-            if(py<clip_top||py>=clip_bottom)continue;
-            for(int sx=0;sx<glyph_data->width;++sx){
-                const int px=gx+sx;
-                if(px<clip_left||px>=clip_right)continue;
-                const uint32_t bit=(uint32_t)sy*glyph_data->width+(uint32_t)sx;
-                const uint8_t packed=face.font->bitmap[glyph_data->dataOffset+(bit>>3)];
-                if(!(packed&(uint8_t)(0x80U>>(bit&7))))continue;
-                meshink_display_draw_pixel(px,py,color,fb);
-                if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
-            }
-        }
-        x+=ui_smooth_char_advance(c,scale);
+    const size_t n=strlen(s);
+    for(size_t i=0;i<n&&s[i]!='\n';) {
+        const meshink_utf8::Char c=meshink_utf8::next(s+i,n-i);
+        if(!c.bytes)break;
+        ui_smooth_render_cp(c.codepoint,x,y,scale,color,bold,
+                            clip_left,clip_top,clip_right,clip_bottom);
+        x+=ui_char_advance(c.codepoint,scale);
+        i+=c.bytes;
     }
+}
+static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,bool bold) {
+    ui_smooth_text_clipped(s,x,y,scale,color,bold,-32768,-32768,32767,32767);
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
     if(!s)return;
-    if(scale>=3){
+    if(scale>=3) {
         ui_smooth_text(s,x,y,scale,color,bold);
         return;
     }
-    while(*s&&*s!='\n'){
-        const char c=*s++;
-        if(c==' '){x+=3*scale;continue;}
-        const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
-        if(right<left){x+=3*scale;continue;}
+    const size_t n=strlen(s);
+    for(size_t i=0;i<n&&s[i]!='\n';) {
+        const meshink_utf8::Char c=meshink_utf8::next(s+i,n-i);
+        if(!c.bytes)break;
+        i+=c.bytes;
+        if(ui_zero_width_cp(c.codepoint))continue;
+        if(meshink_emoji_supported(c.codepoint)) {
+            ui_draw_emoji(c.codepoint,x,y,scale,color,bold,-32768,-32768,32767,32767);
+            x+=ui_char_advance(c.codepoint,scale);
+            continue;
+        }
+        bool macron=false;
+        uint8_t accent=0;
+        uint8_t ext_mark=0;
+        const uint32_t cp=ui_small_latin_base(ui_extended_latin_base(ui_font_base(c.codepoint,&macron),&ext_mark),&accent);
+        if(cp==' ') {x+=3*scale;continue;}
+        const uint8_t* rows=glyph(ui_small_latin_base(cp)<=127?(char)ui_small_latin_base(cp):'?');
+        int left=0,right=4;ui_glyph_bounds(rows,left,right);
+        if(right<left) {x+=3*scale;continue;}
         for(int ry=0;ry<7;++ry)for(int rx=left;rx<=right;++rx)
             if(rows[ry]&(1U<<(4-rx)))
-                for(int dy=0;dy<scale;++dy)for(int dx=0;dx<scale;++dx){
+                for(int dy=0;dy<scale;++dy)for(int dx=0;dx<scale;++dx) {
                     meshink_display_draw_pixel(x+(rx-left)*scale+dx,y+ry*scale+dy,color,fb);
                     if(bold)meshink_display_draw_pixel(x+(rx-left)*scale+dx+1,y+ry*scale+dy,color,fb);
                 }
+        if(macron||accent){
+            const int mid=x+((right-left+1)*scale)/2;
+            if(macron||accent==4||accent==5||accent==6)
+                for(int mx=0;mx<(right-left+1)*scale;++mx)
+                    for(int dy=0;dy<max(1,scale);++dy)
+                        meshink_display_draw_pixel(x+mx,y-2-dy,color,fb);
+            else if(accent==2||accent==3)
+                meshink_display_draw_pixel(mid+scale,y-2,color,fb);
+            else if(accent==1)
+                meshink_display_draw_pixel(mid-scale,y-2,color,fb);
+            else if(accent==7)
+                meshink_display_draw_pixel(mid,y+7*scale,color,fb);
+        }
+        if(ext_mark){
+            const int middle=x+((right-left+1)*scale)/2;
+            const int stroke=max(1,scale);
+            for(int t=0;t<stroke+2;++t){
+                if(ext_mark==1)meshink_display_draw_pixel(x+(right-left+1)*scale-1+t/2,y+7*scale+t,color,fb);
+                else if(ext_mark==4)meshink_display_draw_pixel(middle-stroke+t,y+3*scale+t/2,color,fb);
+                else if(ext_mark==5)meshink_display_draw_pixel(middle+t/2,y-2-stroke,color,fb);
+                else if(ext_mark==2)meshink_display_draw_pixel(middle+t/2,y-2-stroke+t/2,color,fb);
+                else if(ext_mark==3){
+                    meshink_display_draw_pixel(middle-stroke+t,y-2-stroke+t/2,color,fb);
+                    meshink_display_draw_pixel(middle+t,y-2-t/2,color,fb);
+                }
+            }
+        }
         x+=(right-left+1)*scale+scale;
     }
 }
@@ -1155,11 +1613,15 @@ static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
     if(!value||max_width<=0)return;
     if(ui_text_width(value,scale)<=max_width){ui_text(value,x,y,scale,color,bold);return;}
     char clipped[64]{};size_t out=0;int width=0;
+    const size_t n=strlen(value);
     const int dots=ui_text_width("...",scale);
-    while(value[out]&&out<sizeof(clipped)-4){
-        const int advance=ui_char_advance(value[out],scale);
+    while(out<n&&out<sizeof(clipped)-4) {
+        const meshink_utf8::Char cp=meshink_utf8::next(value+out,n-out);
+        if(!cp.bytes||out+cp.bytes>=sizeof(clipped)-4)break;
+        const int advance=ui_char_advance(cp.codepoint,scale);
         if(width+advance+dots>max_width)break;
-        clipped[out]=value[out];width+=advance;++out;
+        memcpy(clipped+out,value+out,cp.bytes);
+        width+=advance;out+=cp.bytes;
     }
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     ui_text(clipped,x,y,scale,color,bold);
@@ -1174,10 +1636,14 @@ static void ui_centred_fit(const char* value,int y,int max_width,int scale,
     }
     char clipped[64]{};size_t out=0;int width=0;
     const int dots=ui_text_width("...",scale);
-    while(value[out]&&out<sizeof(clipped)-4){
-        const int advance=ui_char_advance(value[out],scale);
+    const size_t value_bytes=strlen(value);
+    while(out<value_bytes){
+        const meshink_utf8::Char cp=meshink_utf8::next(value+out,value_bytes-out);
+        if(!cp.bytes||out+cp.bytes>=sizeof(clipped)-4)break;
+        const int advance=ui_char_advance(cp.codepoint,scale);
         if(width+advance+dots>max_width)break;
-        clipped[out]=value[out];width+=advance;++out;
+        memcpy(clipped+out,value+out,cp.bytes);
+        width+=advance;out+=cp.bytes;
     }
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     const int clipped_width=ui_text_width(clipped,scale);
@@ -1187,27 +1653,34 @@ static void ui_centred_fit(const char* value,int y,int max_width,int scale,
 static int ui_text_max_line_width(const char* value,int scale) {
     if(!value||!*value)return 0;
     int widest=0,current=0;
-    for(const char* p=value;;++p){
-        if(!*p||*p=='\n'){
-            if(current>0&&scale<3)current-=scale; // legacy bitmap keeps one trailing scale-wide gap
+    for(const char* p=value;*p;){
+        if(*p=='\n'){
+            if(current>0&&scale<3)current-=scale;
             widest=max(widest,current);current=0;
-            if(!*p)break;
-            continue;
+            ++p;continue;
         }
-        current+=ui_char_advance(*p,scale);
+        const meshink_utf8::Char ch=meshink_utf8::next(p,strlen(p));
+        if(!ch.bytes)break;
+        current+=ui_char_advance(ch.codepoint,scale);
+        p+=ch.bytes;
     }
+    if(current>0&&scale<3)current-=scale;
+    widest=max(widest,current);
     return widest;
 }
 static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
+    const size_t n=strlen(value);
     size_t count=0,last_space=0;int width=0;
-    while(value[count]&&value[count]!='\n'){
-        const int advance=ui_char_advance(value[count],scale);
+    while(count<n&&value[count]!='\n') {
+        const meshink_utf8::Char c=meshink_utf8::next(value+count,n-count);
+        if(!c.bytes)break;
+        const int advance=ui_char_advance(c.codepoint,scale);
         if(count&&width+advance>max_width)break;
-        if(!count&&advance>max_width)return 1;
+        if(!count&&advance>max_width)return c.bytes;
         width+=advance;
-        if(value[count]==' ')last_space=count;
-        ++count;
+        if(c.codepoint==' ')last_space=count;
+        count+=c.bytes;
     }
     if(!value[count]||value[count]=='\n')return count;
     return last_space?last_space:count;
@@ -1220,7 +1693,7 @@ static int ui_wrapped_line_count(const char* value,int max_width,int scale) {
         if(*cursor=='\n'){++cursor;++lines;continue;}
         if(!*cursor)break;
         size_t take=ui_wrap_take(cursor,max_width,scale);
-        if(!take)take=1;
+        if(!take)take=meshink_utf8::next(cursor,strlen(cursor)).bytes;
         cursor+=take;while(*cursor==' ')++cursor;if(*cursor=='\n')++cursor;
         ++lines;
     }
@@ -1234,8 +1707,12 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         while(*cursor==' ')++cursor;
         if(*cursor=='\n'){++cursor;continue;}
         size_t take=ui_wrap_take(cursor,max_width,scale);
-        if(!take)take=1;
-        char line_text[160]{};const size_t copy=min(take,sizeof(line_text)-4);
+        if(!take)take=meshink_utf8::next(cursor,strlen(cursor)).bytes;
+        char line_text[160]{};
+        size_t copy=min(take,sizeof(line_text)-4);
+        // If the display line buffer is shorter than the measured text,
+        // never copy half of a multibyte UTF-8 character.
+        if(copy<take)while(copy&&(((uint8_t)cursor[copy]&0xC0)==0x80))--copy;
         memcpy(line_text,cursor,copy);
         size_t trim=strlen(line_text);
         while(trim&&line_text[trim-1]==' ')line_text[--trim]=0;
@@ -1246,8 +1723,10 @@ static void ui_draw_wrapped(const char* value,int x,int y,int max_width,int scal
         const bool truncated=(row==max_lines-1)&&*next;
         if(truncated){
             const int dots=ui_text_width("...",scale);
-            while(trim&&ui_text_width(line_text,scale)+dots>max_width)
-                line_text[--trim]=0;
+            while(trim&&ui_text_width(line_text,scale)+dots>max_width){
+                trim=meshink_utf8::prior(line_text,trim);
+                line_text[trim]=0;
+            }
             if(trim<sizeof(line_text)-4){
                 line_text[trim++]='.';line_text[trim++]='.';line_text[trim++]='.';
                 line_text[trim]=0;
@@ -1270,7 +1749,7 @@ static void ui_draw_wrapped_tail(const char* value,int x,int y,int max_width,
         while(*cursor==' ')++cursor;
         if(!*cursor)break;
         if(*cursor=='\n'){lines[line_count++]={cursor,0};++cursor;continue;}
-        size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=1;
+        size_t take=ui_wrap_take(cursor,max_width,scale);if(!take)take=meshink_utf8::next(cursor,strlen(cursor)).bytes;
         lines[line_count++]={cursor,take};cursor+=take;
         while(*cursor==' ')++cursor;
         if(*cursor=='\n')++cursor;
@@ -1305,11 +1784,13 @@ static int ui_compose_wrap_lines(const char* value,int max_width,int scale,
         const char* last_space=nullptr;
         int width=0;
         while(*scan&&*scan!='\n'){
-            const int advance=ui_char_advance(*scan,scale);
+            const meshink_utf8::Char ch=meshink_utf8::next(scan,strlen(scan));
+            if(!ch.bytes)break;
+            const int advance=ui_char_advance(ch.codepoint,scale);
             if(scan>start&&width+advance>max_width)break;
             width+=advance;
-            if(*scan==' ')last_space=scan;
-            ++scan;
+            if(ch.codepoint==' ')last_space=scan;
+            scan+=ch.bytes;
         }
         if(*scan=='\n'){
             lines[count++]={start,(size_t)(scan-start)};
@@ -1464,6 +1945,74 @@ static void key(const char* label,const meshink_keyboard::Rect& rect) {
             rect.y+(rect.height-ui_text_height(scale))/2,scale,0,true);
 }
 
+
+static void keyboard_picker_start(char letter,bool emoji){
+    picker_open=false;picker_emoji=emoji;picker_pending_key=emoji?0:letter;picker_count=0;
+    if(emoji){
+        for(uint32_t cp:MESHINK_KEYBOARD_ALL_EMOJI){
+            bool frequent=false;
+            if(keyboard_landscape)for(uint32_t shown:MESHINK_KEYBOARD_FREQUENT_EMOJI)
+                if(cp==shown){frequent=true;break;}
+            if(!frequent)picker_chars[picker_count++]=cp;
+        }
+    }else{
+        const char* alt=meshink_letter_alternatives(letter);
+        if(!alt)return;
+        const size_t n=strlen(alt);
+        for(size_t i=0;i<n&&picker_count<40;){
+            const auto ch=meshink_utf8::next(alt+i,n-i);
+            if(!ch.bytes)break;
+            picker_chars[picker_count++]=ch.codepoint;
+            i+=ch.bytes;
+        }
+    }
+    picker_open=picker_count>0;
+}
+static meshink_keyboard::Rect keyboard_picker_rect(){
+    const auto m=keyboard_metrics(keyboard_landscape);
+    const int tile=keyboard_landscape?38:48;
+    const int columns=keyboard_landscape?12:8;
+    const int rows=(picker_count+columns-1)/columns;
+    const int height=keyboard_landscape?84:rows*tile+16;
+    // Overlay the message history, ABOVE the fixed compose entry box.
+    return keyboard_landscape
+        ? meshink_keyboard::Rect{m.entry.x,8,m.entry.width,height}
+        : meshink_keyboard::Rect{m.entry.x,max(0,m.entry.y-height-8),m.entry.width,height};
+}
+static void keyboard_picker_clear_pixels(){
+    if(!picker_open)return;
+    // Ordinary chat redraw is incremental; it does not clear the whole
+    // framebuffer. Erase the old popup before redrawing chat underneath it.
+    const auto r=keyboard_picker_rect();
+    meshink_display_fill_rect({r.x,r.y,r.width,r.height},0xFF,fb);
+}
+static int keyboard_picker_option(int x,int y){
+    const auto r=keyboard_picker_rect();
+    if(x<r.x||x>=r.x+r.width||y<r.y+8||y>=r.y+r.height)return -1;
+    const int tile=keyboard_landscape?38:48;
+    const int columns=keyboard_landscape?12:8;
+    const int col=(x-r.x)*columns/r.width,row=(y-r.y-8)/tile;
+    const int index=row*columns+col;
+    return index<picker_count?index:-1;
+}
+static void draw_keyboard_picker(){
+    if(!picker_open||!keyboard_message_mode)return;
+    const auto r=keyboard_picker_rect();
+    meshink_display_fill_rect({r.x,r.y,r.width,r.height},0xFF,fb);
+    rounded_box(r.x,r.y,r.width,r.height,max(4,ui_w(5)));
+    const int tile=keyboard_landscape?38:48;
+    for(int i=0;i<picker_count;++i){
+        const int columns=keyboard_landscape?12:8;
+        const int x=r.x+(i%columns)*r.width/columns;
+        const int y=r.y+8+(i/columns)*tile;
+        char encoded[5];meshink_encode_utf8(picker_chars[i],encoded);
+        // Use native 32-pixel emoji artwork and normal Inter text size.
+        const int scale=3;
+        ui_text(encoded,x+(r.width/columns-ui_text_width(encoded,scale))/2,
+                y+(tile-ui_text_height(scale))/2,scale,0,false);
+    }
+}
+
 static void draw_keyboard() {
     const auto metrics=keyboard_metrics(false);
     // Name-entry keyboards need an opaque backing between the keys, but
@@ -1482,8 +2031,13 @@ static void draw_keyboard() {
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;numbers[i];++i){
-        char label[2]={numbers[i],0};
-        key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
+        char label[5]={numbers[i],0};
+        if(keyboard_symbols&&keyboard_message_mode)meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
+        if(keyboard_symbols&&keyboard_message_mode){
+            key(" ",{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
+            ui_text(label,digits.start+i*digits.pitch+(digits.width-ui_text_width(label,3))/2,metrics.number_top+(metrics.key_height-ui_text_height(2))/2,3,0,false);
+        }
+        else key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
     const char* letter_rows_upper[]={"QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
     const char* letter_rows_lower[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
@@ -1537,20 +2091,22 @@ static void draw_landscape_keyboard(){
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(10),ui_h(10)),false);
     const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,960);
-    const int inset_y=meshink_keyboard::scale_axis(12,metrics.height,540);
+    const int inset_y=meshink_keyboard::scale_axis(keyboard_message_mode?6:12,metrics.height,540);
     const int entry_x=metrics.entry.x+inset_x;
     const int entry_y=metrics.entry.y+inset_y;
     const int entry_width=metrics.entry.width-2*inset_x;
     const int entry_height=metrics.entry.height-2*inset_y;
     if(keyboard_message_mode&&value[0])
-        ui_draw_compose_tail(value,entry_x,entry_y,entry_width,entry_height,4);
+        ui_draw_compose_tail(value,entry_x,entry_y,entry_width,entry_height,3);
     else
         ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
                              entry_x,entry_y,entry_width,entry_height,4,0,false);
     const char* numbers="1234567890";
     const auto digits=meshink_keyboard::numbers(metrics);
     for(int i=0;i<10;++i){
-        char label[2]={numbers[i],0};
+        char label[5]={numbers[i],0};
+        if(keyboard_message_mode&&(keyboard_symbols||(picker_open&&picker_emoji)))
+            meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
         landscape_key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
     const char** rows=active_keyboard_rows();
@@ -4075,6 +4631,7 @@ static void draw_quick_panel() {
 
     ui_centred("Tap below or swipe up to close",ui_y(560),2,0,false);
     draw_toast();
+    draw_keyboard_picker();
 }
 
 static void close_quick_panel() {
@@ -4191,6 +4748,7 @@ static void draw_screen() {
     }
     if(keyboard_landscape){
         draw_landscape_keyboard();
+        draw_keyboard_picker();
         return;
     }
     switch(screen){
@@ -4226,6 +4784,9 @@ static void draw_screen() {
             (settings_page&&!(screen==Screen::ProtocolSettings&&keyboard_visible)))
         draw_bottom_nav(3);
     draw_toast();
+    // Popup must be composed after the chat/history and entry surfaces.
+    // Its hitboxes were already active; previously this draw call was missing.
+    draw_keyboard_picker();
 }
 
 static void refresh(MeshInkRefreshMode mode,bool wake_light=true) {
@@ -4518,6 +5079,7 @@ static void touch_sampler_task(void*){
     bool held=false,home_held=false,map_previous=false;
     bool map_multi=false,map_pinch_allowed=false;
     bool keyboard_delete_hold=false,keyboard_delete_repeated=false;
+    bool keyboard_long_emitted=false;
     uint32_t keyboard_delete_repeat_at=0;
     int16_t start_x=0,start_y=0,last_x=0,last_y=0;
     int16_t pinch_x=0,pinch_y=0;
@@ -4632,6 +5194,7 @@ static void touch_sampler_task(void*){
                 last_x=x;last_y=y;
                 if(!held){
                     held=true;start_x=x;start_y=y;pressed_at=millis();frontlight_event();
+                    keyboard_long_emitted=false;
                     keyboard_delete_hold=false;keyboard_delete_repeated=false;
                     if(keyboard_message_mode&&(keyboard_visible||keyboard_landscape)){
                         const auto delete_metrics=keyboard_metrics(keyboard_landscape);
@@ -4663,6 +5226,30 @@ static void touch_sampler_task(void*){
                     quick_slider_preview=(uint8_t)max(0,min(100,value));
                     frontlight_preview(quick_slider_preview);
                 }
+                // Show optional characters while the finger is still held.
+                // This is a separate one-shot event, not a modification to
+                // normal release-to-type or Delete's repeat path.
+                if(!keyboard_long_emitted&&!keyboard_delete_hold&&
+                   keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
+                   (screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
+                   !quick_panel_active&&millis()-pressed_at>=450){
+                    const auto km=keyboard_metrics(keyboard_landscape);
+                    char pressed_char=0;
+                    const bool mode_held=
+                        meshink_keyboard::in_row(start_y,km.mode_key.y,km)&&
+                        start_x<meshink_keyboard::mode_split(km);
+                    const bool letter_held=
+                        keyboard_character_at(start_x,start_y,keyboard_landscape,pressed_char)&&
+                        meshink_letter_alternatives(pressed_char)&&
+                        !(keyboard_symbols&&
+                          meshink_keyboard::in_row(start_y,km.number_top,km));
+                    if(mode_held||letter_held){
+                        QueuedTap hold{start_x,start_y,0,0,false};
+                        hold.hold_ms=(uint16_t)min((uint32_t)65535,
+                                                 (uint32_t)(millis()-pressed_at));
+                        if(queue_touch_event(hold))keyboard_long_emitted=true;
+                    }
+                }
                 if(keyboard_delete_hold&&!quick_panel_active&&
                    (int32_t)(millis()-keyboard_delete_repeat_at)>=0){
                     QueuedTap repeat{start_x,start_y,0,0,false};
@@ -4688,10 +5275,12 @@ static void touch_sampler_task(void*){
                     event_y=start_y;
                 }
                 const bool suppress_release=
-                    keyboard_delete_hold&&keyboard_delete_repeated;
+                    (keyboard_delete_hold&&keyboard_delete_repeated)||keyboard_long_emitted;
                 keyboard_delete_hold=false;keyboard_delete_repeated=false;
+                keyboard_long_emitted=false;
                 if(!suppress_release){
                     QueuedTap tap{event_x,event_y,dx,dy,false};
+                    tap.hold_ms=(uint16_t)min((uint32_t)65535,(uint32_t)(millis()-pressed_at));
                     queue_touch_event(tap);
                 }
             }
@@ -4871,7 +5460,7 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
                 ((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()&&setup_short_edit
                    ?setup_short_name:node_name));
             const size_t n=strlen(value);
-            if(n)value[n-1]=0;
+            if(n){if(keyboard_message_mode)meshink_erase_utf8(value);else value[n-1]=0;}
             if((screen==Screen::SetupName||screen==Screen::ProtocolSettings)&&!setup_is_meshcore()){
                 if(setup_short_edit)setup_short_manual=true;
                 else if(!setup_short_manual)
@@ -4883,6 +5472,7 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
     }
     char character=0;
     if(keyboard_character_at(x,y,true,character)){
+        if(keyboard_message_mode&&keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
         append(character);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
@@ -4950,12 +5540,13 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
         if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
         if(x>=meshink_keyboard::delete_split(metrics)){
             const size_t n=strlen(compose_text);
-            if(n)compose_text[n-1]=0;
+            if(n)meshink_erase_utf8(compose_text);
             queue_text_refresh();return true;
         }
     }
     char character=0;
     if(keyboard_character_at(x,y,false,character)){
+        if(keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
         append(character);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
@@ -6932,7 +7523,72 @@ void ui_loop() {
             const uint8_t page_count=(mesh_protocol_radio_preset_count()+PRESETS_PER_PAGE-1)/PRESETS_PER_PAGE;
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MeshInkRefreshMode::FastGray16);
-        }else handle_tap(tap.x,tap.y);
+        }else {
+            // Landscape reserves a strip above its compact compose field for options.
+            const bool message_edit=keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
+                (screen==Screen::ContactChat||screen==Screen::ChannelChat);
+            bool handled_picker=false;
+            if(message_edit){
+                const auto m=keyboard_metrics(keyboard_landscape);
+                if(picker_open){
+                    int choice=keyboard_picker_option(tap.x,tap.y);
+                    uint32_t selected=choice>=0?picker_chars[choice]:0;
+                    if(keyboard_landscape&&picker_emoji&&
+                       meshink_keyboard::in_row(tap.y,m.number_top,m)){
+                        const int index=meshink_keyboard::key_index_edge_extended(
+                            meshink_keyboard::numbers(m),tap.x,m.width);
+                        if(index>=0){choice=index;selected=MESHINK_KEYBOARD_FREQUENT_EMOJI[index];}
+                    }
+                    if(choice>=0){
+                        if(meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,selected))
+                            queue_text_refresh();
+                        keyboard_picker_clear_pixels();
+                        picker_open=false;picker_pending_key=0;
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                        handled_picker=true;
+                    }else if(tap.y<m.number_top){
+                        // Outside the options: dismiss; leave existing text unchanged.
+                        keyboard_picker_clear_pixels();
+                        picker_open=false;picker_pending_key=0;
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                        handled_picker=true;
+                    }else{
+                        // Keyboard taps dismiss the popover while preserving the
+                        // originally held letter before normal typing continues.
+                        char next_key=0;
+                        const bool same_key=picker_pending_key&&
+                            keyboard_character_at(tap.x,tap.y,keyboard_landscape,next_key)&&
+                            next_key==picker_pending_key;
+                        if(picker_pending_key&&!same_key)append(picker_pending_key);
+                        keyboard_picker_clear_pixels();
+                        picker_open=false;picker_pending_key=0;
+                        queue_text_refresh();
+                        // The normal typing path only paints the input field.
+                        // Repaint the erased history overlay after the key tap.
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                    }
+                }
+                if(!handled_picker&&tap.hold_ms>=450){
+                    char held_key=0;
+                    if(meshink_keyboard::in_row(tap.y,m.mode_key.y,m)&&
+                       tap.x<meshink_keyboard::mode_split(m)){
+                        keyboard_picker_start(0,true);
+                    }else if(keyboard_character_at(tap.x,tap.y,keyboard_landscape,held_key)&&
+                              meshink_letter_alternatives(held_key)){
+                        // In symbols mode the number row displays emoji, not
+                        // numerals: don't open a hidden number alternative.
+                        if(!(keyboard_symbols&&
+                             meshink_keyboard::in_row(tap.y,m.number_top,m)))
+                            keyboard_picker_start(held_key,false);
+                    }
+                    if(picker_open){
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
+                        handled_picker=true;
+                    }
+                }
+            }
+            if(!handled_picker)handle_tap(tap.x,tap.y);
+        }
     }
     const uint32_t touch_diag_now=millis();
     if(touch_diag_now-last_touch_diag_ms>=5000UL){

@@ -100,7 +100,7 @@ inline Metrics make_metrics(int width,int height,bool landscape,
         : Row{80,48,43,8,80,460};
 
     const Rect entry_reference=landscape
-        ? Rect{16,14,928,165}
+        ? Rect{16,105,928,74}
         : Rect{12,544,516,70};
     const int history_bottom_reference=landscape?0:526;
     const int clear_top_reference=landscape?0:486;
@@ -140,7 +140,7 @@ inline Metrics make_metrics(int width,int height,bool landscape,
     metrics.clear_top=clear_top_reference?
         scale_axis(clear_top_reference,height,reference_height)+tuning.y_offset:0;
     metrics.entry=scale_rect(entry_reference,width,height,reference_width,reference_height,tuning);
-    metrics.entry.height=scale_axis(landscape?165:70,height,reference_height);
+    metrics.entry.height=scale_axis(landscape?74:70,height,reference_height);
     metrics.number_row=scale_row(number_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[0]=scale_row(top_reference,width,reference_width,tuning.x_offset);
     metrics.letter_rows[1]=scale_row(home_reference,width,reference_width,tuning.x_offset);

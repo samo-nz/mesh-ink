@@ -104,7 +104,10 @@ public:
         for(const auto& entry:pending){
             const PendingPacket& entry_state=entry.second;
             const auto* packet=entry_state.packet;
-            if(!packet||packet->from!=self||isBroadcast(packet->to)||
+            // Locally injected PhoneAPI packets retain from=0 in the router's
+            // pending retransmission copy. On-air copies receive our node number.
+            // Accept both representations, but never report other nodes' retries.
+            if(!packet||(packet->from!=0&&packet->from!=self)||isBroadcast(packet->to)||
                entry_state.initialNumRetransmissions!=NUM_RELIABLE_UNICAST_ATTEMPTS-1)
                 continue;
             const uint8_t total=entry_state.initialNumRetransmissions;

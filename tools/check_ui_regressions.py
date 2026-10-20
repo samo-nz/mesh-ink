@@ -83,6 +83,8 @@ assert 'if(hit_outer_row(x,y,538))' in display_tap, "standby timeout remains con
 assert 'class MeshInkProgressRouter final : public ReliableRouter' in meshtastic_runtime_source
 assert 'const int32_t delay_ms=ReliableRouter::runOnce();' in meshtastic_runtime_source
 assert 'entry_state.initialNumRetransmissions!=NUM_RELIABLE_UNICAST_ATTEMPTS-1' in meshtastic_runtime_source
+assert '(packet->from!=0&&packet->from!=self)' in meshtastic_runtime_source, "locally injected packets with from=0 must report retry progress"
+assert 'isBroadcast(packet->to)' in meshtastic_runtime_source, "broadcast retries must stay excluded"
 assert 'const uint8_t completed=total-entry_state.numRetransmissions;' in meshtastic_runtime_source
 assert 'meshink_meshtastic_worker_note_retry(packet->id,completed,total)' in meshtastic_runtime_source
 assert 'router=new(std::nothrow) MeshInkProgressRouter();' in meshtastic_runtime_source
@@ -651,7 +653,7 @@ assert "static void ui_draw_wrapped_tail(" in source, "bounded tail rendering re
 assert "static void ui_draw_compose_tail(" in source, "message composer has a dedicated clipped tail renderer"
 assert source.count("ui_draw_compose_tail(")>=3, "portrait and landscape message entry both use the clipped compose tail renderer"
 assert "landscape?198:618" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape keyboard is shifted to the bottom edge"
-assert "Rect{16,14,928,165}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compose viewport uses the reclaimed white space"
+assert "Rect{16,105,928,74}" in (root / "src" / "keyboard_geometry.h").read_text(encoding="utf-8"), "landscape compact compose viewport leaves room for UTF-8 picker above"
 
 assert "meshink_keyboard::in_row(y,828)" not in source, "portrait third-row touch must not use fixed T5 y coordinates"
 assert "meshink_keyboard::in_row(y,425)" not in source, "landscape action-row touch must not use fixed T5 y coordinates"
@@ -1453,10 +1455,10 @@ assert "return {&inter_15_regular,23,23,34};" in source and "return {&inter_30_r
 assert "return {&inter_50_digits,77,79,81};" in source, "oversized standby unread count uses a native digit raster"
 assert "ui_smooth_metric" not in source and "numerator" not in source[source.index("struct UiSmoothFont"):source.index("static void ui_text_fit")], "primary fonts are never scaled at runtime"
 assert "const int baseline=y+face.baseline_from_top;" in source, "each native face carries its own baseline anchor"
-assert "meshink_display_draw_pixel(gx+sx,gy+sy,color,fb);" in source, "native glyph pixels are drawn one-for-one without resampling"
+assert "meshink_display_draw_pixel(px,py,color,fb);" in source and "const int px=gx+sx;" in source, "native glyph pixels are drawn one-for-one without resampling"
 ui_text_body=source[source.index("static void ui_text("):source.index("static void ui_text_fit(")]
 assert "if(scale>=3)" in ui_text_body and "ui_smooth_text(s,x,y,scale,color,bold);" in ui_text_body, "scale-three and larger primary text uses smooth raster glyphs"
-assert "return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);" in source, "small technical text keeps the legacy bitmap renderer"
+assert "if(scale>=3)" in source[source.index("static int ui_char_advance("):source.index("static int ui_text_height(")] and "ui_glyph_bounds(rows,left,right);" in source, "small technical text keeps the legacy bitmap renderer"
 assert "0x80U>>(bit&7)" in source, "smooth glyph renderer consumes one-bit black/white coverage only"
 rounded_fill_body=source[source.index("static void rounded_fill("):source.index("static void rounded_box(",source.index("static void rounded_fill("))]
 assert "meshink_display_fill_rounded_rect({x,y,w,h},radius,color,fb);" in rounded_fill_body, "rounded panels delegate one shape to the display backend"

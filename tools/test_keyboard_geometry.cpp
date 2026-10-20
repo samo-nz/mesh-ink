@@ -137,7 +137,7 @@ int main() {
     assert(landscape.orientation_key.x==0&&landscape.orientation_key.width==199);
     assert(landscape.space_key.x==203&&landscape.space_key.width==504);
     assert(landscape.action_key.x==711&&landscape.action_key.width==249);
-    assert(landscape.entry.x==16&&landscape.entry.y==14&&landscape.entry.width==928&&landscape.entry.height==165);
+    assert(landscape.entry.x==16&&landscape.entry.y==105&&landscape.entry.width==928&&landscape.entry.height==74);
     assert(landscape.letter_rows[0].width==landscape.letter_rows[1].width);
     assert(landscape.letter_rows[0].pitch==landscape.letter_rows[1].pitch);
     assert(landscape.letter_rows[0].start==2&&visible_right(landscape.letter_rows[0])==958);
