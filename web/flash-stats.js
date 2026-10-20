@@ -1,4 +1,4 @@
-import { STATS_ENDPOINT } from "./stats-config.js";
+import { STATS_ENDPOINT } from "./stats-config.js?v=stats-20261020-2";
 
 // Never transmit a device identifier, IP, serial log, filename or message.
 // The two events are browser-reported observations, not attested installs.
