@@ -1,5 +1,6 @@
 #include "../src/utf8_display.h"
 #include "../src/fonts/meshink_emoji.h"
+#include "../src/keyboard_utf8_input.h"
 #include <cassert>
 #include <cstring>
 #include <cstdio>
@@ -43,5 +44,21 @@ int main() {
             assert(ink);
         }
     }
+    char compose[32]="a";
+    assert(meshink_append_utf8(compose,sizeof(compose),12,0x101));
+    assert(meshink_append_utf8(compose,sizeof(compose),12,0x1F602));
+    assert(strcmp(compose,"aā😂")==0);
+    meshink_erase_utf8(compose);
+    assert(strcmp(compose,"aā")==0);
+    meshink_erase_utf8(compose);
+    assert(strcmp(compose,"a")==0);
+    assert(meshink_append_utf8(compose,sizeof(compose),12,0x2764));
+    assert(meshink_append_utf8(compose,sizeof(compose),12,0xFE0F));
+    meshink_erase_utf8(compose);
+    assert(strcmp(compose,"a")==0);
+    assert(!meshink_append_utf8(compose,sizeof(compose),2,0x1F602));
+    assert(strcmp(compose,"a")==0);
+    assert(meshink_letter_alternatives('a')&&meshink_letter_alternatives('A'));
+    assert(MESHINK_KEYBOARD_FREQUENT_EMOJI[0]==0x1F602);
     puts("PASS: UTF-8 decoding, character boundaries and compact emoji glyphs");
 }
