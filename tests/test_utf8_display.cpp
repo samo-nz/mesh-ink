@@ -61,7 +61,7 @@ int main() {
     assert(meshink_letter_alternatives('a')&&meshink_letter_alternatives('A'));
     // Every exposed Phase 1 character must decode as a complete codepoint,
     // round-trip through the message composer, and delete cleanly.
-    const char* all_keys="aAcCdDeEgGhHiIjJkKlLnNoOrRsStTuUwWyYzZ?!'\\"-.$%/=0123";
+    const char* all_keys=R"PHASE1(aAcCdDeEgGhHiIjJkKlLnNoOrRsStTuUwWyYzZ?!'"-.$%/=0123)PHASE1";
     for(const char* key=all_keys;*key;++key){
         const char* options=meshink_letter_alternatives(*key);
         assert(options);
