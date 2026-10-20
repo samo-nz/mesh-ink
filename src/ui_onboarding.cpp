@@ -2087,13 +2087,13 @@ static void draw_landscape_keyboard(){
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
                 max(ui_w(10),ui_h(10)),false);
     const int inset_x=meshink_keyboard::scale_axis(16,metrics.width,960);
-    const int inset_y=meshink_keyboard::scale_axis(12,metrics.height,540);
+    const int inset_y=meshink_keyboard::scale_axis(keyboard_message_mode?6:12,metrics.height,540);
     const int entry_x=metrics.entry.x+inset_x;
     const int entry_y=metrics.entry.y+inset_y;
     const int entry_width=metrics.entry.width-2*inset_x;
     const int entry_height=metrics.entry.height-2*inset_y;
     if(keyboard_message_mode&&value[0])
-        ui_draw_compose_tail(value,entry_x,entry_y,entry_width,entry_height,4);
+        ui_draw_compose_tail(value,entry_x,entry_y,entry_width,entry_height,3);
     else
         ui_draw_wrapped_tail(value[0]?value:(keyboard_password_mode?"Enter password":"Enter text"),
                              entry_x,entry_y,entry_width,entry_height,4,0,false);
@@ -5226,7 +5226,7 @@ static void touch_sampler_task(void*){
                 // This is a separate one-shot event, not a modification to
                 // normal release-to-type or Delete's repeat path.
                 if(!keyboard_long_emitted&&!keyboard_delete_hold&&
-                   keyboard_message_mode&&keyboard_visible&&!keyboard_landscape&&
+                   keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
                    (screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                    !quick_panel_active&&millis()-pressed_at>=450){
                     const auto km=keyboard_metrics(keyboard_landscape);
@@ -7520,8 +7520,7 @@ void ui_loop() {
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MeshInkRefreshMode::FastGray16);
         }else {
-            // Landscape entry begins 14px from the top: no room for a popup
-            // ABOVE it. Keep landscape's proven touch/typing path unchanged.
+            // Landscape reserves a strip above its compact compose field for options.
             const bool message_edit=keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
                 (screen==Screen::ContactChat||screen==Screen::ChannelChat);
             bool handled_picker=false;
