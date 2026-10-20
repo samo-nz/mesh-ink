@@ -7252,7 +7252,11 @@ void ui_loop() {
                     }else{
                         // Keyboard taps dismiss the popover while preserving the
                         // originally held letter before normal typing continues.
-                        if(picker_pending_key)append(picker_pending_key);
+                        char next_key=0;
+                        const bool same_key=picker_pending_key&&
+                            keyboard_character_at(tap.x,tap.y,false,next_key)&&
+                            next_key==picker_pending_key;
+                        if(picker_pending_key&&!same_key)append(picker_pending_key);
                         picker_open=false;picker_pending_key=0;
                         queue_text_refresh();
                     }
