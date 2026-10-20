@@ -1771,7 +1771,7 @@ static void draw_keyboard() {
         if(keyboard_symbols&&keyboard_message_mode)meshink_encode_utf8(MESHINK_KEYBOARD_FREQUENT_EMOJI[i],label);
         if(keyboard_symbols&&keyboard_message_mode){
             key(" ",{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
-            ui_text(label,digits.start+i*digits.pitch+(digits.width-ui_text_width(label,2))/2,metrics.number_top+(metrics.key_height-ui_text_height(2))/2,2,0,false);
+            ui_text(label,digits.start+i*digits.pitch+(digits.width-ui_text_width(label,3))/2,metrics.number_top+(metrics.key_height-ui_text_height(2))/2,3,0,false);
         }
         else key(label,{digits.start+i*digits.pitch,metrics.number_top,digits.width,metrics.key_height});
     }
