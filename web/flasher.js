@@ -1,6 +1,6 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js.js";
 import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";
-import { reportFlashEvent } from "./flash-stats.js";
+import { reportFlashEvent } from "./flash-stats.js?v=stats-20261020-2";
 
 const UPDATE_ADDRESS = 0x10000;
 const FULL_WIPE_ADDRESS = 0x0;
