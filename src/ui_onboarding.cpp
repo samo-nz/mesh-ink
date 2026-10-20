@@ -1140,7 +1140,8 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
     const UiSmoothFont face=ui_smooth_font(scale);
     const MeshInkFontGlyph* g=ui_smooth_glyph(face.font,cp);
     if(!g)return;
-    const int gx=x+g->left,gy=y+face.baseline_from_top-g->top;
+    const int baseline=y+face.baseline_from_top;
+    const int gx=x+g->left,gy=baseline-g->top;
     for(int sy=0;sy<g->height;++sy) {
         const int py=gy+sy;
         if(py<clip_top||py>=clip_bottom)continue;
