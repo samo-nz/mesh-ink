@@ -52,7 +52,7 @@ inline const char* meshink_letter_alternatives(char key){
       case 'r':return "ř";case 'R':return "Ř";
       case 's':return "śš";case 'S':return "ŚŠ";
       case 'u':return "úùûüū";case 'U':return "ÚÙÛÜŪ";
-      case 'y':return "ýÿ";case 'Y':return "ÝŸ";
+      case 'y':return "ýÿ";case 'Y':return "Ý";
       case 'z':return "źżž";case 'Z':return "ŹŻŽ";
       default:return nullptr;
     }
