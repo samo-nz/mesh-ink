@@ -7229,7 +7229,9 @@ void ui_loop() {
             int next=(int)preset_page+(tap.dy<0?1:-1);if(next<0)next=0;if(next>=page_count)next=page_count-1;
             preset_page=(uint8_t)next;T5_DEBUGF(T5_LOG_UI,"[T5-UI] preset page=%u\n",preset_page+1);draw_screen();refresh(MeshInkRefreshMode::FastGray16);
         }else {
-            const bool message_edit=keyboard_message_mode&&(keyboard_visible||keyboard_landscape)&&
+            // Landscape entry begins 14px from the top: no room for a popup
+            // ABOVE it. Keep landscape's proven touch/typing path unchanged.
+            const bool message_edit=keyboard_message_mode&&keyboard_visible&&!keyboard_landscape&&
                 (screen==Screen::ContactChat||screen==Screen::ChannelChat);
             bool handled_picker=false;
             if(message_edit){
