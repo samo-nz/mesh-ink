@@ -59,6 +59,26 @@ int main() {
     assert(!meshink_append_utf8(compose,sizeof(compose),2,0x1F602));
     assert(strcmp(compose,"a")==0);
     assert(meshink_letter_alternatives('a')&&meshink_letter_alternatives('A'));
+    // Every exposed Phase 1 character must decode as a complete codepoint,
+    // round-trip through the message composer, and delete cleanly.
+    const char* all_keys="aAcCdDeEgGhHiIjJkKlLnNoOrRsStTuUwWyYzZ?!'\\"-.$%/=0123";
+    for(const char* key=all_keys;*key;++key){
+        const char* options=meshink_letter_alternatives(*key);
+        assert(options);
+        const size_t len=strlen(options);
+        size_t count=0;
+        for(size_t off=0;off<len;){
+            const auto ch=meshink_utf8::next(options+off,len-off);
+            assert(ch.bytes>=1&&ch.codepoint!=0xFFFD);
+            char buffer[32]="X";
+            assert(meshink_append_utf8(buffer,sizeof(buffer),30,ch.codepoint));
+            meshink_erase_utf8(buffer);
+            assert(strcmp(buffer,"X")==0);
+            off+=ch.bytes;
+            ++count;
+        }
+        assert(count>0&&count<=40);
+    }
     assert(MESHINK_KEYBOARD_FREQUENT_EMOJI[0]==0x1F602);
     puts("PASS: UTF-8 decoding, character boundaries and compact emoji glyphs");
 }
