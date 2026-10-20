@@ -1119,10 +1119,16 @@ static uint32_t ui_small_latin_base(uint32_t cp,uint8_t* mark=nullptr) {
 static bool ui_zero_width_cp(uint32_t cp) {
     return cp==0xFE0F||cp==0xFE0E||cp==0x200D||cp==0x0304;
 }
-static int ui_emoji_factor(int scale) { return scale>=6?2:1; }
+// Size emoji to the native text face rather than drawing tiny 16px symbols.
+// The chat's Inter-15 tier is 23px high, so emoji render at 24px there.
+static int ui_emoji_size(int scale) {
+    if(scale<3)return 12;
+    if(scale>=11)return 16; // large numeric standby face is not a text face
+    return scale==3?24:scale==4?32:scale==5?40:48;
+}
 static int ui_char_advance(uint32_t cp,int scale) {
     if(ui_zero_width_cp(cp))return 0;
-    if(meshink_emoji_rows(cp))return 16*ui_emoji_factor(scale)+2;
+    if(meshink_emoji_rows(cp))return ui_emoji_size(scale)+2;
     cp=ui_font_base(cp);
     if(scale>=3) {
         const UiSmoothFont face=ui_smooth_font(scale);
@@ -1160,16 +1166,20 @@ static void ui_draw_emoji(uint32_t cp,int x,int y,int scale,uint8_t color,bool b
                           int left,int top,int right,int bottom) {
     const uint16_t* rows=meshink_emoji_rows(cp);
     if(!rows)return;
-    const int factor=ui_emoji_factor(scale);
-    const int baseline=scale>=3?y+ui_smooth_font(scale).baseline_from_top:y+16;
-    const int start_y=baseline-16*factor;
-    for(int ry=0;ry<16;++ry)for(int rx=0;rx<16;++rx) {
-        if(!(rows[ry]&(uint16_t)(0x8000U>>rx)))continue;
-        for(int dy=0;dy<factor;++dy)for(int dx=0;dx<factor;++dx) {
-            const int px=x+rx*factor+dx,py=start_y+ry*factor+dy;
-            if(px>=left&&px<right&&py>=top&&py<bottom)
-                meshink_display_draw_pixel(px,py,color,fb);
-            if(bold&&px+1>=left&&px+1<right&&py>=top&&py<bottom)
+    const int size=ui_emoji_size(scale);
+    const int baseline=scale>=3?y+ui_smooth_font(scale).baseline_from_top:y+12;
+    const int start_y=baseline-size;
+    // Nearest-neighbour enlargement preserves the crisp black/white e-paper
+    // output, and the exact same size is used for measuring text advances.
+    for(int dy=0;dy<size;++dy){
+        const int py=start_y+dy;
+        if(py<top||py>=bottom)continue;
+        const uint16_t bits=rows[(dy*16)/size];
+        for(int dx=0;dx<size;++dx){
+            if(!(bits&(uint16_t)(0x8000U>>((dx*16)/size))))continue;
+            const int px=x+dx;
+            if(px>=left&&px<right)meshink_display_draw_pixel(px,py,color,fb);
+            if(bold&&px+1>=left&&px+1<right)
                 meshink_display_draw_pixel(px+1,py,color,fb);
         }
     }
@@ -1202,12 +1212,17 @@ static void ui_smooth_render_cp(uint32_t cp,int x,int y,int scale,uint8_t color,
         }
     }
     if(macron) {
-        // Draw a clear horizontal macron without altering any stored UTF-8 bytes.
-        const int my=gy-3;
-        for(int dx=1;dx<max(2,(int)g->width-1);++dx) {
-            const int px=gx+dx;
-            if(px>=clip_left&&px<clip_right&&my>=clip_top&&my<clip_bottom)
-                meshink_display_draw_pixel(px,my,color,fb);
+        // Scale the macron's weight and gap with the native font. A single
+        // pixel line disappears on the larger glyphs and e-paper refresh.
+        const int thickness=scale>=6?4:scale>=4?3:2;
+        const int gap=scale>=5?4:3;
+        const int length=max(3,(int)g->width-2);
+        const int start_x=gx+((int)g->width-length)/2;
+        const int first_y=gy-gap-thickness+1;
+        for(int dy=0;dy<thickness;++dy)for(int dx=0;dx<length;++dx){
+            const int px=start_x+dx,py=first_y+dy;
+            if(px>=clip_left&&px<clip_right&&py>=clip_top&&py<clip_bottom)
+                meshink_display_draw_pixel(px,py,color,fb);
         }
     }
 }
@@ -1263,7 +1278,8 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
             const int mid=x+((right-left+1)*scale)/2;
             if(macron||accent==4||accent==5||accent==6)
                 for(int mx=0;mx<(right-left+1)*scale;++mx)
-                    meshink_display_draw_pixel(x+mx,y-2,color,fb);
+                    for(int dy=0;dy<max(1,scale);++dy)
+                        meshink_display_draw_pixel(x+mx,y-2-dy,color,fb);
             else if(accent==2||accent==3)
                 meshink_display_draw_pixel(mid+scale,y-2,color,fb);
             else if(accent==1)
