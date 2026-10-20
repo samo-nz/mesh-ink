@@ -1957,6 +1957,13 @@ static meshink_keyboard::Rect keyboard_picker_rect(){
     // Overlay the message history, ABOVE the fixed compose entry box.
     return {m.entry.x,max(0,m.entry.y-height-8),m.entry.width,height};
 }
+static void keyboard_picker_clear_pixels(){
+    if(!picker_open)return;
+    // Ordinary chat redraw is incremental; it does not clear the whole
+    // framebuffer. Erase the old popup before redrawing chat underneath it.
+    const auto r=keyboard_picker_rect();
+    meshink_display_fill_rect({r.x,r.y,r.width,r.height},0xFF,fb);
+}
 static int keyboard_picker_option(int x,int y){
     const auto r=keyboard_picker_rect();
     if(x<r.x||x>=r.x+r.width||y<r.y+8||y>=r.y+r.height)return -1;
@@ -7504,11 +7511,13 @@ void ui_loop() {
                     if(choice>=0){
                         if(meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,picker_chars[choice]))
                             queue_text_refresh();
+                        keyboard_picker_clear_pixels();
                         picker_open=false;picker_pending_key=0;
                         draw_screen();refresh(MeshInkRefreshMode::Direct);
                         handled_picker=true;
                     }else if(tap.y<m.number_top){
                         // Outside the options: dismiss; leave existing text unchanged.
+                        keyboard_picker_clear_pixels();
                         picker_open=false;picker_pending_key=0;
                         draw_screen();refresh(MeshInkRefreshMode::Direct);
                         handled_picker=true;
@@ -7520,8 +7529,12 @@ void ui_loop() {
                             keyboard_character_at(tap.x,tap.y,false,next_key)&&
                             next_key==picker_pending_key;
                         if(picker_pending_key&&!same_key)append(picker_pending_key);
+                        keyboard_picker_clear_pixels();
                         picker_open=false;picker_pending_key=0;
                         queue_text_refresh();
+                        // The normal typing path only paints the input field.
+                        // Repaint the erased history overlay after the key tap.
+                        draw_screen();refresh(MeshInkRefreshMode::Direct);
                     }
                 }
                 if(!handled_picker&&tap.hold_ms>=450){
