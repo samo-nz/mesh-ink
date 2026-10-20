@@ -83,6 +83,8 @@ assert 'if(hit_outer_row(x,y,538))' in display_tap, "standby timeout remains con
 assert 'class MeshInkProgressRouter final : public ReliableRouter' in meshtastic_runtime_source
 assert 'const int32_t delay_ms=ReliableRouter::runOnce();' in meshtastic_runtime_source
 assert 'entry_state.initialNumRetransmissions!=NUM_RELIABLE_UNICAST_ATTEMPTS-1' in meshtastic_runtime_source
+assert '(packet->from!=0&&packet->from!=self)' in meshtastic_runtime_source, "locally injected packets with from=0 must report retry progress"
+assert 'isBroadcast(packet->to)' in meshtastic_runtime_source, "broadcast retries must stay excluded"
 assert 'const uint8_t completed=total-entry_state.numRetransmissions;' in meshtastic_runtime_source
 assert 'meshink_meshtastic_worker_note_retry(packet->id,completed,total)' in meshtastic_runtime_source
 assert 'router=new(std::nothrow) MeshInkProgressRouter();' in meshtastic_runtime_source
