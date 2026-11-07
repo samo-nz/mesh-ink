@@ -29,6 +29,7 @@ board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding
 board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
 companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(encoding="utf-8")
+meshtastic_companion_source = (root / "src" / "protocol" / "meshtastic_companion.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
@@ -254,7 +255,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert firmware_version.group(1) == "3.1.1", "3.1.1 uses the stable version string, not an RC tag"
+assert firmware_version.group(1) == "3.1.2", "3.1.2 uses the stable version string, not an RC tag"
 assert "valid stable or numbered test/RC version" in testing_workflow_source, "testing CI accepts explicitly requested stable firmware versions"
 assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+|-rc\.\d+|deepsleep\d+)?", firmware_version.group(1)), "firmware version must be stable, a numbered test/RC build, or a numbered deepsleep experiment"
 
@@ -499,8 +500,19 @@ assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exi
 assert 'notice_meshink_logo(160, fb);' in companion_notice_source, "companion screen uses MeshInk splash artwork"
 assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in companion_notice_source, "companion screen labels Bluetooth mode below logo"
 assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in companion_notice_source, "companion screen uses board-provided primary-button label"
-assert "meshink_show_companion_notice();" in companion_source, "companion runtime owns splash presentation"
-assert companion_source.index("meshink_show_companion_notice();") < companion_source.index("meshink_board_begin_companion();"), "companion splash renders before board/MeshCore I2C setup"
+assert "meshink_show_companion_notice(pairing_line);" in companion_source, "MeshCore companion boot supplies actual saved pairing information"
+assert companion_source.index("meshink_show_companion_notice(pairing_line);") < companion_source.index("meshink_board_begin_companion();"), "MeshCore companion splash renders before board/radio setup"
+assert "meshink_show_companion_notice(pairing_line);" in meshtastic_companion_source, "Meshtastic companion boot supplies saved native pairing information"
+assert meshtastic_companion_source.index("meshink_show_companion_notice(pairing_line);") < meshtastic_companion_source.index("meshink_board_begin_companion();"), "Meshtastic displays pairing detail before radio/BLE startup"
+assert 'SPIFFS.open("/prefs.json","r")' in companion_source and "prefs.loadSerial(file)" in companion_source, "MeshCore PIN is inspected read-only from upstream prefs.json"
+assert 'SPIFFS.open("/new_prefs","r")' in companion_source and "legacy.seek(80)" in companion_source, "MeshCore legacy PIN is inspected without preference migration"
+assert "saved_pin?(saved_pin):(uint32_t)BLE_PIN_CODE" in companion_source.replace("saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE","saved_pin?(saved_pin):(uint32_t)BLE_PIN_CODE"), "MeshCore fallback uses its real compile-time PIN setting"
+assert companion_source.index("companion_saved_pin_label(pairing_line);") < companion_source.index("the_mesh.begin(false);"), "MeshCore reads PIN before native startup"
+assert 'SPIFFS.open("/prefs/config.proto","r")' in meshtastic_companion_source and "pb_decode(&stream,meshtastic_LocalConfig_fields,&saved)" in meshtastic_companion_source, "Meshtastic PIN uses its official persisted protobuf, not a copied NVS PIN"
+assert meshtastic_companion_source.index("companion_saved_pin_label(pairing_line);") < meshtastic_companion_source.index("meshink_meshtastic_native_begin();"), "Meshtastic reads saved PIN before native radio and BLE startup"
+assert "PairingMode_NO_PIN" in meshtastic_companion_source and "RANDOM PIN UNSUPPORTED" in meshtastic_companion_source, "Meshtastic companion notice correctly handles no-PIN and unsupported random pairing"
+assert "meshink_show_companion_notice(const char* pairing_line)" in companion_notice_source and 'notice_centred(pairing_line, 615, 3, fb, true);' in companion_notice_source, "shared companion screen displays the configured pairing PIN prominently"
+assert "pairing_snapshot" not in meshtastic_companion_source and "putUInt(kPairingSnapshotKey" not in meshtastic_companion_source, "PIN is never mirrored or persisted across the companion reboot"
 assert "BLUETOOTH COMPANION MODE" not in board_target_source and "MESHINK_LOGO_" not in board_target_source, "board package must not contain MeshInk companion presentation"
 assert "epd_set_lcd_pixel_clock_MHz(17);" in display_backend_source, "T5 display backend owns field-tested panel clock"
 assert "meshink_display_set_pixel_clock_mhz" not in source and "meshink_display_set_pixel_clock_mhz" not in companion_notice_source, "application code must not select hardware display clock"
@@ -510,7 +522,7 @@ assert "meshink_touch_set_orientation(orientation);" in source, "UI orientation 
 assert "const int16_t x=raw_y" not in source, "landscape keyboard handler must receive logical touch coordinates"
 assert "TOUCH_PORTRAIT_WIDTH-1-raw_x" in touch_backend_source, "T5 touch backend owns landscape coordinate transform"
 assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in companion_notice_source, "companion screen shows exit duration"
-assert "{'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}}" in companion_notice_source, "companion tiny font includes firmware-version hyphen"
+assert "{'-',{0,0,0,31,0,0,0}}" in companion_notice_source and "{':',{0,6,6,0,6,6,0}}" in companion_notice_source, "companion tiny font includes firmware hyphen and pairing PIN colon"
 assert "if(key>='a'&&key<='z')key=(char)(key-'a'+'A');" in companion_notice_source, "companion tiny font renders lowercase firmware-version letters"
 assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in companion_notice_source, "legacy MESHCORE companion splash removed"
 
