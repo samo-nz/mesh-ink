@@ -145,10 +145,10 @@ void meshink_show_companion_notice(const char* pairing_line) {
         // Place the active protocol artwork beneath it, above the mode label.
         notice_protocol_logo(418, 90, fb);
         notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);
-        // Draw protocol pairing state handed off from the pre-reboot
-        // configuration. The panel remains visible after BLE starts.
+        // Every protocol inspects its own saved pairing configuration at
+        // this boot. Keep that detail visible while Bluetooth runs.
         if(pairing_line&&pairing_line[0])
-            notice_centred(pairing_line, 615, 2, fb, true);
+            notice_centred(pairing_line, 615, 3, fb, true);
         char hold_button[32];
         snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());
         notice_centred(hold_button, 665, 2, fb, true);
