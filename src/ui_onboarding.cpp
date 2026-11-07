@@ -2406,6 +2406,23 @@ static void draw_companion_confirm() {
     const MeshInkUiRect start=meshink_confirm_right_rect(layout,500);
     ui_centred("BLUETOOTH",ui_y(120),5,0,true);ui_centred("COMPANION MODE",ui_y(180),4,0,true);
     ui_centred("THE LOCAL UI WILL CLOSE",ui_y(300),2);ui_centred("UNTIL THE DEVICE RESTARTS",ui_y(335),2);
+    // This comes from the running protocol's native configuration, never a
+    // MeshInk default or newly generated passkey. No cross-core NodeDB read.
+    MeshInkCompanionPairingInfo pairing{};
+    if(mesh_protocol_companion_pairing_info(pairing)){
+        if(pairing.mode==MeshInkCompanionPairingMode::FixedPin){
+            char pin[7];
+            snprintf(pin,sizeof(pin),"%06lu",(unsigned long)pairing.pin);
+            ui_centred("BLUETOOTH PIN AT REBOOT",ui_y(385),2,0,true);
+            ui_centred(pin,ui_y(414),5,0,true);
+        }else if(pairing.mode==MeshInkCompanionPairingMode::NoPin){
+            ui_centred("NO BLUETOOTH PIN REQUIRED",ui_y(414),2,0,true);
+        }else if(pairing.mode==MeshInkCompanionPairingMode::Unsupported){
+            ui_centred("RANDOM PIN UNSUPPORTED",ui_y(414),2,0,true);
+        }
+    }else if(mesh_protocol_descriptor().id==2){
+        ui_centred("BLUETOOTH PIN UNAVAILABLE",ui_y(414),2,0,true);
+    }
     ui_action_button("CANCEL",cancel,false);
     ui_action_button("START",start,true);
 }
@@ -6542,7 +6559,16 @@ static void handle_tap(int16_t x,int16_t y) {
     if(screen==Screen::CompanionConfirm){
         const MeshInkUiLayout& layout=portrait_layout();
         if(hit(x,y,meshink_confirm_left_rect(layout,500))){screen=setup_complete?Screen::More:Screen::Welcome;draw_screen();refresh(MeshInkRefreshMode::Direct);return;}
-        if(hit(x,y,meshink_confirm_right_rect(layout,500))){T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");mesh_protocol_request_companion_mode();return;}
+        if(hit(x,y,meshink_confirm_right_rect(layout,500))){
+            MeshInkCompanionPairingInfo pairing{};
+            if(mesh_protocol_companion_pairing_info(pairing)&&
+               pairing.mode==MeshInkCompanionPairingMode::Unsupported){
+                show_toast("SET A FIXED PIN IN MESHTASTIC");
+                draw_screen();refresh(MeshInkRefreshMode::Direct);return;
+            }
+            T5_DEBUGLN(T5_LOG_UI,"[T5-UI] companion mode confirmed");
+            mesh_protocol_request_companion_mode();return;
+        }
         return;
     }
     if(screen==Screen::ShutdownConfirm){
