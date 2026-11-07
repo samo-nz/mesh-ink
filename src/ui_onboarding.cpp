@@ -4983,7 +4983,7 @@ static void draw_low_battery_notice(const MeshInkPowerCriticalState& critical) {
 static void paint_low_battery_shutdown(
         const MeshInkPowerCriticalState& critical,const char* source) {
     if(!fb){
-        Serial.printf("[T5-SHUTDOWN] low-battery EPD unavailable source=%s\\n",
+        Serial.printf("[T5-SHUTDOWN] low-battery EPD unavailable source=%s\n",
                       source?source:"unknown");
         return;
     }
@@ -5001,17 +5001,17 @@ static void paint_low_battery_shutdown(
         &display,MeshInkRefreshMode::Gray16,
         (int)meshink_display_ambient_temperature());
     meshink_display_poweroff();
-    Serial.printf("[T5-SHUTDOWN] low-battery EPD source=%s clear-before-draw=1 mode=GC16 result=%d\\n",
+    Serial.printf("[T5-SHUTDOWN] low-battery EPD source=%s clear-before-draw=1 mode=GC16 result=%d\n",
                   source?source:"unknown",(int)result);
 }
 
 [[noreturn]] void ui_minimal_low_battery_shutdown(
         const MeshInkPowerCriticalState& critical,const char* source) {
     if(critical.battery_mv_valid)
-        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; minimal low-battery shutdown\\n",
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; minimal low-battery shutdown\n",
                       (unsigned)critical.battery_mv,source?source:"unknown");
     else
-        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\\n",
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\n",
                       source?source:"unknown");
 
     // Cold boot has no display session, but a retained-radio message alert
@@ -5046,10 +5046,10 @@ static void paint_low_battery_shutdown(
 
 static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
     if(critical.battery_mv_valid)
-        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; entering ship mode\\n",
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; entering ship mode\n",
                       (unsigned)critical.battery_mv,source?source:"unknown");
     else
-        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; entering ship mode\\n",
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; entering ship mode\n",
                       source?source:"unknown");
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
     text_refresh_pending=false;message_alert_active=false;
