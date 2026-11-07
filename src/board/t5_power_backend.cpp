@@ -51,6 +51,33 @@ bool gauge_word(uint8_t command,uint16_t& result) {
     return true;
 }
 
+// Low-SOC calibration evidence only: no gauge writes, NVS state, timer task
+// or heap allocation. Read at most once per minute while discharging; include
+// one last sample when the voltage cutoff is confirmed. BQ27220: 0x2C SOC,
+// 0x10 remaining mAh, 0x12 full-charge mAh, 0x14 signed average current.
+void log_low_soc_diagnostic(uint16_t voltage_mv,bool critical) {
+    static uint32_t last_at=0;
+    const uint32_t now=millis();
+    if(!critical&&last_at&&now-last_at<60000UL)return;
+    last_at=now?now:1;
+    uint16_t soc=0;
+    if(!gauge_word(0x2C,soc)) {
+        if(critical)Serial.println("[T5-BATT] critical SOC read unavailable");
+        return;
+    }
+    if(soc>10&&!critical)return;
+    uint16_t remaining=0,full=0,current_raw=0;
+    if(gauge_word(0x10,remaining)&&gauge_word(0x12,full)&&
+       gauge_word(0x14,current_raw)){
+        Serial.printf("[T5-BATT] mv=%u soc=%u%% remaining=%umAh full=%umAh avg_current=%dmA critical=%u\n",
+                      (unsigned)voltage_mv,(unsigned)soc,(unsigned)remaining,
+                      (unsigned)full,(int)(int16_t)current_raw,critical?1U:0U);
+    }else{
+        Serial.printf("[T5-BATT] mv=%u soc=%u%% detail=unavailable critical=%u\n",
+                      (unsigned)voltage_mv,(unsigned)soc,critical?1U:0U);
+    }
+}
+
 bool primary_charger_byte(uint8_t reg,uint8_t& value) {
     return read_bytes(BQ25896_PRIMARY_ADDR,reg,&value,1);
 }
@@ -429,6 +456,7 @@ MeshInkPowerSleepCheck meshink_power_deep_sleep_check(MeshInkPowerCriticalState&
                   external_stable?"EXTERNAL":(low?"CRITICAL":"SAFE"));
 
     if(external_stable)return MeshInkPowerSleepCheck::ExternalPower;
+    if(low)log_low_soc_diagnostic(state.battery_mv,true);
     state.critical=low;
     return low?MeshInkPowerSleepCheck::Critical:MeshInkPowerSleepCheck::Safe;
 }
@@ -460,10 +488,13 @@ bool meshink_power_poll_critical(MeshInkPowerCriticalState& state) {
 
     if(millivolts>=T5_CRITICAL_BATTERY_MV) {
         low_samples=0;
+        log_low_soc_diagnostic(millivolts,false);
         return false;
     }
     if(low_samples<T5_CRITICAL_SAMPLES)++low_samples;
-    if(low_samples<T5_CRITICAL_SAMPLES)return false;
+    const bool confirmed=low_samples>=T5_CRITICAL_SAMPLES;
+    log_low_soc_diagnostic(millivolts,confirmed);
+    if(!confirmed)return false;
 
     state.critical=true;
     return true;

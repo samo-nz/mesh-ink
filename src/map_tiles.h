@@ -3,9 +3,10 @@
 
 // "tiles" counts successfully decoded screen tiles. "native" counts tiles
 // found at the requested zoom; the remainder are upscaled parent tiles.
-// "missing" counts screen tiles without any supported parent on the SD card.
+// "missing" counts screen tiles without any supported parent on SD or in cache.
 struct MapRenderResult {
     bool sd_ready;
+    bool io_failed; // partial I/O failure: display cached pixels, don't cache partial viewport
     uint16_t tiles;
     uint16_t reused;
     uint16_t native;
@@ -40,13 +41,13 @@ struct MapRenderResult {
 MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,int height,
                                  double latitude,double longitude,uint8_t zoom);
 
-// Probes a removable card and retries a failed mount without rebooting.
-// Call before reusing a cached map framebuffer or periodically while on Maps.
+// Explicit on-demand SD mount/readiness check (also used by screenshots).
+// Rendering from cached tiles does not call this or touch the SD bus.
 bool map_tiles_media_ready();
 // During the boot splash, mount/index map storage without decoding tiles.
 // This warms zoom-folder/archive metadata so the first Maps interaction does
 // not pay the one-time FAT/PMTiles discovery cost.
 void map_tiles_warm_storage();
-// Changes whenever the old card is unmounted or a new mount succeeds.
-// UI must discard cached map images when this value changes.
+// Changes only when a new SD mount succeeds. The UI preserves the last
+// rendered viewport across removal, while decoded source tiles remain in RAM.
 uint32_t map_tiles_media_epoch();

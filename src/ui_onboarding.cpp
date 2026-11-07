@@ -521,7 +521,8 @@ static bool map_cache_hit() {
 }
 
 static const char* map_source_badge(const MapRenderResult& result) {
-    if(!result.sd_ready||!result.tiles)return "---";
+    if(!result.tiles)return "---";
+    if(!result.sd_ready)return "RAM";
     // Prefer the requested/native zoom source. Parent fallbacks often represent
     // intentionally omitted blank/ocean tiles and should not contaminate the
     // badge for an otherwise-native viewport.
@@ -2907,17 +2908,17 @@ static void pan_map_by_pixels(int dx,int dy) {
 }
 static void draw_maps() {
     const MeshInkUiLayout& layout=portrait_layout();
-    const bool media_ready=map_tiles_media_ready();
+    // No SD probe just to redraw an already cached viewport. The tile
+    // renderer checks/mounts SD only when it needs an uncached source.
     const uint32_t media_epoch=map_tiles_media_epoch();
-    if(!media_ready||map_base_media_epoch!=media_epoch) {
+    if(map_base_media_epoch!=media_epoch) {
         map_base_valid=false;
         map_base_media_epoch=media_epoch;
     }
     MapRenderResult result{};
-    result.sd_ready=media_ready;
     result.min_source_zoom=map_zoom;
     result.max_source_zoom=map_zoom;
-    if(media_ready&&map_cache_hit()) {
+    if(map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar();
@@ -2926,13 +2927,13 @@ static void draw_maps() {
         draw_status_bar();
         result=map_tiles_render(fb,0,map_top(),layout.width,map_bottom()-map_top(),
                                 map_latitude,map_longitude,map_zoom);
-        if(!result.sd_ready||map_base_media_epoch!=map_tiles_media_epoch()) {
+        if(map_base_media_epoch!=map_tiles_media_epoch()) {
             map_base_valid=false;
             map_base_media_epoch=map_tiles_media_epoch();
-            if(!result.sd_ready)
-                meshink_display_fill_rect({0,map_top(),layout.width,map_bottom()-map_top()},0xFF,fb);
         }
-        if(result.sd_ready&&result.tiles) {
+        // Preserve any surviving cached tiles even when SD is removed.
+        // Never cache a partially failed SD render as a complete viewport.
+        if(result.sd_ready&&result.tiles&&!result.io_failed) {
             const size_t bytes=meshink_display_framebuffer_bytes();
             if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
             if(map_base_cache) {
@@ -2992,9 +2993,15 @@ static void draw_maps() {
     line(ui_x(26)+pixels,ui_y(866),ui_x(26)+pixels,ui_y(878));
     ui_text(scale,ui_x(28),ui_y(850),2,0,true);
     if(!result.sd_ready){
-        const MeshInkUiRect warning=ui_rect(80,300,380,80);
-        ui_section_card(warning);
-        ui_centred("SD card / maps unavailable",ui_y(328),2,0,true);
+        if(result.tiles){
+            const MeshInkUiRect offline=ui_rect(18,774,300,30);
+            meshink_display_fill_rect({offline.x,offline.y,offline.width,offline.height},0xFF,fb);
+            ui_text("SD OFFLINE - CACHED TILES",ui_x(22),ui_y(778),2,0,true);
+        }else{
+            const MeshInkUiRect warning=ui_rect(80,300,380,80);
+            ui_section_card(warning);
+            ui_centred("SD card / maps unavailable",ui_y(328),2,0,true);
+        }
     }
     draw_bottom_nav(2);
 }
@@ -4363,7 +4370,10 @@ static void draw_branding_stack(int top,int bottom,int gap,int protocol_height,i
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);
-    if(!deep_sleep_standby)draw_status_bar();
+    // The saved preference is shared across protocols. Meshtastic does not
+    // support retained-radio deep sleep, so normal standby keeps its bar.
+    if(!(deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby()))
+        draw_status_bar();
 
     const bool has_direct=status_unread>0;
     const bool has_channel=status_channel_unread>0;
@@ -4948,6 +4958,53 @@ static void request_hardware_shutdown() {
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
 }
 
+// One low-battery screen for runtime, cold boot and retained/headless wake.
+// This is a terminal display path: no UI layers, protocol callbacks or heap
+// allocation. The EPD retains its previous *physical* image even after a
+// fresh framebuffer is filled white. Use the known-good boot-splash sequence
+// to prevent old text/boot branding from appearing under the shutdown notice.
+static void draw_low_battery_notice(const MeshInkPowerCriticalState& critical) {
+    meshink_display_set_all_white(&display);
+    ui_centred("LOW BATTERY",ui_y(230),6,0,true);
+    ui_centred("POWERED DOWN",ui_y(340),5,0,true);
+    ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
+    if(critical.battery_mv_valid){
+        char voltage[20];
+        snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
+                 (unsigned)(critical.battery_mv/1000U),
+                 (unsigned)((critical.battery_mv%1000U)/10U));
+        ui_centred(voltage,ui_y(650),2,0,true);
+    }else{
+        ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
+    }
+    ui_centred(UI_VERSION,ui_y(900),2,0,true);
+}
+
+static void paint_low_battery_shutdown(
+        const MeshInkPowerCriticalState& critical,const char* source) {
+    if(!fb){
+        Serial.printf("[T5-SHUTDOWN] low-battery EPD unavailable source=%s\n",
+                      source?source:"unknown");
+        return;
+    }
+    // Exactly as in paint_cold_boot_frame(): first erase the retained panel,
+    // then invalidate EPDiy's previous-frame comparator and commit GC16.
+    // Both steps are synchronous; ship mode is requested only afterwards.
+    meshink_display_poweron();
+    meshink_display_clear();
+    meshink_display_poweroff();
+
+    draw_low_battery_notice(critical);
+    meshink_display_invalidate_previous(&display);
+    meshink_display_poweron();
+    const MeshInkDisplayResult result=meshink_display_update_screen(
+        &display,MeshInkRefreshMode::Gray16,
+        (int)meshink_display_ambient_temperature());
+    meshink_display_poweroff();
+    Serial.printf("[T5-SHUTDOWN] low-battery EPD source=%s clear-before-draw=1 mode=GC16 result=%d\n",
+                  source?source:"unknown",(int)result);
+}
+
 [[noreturn]] void ui_minimal_low_battery_shutdown(
         const MeshInkPowerCriticalState& critical,const char* source) {
     if(critical.battery_mv_valid)
@@ -4957,52 +5014,34 @@ static void request_hardware_shutdown() {
         Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\n",
                       source?source:"unknown");
 
-    // No touch, storage, GPS or protocol startup here. Bring up only the
-    // frontlight pin (kept at zero) and EPD long enough to leave persistent
-    // user guidance before board-level ship mode removes battery power.
+    // Cold boot has no display session, but a retained-radio message alert
+    // may already own a live EPDiy session in this same process. EPDiy's
+    // epd_hl_init() is one-shot; never initialize it again in that case.
     meshink_power_frontlight_begin();
     meshink_power_frontlight_set(0);
-    meshink_display_init();
-    meshink_display_set_orientation(MeshInkOrientation::Portrait);
-    display=meshink_display_state_init();
-    fb=meshink_display_framebuffer(&display);
-
-    if(fb){
-        meshink_display_set_all_white(&display);
-        ui_centred("LOW BATTERY",ui_y(230),6,0,true);
-        ui_centred("POWERED DOWN",ui_y(340),5,0,true);
-        ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
-        if(critical.battery_mv_valid){
-            char voltage[20];
-            snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
-                     (unsigned)(critical.battery_mv/1000U),
-                     (unsigned)((critical.battery_mv%1000U)/10U));
-            ui_centred(voltage,ui_y(650),2,0,true);
-        }else{
-            ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
-        }
-        ui_centred(UI_VERSION,ui_y(900),2,0,true);
-        meshink_display_poweron();
-        const MeshInkDisplayResult result=meshink_display_update_screen(
-            &display,MeshInkRefreshMode::FastGray16,
-            (int)meshink_display_ambient_temperature());
-        meshink_display_poweroff();
-        Serial.printf("[T5-DEEPSLEEP] minimal low-battery EPD result=%d\n",(int)result);
+    const bool reuse_display=display_session_active;
+    if(!reuse_display){
+        meshink_display_init();
+        display_session_active=true;
+        meshink_display_set_orientation(MeshInkOrientation::Portrait);
+        display=meshink_display_state_init();
+        fb=meshink_display_framebuffer(&display);
     }else{
-        meshink_display_poweroff();
-        Serial.println("[T5-DEEPSLEEP] minimal low-battery framebuffer unavailable");
+        Serial.println("[T5-SHUTDOWN] low-battery reusing initialized EPDiy session");
+        meshink_display_set_orientation(MeshInkOrientation::Portrait);
     }
+    paint_low_battery_shutdown(critical,source);
 
-    meshink_display_release_state(&display);
-    fb=nullptr;
-    meshink_display_deinit();
-
-    // EPDiy v7 teardown deletes the shared I2C driver. Re-establish only the
-    // minimal bus before commanding board-level battery ship mode; otherwise the
-    // charger write would fail and low-battery shutdown would degrade to the
-    // ESP32-only deep-sleep fallback.
-    if(!meshink_power_begin_minimal_bus())
-        Serial.println("[T5-ERROR] low-battery ship-mode I2C restart failed");
+    if(!reuse_display){
+        // EPDiy v7 teardown deletes the shared I2C driver. Re-establish
+        // only the minimal bus before the board-owned battery disconnect.
+        meshink_display_release_state(&display);
+        fb=nullptr;
+        meshink_display_deinit();
+        display_session_active=false;
+        if(!meshink_power_begin_minimal_bus())
+            Serial.println("[T5-ERROR] low-battery ship-mode I2C restart failed");
+    } // Existing headless/interactive sessions retain their working I2C bus.
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
 }
 
@@ -5016,22 +5055,10 @@ static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,
     keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
     text_refresh_pending=false;message_alert_active=false;
     frontlight_deadline=0;frontlight_drive(false);
-
-    meshink_display_set_all_white(&display);
-    ui_centred("LOW BATTERY",ui_y(230),6,0,true);
-    ui_centred("POWERED DOWN",ui_y(340),5,0,true);
-    ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
-    if(critical.battery_mv_valid) {
-        char voltage[20];
-        snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
-                 (unsigned)(critical.battery_mv/1000U),
-                 (unsigned)((critical.battery_mv%1000U)/10U));
-        ui_centred(voltage,ui_y(650),2,0,true);
-    } else {
-        ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
-    }
-    ui_centred(UI_VERSION,ui_y(900),2,0,true);
-    refresh(MeshInkRefreshMode::FastGray16,false);
+    // The active UI can have a landscape keyboard or Maps displayed.
+    // Reorient and clear the physical panel before painting the terminal view.
+    set_ui_orientation(MeshInkOrientation::Portrait);
+    paint_low_battery_shutdown(critical,source);
 
     set_touch_power(false);
     if(mesh_is_ready) {
@@ -7326,20 +7353,6 @@ void ui_loop() {
        (screen!=Screen::Maps||standby_active||
         millis()-map_taps.last_at>=meshink_map_gestures::TAP_WINDOW_MS))
         finish_map_tap_sequence();
-    // Hot card removal/insertion is checked even when the user is not
-    // touching Maps. The generation changes on a failed read/remount, so
-    // discard the old viewport and show the unavailable or new map promptly.
-    static uint32_t last_map_media_poll=0;
-    if(screen==Screen::Maps&&!standby_active&&!message_alert_active&&
-       millis()-last_map_media_poll>=3000) {
-        last_map_media_poll=millis();
-        const uint32_t previous_epoch=map_tiles_media_epoch();
-        map_tiles_media_ready();
-        if(map_tiles_media_epoch()!=previous_epoch) {
-            map_base_valid=false;
-            load_map_with_feedback(true);
-        }
-    }
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
     if(setup_complete&&!setup_is_screen(screen)&&!standby_active&&standby_timeout&&
        millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");

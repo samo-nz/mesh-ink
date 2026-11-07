@@ -7,10 +7,12 @@ boot=get("src/unified_main.cpp")
 ui=get("src/ui_onboarding.cpp")
 format=get("src/backup_format.h")
 storage=get("src/board/t5_storage_backend.cpp")
-assert "if(root&&root.isDirectory())" in storage
-assert "if(sd_started){SD.end();sd_started=false;}" in storage
-assert storage.index("if(root&&root.isDirectory())") < storage.index("if(sd_started){SD.end();sd_started=false;}")
-assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage
+mount=storage.split("bool meshink_storage_begin()",1)[1].split("bool meshink_storage_media_ready()",1)[0]
+assert "if(sd_started){" in mount, "only probe an SD VFS after it was mounted"
+assert "const bool ready=root&&root.isDirectory();" in mount
+assert mount.index("if(ready)return true;") < mount.index("SD.end();"), "reuse mounted SD before unmounting"
+assert mount.index("if(sd_started){") < mount.index("SD.end();"), "never uninit SD before first successful mount"
+assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in mount
 # Factory-new SPIFFS is the ONLY time the first-format notice may appear.
 # Keep erase verification authoritative: no mount failure may imply a wipe.
 assert 'if(SPIFFS.begin(false))return true;' in storage

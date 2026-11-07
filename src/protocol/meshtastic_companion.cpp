@@ -9,6 +9,7 @@
 #include "../../lib/Meshtastic/src/modules/TextMessageModule.h"
 #include "../../lib/Meshtastic/src/Observer.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
+#include "../../lib/Meshtastic/src/mesh/generated/meshtastic/localonly.pb.h"
 #include "../companion_notice.h"
 #include "../backup_restore.h"
 #include "../message_store.h"
@@ -29,6 +30,7 @@
 #include <Preferences.h>
 #include <SPIFFS.h>
 #include <esp_random.h>
+#include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <atomic>
@@ -75,6 +77,11 @@ char ble_name[30]{}; // 29-byte maximum scan-response name (incl. AD overhead)
 char last_native_timezone[65]{};
 uint32_t next_timezone_check=0;
 bool journal_ready=false;
+// Session-local passkey is chosen before drawing the persistent e-paper
+// notice and is then used *verbatim* by Bluedroid for every pairing request.
+// This never changes the official saved Meshtastic Bluetooth configuration.
+uint32_t companion_session_pin=0;
+bool companion_pin_ready=false;
 
 // Record live Meshtastic text messages in MeshInk's Meshtastic v4 journal.
 //
@@ -276,7 +283,7 @@ class PairingCallbacks final : public BLESecurityCallbacks {
   public:
     uint32_t onPassKeyRequest() override {
         Serial.println("[MT-BLE] Pairing: passkey requested");
-        return config.bluetooth.fixed_pin;
+        return companion_session_pin;
     }
     void onPassKeyNotify(uint32_t) override {
         Serial.println("[MT-BLE] Pairing: enter configured fixed PIN on phone");
@@ -303,11 +310,8 @@ PairingCallbacks pairing_callbacks;
 BLE2902 from_num_cccd;
 
 bool start_ble() {
-    // The official config is the single source of truth. A static e-paper
-    // notice cannot display a new randomly generated passkey for each pairing;
-    // require the official fixed-PIN or no-PIN setting, never silently alter it.
-    if (config.bluetooth.mode == meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN) {
-        Serial.println("[MT-BLE] Random PIN requires a dynamic pairing display; set fixed PIN in Meshtastic settings first");
+    if(!companion_pin_ready || companion_session_pin>999999U){
+        Serial.println("[MT-BLE] ERROR: no valid display-confirmed companion PIN");
         return false;
     }
     uint8_t mac[6]{};
@@ -318,20 +322,18 @@ bool start_ble() {
 
     BLEDevice::init(ble_name);
     BLEDevice::setMTU(517);
-    const bool pin_required =
-        config.bluetooth.mode != meshtastic_Config_BluetoothConfig_PairingMode_NO_PIN;
-    if (pin_required) {
-        BLESecurity security;
-        // ESP32 Arduino's setStaticPIN() internally changes authentication
-        // mode to SC_ONLY. Install the PIN *first*, then restore MITM+bonding.
-        // Otherwise the encrypted-MITM GATT permissions can never be met.
-        security.setStaticPIN(config.bluetooth.fixed_pin);
-        security.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
-        security.setCapability(ESP_IO_CAP_OUT);
-        security.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-        security.setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-        BLEDevice::setSecurityCallbacks(&pairing_callbacks);
-    }
+    // All companion sessions require the passkey shown on the e-paper.
+    // In native RANDOM_PIN and NO_PIN modes this is a fresh boot-only pin;
+    // for FIXED_PIN it is the stored six-digit value. No config is rewritten.
+    BLESecurity security;
+    // setStaticPIN resets auth mode to SC_ONLY in Arduino 2.x. Set the PIN
+    // first, then restore MITM + bonding and matching GATT permissions.
+    security.setStaticPIN(companion_session_pin);
+    security.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+    security.setCapability(ESP_IO_CAP_OUT);
+    security.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    security.setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    BLEDevice::setSecurityCallbacks(&pairing_callbacks);
     server = BLEDevice::createServer();
     if (!server) return false;
     server->setCallbacks(&server_callbacks);
@@ -347,11 +349,9 @@ bool start_ble() {
     from_num = service->createCharacteristic(FROMNUM_UUID,
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     if (!write_ch || !read_ch || !from_num) return false;
-    if (pin_required) {
-        write_ch->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
-        read_ch->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
-        from_num->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
-    }
+    write_ch->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+    read_ch->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+    from_num->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
     write_ch->setCallbacks(&to_radio_callbacks);
     read_ch->setCallbacks(&from_radio_callbacks);
     from_num->addDescriptor(&from_num_cccd);
@@ -367,8 +367,8 @@ bool start_ble() {
     adv->setMaxPreferred(0x12);
     adv->start();
 
-    Serial.printf("[MT-BLE] advertising %s (upstream PhoneAPI, %s)\n", ble_name,
-                  pin_required ? "fixed-PIN pairing" : "no-PIN pairing");
+    Serial.printf("[MT-BLE] advertising %s (upstream PhoneAPI, displayed boot PIN required)\n",
+                  ble_name);
     return true;
 }
 
@@ -441,6 +441,53 @@ void snapshot_gps() {
 }
 } // namespace
 
+// Read-only inspection of the same official LocalConfig protobuf that the
+// native NodeDB will load later in this boot. No copy across resets, NVS
+// mirror, fake default, radio startup, or modification of Meshtastic settings.
+static bool pairing_config_stream_read(pb_istream_t* stream,pb_byte_t* buffer,size_t count){
+    auto* file=static_cast<File*>(stream->state);
+    if(!file)return false;
+    if(buffer)return file->read(buffer,count)==count;
+    uint8_t skip[32];
+    while(count){
+        const size_t chunk=std::min(count,sizeof(skip));
+        if(file->read(skip,chunk)!=chunk)return false;
+        count-=chunk;
+    }
+    return true;
+}
+
+static void companion_saved_pin_label(char label[40]){
+    // A headless companion cannot repaint a new code for each GATT pairing.
+    // Generate once per boot for RANDOM_PIN and NO_PIN configurations; if a
+    // valid fixed PIN exists, honour it instead. The exact chosen value is
+    // the one applied to Bluedroid after the native radio has started.
+    companion_session_pin=100000U+esp_random()%900000U;
+    companion_pin_ready=true;
+    File file=SPIFFS.open("/prefs/config.proto","r");
+    if(file){
+        const size_t length=file.size();
+        if(length>0 && length<=meshtastic_LocalConfig_size){
+            // The official LocalConfig has large non-Bluetooth fields. Decode
+            // in disposable PSRAM, not on the small Arduino loop stack.
+            auto* saved=static_cast<meshtastic_LocalConfig*>(
+                heap_caps_calloc(1,sizeof(meshtastic_LocalConfig),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+            if(saved){
+                pb_istream_t stream={&pairing_config_stream_read,&file,length};
+                if(pb_decode(&stream,meshtastic_LocalConfig_fields,saved) &&
+                   saved->version>=DEVICESTATE_MIN_VER && saved->has_bluetooth &&
+                   saved->bluetooth.mode==meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN &&
+                   saved->bluetooth.fixed_pin<=999999U){
+                    companion_session_pin=saved->bluetooth.fixed_pin;
+                }
+                heap_caps_free(saved);
+            }else Serial.println("[MT-BLE] low memory reading PIN; using generated boot PIN");
+        }
+        file.close();
+    }
+    snprintf(label,40,"BLUETOOTH PIN: %06lu",(unsigned long)companion_session_pin);
+}
+
 bool meshink_meshtastic_companion_active() { return active; }
 
 void meshink_meshtastic_request_companion() {
@@ -470,14 +517,20 @@ void meshink_meshtastic_companion_setup() {
     ready = false;
     shutting_down.store(false, std::memory_order_release);
 
-    // Match MeshCore: show one e-paper image and release its buffers and
-    // shared GPIOs before the native SX1262 driver or Bluetooth starts.
-    meshink_show_companion_notice();
-    meshink_board_begin_companion();
-    if (!meshink_storage_mount_internal_safe() || !meshink_backup_recover_pending()) {
+    // Mount internal flash only to inspect the saved official PIN before
+    // drawing. EPDiy still releases its overlapping radio pins before the
+    // SX1262 and Bluedroid are initialized. No native engine starts early.
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
+    // A pending restore can roll back config.proto. Inspect the final
+    // recovered bytes, never a PIN from a file later replaced by recovery.
+    if(!storage_mounted || !meshink_backup_recover_pending()){
         Serial.println("[MT-BLE] storage unavailable or interrupted restore; refusing headless start");
         return;
     }
+    char pairing_line[40]{};
+    companion_saved_pin_label(pairing_line);
+    meshink_show_companion_notice(pairing_line);
+    meshink_board_begin_companion();
     journal_ready=meshink_message_store().begin();
     if(!journal_ready)
         Serial.println("[MT-BLE] ERROR: MeshInk message journal unavailable");

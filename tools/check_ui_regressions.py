@@ -29,6 +29,7 @@ board_target_source = (root / "src" / "board" / "target.cpp").read_text(encoding
 board_target_header_source = (root / "src" / "board" / "target.h").read_text(encoding="utf-8")
 companion_source = (root / "src" / "companion_runtime.cpp").read_text(encoding="utf-8")
 companion_notice_source = (root / "src" / "companion_notice.cpp").read_text(encoding="utf-8")
+meshtastic_companion_source = (root / "src" / "protocol" / "meshtastic_companion.cpp").read_text(encoding="utf-8")
 ui_layout_source = (root / "src" / "ui_layout.h").read_text(encoding="utf-8")
 display_backend_source = (root / "src" / "board" / "t5_display_backend.h").read_text(encoding="utf-8")
 display_types_source = (root / "src" / "hardware" / "display_types.h").read_text(encoding="utf-8")
@@ -254,6 +255,8 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
+assert firmware_version.group(1) == "3.1.2", "3.1.2 uses the stable version string, not an RC tag"
+assert "valid stable or numbered test/RC version" in testing_workflow_source, "testing CI accepts explicitly requested stable firmware versions"
 assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+|-rc\.\d+|deepsleep\d+)?", firmware_version.group(1)), "firmware version must be stable, a numbered test/RC build, or a numbered deepsleep experiment"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
@@ -364,7 +367,7 @@ assert "gpio_uninstall_isr_service();" not in native_attach_body, "native driver
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
 assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
 assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
-assert "if(!deep_sleep_standby)draw_status_bar();" in source, "deep-sleep standby omits the normal status bar"
+assert "if(!(deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby()))" in source, "Meshtastic normal standby always preserves its status bar, even with retained MeshCore preference"
 assert '"DEEP SLEEP STANDBY"' in source, "deep-sleep standby visibly identifies its power state"
 assert "esp_sleep_enable_timer_wakeup" in board_target_source and "60ULL*60ULL*1000000ULL" in board_target_source, "deep-sleep standby has an hourly battery timer wake"
 assert "meshink_board_return_to_retained_deep_sleep" in unified_source, "timer and short-button wakes preserve retained SX1262 state when re-sleeping"
@@ -439,6 +442,18 @@ assert "meshink_power_low_battery_latched" not in power_backend_source and "low_
 assert "ui_minimal_low_battery_shutdown" in source and "minimal low-battery shutdown" in source, "critical deep-sleep battery path uses minimal persistent EPD notice"
 minimal_low_battery_body=source[source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"):source.index("static void critical_battery_shutdown",source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"))]
 assert minimal_low_battery_body.index("meshink_display_deinit();") < minimal_low_battery_body.index("meshink_power_begin_minimal_bus()") < minimal_low_battery_body.index("meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery)"), "minimal low-battery path restores shared I2C after EPDiy teardown before BATFET ship command"
+assert "const bool reuse_display=display_session_active;" in minimal_low_battery_body, "minimal low-battery path cannot double-init active EPDiy display"
+assert "if(!reuse_display){" in minimal_low_battery_body and "display=meshink_display_state_init();" in minimal_low_battery_body, "cold-boot-only path owns its new framebuffer"
+assert "paint_low_battery_shutdown(critical,source);" in minimal_low_battery_body, "headless low-battery and runtime share the reliable physical-clear path"
+shutdown_painter=source.split("static void paint_low_battery_shutdown(",1)[1].split("[[noreturn]] void ui_minimal_low_battery_shutdown",1)[0]
+assert shutdown_painter.index("meshink_display_clear();") < shutdown_painter.index("draw_low_battery_notice(critical);") < shutdown_painter.index("meshink_display_invalidate_previous(&display);") < shutdown_painter.index("meshink_display_update_screen("), "physical e-paper is cleared and previous-frame invalidated before final low battery notice"
+assert "MeshInkRefreshMode::Gray16" in shutdown_painter and "clear-before-draw=1" in shutdown_painter, "terminal low-battery notice uses full GC16, not fragile GL16"
+runtime_low_battery=source.split("static void critical_battery_shutdown(",1)[1].split("static void service_critical_battery()",1)[0]
+assert 'set_ui_orientation(MeshInkOrientation::Portrait);' in runtime_low_battery, "landscape keyboard can't rotate the terminal low-battery message"
+assert "paint_low_battery_shutdown(critical,source);" in runtime_low_battery, "runtime low-battery uses same physical-clear path"
+assert "T5_CRITICAL_BATTERY_MV = 3300" in power_backend_source, "3.30 V safety threshold stays unchanged pending discharge data"
+assert "log_low_soc_diagnostic(millivolts,confirmed);" in power_backend_source, "3-sample shutdown threshold records final BQ27220 diagnostic"
+assert "gauge_word(0x10,remaining)" in power_backend_source and "gauge_word(0x12,full)" in power_backend_source and "gauge_word(0x14,current_raw)" in power_backend_source, "low SOC logging includes capacity and current without allocations"
 assert unified_source.count('meshink_wireless_force_local_radios_off()') == 4, "local wireless policy is enforced for normal pre/post MeshCore startup plus retained radio/button wake paths"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
@@ -485,8 +500,25 @@ assert "gpio_uninstall_isr_service();" not in release_body, "frontlight-only exi
 assert 'notice_meshink_logo(160, fb);' in companion_notice_source, "companion screen uses MeshInk splash artwork"
 assert 'notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);' in companion_notice_source, "companion screen labels Bluetooth mode below logo"
 assert 'snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());' in companion_notice_source, "companion screen uses board-provided primary-button label"
-assert "meshink_show_companion_notice();" in companion_source, "companion runtime owns splash presentation"
-assert companion_source.index("meshink_show_companion_notice();") < companion_source.index("meshink_board_begin_companion();"), "companion splash renders before board/MeshCore I2C setup"
+assert "meshink_show_companion_notice(pairing_line);" in companion_source, "MeshCore companion boot supplies actual saved pairing information"
+assert companion_source.index("meshink_show_companion_notice(pairing_line);") < companion_source.index("meshink_board_begin_companion();"), "MeshCore companion splash renders before board/radio setup"
+assert "meshink_show_companion_notice(pairing_line);" in meshtastic_companion_source, "Meshtastic companion boot supplies saved native pairing information"
+assert meshtastic_companion_source.index("meshink_show_companion_notice(pairing_line);") < meshtastic_companion_source.index("meshink_board_begin_companion();"), "Meshtastic displays pairing detail before radio/BLE startup"
+assert 'SPIFFS.open("/prefs.json","r")' in companion_source and "prefs.loadSerial(file)" in companion_source, "MeshCore PIN is inspected read-only from upstream prefs.json"
+assert 'SPIFFS.open("/new_prefs","r")' in companion_source and "legacy.seek(80)" in companion_source, "MeshCore legacy PIN is inspected without preference migration"
+assert "saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE" in companion_source, "MeshCore fallback uses its real compile-time PIN setting"
+assert companion_source.index("companion_saved_pin_label(pairing_line);") < companion_source.index("the_mesh.begin(false);"), "MeshCore reads PIN before native startup"
+assert 'SPIFFS.open("/prefs/config.proto","r")' in meshtastic_companion_source and "pb_decode(&stream,meshtastic_LocalConfig_fields,saved)" in meshtastic_companion_source, "Meshtastic PIN comes from its official persisted protobuf, not copied NVS"
+assert "heap_caps_calloc(1,sizeof(meshtastic_LocalConfig),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)" in meshtastic_companion_source and "heap_caps_free(saved);" in meshtastic_companion_source, "large Meshtastic PIN decode scratch is temporary PSRAM"
+assert meshtastic_companion_source.index("companion_saved_pin_label(pairing_line);") < meshtastic_companion_source.index("meshink_meshtastic_native_begin()"), "Meshtastic reads saved PIN before native radio and BLE startup"
+assert "companion_session_pin=100000U+esp_random()%900000U;" in meshtastic_companion_source, "headless Meshtastic creates one random PIN per boot"
+assert "PairingMode_FIXED_PIN" in meshtastic_companion_source and "saved->bluetooth.fixed_pin" in meshtastic_companion_source, "saved fixed PIN is honoured when available"
+assert "return companion_session_pin;" in meshtastic_companion_source and "security.setStaticPIN(companion_session_pin);" in meshtastic_companion_source, "Meshtastic BLE callback and pairing security both use displayed boot PIN"
+assert "pin_required" not in meshtastic_companion_source and "RANDOM PIN UNSUPPORTED" not in meshtastic_companion_source, "all Meshtastic companion modes require displayed PIN, including native no-PIN/random"
+assert "ESP_GATT_PERM_WRITE_ENC_MITM" in meshtastic_companion_source and "ESP_GATT_PERM_READ_ENC_MITM" in meshtastic_companion_source, "Meshtastic GATT uses required authenticated pairing"
+assert "snprintf(label,40,\"BLUETOOTH PIN: %06lu\"," in meshtastic_companion_source, "Meshtastic label prints exact six-digit boot code"
+assert "meshink_show_companion_notice(const char* pairing_line)" in companion_notice_source and 'notice_centred(pairing_line, 615, 3, fb, true);' in companion_notice_source, "shared companion screen displays the configured pairing PIN prominently"
+assert "pairing_snapshot" not in meshtastic_companion_source and "putUInt(kPairingSnapshotKey" not in meshtastic_companion_source, "PIN is never mirrored or persisted across the companion reboot"
 assert "BLUETOOTH COMPANION MODE" not in board_target_source and "MESHINK_LOGO_" not in board_target_source, "board package must not contain MeshInk companion presentation"
 assert "epd_set_lcd_pixel_clock_MHz(17);" in display_backend_source, "T5 display backend owns field-tested panel clock"
 assert "meshink_display_set_pixel_clock_mhz" not in source and "meshink_display_set_pixel_clock_mhz" not in companion_notice_source, "application code must not select hardware display clock"
@@ -496,7 +528,7 @@ assert "meshink_touch_set_orientation(orientation);" in source, "UI orientation 
 assert "const int16_t x=raw_y" not in source, "landscape keyboard handler must receive logical touch coordinates"
 assert "TOUCH_PORTRAIT_WIDTH-1-raw_x" in touch_backend_source, "T5 touch backend owns landscape coordinate transform"
 assert 'notice_centred("2 SECONDS TO EXIT", 705, 2, fb);' in companion_notice_source, "companion screen shows exit duration"
-assert "{'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}}" in companion_notice_source, "companion tiny font includes firmware-version hyphen"
+assert "{'-',{0,0,0,31,0,0,0}}" in companion_notice_source and "{':',{0,6,6,0,6,6,0}}" in companion_notice_source, "companion tiny font includes firmware hyphen and pairing PIN colon"
 assert "if(key>='a'&&key<='z')key=(char)(key-'a'+'A');" in companion_notice_source, "companion tiny font renders lowercase firmware-version letters"
 assert 'notice_centred("MESHCORE", 290, 7, fb, true);' not in companion_notice_source, "legacy MESHCORE companion splash removed"
 
@@ -1926,8 +1958,9 @@ storage_mount=storage_backend_source.split("bool meshink_storage_begin()",1)[1].
 assert "SPIClass& shared_spi=t5_shared_spi();" in storage_mount, "SD and LoRa use the same board-owned SPI peripheral"
 assert "shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);" in storage_mount, "SD can initialize SPI without LoRa or a completed Meshtastic wizard"
 assert storage_mount.index("shared_spi.begin(")<storage_mount.index("sd_started=SD.begin("), "T5 pin mapping must be installed before SD init"
-assert 'if(sd_started){SD.end();sd_started=false;}' in storage_mount, "SD is only unmounted after a prior successful mount"
-assert storage_mount.index('if(root&&root.isDirectory())') < storage_mount.index('SD.end();'), "already-mounted SD is reused before any SPI teardown"
+assert 'if(sd_started){' in storage_mount, "SD VFS is never probed before a successful mount"
+assert storage_mount.index('if(sd_started){') < storage_mount.index('SD.end();'), "SD is only unmounted after a prior successful mount"
+assert storage_mount.index('if(ready)return true;') < storage_mount.index('SD.end();'), "already-mounted SD is reused before any SPI teardown"
 assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage_mount, "successful first SD mount persists across B+R and Maps warmup"
 
 # 2.1.1-test.17: Meshtastic first-use journal recovery must not get stuck
@@ -2122,3 +2155,26 @@ assert 'show_toast(!queued?' in quick_touch
 assert 'draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);' in quick_touch
 assert '"LOCATION SENT"' not in quick_touch and '"NODE INFO SENT"' not in quick_touch
 assert '"LOCATION SENT"' in result_handler and '"NODE INFO SENT"' in result_handler
+
+
+# SD optionality / no-card bootloop and event-driven Maps acceptance guards.
+sd_patch_source = (root / "tools" / "patch_arduino_sd_uninit.py").read_text(encoding="utf-8")
+assert "MESHINK_SD_UNINIT_LIFETIME_FIX" in sd_patch_source and "PR #10122" in sd_patch_source
+assert "pre:tools/patch_arduino_sd_uninit.py" in platformio_source, "pinned Arduino SD lifetime fix runs during every firmware build"
+assert "if(sd_started){" in storage_mount and "if(ready)return true;" in storage_mount
+assert "path&&sd_started" in storage_backend_source, "unmounted SD file operations are guarded"
+assert "last_map_media_poll" not in source and "SD_RETRY_MS" not in map_source, "Maps never relies on timed SD polling or retry"
+assert "void reset_sd_metadata()" in map_source, "SD metadata is managed independently from decoded map pixels"
+assert "for(auto& tile:tile_cache)tile.valid=false;" not in map_source, "SD errors never erase cached decoded tiles"
+assert "uint32_t media_epoch;" in map_source and "slot->media_epoch=sd_media_epoch" in map_source, "cached tiles can be revalidated across media changes"
+assert "return use_cached();" in map_source, "old tiles remain fallback when media access fails"
+assert "bool sd_checked_this_render=false;" in map_source, "SD is mounted once per uncached map render"
+assert "if(!was_mounted&&sd_mounted)pmtiles_begin_frame();" in map_source, "first inserted SD card restores PMTiles frame ownership immediately"
+assert "if(!ready)return result;" not in map_source, "offline maps still render cached source pixels"
+assert "result.io_failed=failed;" in map_source, "a partially failed render cannot become a full viewport cache"
+assert "pmtiles_had_media_io_error()" in map_source and "media_io_failed = true;" in pmtiles_source, "archive read errors remain observable after local archive disable"
+assert 'Serial.println("[T5-MAP] SD I/O failed; release mount and keep cached tiles");' in map_source, "real SD read failures must release bad handles before next on-demand access"
+assert 'mark_sd_unavailable();' in map_source.split('const bool failed=map_io_failed',1)[1], "actual map I/O errors invalidate the SD mount"
+assert "if(result.sd_ready&&result.tiles&&!result.io_failed)" in source
+assert "SD OFFLINE - CACHED TILES" in source, "show a nonobstructive offline label over cached tiles"
+assert "if(!init_png_decoder_psram())" in map_source and "abort();" not in map_source, "low PSRAM never crashes map startup"
