@@ -521,7 +521,8 @@ static bool map_cache_hit() {
 }
 
 static const char* map_source_badge(const MapRenderResult& result) {
-    if(!result.sd_ready||!result.tiles)return "---";
+    if(!result.tiles)return "---";
+    if(!result.sd_ready)return "RAM";
     // Prefer the requested/native zoom source. Parent fallbacks often represent
     // intentionally omitted blank/ocean tiles and should not contaminate the
     // badge for an otherwise-native viewport.
@@ -2907,17 +2908,17 @@ static void pan_map_by_pixels(int dx,int dy) {
 }
 static void draw_maps() {
     const MeshInkUiLayout& layout=portrait_layout();
-    const bool media_ready=map_tiles_media_ready();
+    // No SD probe just to redraw an already cached viewport. The tile
+    // renderer checks/mounts SD only when it needs an uncached source.
     const uint32_t media_epoch=map_tiles_media_epoch();
-    if(!media_ready||map_base_media_epoch!=media_epoch) {
+    if(map_base_media_epoch!=media_epoch) {
         map_base_valid=false;
         map_base_media_epoch=media_epoch;
     }
     MapRenderResult result{};
-    result.sd_ready=media_ready;
     result.min_source_zoom=map_zoom;
     result.max_source_zoom=map_zoom;
-    if(media_ready&&map_cache_hit()) {
+    if(map_cache_hit()) {
         result=map_base_result;
         memcpy(fb,map_base_cache,map_base_bytes);
         draw_status_bar();
@@ -2926,13 +2927,13 @@ static void draw_maps() {
         draw_status_bar();
         result=map_tiles_render(fb,0,map_top(),layout.width,map_bottom()-map_top(),
                                 map_latitude,map_longitude,map_zoom);
-        if(!result.sd_ready||map_base_media_epoch!=map_tiles_media_epoch()) {
+        if(map_base_media_epoch!=map_tiles_media_epoch()) {
             map_base_valid=false;
             map_base_media_epoch=map_tiles_media_epoch();
-            if(!result.sd_ready)
-                meshink_display_fill_rect({0,map_top(),layout.width,map_bottom()-map_top()},0xFF,fb);
         }
-        if(result.sd_ready&&result.tiles) {
+        // Preserve any surviving cached tiles even when SD is removed.
+        // Never cache a partially failed SD render as a complete viewport.
+        if(result.sd_ready&&result.tiles&&!result.io_failed) {
             const size_t bytes=meshink_display_framebuffer_bytes();
             if(!map_base_cache)map_base_cache=(uint8_t*)heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
             if(map_base_cache) {
@@ -2992,9 +2993,15 @@ static void draw_maps() {
     line(ui_x(26)+pixels,ui_y(866),ui_x(26)+pixels,ui_y(878));
     ui_text(scale,ui_x(28),ui_y(850),2,0,true);
     if(!result.sd_ready){
-        const MeshInkUiRect warning=ui_rect(80,300,380,80);
-        ui_section_card(warning);
-        ui_centred("SD card / maps unavailable",ui_y(328),2,0,true);
+        if(result.tiles){
+            const MeshInkUiRect offline=ui_rect(18,774,300,30);
+            meshink_display_fill_rect({offline.x,offline.y,offline.width,offline.height},0xFF,fb);
+            ui_text("SD OFFLINE - CACHED TILES",ui_x(22),ui_y(778),2,0,true);
+        }else{
+            const MeshInkUiRect warning=ui_rect(80,300,380,80);
+            ui_section_card(warning);
+            ui_centred("SD card / maps unavailable",ui_y(328),2,0,true);
+        }
     }
     draw_bottom_nav(2);
 }
@@ -7326,20 +7333,6 @@ void ui_loop() {
        (screen!=Screen::Maps||standby_active||
         millis()-map_taps.last_at>=meshink_map_gestures::TAP_WINDOW_MS))
         finish_map_tap_sequence();
-    // Hot card removal/insertion is checked even when the user is not
-    // touching Maps. The generation changes on a failed read/remount, so
-    // discard the old viewport and show the unavailable or new map promptly.
-    static uint32_t last_map_media_poll=0;
-    if(screen==Screen::Maps&&!standby_active&&!message_alert_active&&
-       millis()-last_map_media_poll>=3000) {
-        last_map_media_poll=millis();
-        const uint32_t previous_epoch=map_tiles_media_epoch();
-        map_tiles_media_ready();
-        if(map_tiles_media_epoch()!=previous_epoch) {
-            map_base_valid=false;
-            load_map_with_feedback(true);
-        }
-    }
     const uint32_t standby_timeout=STANDBY_TIMEOUTS[min((uint8_t)3,standby_timeout_index)];
     if(setup_complete&&!setup_is_screen(screen)&&!standby_active&&standby_timeout&&
        millis()-last_user_activity>=standby_timeout)enter_standby("TIMEOUT");
