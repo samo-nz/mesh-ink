@@ -219,17 +219,25 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 3.1.0 adds **international UTF-8 keyboard input and emoji
-          messaging** to the standalone MeshCore/Meshtastic e-paper communicator.
+          MeshInk 3.1.2 is a **stability and usability update** for the
+          standalone MeshCore/Meshtastic e-paper communicator.
 
-          Highlights:
-          - accented letters, international punctuation and long-press alternatives in portrait and landscape
-          - 34 emoji with frequently used shortcuts and a compact landscape picker
-          - Unicode-aware message wrapping, editing, deletion and safe text clipping
-          - real Meshtastic direct-message retry progress while awaiting an acknowledgement
-          - offline maps, node discovery, GPS and optional location sharing
-          - Bluetooth companion mode for the selected network's mobile app
-          - low-power standby and SD-card backup and restore
+          What's new in 3.1.2:
+          - fixes the startup crash with no microSD card fitted and improves SD hot-swap safety
+          - retains decoded map tiles in RAM when the card goes offline, and retries on demand
+          - shows the actual Bluetooth companion pairing PIN on the e-paper screen in both protocols
+          - uses a displayed session PIN for Meshtastic random/no-PIN companion configurations
+          - restores the status bar in Meshtastic normal standby
+          - improves low-battery shutdown screen clearing and adds serial battery diagnostics
+
+          The PIN display is useful for pairing and recovery, but does not
+          conclusively resolve every Meshtastic Bluetooth-after-backup issue.
+          The low-battery screen changes have not yet been validated by a
+          physical critical-battery shutdown.
+
+          Also included from 3.1.0: accented-character long-press input,
+          a 34-emoji picker with shortcuts, Unicode-aware editing and
+          Meshtastic direct-message delivery progress.
 
           MeshCore and Meshtastic run one at a time, not simultaneously.
           Both support normal standby; deep-sleep standby remains MeshCore-only.
