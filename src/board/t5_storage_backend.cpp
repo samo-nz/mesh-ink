@@ -11,10 +11,9 @@ namespace {
 // Preserve the field-tested map/PMTiles access rate. Keeping this in the
 // backend prevents application code from knowing board electrical tuning.
 constexpr uint32_t T5_STORAGE_SPI_HZ=25000000;
-// Both pre-protocol Backup/Restore and Maps use this backend in one boot.
-// Do not deinitialize an already-mounted Arduino SD card: SD.end() may call
-// SPIClass::endTransaction() after the shared SX1262 SPI bus was configured
-// by RadioLib, triggering a null FreeRTOS queue assertion.
+// The Arduino SD uninit transaction lifetime is fixed at build time; only
+// end a successful mount, and never access SD's VFS before the first mount.
+// This state is shared by Maps, screenshots and offline Backup/Restore.
 bool sd_started=false;
 MeshInkFirstFormatNotice first_format_notice=nullptr;
 }
@@ -51,16 +50,16 @@ bool meshink_storage_mount_internal_safe() {
 bool meshink_storage_begin() {
     // A pre-protocol backup/restore may have mounted SD already; Maps must
     // reuse it, not close a live filesystem and shared SPI transaction.
-    File root=SD.open("/",FILE_READ);
-    if(root&&root.isDirectory()){
-        root.close();
-        sd_started=true;
-        return true;
+    if(sd_started){
+        File root=SD.open("/",FILE_READ);
+        const bool ready=root&&root.isDirectory();
+        if(root)root.close();
+        if(ready)return true;
+        // A failed mounted filesystem must be ended before trying new media.
+        // The pinned Arduino SD uninit lifetime bug is patched at build time.
+        SD.end();
+        sd_started=false;
     }
-    if(root)root.close();
-    // Real media failure/removal may require an explicit remount. Never call
-    // SD.end() before the FIRST SD.begin() in this process.
-    if(sd_started){SD.end();sd_started=false;}
     pinMode(T5_PIN_SD_CS,OUTPUT);
     digitalWrite(T5_PIN_SD_CS,HIGH);
     // First-use setup may defer radio_init, so configure the shared SPI pins
@@ -72,14 +71,12 @@ bool meshink_storage_begin() {
 }
 
 bool meshink_storage_media_ready() {
-    File root=SD.open("/",FILE_READ);
-    if(root&&root.isDirectory()){root.close();sd_started=true;return true;}
-    if(root)root.close();
-    // An inserted card may be mounted after startup without opening Maps.
+    // Retry the mount on every explicit request, never on a timer.
     if(!meshink_storage_begin())return false;
-    root=SD.open("/",FILE_READ);
+    File root=SD.open("/",FILE_READ);
     const bool ready=root&&root.isDirectory();
     if(root)root.close();
+    if(!ready)meshink_storage_end();
     return ready;
 }
 
@@ -88,19 +85,19 @@ void meshink_storage_end() {
 }
 
 MeshInkStorageFile meshink_storage_open(const char* path) {
-    return path ? SD.open(path,FILE_READ) : MeshInkStorageFile();
+    return path&&sd_started ? SD.open(path,FILE_READ) : MeshInkStorageFile();
 }
 
 MeshInkStorageFile meshink_storage_open_write(const char* path) {
-    return path ? SD.open(path,FILE_WRITE) : MeshInkStorageFile();
+    return path&&sd_started ? SD.open(path,FILE_WRITE) : MeshInkStorageFile();
 }
 
 bool meshink_storage_exists(const char* path) {
-    return path && SD.exists(path);
+    return path&&sd_started&&SD.exists(path);
 }
 
-bool meshink_storage_remove(const char* path){return path&&SD.remove(path);}
-bool meshink_storage_rename(const char* from,const char* to){return from&&to&&SD.rename(from,to);}
+bool meshink_storage_remove(const char* path){return path&&sd_started&&SD.remove(path);}
+bool meshink_storage_rename(const char* from,const char* to){return from&&to&&sd_started&&SD.rename(from,to);}
 
 uint32_t meshink_storage_bus_hz() {
     return T5_STORAGE_SPI_HZ;
