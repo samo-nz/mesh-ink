@@ -72,6 +72,9 @@ size_t failed_count=0;
 bool prepared = false;
 // A map render keeps one archive file open for its repeated tile lookups.
 bool frame_active = false, io_failed = false;
+// Keep a real seek/read failure visible even when one corrupt/unreadable
+// archive is disabled locally. Maps must release stale SD handles afterwards.
+bool media_io_failed = false;
 MeshInkStorageFile frame_file;
 char frame_path[160]{};
 PmtilesPerfStats perf{};
@@ -123,6 +126,7 @@ bool read_at(MeshInkStorageFile& file, uint64_t start, uint8_t* dst, size_t n) {
     perf.metadata_seek_us+=(uint32_t)(perf_now_us()-seek_started);
     if (!seek_ok) {
         io_failed = true;
+        media_io_failed = true;
         return false;
     }
     alignas(4) static uint8_t stage[256];
@@ -135,6 +139,7 @@ bool read_at(MeshInkStorageFile& file, uint64_t start, uint8_t* dst, size_t n) {
         perf.metadata_bytes+=(uint32_t)got;
         if (got != chunk) {
             io_failed = true;
+            media_io_failed = true;
             return false;
         }
         memcpy(dst, stage, chunk);
@@ -405,6 +410,7 @@ void pmtiles_begin_frame() {
     perf = PmtilesPerfStats{};
     frame_active = true;
     io_failed = false;
+    media_io_failed = false;
 }
 
 void pmtiles_end_frame() {
@@ -417,12 +423,13 @@ bool pmtiles_warm_archive(const char* path) {
     if(!path||!*path||pmtiles_archive_failed(path))return false;
     perf=PmtilesPerfStats{};
     io_failed=false;
+    media_io_failed=false;
     if(!frame_file||strcmp(frame_path,path)) {
         close_frame_file();
         const uint32_t open_started=perf_now_us();
         frame_file=meshink_storage_open(path);
         perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
-        if(!frame_file){pmtiles_disable_archive(path);return false;}
+        if(!frame_file){media_io_failed=true;pmtiles_disable_archive(path);return false;}
         strncpy(frame_path,path,sizeof(frame_path)-1);
         frame_path[sizeof(frame_path)-1]=0;
     }
@@ -441,6 +448,7 @@ MeshInkStorageFile* pmtiles_frame_file(const char* path) {
 }
 
 bool pmtiles_had_io_error() { return io_failed; }
+bool pmtiles_had_media_io_error() { return media_io_failed; }
 PmtilesPerfStats pmtiles_perf_stats() { return perf; }
 
 void pmtiles_reset() {
@@ -452,6 +460,7 @@ void pmtiles_reset() {
     cached_path[0] = 0;
     prepared = false;
     io_failed = false;
+    media_io_failed = false;
     perf = PmtilesPerfStats{};
     memset(failed_archives,0,sizeof(failed_archives));
     failed_count=0;
@@ -471,14 +480,22 @@ bool pmtiles_find_png(const char* path, int zoom, int x, int y,
             const uint32_t open_started=perf_now_us();
             frame_file = meshink_storage_open(path);
             perf.archive_open_us+=(uint32_t)(perf_now_us()-open_started);
-            if (!frame_file) { pmtiles_disable_archive(path); return false; }
+            if (!frame_file) {
+                media_io_failed = true;
+                pmtiles_disable_archive(path);
+                return false;
+            }
             strncpy(frame_path, path, sizeof(frame_path) - 1);
             frame_path[sizeof(frame_path) - 1] = 0;
         }
         file = &frame_file;
     } else {
         local_file = meshink_storage_open(path);
-        if (!local_file) { pmtiles_disable_archive(path); return false; }
+        if (!local_file) {
+            media_io_failed = true;
+            pmtiles_disable_archive(path);
+            return false;
+        }
         file = &local_file;
     }
     const uint32_t prepare_started=perf_now_us();
