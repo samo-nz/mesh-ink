@@ -9,6 +9,7 @@
 #include "../../lib/Meshtastic/src/modules/TextMessageModule.h"
 #include "../../lib/Meshtastic/src/Observer.h"
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
+#include "../../lib/Meshtastic/src/mesh/generated/meshtastic/localonly.pb.h"
 #include "../companion_notice.h"
 #include "../backup_restore.h"
 #include "../message_store.h"
@@ -441,6 +442,54 @@ void snapshot_gps() {
 }
 } // namespace
 
+// Read-only inspection of the same official LocalConfig protobuf that the
+// native NodeDB will load later in this boot. No copy across resets, NVS
+// mirror, fake default, radio startup, or modification of Meshtastic settings.
+static bool pairing_config_stream_read(pb_istream_t* stream,pb_byte_t* buffer,size_t count){
+    auto* file=static_cast<File*>(stream->state);
+    if(!file)return false;
+    if(buffer)return file->read(buffer,count)==count;
+    uint8_t skip[32];
+    while(count){
+        const size_t chunk=std::min(count,sizeof(skip));
+        if(file->read(skip,chunk)!=chunk)return false;
+        count-=chunk;
+    }
+    return true;
+}
+
+static void companion_saved_pin_label(char label[40]){
+    snprintf(label,40,"PIN UNAVAILABLE");
+    File file=SPIFFS.open("/prefs/config.proto","r");
+    if(!file)return;
+    const size_t length=file.size();
+    if(!length||length>meshtastic_LocalConfig_size){
+        file.close();
+        return;
+    }
+    meshtastic_LocalConfig saved=meshtastic_LocalConfig_init_zero;
+    pb_istream_t stream={&pairing_config_stream_read,&file,length};
+    const bool loaded=pb_decode(&stream,meshtastic_LocalConfig_fields,&saved);
+    file.close();
+    if(!loaded||saved.version<DEVICESTATE_MIN_VER||!saved.has_bluetooth)return;
+    switch(saved.bluetooth.mode){
+        case meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN:
+            if(saved.bluetooth.fixed_pin<=999999U)
+                snprintf(label,40,"BLUETOOTH PIN: %06lu",
+                         (unsigned long)saved.bluetooth.fixed_pin);
+            break;
+        case meshtastic_Config_BluetoothConfig_PairingMode_NO_PIN:
+            snprintf(label,40,"NO PIN REQUIRED");
+            break;
+        case meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN:
+            // This headless companion has no changing on-screen challenge;
+            // start_ble() currently rejects this native Meshtastic mode.
+            snprintf(label,40,"RANDOM PIN UNSUPPORTED");
+            break;
+        default:break;
+    }
+}
+
 bool meshink_meshtastic_companion_active() { return active; }
 
 void meshink_meshtastic_request_companion() {
@@ -470,11 +519,16 @@ void meshink_meshtastic_companion_setup() {
     ready = false;
     shutting_down.store(false, std::memory_order_release);
 
-    // Match MeshCore: show one e-paper image and release its buffers and
-    // shared GPIOs before the native SX1262 driver or Bluetooth starts.
-    meshink_show_companion_notice();
+    // Mount internal flash only to inspect the saved official PIN before
+    // drawing. EPDiy still releases its overlapping radio pins before the
+    // SX1262 and Bluedroid are initialized. No native engine starts early.
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
+    char pairing_line[40]{};
+    if(storage_mounted)companion_saved_pin_label(pairing_line);
+    else snprintf(pairing_line,sizeof(pairing_line),"PIN UNAVAILABLE");
+    meshink_show_companion_notice(pairing_line);
     meshink_board_begin_companion();
-    if (!meshink_storage_mount_internal_safe() || !meshink_backup_recover_pending()) {
+    if (!storage_mounted || !meshink_backup_recover_pending()) {
         Serial.println("[MT-BLE] storage unavailable or interrupted restore; refusing headless start");
         return;
     }
