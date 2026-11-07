@@ -81,6 +81,7 @@ bool journal_ready=false;
 // notice and is then used *verbatim* by Bluedroid for every pairing request.
 // This never changes the official saved Meshtastic Bluetooth configuration.
 uint32_t companion_session_pin=0;
+bool companion_pin_ready=false;
 
 // Record live Meshtastic text messages in MeshInk's Meshtastic v4 journal.
 //
@@ -309,7 +310,7 @@ PairingCallbacks pairing_callbacks;
 BLE2902 from_num_cccd;
 
 bool start_ble() {
-    if(companion_session_pin>999999U || companion_session_pin<100000U){
+    if(!companion_pin_ready || companion_session_pin>999999U){
         Serial.println("[MT-BLE] ERROR: no valid display-confirmed companion PIN");
         return false;
     }
@@ -462,6 +463,7 @@ static void companion_saved_pin_label(char label[40]){
     // valid fixed PIN exists, honour it instead. The exact chosen value is
     // the one applied to Bluedroid after the native radio has started.
     companion_session_pin=100000U+esp_random()%900000U;
+    companion_pin_ready=true;
     File file=SPIFFS.open("/prefs/config.proto","r");
     if(file){
         const size_t length=file.size();
@@ -475,7 +477,7 @@ static void companion_saved_pin_label(char label[40]){
                 if(pb_decode(&stream,meshtastic_LocalConfig_fields,saved) &&
                    saved->version>=DEVICESTATE_MIN_VER && saved->has_bluetooth &&
                    saved->bluetooth.mode==meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN &&
-                   saved->bluetooth.fixed_pin>=100000U && saved->bluetooth.fixed_pin<=999999U){
+                   saved->bluetooth.fixed_pin<=999999U){
                     companion_session_pin=saved->bluetooth.fixed_pin;
                 }
                 heap_caps_free(saved);
