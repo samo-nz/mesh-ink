@@ -50,6 +50,16 @@ struct MeshInkRadioPreset {
     uint8_t path_hash_bytes;
 };
 
+// Display-only snapshot of a protocol's configured companion pairing mode.
+// A six-digit fixed PIN is owned by the protocol; the UI must not invent one.
+enum class MeshInkCompanionPairingMode : uint8_t {
+    Unavailable=0, FixedPin=1, NoPin=2, Unsupported=3
+};
+struct MeshInkCompanionPairingInfo {
+    MeshInkCompanionPairingMode mode=MeshInkCompanionPairingMode::Unavailable;
+    uint32_t pin=0;
+};
+
 struct MeshInkProtocolBackend {
     MeshInkProtocolDescriptor descriptor{};
 
@@ -71,6 +81,7 @@ struct MeshInkProtocolBackend {
     bool (*prepare_switch_shutdown)() = nullptr;
 
     // Optional companion/transport mode owned by this protocol helper.
+    bool (*companion_pairing_info)(MeshInkCompanionPairingInfo& info) = nullptr;
     void (*request_companion_mode)() = nullptr;
     bool (*consume_companion_request)() = nullptr;
     void (*companion_setup)() = nullptr;
