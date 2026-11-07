@@ -1,3 +1,4 @@
+import { showUsageStatistics } from "./usage-stats.js?v=compact-counts-1";
 import { serial as webUsbSerial } from "./vendor/web-serial-polyfill.js";
 
 const $ = (id) => document.getElementById(id);
@@ -388,3 +389,5 @@ if (!serialAvailable()) {
 updateLogButtons();
 updateReceiveStats();
 updateControls();
+
+void showUsageStatistics();
