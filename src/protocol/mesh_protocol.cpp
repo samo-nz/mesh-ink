@@ -273,6 +273,12 @@ void mesh_protocol_prepare_shutdown() {
 #endif
 }
 
+bool mesh_protocol_companion_pairing_info(MeshInkCompanionPairingInfo& info) {
+    info=MeshInkCompanionPairingInfo{};
+    return active_backend().companion_pairing_info
+        ? active_backend().companion_pairing_info(info) : false;
+}
+
 void mesh_protocol_request_companion_mode() {
     if (active_backend().request_companion_mode) active_backend().request_companion_mode();
 }
