@@ -42,6 +42,9 @@ MeshInkStorageFile* pmtiles_frame_file(const char* path);
 bool pmtiles_archive_failed(const char* path);
 void pmtiles_disable_archive(const char* path);
 bool pmtiles_had_io_error();
+// Sticky within a render/warmup even if the failing archive was disabled.
+// Callers can release the SD mount while retaining decoded tile pixels.
+bool pmtiles_had_media_io_error();
 // Per-frame cold-path instrumentation. Categories may be nested; callers use
 // these to separate archive metadata costs from tile PNG range I/O.
 PmtilesPerfStats pmtiles_perf_stats();
