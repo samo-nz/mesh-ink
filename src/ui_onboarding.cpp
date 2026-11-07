@@ -5034,7 +5034,7 @@ static void paint_low_battery_shutdown(
 
     if(!reuse_display){
         // EPDiy v7 teardown deletes the shared I2C driver. Re-establish
-        // only the minimal bus before the BQ25896 battery disconnect.
+        // only the minimal bus before the board-owned battery disconnect.
         meshink_display_release_state(&display);
         fb=nullptr;
         meshink_display_deinit();
