@@ -581,7 +581,11 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         return use_cached();
     if(!sd_checked_this_render){
         sd_checked_this_render=true;
+        const bool was_mounted=sd_mounted;
         (void)media_ready(true); // mount/probe only when a source needs SD
+        // A fresh mount reset PMTiles handles/indexes and frame_active.
+        // Reactivate the current frame before looking up an archive.
+        if(!was_mounted&&sd_mounted)pmtiles_begin_frame();
     }
     // Retain older pixels as fallback if the new card lacks this source.
     if(!sd_mounted||map_io_failed||pmtiles_had_io_error()||
