@@ -1926,8 +1926,9 @@ storage_mount=storage_backend_source.split("bool meshink_storage_begin()",1)[1].
 assert "SPIClass& shared_spi=t5_shared_spi();" in storage_mount, "SD and LoRa use the same board-owned SPI peripheral"
 assert "shared_spi.begin(T5_PIN_SPI_SCLK,T5_PIN_SPI_MISO,T5_PIN_SPI_MOSI);" in storage_mount, "SD can initialize SPI without LoRa or a completed Meshtastic wizard"
 assert storage_mount.index("shared_spi.begin(")<storage_mount.index("sd_started=SD.begin("), "T5 pin mapping must be installed before SD init"
-assert 'if(sd_started){SD.end();sd_started=false;}' in storage_mount, "SD is only unmounted after a prior successful mount"
-assert storage_mount.index('if(root&&root.isDirectory())') < storage_mount.index('SD.end();'), "already-mounted SD is reused before any SPI teardown"
+assert 'if(sd_started){' in storage_mount, "SD VFS is never probed before a successful mount"
+assert storage_mount.index('if(sd_started){') < storage_mount.index('SD.end();'), "SD is only unmounted after a prior successful mount"
+assert storage_mount.index('if(ready)return true;') < storage_mount.index('SD.end();'), "already-mounted SD is reused before any SPI teardown"
 assert 'sd_started=SD.begin(T5_PIN_SD_CS,shared_spi,T5_STORAGE_SPI_HZ)' in storage_mount, "successful first SD mount persists across B+R and Maps warmup"
 
 # 2.1.1-test.17: Meshtastic first-use journal recovery must not get stuck
@@ -2122,3 +2123,22 @@ assert 'show_toast(!queued?' in quick_touch
 assert 'draw_quick_panel();refresh(MeshInkRefreshMode::Direct,true);' in quick_touch
 assert '"LOCATION SENT"' not in quick_touch and '"NODE INFO SENT"' not in quick_touch
 assert '"LOCATION SENT"' in result_handler and '"NODE INFO SENT"' in result_handler
+
+
+# SD optionality / no-card bootloop and event-driven Maps acceptance guards.
+sd_patch_source = (root / "tools" / "patch_arduino_sd_uninit.py").read_text(encoding="utf-8")
+assert "MESHINK_SD_UNINIT_LIFETIME_FIX" in sd_patch_source and "PR #10122" in sd_patch_source
+assert "pre:tools/patch_arduino_sd_uninit.py" in platformio_source, "pinned Arduino SD lifetime fix runs during every firmware build"
+assert "if(sd_started){" in storage_mount and "if(ready)return true;" in storage_mount
+assert "path&&sd_started" in storage_backend_source, "unmounted SD file operations are guarded"
+assert "last_map_media_poll" not in source and "SD_RETRY_MS" not in map_source, "Maps never relies on timed SD polling or retry"
+assert "void reset_sd_metadata()" in map_source, "SD metadata is managed independently from decoded map pixels"
+assert "for(auto& tile:tile_cache)tile.valid=false;" not in map_source, "SD errors never erase cached decoded tiles"
+assert "uint32_t media_epoch;" in map_source and "slot->media_epoch=sd_media_epoch" in map_source, "cached tiles can be revalidated across media changes"
+assert "return use_cached();" in map_source, "old tiles remain fallback when media access fails"
+assert "bool sd_checked_this_render=false;" in map_source, "SD is mounted once per uncached map render"
+assert "if(!ready)return result;" not in map_source, "offline maps still render cached source pixels"
+assert "result.io_failed=failed;" in map_source, "a partially failed render cannot become a full viewport cache"
+assert "if(result.sd_ready&&result.tiles&&!result.io_failed)" in source
+assert "SD OFFLINE - CACHED TILES" in source, "show a nonobstructive offline label over cached tiles"
+assert "if(!init_png_decoder_psram())" in map_source and "abort();" not in map_source, "low PSRAM never crashes map startup"
