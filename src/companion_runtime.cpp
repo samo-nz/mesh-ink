@@ -478,17 +478,62 @@ void local_mesh_flush_contacts_save_if_due() {
         local_mesh_flush_contacts_save_now();
 }
 
+// Inspect the exact saved companion preferences without starting the mesh,
+// Bluetooth or radio. MyMesh::begin(false) later uses this same persisted PIN,
+// or the board's compiled BLE_PIN_CODE when the field is zero.
+static void companion_saved_pin_label(char label[40]) {
+    snprintf(label,40,"PIN UNAVAILABLE");
+    uint32_t saved_pin=0;
+    bool found=false;
+    File file=SPIFFS.open("/prefs.json","r");
+    if(file){
+        NodePrefs prefs{};
+        found=prefs.loadSerial(file);
+        if(found)saved_pin=prefs.ble_pin;
+        file.close();
+    }else{
+        // The upstream DataStore also supports this legacy preferences file.
+        // Read only its four-byte PIN at offset 80: do not migrate/write while
+        // constructing a static e-paper notice.
+        File legacy=SPIFFS.open("/new_prefs","r");
+        if(legacy){
+            uint8_t bytes[4]{};
+            if(legacy.size()>=84&&legacy.seek(80)&&legacy.read(bytes,sizeof(bytes))==sizeof(bytes)){
+                saved_pin=(uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|
+                    ((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
+                found=true;
+            }
+            legacy.close();
+        }else{
+            // First boot: MyMesh defaults this field to zero.
+            found=true;
+        }
+    }
+    if(!found)return;
+#ifdef BLE_PIN_CODE
+    const uint32_t active_pin=saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE;
+    if(active_pin<=999999U)
+        snprintf(label,40,"BLUETOOTH PIN: %06lu",(unsigned long)active_pin);
+#else
+    (void)saved_pin;
+    snprintf(label,40,"NO PIN CONFIGURED");
+#endif
+}
+
 void companion_setup() {
     companion_mode_active=true;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
-    meshink_show_companion_notice();
+    const bool storage_mounted=meshink_storage_mount_internal_safe();
+    char pairing_line[40]{};
+    if(storage_mounted)companion_saved_pin_label(pairing_line);
+    else snprintf(pairing_line,sizeof(pairing_line),"PIN UNAVAILABLE");
+    meshink_show_companion_notice(pairing_line);
     meshink_board_begin_companion();
     if (!meshink_radio_initialize()) {
         Serial.printf("[T5-ERROR] %s initialization failed\n",meshink_radio_name());
         while (true) delay(1000);
     }
     fast_rng.begin(meshink_radio_rng_seed());
-    const bool storage_mounted=meshink_storage_mount_internal_safe();
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
     if(storage_mounted&&!meshink_backup_recover_pending()){
@@ -499,6 +544,8 @@ void companion_setup() {
         Serial.println("[T5-ERROR] MeshInk message journal unavailable in companion mode");
     store.begin();
     the_mesh.begin(false);
+    // No separate PIN state exists: both BLE and the notice derive from the
+    // upstream prefs. Never print the six-digit credential on USB serial.
     bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                               the_mesh.getBLEPin());
     companion_configure_ble_scan_response(BLE_NAME_PREFIX,the_mesh.getNodePrefs()->node_name);
