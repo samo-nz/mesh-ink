@@ -2139,6 +2139,9 @@ assert "return use_cached();" in map_source, "old tiles remain fallback when med
 assert "bool sd_checked_this_render=false;" in map_source, "SD is mounted once per uncached map render"
 assert "if(!ready)return result;" not in map_source, "offline maps still render cached source pixels"
 assert "result.io_failed=failed;" in map_source, "a partially failed render cannot become a full viewport cache"
+assert "pmtiles_had_media_io_error()" in map_source and "media_io_failed = true;" in pmtiles_source, "archive read errors remain observable after local archive disable"
+assert 'Serial.println("[T5-MAP] SD I/O failed; release mount and keep cached tiles");' in map_source, "real SD read failures must release bad handles before next on-demand access"
+assert 'mark_sd_unavailable();' in map_source.split('const bool failed=map_io_failed',1)[1], "actual map I/O errors invalidate the SD mount"
 assert "if(result.sd_ready&&result.tiles&&!result.io_failed)" in source
 assert "SD OFFLINE - CACHED TILES" in source, "show a nonobstructive offline label over cached tiles"
 assert "if(!init_png_decoder_psram())" in map_source and "abort();" not in map_source, "low PSRAM never crashes map startup"
