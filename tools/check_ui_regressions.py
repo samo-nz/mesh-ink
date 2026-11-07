@@ -2137,6 +2137,7 @@ assert "for(auto& tile:tile_cache)tile.valid=false;" not in map_source, "SD erro
 assert "uint32_t media_epoch;" in map_source and "slot->media_epoch=sd_media_epoch" in map_source, "cached tiles can be revalidated across media changes"
 assert "return use_cached();" in map_source, "old tiles remain fallback when media access fails"
 assert "bool sd_checked_this_render=false;" in map_source, "SD is mounted once per uncached map render"
+assert "if(!was_mounted&&sd_mounted)pmtiles_begin_frame();" in map_source, "first inserted SD card restores PMTiles frame ownership immediately"
 assert "if(!ready)return result;" not in map_source, "offline maps still render cached source pixels"
 assert "result.io_failed=failed;" in map_source, "a partially failed render cannot become a full viewport cache"
 assert "pmtiles_had_media_io_error()" in map_source and "media_io_failed = true;" in pmtiles_source, "archive read errors remain observable after local archive disable"
