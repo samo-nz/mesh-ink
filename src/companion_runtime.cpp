@@ -37,6 +37,7 @@
 // Device-owned composition root around the upstream MeshCore companion
 // classes. MeshInk adds persistence hooks without changing the phone protocol.
 static bool companion_mode_active=false;
+static uint32_t companion_boot_pin=0; // Exact PIN printed on this boot's static e-paper notice.
 
 struct PendingCompanionSend {
     bool active=false;
@@ -488,8 +489,12 @@ static void companion_saved_pin_label(char label[40]) {
     File file=SPIFFS.open("/prefs.json","r");
     if(file){
         NodePrefs prefs{};
-        found=prefs.loadSerial(file);
-        if(found)saved_pin=prefs.ble_pin;
+        // Upstream MyMesh reads prefs with the same parser, even when the
+        // parser reports an error in an unrelated field.
+        const bool parsed=prefs.loadSerial(file);
+        saved_pin=prefs.ble_pin;
+        found=true;
+        if(!parsed)Serial.println("[MC-BLE] saved preferences partly unreadable");
         file.close();
     }else{
         // The upstream DataStore also supports this legacy preferences file.
@@ -511,9 +516,15 @@ static void companion_saved_pin_label(char label[40]) {
     }
     if(!found)return;
 #ifdef BLE_PIN_CODE
-    const uint32_t active_pin=saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE;
-    if(active_pin<=999999U)
-        snprintf(label,40,"BLUETOOTH PIN: %06lu",(unsigned long)active_pin);
+    companion_boot_pin=saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE;
+    if(companion_boot_pin>999999U){
+        // A malformed stored PIN cannot be presented as a six-digit code.
+        // Keep the correction ephemeral and use precisely the displayed PIN
+        // for the BLE session; never modify the saved MeshCore prefs.
+        companion_boot_pin=100000U+esp_random()%900000U;
+        Serial.println("[MC-BLE] invalid stored PIN; generated one for this boot");
+    }
+    snprintf(label,40,"BLUETOOTH PIN: %06lu",(unsigned long)companion_boot_pin);
 #else
     (void)saved_pin;
     snprintf(label,40,"NO PIN CONFIGURED");
@@ -524,9 +535,15 @@ void companion_setup() {
     companion_mode_active=true;
     T5_DEBUGLN(T5_LOG_MESH,"[T5-BOOT] starting upstream MeshCore companion runtime");
     const bool storage_mounted=meshink_storage_mount_internal_safe();
+    // Finish any interrupted backup rollback *before* inspecting PIN state,
+    // otherwise the saved preferences could change after the notice is drawn.
+    const bool recovered=storage_mounted&&meshink_backup_recover_pending();
+    if(!recovered){
+        Serial.println("[MC-BLE] companion startup stopped: saved settings unavailable");
+        while(true)delay(1000);
+    }
     char pairing_line[40]{};
-    if(storage_mounted)companion_saved_pin_label(pairing_line);
-    else snprintf(pairing_line,sizeof(pairing_line),"PIN UNAVAILABLE");
+    companion_saved_pin_label(pairing_line);
     meshink_show_companion_notice(pairing_line);
     meshink_board_begin_companion();
     if (!meshink_radio_initialize()) {
@@ -536,18 +553,16 @@ void companion_setup() {
     fast_rng.begin(meshink_radio_rng_seed());
     if(storage_mounted)Serial.println("[T5-INIT] storage=SPIFFS OK");
     else Serial.println("[T5-ERROR] SPIFFS unavailable in companion mode");
-    if(storage_mounted&&!meshink_backup_recover_pending()){
-        Serial.println("[T5-ERROR] interrupted restore requires recovery; refusing companion startup");
-        while(true)delay(1000);
-    }
     if(storage_mounted&&!meshink_message_store().begin())
         Serial.println("[T5-ERROR] MeshInk message journal unavailable in companion mode");
     store.begin();
     the_mesh.begin(false);
     // No separate PIN state exists: both BLE and the notice derive from the
     // upstream prefs. Never print the six-digit credential on USB serial.
+    // Always pair with the exact six-digit PIN already shown on e-paper.
+    // Normally identical to getBLEPin(); also robust to damaged preferences.
     bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
-                              the_mesh.getBLEPin());
+                              companion_boot_pin);
     companion_configure_ble_scan_response(BLE_NAME_PREFIX,the_mesh.getNodePrefs()->node_name);
     interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
     the_mesh.startInterface(interface_manager);
