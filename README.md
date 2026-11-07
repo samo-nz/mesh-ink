@@ -80,6 +80,8 @@ Send private or channel messages, explore offline maps, discover nodes and share
 
 MeshInk currently targets the **LILYGO T5 E-Paper S3 Pro**, using its 4.7-inch 540×960 e-paper touchscreen, ESP32-S3, SX1262 LoRa radio and GPS.
 
+**GPS power limitation (T5 H752-01):** The GPS receiver and LoRa radio share a power rail. Disabling GPS in MeshInk stops GPS use but **does not physically power off the receiver** while LoRa is operating. The GPS can therefore still consume power even when disabled in settings.
+
 ## Web flasher
 
 The easiest way to install or update MeshInk is with the **[MeshInk Web Flasher](https://samo-nz.github.io/mesh-ink/)**.
