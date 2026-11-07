@@ -521,15 +521,16 @@ void meshink_meshtastic_companion_setup() {
     // drawing. EPDiy still releases its overlapping radio pins before the
     // SX1262 and Bluedroid are initialized. No native engine starts early.
     const bool storage_mounted=meshink_storage_mount_internal_safe();
-    char pairing_line[40]{};
-    if(storage_mounted)companion_saved_pin_label(pairing_line);
-    else snprintf(pairing_line,sizeof(pairing_line),"PIN UNAVAILABLE");
-    meshink_show_companion_notice(pairing_line);
-    meshink_board_begin_companion();
-    if (!storage_mounted || !meshink_backup_recover_pending()) {
+    // A pending restore can roll back config.proto. Inspect the final
+    // recovered bytes, never a PIN from a file later replaced by recovery.
+    if(!storage_mounted || !meshink_backup_recover_pending()){
         Serial.println("[MT-BLE] storage unavailable or interrupted restore; refusing headless start");
         return;
     }
+    char pairing_line[40]{};
+    companion_saved_pin_label(pairing_line);
+    meshink_show_companion_notice(pairing_line);
+    meshink_board_begin_companion();
     journal_ready=meshink_message_store().begin();
     if(!journal_ready)
         Serial.println("[MT-BLE] ERROR: MeshInk message journal unavailable");
