@@ -48,6 +48,6 @@ bool map_tiles_media_ready();
 // This warms zoom-folder/archive metadata so the first Maps interaction does
 // not pay the one-time FAT/PMTiles discovery cost.
 void map_tiles_warm_storage();
-// Changes on an observed SD disconnect or a successful new mount.
-// UI discards rendered viewport cache, not decoded source tiles, on a change.
+// Changes only when a new SD mount succeeds. The UI preserves the last
+// rendered viewport across removal, while decoded source tiles remain in RAM.
 uint32_t map_tiles_media_epoch();
