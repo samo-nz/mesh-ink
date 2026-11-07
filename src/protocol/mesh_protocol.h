@@ -34,6 +34,7 @@ bool mesh_protocol_is_running();
 void mesh_protocol_flush_now();
 void mesh_protocol_prepare_shutdown();
 
+bool mesh_protocol_companion_pairing_info(MeshInkCompanionPairingInfo& info);
 void mesh_protocol_request_companion_mode();
 bool mesh_protocol_consume_companion_request();
 void mesh_protocol_companion_setup();
