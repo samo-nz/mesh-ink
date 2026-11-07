@@ -23,6 +23,7 @@ struct Tile {
     uint8_t* bits;
     int z,x,y;
     uint32_t age;
+    uint32_t media_epoch; // revalidate tiles from earlier SD mounts, without discarding them
     bool valid;
     bool from_pmtiles;
 };
@@ -34,17 +35,20 @@ uint32_t cache_age=0;
 // Keep the decoder alive for the entire local UI session. Its internal SIMD
 // row must remain 16-byte aligned, including when the object lives in PSRAM.
 PNG* png=nullptr;
-void init_png_decoder_psram(){
-    if(png)return;
+bool init_png_decoder_psram(){
+    if(png)return true;
+    // No decoder allocation at boot without map data. On a low-memory
+    // Meshtastic session, keep Maps usable from cache if allocation fails.
     void* memory=heap_caps_aligned_alloc(16,sizeof(PNG),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!memory || ((uintptr_t)memory & 15U)){
-        Serial.println("[T5-MAP] FATAL: aligned PSRAM PNG decoder allocation failed");
-        Serial.flush();
-        abort();
+        if(memory)free(memory);
+        Serial.println("[T5-MAP] PNG decoder PSRAM unavailable; using cached tiles");
+        return false;
     }
     png=new(memory) PNG();
     Serial.printf("[T5-MAP] PNG decoder PSRAM bytes=%u align=%u ptr=%p\n",
                   (unsigned)sizeof(PNG),(unsigned)((uintptr_t)png&15U),(void*)png);
+    return true;
 }
 #if T5_CACHE64_EXPERIMENT
 extern "C" void s3_rgb565(uint8_t* src,uint8_t* dest,int count,bool big_endian);
@@ -67,8 +71,8 @@ bool png_range_active=false;
 uint32_t png_range_start=0,png_range_length=0;
 bool zoom_folder_known[25]{},zoom_folder_present[25]{};
 bool sd_mounted=false,map_io_failed=false;
-uint32_t sd_retry_after=0,sd_media_epoch=0;
-constexpr uint32_t SD_RETRY_MS=1500;
+bool sd_checked_this_render=false;
+uint32_t sd_media_epoch=0;
 // Physical card wiring, SPI ownership and the field-tested bus clock are
 // selected by the storage backend rather than by Maps.
 // Per-render PMTiles/PNG timing. PNG decode includes its nested range I/O;
@@ -137,8 +141,9 @@ bool preload_pmt_png(MeshInkStorageFile* archive,uint32_t offset,uint32_t length
     }
     return true;
 }
-void reset_sd_caches() {
-    for(auto& tile:tile_cache)tile.valid=false;
+void reset_sd_metadata() {
+    // Only filesystem-derived state belongs to a removable SD card. Source
+    // pixels already decoded into PSRAM remain valid even with no card.
     memset(absent_tiles,0,sizeof(absent_tiles));
     absent_cursor=0;
     memset(zoom_folder_known,0,sizeof(zoom_folder_known));
@@ -155,67 +160,32 @@ void reset_sd_caches() {
 void mark_sd_unavailable() {
     if(file)file.close();
     png_file=nullptr;
-    reset_sd_caches(); // close all archive handles before unmounting
-    if(sd_mounted)meshink_storage_end();
-    sd_mounted=false;
+    reset_sd_metadata(); // closes PMTiles handles before the filesystem ends
+    if(sd_mounted){
+        meshink_storage_end();
+        sd_mounted=false;
+        ++sd_media_epoch;
+        Serial.println("[T5-MAP] SD unavailable; cached map pixels retained");
+    }
     map_io_failed=false;
-    sd_retry_after=millis()+SD_RETRY_MS;
-    ++sd_media_epoch;
-    Serial.println("[T5-MAP] SD unavailable; map caches invalidated");
 }
 bool media_ready(bool probe=true) {
     if(!sd_mounted) {
-        if((int32_t)(millis()-sd_retry_after)<0)return false;
-        if(!meshink_storage_begin()) {
-            sd_retry_after=millis()+SD_RETRY_MS;
-            return false;
-        }
+        // Retry at each actual SD-dependent request. No timer or card poll.
+        if(!meshink_storage_begin())return false;
         sd_mounted=true;
-        reset_sd_caches();
+        reset_sd_metadata();
         ++sd_media_epoch;
-        T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] SD mounted; SPI clock requested=%lu MHz\n",
-                      (unsigned long)(meshink_storage_bus_hz()/1000000));
+        T5_DEBUGF(T5_LOG_MAP,"[T5-MAP] SD mounted; SPI clock requested=%lu MHz\\n",
+                  (unsigned long)(meshink_storage_bus_hz()/1000000));
     }
-    if(probe) {
-        // Do not use SD.readRAW() as a card-presence oracle: an otherwise
-        // readable card may reject the raw-sector probe, which previously
-        // caused an endless mount/unmount loop. Check the *same filesystem
-        // read path* the map renderer uses, and require consecutive failures
-        // before treating a probe error as physical removal.
-        bool readable=false;
-        if(archives_discovered&&archive_count) {
-            MeshInkStorageFile witness=meshink_storage_open(archive_paths[0]);
-            uint8_t magic[8]{};
-            readable=witness&&witness.read(magic,sizeof(magic))==sizeof(magic)
-                &&memcmp(magic,"PMTiles",7)==0&&magic[7]==3;
-            if(witness)witness.close();
-        } else {
-            MeshInkStorageFile maps=meshink_storage_open("/maps");
-            readable=maps&&maps.isDirectory();
-            if(maps)maps.close();
-            // No map folder is a valid inserted card state, but the absence
-            // of a witness cannot establish removal. Never unmount here.
-            if(!readable) {
-                MeshInkStorageFile root=meshink_storage_open("/");
-                readable=root&&root.isDirectory();
-                if(root)root.close();
-            }
-        }
-        static uint8_t consecutive_probe_failures=0;
-        if(readable) {
-            consecutive_probe_failures=0;
-        } else if(archives_discovered&&archive_count) {
-            if(++consecutive_probe_failures>=2) {
-                consecutive_probe_failures=0;
-                Serial.println("[T5-MAP] archive read failed twice; resetting SD");
-                mark_sd_unavailable();
-                return false;
-            }
-            Serial.println("[T5-MAP] SD archive probe failed once; verifying on next poll");
-        } else {
-            // An empty card has nothing to read as a reliable witness.
-            // Only a genuine tile read failure triggers remounting here.
-            consecutive_probe_failures=0;
+    if(probe){
+        MeshInkStorageFile root=meshink_storage_open("/");
+        const bool readable=root&&root.isDirectory();
+        if(root)root.close();
+        if(!readable){
+            mark_sd_unavailable();
+            return false;
         }
     }
     return true;
@@ -563,12 +533,16 @@ void mark_absent(int z,int x,int y) {
     AbsentTile& entry=absent_tiles[absent_cursor++%ABSENT_SLOTS];
     entry={z,x,y,true};
 }
-Tile* acquire_slot() {
-    Tile* oldest=&tile_cache[0];
+Tile* acquire_slot(const Tile* protected_tile=nullptr) {
+    // Revalidating a tile after an SD swap must not overwrite the only cached
+    // copy until a replacement has been fully decoded and verified.
+    Tile* oldest=nullptr;
     for(auto& entry:tile_cache) {
-        if(!entry.valid){oldest=&entry;break;}
-        if(entry.age<oldest->age)oldest=&entry;
+        if(&entry==protected_tile)continue;
+        if(!oldest||!entry.valid){oldest=&entry;if(!entry.valid)break;}
+        else if(entry.age<oldest->age)oldest=&entry;
     }
+    if(!oldest)return nullptr;
     if(!oldest->bits) {
         oldest->bits=(uint8_t*)heap_caps_malloc(TILE_BYTES,
                             MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
@@ -592,14 +566,26 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                  MapRenderResult& result,Tile*& output,bool& direct,
                  bool& from_pmtiles) {
     from_pmtiles=false;
-    output=find_cached(z,x,y);
-    if(output){
+    Tile* cached=find_cached(z,x,y);
+    auto use_cached=[&]() -> bool {
+        if(!cached)return false;
+        output=cached;
         ++result.ram_hits;
-        from_pmtiles=output->from_pmtiles;
+        from_pmtiles=cached->from_pmtiles;
         return true;
+    };
+    // An already-decoded tile never requires SD I/O, even after removal.
+    if(cached&&(!sd_mounted||cached->media_epoch==sd_media_epoch))
+        return use_cached();
+    if(!sd_checked_this_render){
+        sd_checked_this_render=true;
+        (void)media_ready(true); // mount/probe only when a source needs SD
     }
-    if(map_io_failed||pmtiles_had_io_error())return false;
-    if(previously_absent(z,x,y))return false;
+    // Retain older pixels as fallback if the new card lacks this source.
+    if(!sd_mounted||map_io_failed||pmtiles_had_io_error()||
+       previously_absent(z,x,y))
+        return use_cached();
+    if(cached&&cached->media_epoch==sd_media_epoch)return use_cached();
     char path[SOURCE_PATH_BYTES];
     snprintf(path,sizeof(path),"/maps/%d/%d/%d.png",z,x,y);
     PmtilesPngRange range{};
@@ -651,21 +637,26 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
                 Serial.printf("[T5-MAP] archive lookup I/O failed: %s z=%d x=%d y=%d\n",
                               archive_paths[i],z,x,y);
                 map_io_failed=true;
-                return false;
+                return use_cached();
             }
         }
         if(!found){
             if(!archive_unavailable)mark_absent(z,x,y);
-            return false;
+            return use_cached();
         }
     }
     bool pmt_preloaded=false;
     if(selected_pmtiles&&range.length) {
         MeshInkStorageFile* archive=pmtiles_frame_file(path);
         if(archive&&ensure_pmt_png_buffer(range.length)) {
-            if(!preload_pmt_png(archive,range.offset,range.length))return false;
+            if(!preload_pmt_png(archive,range.offset,range.length))
+                return use_cached();
             pmt_preloaded=true;
         }
+    }
+    if(!init_png_decoder_psram()){
+        if(file)file.close();
+        return use_cached();
     }
     png_range_active=selected_pmtiles&&!pmt_preloaded&&range.length!=0;
     png_range_start=range.offset;
@@ -677,15 +668,15 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
         if(!pmt_preloaded)
             png_close(nullptr); // only closes a loose-file handle, not PMTiles
         png_range_active=false;
-        return false;
+        return use_cached();
     }
     if(png->getWidth()!=TILE_SIZE||png->getHeight()!=TILE_SIZE) {
         Serial.printf("[T5-MAP] wrong PNG size: %s\n",path);
         png->close();
         png_range_active=false;
-        return false;
+        return use_cached();
     }
-    Tile* slot=acquire_slot();
+    Tile* slot=acquire_slot(cached);
     ctx=draw;
     decode_bits=slot?slot->bits:nullptr;
     const uint32_t decode_started=map_perf_now_us();
@@ -698,20 +689,22 @@ bool load_source(int z,int x,int y,const DrawContext& draw,
     decode_bits=nullptr;
     if(map_io_failed) {
         if(slot)slot->valid=false;
-        return false;
+        return use_cached();
     }
     if(decode_status!=PNG_SUCCESS) {
         if(slot)slot->valid=false;
         Serial.printf("[T5-MAP] PNG decode failed: %s status=%d\n",
                       path,decode_status);
-        return false;
+        return use_cached();
     }
     ++result.disk_decodes;
     if(selected_pmtiles)++result.pmtiles_decodes;
     else ++result.loose_decodes;
     from_pmtiles=selected_pmtiles;
     if(slot) {
-        slot->z=z;slot->x=x;slot->y=y;slot->from_pmtiles=selected_pmtiles;slot->valid=true;
+        if(cached)cached->valid=false; // replace only after successful decode
+        slot->z=z;slot->x=x;slot->y=y;slot->from_pmtiles=selected_pmtiles;
+        slot->media_epoch=sd_media_epoch;slot->valid=true;
         output=slot;
     } else direct=true;
     return true;
@@ -791,7 +784,8 @@ bool draw_tile(int zoom,int x,int y,int dx,int dy,MapRenderResult& result) {
 
 bool map_tiles_media_ready(){return media_ready(true);}
 void map_tiles_warm_storage(){
-    init_png_decoder_psram();
+    // Warm only SD metadata; do not allocate the PNG decoder until a tile
+    // actually needs decoding (particularly important without an SD card).
     const uint32_t started=millis();
     if(!media_ready(false)){
         Serial.println("[T5-MAP-WARM] SD unavailable; deferred until Maps");
@@ -817,13 +811,14 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                                 int height,double lat,double lon,uint8_t zoom) {
     const uint32_t started=millis(); // per-render performance instrumentation
     reset_map_perf();
-    const bool ready=media_ready(false);
+    // Cache-only map views need no SD mount, SPI probe or retry delay.
+    // The first uncached source request in load_source() performs the check.
+    sd_checked_this_render=false;
+    map_io_failed=false;
     MapRenderResult result{};
-    result.sd_ready=ready;
+    result.sd_ready=sd_mounted;
     result.min_source_zoom=zoom;
     result.max_source_zoom=zoom;
-    if(!ready)return result;
-    map_io_failed=false;
     pmtiles_begin_frame();
     target=framebuffer;
     render_clip={x,y,width,height};
@@ -835,8 +830,8 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     const int left=(int)floor(centre_x-width/2.0);
     const int top=(int)floor(centre_y-height/2.0);
     const int tx0=(int)floor(left/256.0),ty0=(int)floor(top/256.0);
-    for(int ty=ty0;ty*256<top+height&&!map_io_failed&&!pmtiles_had_io_error();++ty)
-        for(int tx=tx0;tx*256<left+width&&!map_io_failed&&!pmtiles_had_io_error();++tx)
+    for(int ty=ty0;ty*256<top+height;++ty)
+        for(int tx=tx0;tx*256<left+width;++tx)
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
@@ -844,15 +839,13 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
     const PmtilesPerfStats pmt_perf=pmtiles_perf_stats();
     pmtiles_end_frame();
     if(failed) {
-        // A failed *tile* operation is not proof the card was removed: an
-        // individual PNG/file may be absent, truncated or briefly unreadable.
-        // Check independent filesystem I/O before unmounting the entire card.
+        // A corrupt PNG is not necessarily card removal. Probe the filesystem
+        // before unmounting; cached pixels already rendered remain visible.
         const bool storage_responds=media_ready(true);
-        Serial.printf("[T5-MAP] map tile read failed; SD witness=%s (no blind unmount)\n",
+        Serial.printf("[T5-MAP] map tile read failed; SD witness=%s (cached tiles kept)\n",
                       storage_responds?"OK":"UNAVAILABLE");
-        result.sd_ready=storage_responds;
-        result.tiles=0; // partial frame must never become cached as complete
     }
+    result.sd_ready=sd_mounted;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
                   (unsigned)zoom,(unsigned long)(millis()-started),
                   (unsigned long)perf_pmt_lookup_us,
