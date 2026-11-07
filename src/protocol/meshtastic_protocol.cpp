@@ -51,6 +51,32 @@ PsramPtr<PhoneRxScratch> phone_rx;
 // retransmissions remain in the pinned official Meshtastic core.
 namespace {
 bool ready=false;
+// Sample native Bluetooth config once on the UI/core-owned startup path,
+// before the networking worker starts. The UI never reads mutable NodeDB
+// config concurrently with that worker.
+MeshInkCompanionPairingInfo companion_pairing_snapshot{};
+bool companion_pairing_info(MeshInkCompanionPairingInfo& info){
+    info=companion_pairing_snapshot;
+    return ready&&info.mode!=MeshInkCompanionPairingMode::Unavailable;
+}
+void capture_companion_pairing(){
+    companion_pairing_snapshot=MeshInkCompanionPairingInfo{};
+    switch(config.bluetooth.mode){
+        case meshtastic_Config_BluetoothConfig_PairingMode_FIXED_PIN:
+            if(config.bluetooth.fixed_pin<=999999U){
+                companion_pairing_snapshot.mode=MeshInkCompanionPairingMode::FixedPin;
+                companion_pairing_snapshot.pin=config.bluetooth.fixed_pin;
+            }
+            break;
+        case meshtastic_Config_BluetoothConfig_PairingMode_NO_PIN:
+            companion_pairing_snapshot.mode=MeshInkCompanionPairingMode::NoPin;
+            break;
+        case meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN:
+            companion_pairing_snapshot.mode=MeshInkCompanionPairingMode::Unsupported;
+            break;
+        default:break;
+    }
+}
 bool gps_stable_fix=false,gps_candidate_fix=false;
 uint32_t gps_candidate_since=0,gps_next_status=0;
 void update_shared_gps_status(){
@@ -123,6 +149,7 @@ void start(){
     // Native Router, NodeDB and MeshService must initialize before PhoneAPI.
     // This seam does not initialize a second firmware application.
     const bool engine_ready=meshink_meshtastic_native_begin();
+    if(engine_ready)capture_companion_pairing();
     const bool phone_ready=engine_ready&&meshink_official_phoneapi_open(1);
     ready=engine_ready&&phone_ready;
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
@@ -462,6 +489,7 @@ const MeshInkProtocolBackend& backend(){
     value.flush_now=meshink_meshtastic_ui_flush;
     value.prepare_shutdown=stop;value.prepare_switch_shutdown=prepare_switch_shutdown;
     value.provider=meshink_meshtastic_ui_provider;
+    value.companion_pairing_info=companion_pairing_info;
     value.request_companion_mode=meshink_meshtastic_request_companion;
     value.consume_companion_request=meshink_meshtastic_consume_companion_request;
     value.companion_setup=meshink_meshtastic_companion_setup;
