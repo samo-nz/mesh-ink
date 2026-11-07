@@ -254,6 +254,8 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
+assert firmware_version.group(1) == "3.1.1", "3.1.1 uses the stable version string, not an RC tag"
+assert "valid stable or numbered test/RC version" in testing_workflow_source, "testing CI accepts explicitly requested stable firmware versions"
 assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+|-rc\.\d+|deepsleep\d+)?", firmware_version.group(1)), "firmware version must be stable, a numbered test/RC build, or a numbered deepsleep experiment"
 
 # Status-bar refresh policy: normal UI follows the wall-clock minute while
@@ -364,7 +366,7 @@ assert "gpio_uninstall_isr_service();" not in native_attach_body, "native driver
 assert "gpio_isr_handler_remove(CFG_INTR)" in epdiy_patch_source, "EPDiy teardown removes only its own interrupt handler"
 assert "if (meshink_epdiy_owns_gpio_isr_service && !meshink_radio_gpio_isr)" in epdiy_patch_source, "EPDiy uninstalls its service only when no live radio DIO1 handler depends on it"
 assert platformio_source.count("pre:tools/patch_epdiy_shared_gpio_isr.py") == 2, "all EPDiy firmware targets apply the shared-ISR patch"
-assert "if(!deep_sleep_standby)draw_status_bar();" in source, "deep-sleep standby omits the normal status bar"
+assert "if(!(deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby()))" in source, "Meshtastic normal standby always preserves its status bar, even with retained MeshCore preference"
 assert '"DEEP SLEEP STANDBY"' in source, "deep-sleep standby visibly identifies its power state"
 assert "esp_sleep_enable_timer_wakeup" in board_target_source and "60ULL*60ULL*1000000ULL" in board_target_source, "deep-sleep standby has an hourly battery timer wake"
 assert "meshink_board_return_to_retained_deep_sleep" in unified_source, "timer and short-button wakes preserve retained SX1262 state when re-sleeping"
@@ -439,6 +441,18 @@ assert "meshink_power_low_battery_latched" not in power_backend_source and "low_
 assert "ui_minimal_low_battery_shutdown" in source and "minimal low-battery shutdown" in source, "critical deep-sleep battery path uses minimal persistent EPD notice"
 minimal_low_battery_body=source[source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"):source.index("static void critical_battery_shutdown",source.index("[[noreturn]] void ui_minimal_low_battery_shutdown"))]
 assert minimal_low_battery_body.index("meshink_display_deinit();") < minimal_low_battery_body.index("meshink_power_begin_minimal_bus()") < minimal_low_battery_body.index("meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery)"), "minimal low-battery path restores shared I2C after EPDiy teardown before BATFET ship command"
+assert "const bool reuse_display=display_session_active;" in minimal_low_battery_body, "minimal low-battery path cannot double-init active EPDiy display"
+assert "if(!reuse_display){" in minimal_low_battery_body and "display=meshink_display_state_init();" in minimal_low_battery_body, "cold-boot-only path owns its new framebuffer"
+assert "paint_low_battery_shutdown(critical,source);" in minimal_low_battery_body, "headless low-battery and runtime share the reliable physical-clear path"
+shutdown_painter=source.split("static void paint_low_battery_shutdown(",1)[1].split("[[noreturn]] void ui_minimal_low_battery_shutdown",1)[0]
+assert shutdown_painter.index("meshink_display_clear();") < shutdown_painter.index("draw_low_battery_notice(critical);") < shutdown_painter.index("meshink_display_invalidate_previous(&display);") < shutdown_painter.index("meshink_display_update_screen("), "physical e-paper is cleared and previous-frame invalidated before final low battery notice"
+assert "MeshInkRefreshMode::Gray16" in shutdown_painter and "clear-before-draw=1" in shutdown_painter, "terminal low-battery notice uses full GC16, not fragile GL16"
+runtime_low_battery=source.split("static void critical_battery_shutdown(",1)[1].split("static void service_critical_battery()",1)[0]
+assert 'set_ui_orientation(MeshInkOrientation::Portrait);' in runtime_low_battery, "landscape keyboard can't rotate the terminal low-battery message"
+assert "paint_low_battery_shutdown(critical,source);" in runtime_low_battery, "runtime low-battery uses same physical-clear path"
+assert "T5_CRITICAL_BATTERY_MV = 3300" in power_backend_source, "3.30 V safety threshold stays unchanged pending discharge data"
+assert "log_low_soc_diagnostic(millivolts,confirmed);" in power_backend_source, "3-sample shutdown threshold records final BQ27220 diagnostic"
+assert "gauge_word(0x10,remaining)" in power_backend_source and "gauge_word(0x12,full)" in power_backend_source and "gauge_word(0x14,current_raw)" in power_backend_source, "low SOC logging includes capacity and current without allocations"
 assert unified_source.count('meshink_wireless_force_local_radios_off()') == 4, "local wireless policy is enforced for normal pre/post MeshCore startup plus retained radio/button wake paths"
 assert 'check_local_wireless_state("local-pre"' in unified_source, "local boot verifies radios before UI startup"
 assert 'check_local_wireless_state("local-post-mesh"' in unified_source, "local boot verifies radios after MeshCore startup"
