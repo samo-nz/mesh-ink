@@ -164,7 +164,9 @@ void mark_sd_unavailable() {
     if(sd_mounted){
         meshink_storage_end();
         sd_mounted=false;
-        ++sd_media_epoch;
+        // Do not bump the generation here: the already rendered viewport is
+        // still useful offline, even if its source tiles have been evicted.
+        // Only a successful *new* mount invalidates that viewport.
         Serial.println("[T5-MAP] SD unavailable; cached map pixels retained");
     }
     map_io_failed=false;
