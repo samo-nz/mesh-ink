@@ -5023,12 +5023,13 @@ static void paint_low_battery_shutdown(
     if(!reuse_display){
         meshink_display_init();
         display_session_active=true;
+        meshink_display_set_orientation(MeshInkOrientation::Portrait);
         display=meshink_display_state_init();
         fb=meshink_display_framebuffer(&display);
     }else{
         Serial.println("[T5-SHUTDOWN] low-battery reusing initialized EPDiy session");
+        meshink_display_set_orientation(MeshInkOrientation::Portrait);
     }
-    meshink_display_set_orientation(MeshInkOrientation::Portrait);
     paint_low_battery_shutdown(critical,source);
 
     if(!reuse_display){
