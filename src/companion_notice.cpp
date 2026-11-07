@@ -27,7 +27,8 @@ static constexpr Glyph notice_glyphs[] = {
     {'5',{31,16,16,30,1,1,30}}, {'6',{14,16,16,30,17,17,14}},
     {'7',{31,1,2,4,8,8,8}}, {'8',{14,17,17,14,17,17,14}},
     {'9',{14,17,17,15,1,1,14}},
-    {'.',{0,0,0,0,0,6,6}}, {'-',{0,0,0,31,0,0,0}},
+    {'.',{0,0,0,0,0,6,6}}, {':',{0,6,6,0,6,6,0}},
+    {'-',{0,0,0,31,0,0,0}},
     {'A',{14,17,17,31,17,17,17}}, {'B',{30,17,17,30,17,17,30}},
     {'C',{14,17,16,16,16,17,14}}, {'D',{30,17,17,17,17,17,30}},
     {'E',{31,16,16,30,16,16,31}}, {'F',{31,16,16,30,16,16,16}},
@@ -35,9 +36,11 @@ static constexpr Glyph notice_glyphs[] = {
     {'I',{31,4,4,4,4,4,31}}, {'L',{16,16,16,16,16,16,31}},
     {'M',{17,27,21,21,17,17,17}},
     {'N',{17,25,21,19,17,17,17}}, {'O',{14,17,17,17,17,17,14}},
-    {'P',{30,17,17,30,16,16,16}}, {'R',{30,17,17,30,20,18,17}},
+    {'P',{30,17,17,30,16,16,16}}, {'Q',{14,17,17,17,21,18,13}},
+    {'R',{30,17,17,30,20,18,17}},
     {'S',{15,16,16,14,1,1,30}}, {'T',{31,4,4,4,4,4,4}},
-    {'U',{17,17,17,17,17,17,14}}, {'X',{17,17,10,4,10,17,17}},
+    {'U',{17,17,17,17,17,17,14}}, {'V',{17,17,17,17,17,10,4}},
+    {'X',{17,17,10,4,10,17,17}},
 };
 
 static void notice_text(const char* message, int x, int y, int scale, uint8_t* fb, bool bold = false) {
@@ -124,7 +127,7 @@ static void notice_protocol_logo(int top, int target_height, uint8_t* fb) {
     }
 }
 
-void meshink_show_companion_notice() {
+void meshink_show_companion_notice(const char* pairing_line) {
     meshink_power_frontlight_begin();
     meshink_power_frontlight_set(100);
     T5_TRACE("board: begin; frontlight on; display protocol companion notice before radio/I2C startup\n");
@@ -142,6 +145,10 @@ void meshink_show_companion_notice() {
         // Place the active protocol artwork beneath it, above the mode label.
         notice_protocol_logo(418, 90, fb);
         notice_centred("BLUETOOTH COMPANION MODE", 565, 3, fb, true);
+        // Draw protocol pairing state handed off from the pre-reboot
+        // configuration. The panel remains visible after BLE starts.
+        if(pairing_line&&pairing_line[0])
+            notice_centred(pairing_line, 615, 2, fb, true);
         char hold_button[32];
         snprintf(hold_button,sizeof(hold_button),"HOLD %s BUTTON",meshink_primary_button_name());
         notice_centred(hold_button, 665, 2, fb, true);
