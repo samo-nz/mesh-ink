@@ -4370,7 +4370,10 @@ static void draw_branding_stack(int top,int bottom,int gap,int protocol_height,i
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);
-    if(!deep_sleep_standby)draw_status_bar();
+    // The saved preference is shared across protocols. Meshtastic does not
+    // support retained-radio deep sleep, so normal standby keeps its bar.
+    if(!(deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby()))
+        draw_status_bar();
 
     const bool has_direct=status_unread>0;
     const bool has_channel=status_channel_unread>0;
@@ -4955,90 +4958,106 @@ static void request_hardware_shutdown() {
     meshink_power_enter_ship_mode(MeshInkPowerOffReason::User);
 }
 
-[[noreturn]] void ui_minimal_low_battery_shutdown(
-        const MeshInkPowerCriticalState& critical,const char* source) {
-    if(critical.battery_mv_valid)
-        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; minimal low-battery shutdown\n",
-                      (unsigned)critical.battery_mv,source?source:"unknown");
-    else
-        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\n",
-                      source?source:"unknown");
-
-    // No touch, storage, GPS or protocol startup here. Bring up only the
-    // frontlight pin (kept at zero) and EPD long enough to leave persistent
-    // user guidance before board-level ship mode removes battery power.
-    meshink_power_frontlight_begin();
-    meshink_power_frontlight_set(0);
-    meshink_display_init();
-    meshink_display_set_orientation(MeshInkOrientation::Portrait);
-    display=meshink_display_state_init();
-    fb=meshink_display_framebuffer(&display);
-
-    if(fb){
-        meshink_display_set_all_white(&display);
-        ui_centred("LOW BATTERY",ui_y(230),6,0,true);
-        ui_centred("POWERED DOWN",ui_y(340),5,0,true);
-        ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
-        if(critical.battery_mv_valid){
-            char voltage[20];
-            snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
-                     (unsigned)(critical.battery_mv/1000U),
-                     (unsigned)((critical.battery_mv%1000U)/10U));
-            ui_centred(voltage,ui_y(650),2,0,true);
-        }else{
-            ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
-        }
-        ui_centred(UI_VERSION,ui_y(900),2,0,true);
-        meshink_display_poweron();
-        const MeshInkDisplayResult result=meshink_display_update_screen(
-            &display,MeshInkRefreshMode::FastGray16,
-            (int)meshink_display_ambient_temperature());
-        meshink_display_poweroff();
-        Serial.printf("[T5-DEEPSLEEP] minimal low-battery EPD result=%d\n",(int)result);
-    }else{
-        meshink_display_poweroff();
-        Serial.println("[T5-DEEPSLEEP] minimal low-battery framebuffer unavailable");
-    }
-
-    meshink_display_release_state(&display);
-    fb=nullptr;
-    meshink_display_deinit();
-
-    // EPDiy v7 teardown deletes the shared I2C driver. Re-establish only the
-    // minimal bus before commanding board-level battery ship mode; otherwise the
-    // charger write would fail and low-battery shutdown would degrade to the
-    // ESP32-only deep-sleep fallback.
-    if(!meshink_power_begin_minimal_bus())
-        Serial.println("[T5-ERROR] low-battery ship-mode I2C restart failed");
-    meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
-}
-
-static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
-    if(critical.battery_mv_valid)
-        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; entering ship mode\n",
-                      (unsigned)critical.battery_mv,source?source:"unknown");
-    else
-        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; entering ship mode\n",
-                      source?source:"unknown");
-    keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
-    text_refresh_pending=false;message_alert_active=false;
-    frontlight_deadline=0;frontlight_drive(false);
-
+// One low-battery screen for runtime, cold boot and retained/headless wake.
+// This is a terminal display path: no UI layers, protocol callbacks or heap
+// allocation. The EPD retains its previous *physical* image even after a
+// fresh framebuffer is filled white. Use the known-good boot-splash sequence
+// to prevent old text/boot branding from appearing under the shutdown notice.
+static void draw_low_battery_notice(const MeshInkPowerCriticalState& critical) {
     meshink_display_set_all_white(&display);
     ui_centred("LOW BATTERY",ui_y(230),6,0,true);
     ui_centred("POWERED DOWN",ui_y(340),5,0,true);
     ui_centred("CONNECT USB TO CHARGE",ui_y(475),3,0,true);
-    if(critical.battery_mv_valid) {
+    if(critical.battery_mv_valid){
         char voltage[20];
         snprintf(voltage,sizeof(voltage),"BATTERY %u.%02uV",
                  (unsigned)(critical.battery_mv/1000U),
                  (unsigned)((critical.battery_mv%1000U)/10U));
         ui_centred(voltage,ui_y(650),2,0,true);
-    } else {
+    }else{
         ui_centred("BATTERY CRITICAL",ui_y(650),2,0,true);
     }
     ui_centred(UI_VERSION,ui_y(900),2,0,true);
-    refresh(MeshInkRefreshMode::FastGray16,false);
+}
+
+static void paint_low_battery_shutdown(
+        const MeshInkPowerCriticalState& critical,const char* source) {
+    if(!fb){
+        Serial.printf("[T5-SHUTDOWN] low-battery EPD unavailable source=%s\\n",
+                      source?source:"unknown");
+        return;
+    }
+    // Exactly as in paint_cold_boot_frame(): first erase the retained panel,
+    // then invalidate EPDiy's previous-frame comparator and commit GC16.
+    // Both steps are synchronous; ship mode is requested only afterwards.
+    meshink_display_poweron();
+    meshink_display_clear();
+    meshink_display_poweroff();
+
+    draw_low_battery_notice(critical);
+    meshink_display_invalidate_previous(&display);
+    meshink_display_poweron();
+    const MeshInkDisplayResult result=meshink_display_update_screen(
+        &display,MeshInkRefreshMode::Gray16,
+        (int)meshink_display_ambient_temperature());
+    meshink_display_poweroff();
+    Serial.printf("[T5-SHUTDOWN] low-battery EPD source=%s clear-before-draw=1 mode=GC16 result=%d\\n",
+                  source?source:"unknown",(int)result);
+}
+
+[[noreturn]] void ui_minimal_low_battery_shutdown(
+        const MeshInkPowerCriticalState& critical,const char* source) {
+    if(critical.battery_mv_valid)
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; minimal low-battery shutdown\\n",
+                      (unsigned)critical.battery_mv,source?source:"unknown");
+    else
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; minimal low-battery shutdown\\n",
+                      source?source:"unknown");
+
+    // Cold boot has no display session, but a retained-radio message alert
+    // may already own a live EPDiy session in this same process. EPDiy's
+    // epd_hl_init() is one-shot; never initialize it again in that case.
+    meshink_power_frontlight_begin();
+    meshink_power_frontlight_set(0);
+    const bool reuse_display=display_session_active;
+    if(!reuse_display){
+        meshink_display_init();
+        display_session_active=true;
+        display=meshink_display_state_init();
+        fb=meshink_display_framebuffer(&display);
+    }else{
+        Serial.println("[T5-SHUTDOWN] low-battery reusing initialized EPDiy session");
+    }
+    meshink_display_set_orientation(MeshInkOrientation::Portrait);
+    paint_low_battery_shutdown(critical,source);
+
+    if(!reuse_display){
+        // EPDiy v7 teardown deletes the shared I2C driver. Re-establish
+        // only the minimal bus before the BQ25896 battery disconnect.
+        meshink_display_release_state(&display);
+        fb=nullptr;
+        meshink_display_deinit();
+        display_session_active=false;
+        if(!meshink_power_begin_minimal_bus())
+            Serial.println("[T5-ERROR] low-battery ship-mode I2C restart failed");
+    } // Existing headless/interactive sessions retain their working I2C bus.
+    meshink_power_enter_ship_mode(MeshInkPowerOffReason::LowBattery);
+}
+
+static void critical_battery_shutdown(const MeshInkPowerCriticalState& critical,const char* source) {
+    if(critical.battery_mv_valid)
+        Serial.printf("[T5-ERROR] CRITICAL battery=%umV source=%s; entering ship mode\\n",
+                      (unsigned)critical.battery_mv,source?source:"unknown");
+    else
+        Serial.printf("[T5-ERROR] CRITICAL battery source=%s; entering ship mode\\n",
+                      source?source:"unknown");
+    keyboard_visible=false;keyboard_message_mode=false;toast_visible=false;
+    text_refresh_pending=false;message_alert_active=false;
+    frontlight_deadline=0;frontlight_drive(false);
+    // The active UI can have a landscape keyboard or Maps displayed.
+    // Reorient and clear the physical panel before painting the terminal view.
+    set_ui_orientation(MeshInkOrientation::Portrait);
+    paint_low_battery_shutdown(critical,source);
 
     set_touch_power(false);
     if(mesh_is_ready) {
