@@ -1,4 +1,4 @@
-# MeshInk 3.1.0
+# MeshInk 3.1.2
 
 <p align="center">
   <img src="docs/file_00000000248c820a81311144dc2df47d.png" alt="MeshInk — Stay Connected, Further" width="720">
@@ -69,12 +69,57 @@ Send private or channel messages, explore offline maps, discover nodes and share
 - **Customisable settings** — Radio, GPS, display and power preferences.
 - **SD card support** — Offline maps and device backup/restore.
 
-### New in 3.1.0
+### What's new in 3.1.2
 
-- **International typing** — Long-press characters for accented letters and punctuation alternatives on portrait or landscape keyboards.
-- **Emoji messaging** — 34 selectable emoji, with ten frequent shortcuts on the symbols row and a compact landscape selection panel.
-- **UTF-8-aware composition** — Correct character boundaries for wrapping, editing, backspace and display clipping.
-- **Meshtastic message progress** — Show actual retry progress for acknowledged direct messages and the final delivery/failure outcome.
+- **SD-card reliability** — Fix boot crashes without an SD card and handle card removal/reinsertion without restarting.
+- **Offline Maps** — Keep cached tiles visible while the SD card is offline, recover access when reinserted, and avoid periodic card polling.
+- **Bluetooth companion PIN** — Show the six-digit pairing PIN for MeshCore and Meshtastic. Meshtastic uses a saved fixed PIN or a boot-specific PIN for random/no-PIN settings; the displayed PIN is always required in companion mode.
+- **Meshtastic standby** — Preserve the status bar when entering normal standby.
+- **Low-battery shutdown** — Improve e-paper clearing before the warning and add serial battery diagnostics; the 3.30 V cutoff is unchanged.
+
+<details>
+<summary><strong>Emoji and international characters</strong></summary>
+
+While writing a **direct or channel message** in portrait or landscape:
+
+- **Accents and extra symbols:** Long-press a key for about half a second, then tap your choice. Use the uppercase keyboard for capital-letter alternatives.
+- **Emoji:** Long-press the keyboard's `ABC`, `abc` or `#+=` mode key to open the picker. Symbols mode also puts 10 favourite emojis on the top row; on the landscape keyboard these remain available alongside the other choices.
+
+**Letter alternatives** (lowercase shown; uppercase variants are available too, including `ẞ`):
+
+| Key | Alternatives | Key | Alternatives |
+| --- | --- | --- | --- |
+| `a` | áàâäãåāąăæ | `c` | çćčĉċ |
+| `d` | ďđð | `e` | éèêëēęėě |
+| `g` | ğģġĝǥ | `h` | ħĥ |
+| `i` | íìîïīı | `j` | ĵ |
+| `k` | ķ | `l` | łļľ |
+| `n` | ñńňņŋ | `o` | óòôöõøōœő |
+| `r` | řŕŗ | `s` | śšßșşŝ |
+| `t` | ťțþŧ | `u` | úùûüūůűųŭ |
+| `w` | ŵẁẃẅ | `y` | ýÿŷ |
+| `z` | źżž | — | — |
+
+**Other long-press alternatives:**
+
+| Key | Alternatives | Key | Alternatives |
+| --- | --- | --- | --- |
+| `?` | ¿ | `!` | ¡ |
+| `'` | ‘ ’ | `"` | “ ” « » „ |
+| `-` | – — | `.` | … · |
+| `$` | € £ ¥ | `%` | ‰ |
+| `/` | ÷ | `=` | ≠ ≈ |
+| `0` | ° º ª | `1` | ¹ |
+| `2` | ² | `3` | ³ |
+
+**All 34 emoji** (picker order):
+
+😂  ❤  😍  🤣  😊  🙏  😭  😘  👍
+😅  👏  😁  🔥  😢  🤔  💪  😉  👌
+😎  🎉  🙂  😀  💯  😴  😡  👎  📍
+🚀  ❌  ⚠  ⭐  ✅  👋  😮
+
+</details>
 
 ## Hardware
 
