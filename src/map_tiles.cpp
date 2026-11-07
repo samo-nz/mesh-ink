@@ -836,6 +836,7 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
     const bool failed=map_io_failed||pmtiles_had_io_error();
+    result.io_failed=failed;
     const PmtilesPerfStats pmt_perf=pmtiles_perf_stats();
     pmtiles_end_frame();
     if(failed) {
