@@ -506,7 +506,7 @@ assert "meshink_show_companion_notice(pairing_line);" in meshtastic_companion_so
 assert meshtastic_companion_source.index("meshink_show_companion_notice(pairing_line);") < meshtastic_companion_source.index("meshink_board_begin_companion();"), "Meshtastic displays pairing detail before radio/BLE startup"
 assert 'SPIFFS.open("/prefs.json","r")' in companion_source and "prefs.loadSerial(file)" in companion_source, "MeshCore PIN is inspected read-only from upstream prefs.json"
 assert 'SPIFFS.open("/new_prefs","r")' in companion_source and "legacy.seek(80)" in companion_source, "MeshCore legacy PIN is inspected without preference migration"
-assert "saved_pin?(saved_pin):(uint32_t)BLE_PIN_CODE" in companion_source.replace("saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE","saved_pin?(saved_pin):(uint32_t)BLE_PIN_CODE"), "MeshCore fallback uses its real compile-time PIN setting"
+assert "saved_pin?saved_pin:(uint32_t)BLE_PIN_CODE" in companion_source, "MeshCore fallback uses its real compile-time PIN setting"
 assert companion_source.index("companion_saved_pin_label(pairing_line);") < companion_source.index("the_mesh.begin(false);"), "MeshCore reads PIN before native startup"
 assert 'SPIFFS.open("/prefs/config.proto","r")' in meshtastic_companion_source and "pb_decode(&stream,meshtastic_LocalConfig_fields,&saved)" in meshtastic_companion_source, "Meshtastic PIN uses its official persisted protobuf, not a copied NVS PIN"
 assert meshtastic_companion_source.index("companion_saved_pin_label(pairing_line);") < meshtastic_companion_source.index("meshink_meshtastic_native_begin();"), "Meshtastic reads saved PIN before native radio and BLE startup"
