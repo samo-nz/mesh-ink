@@ -798,7 +798,14 @@ void map_tiles_warm_storage(){
     for(unsigned z=0;z<25U;++z)if(zoom_folder_present[z])++loose_zooms;
     bool archive_warm=false;
     if(archive_count)archive_warm=pmtiles_warm_archive(archive_paths[0]);
+    const bool io_failed=pmtiles_had_media_io_error();
     const PmtilesPerfStats warm=pmtiles_perf_stats();
+    if(io_failed){
+        // Archive-open or read failed while boot warming. Invalidate only SD
+        // handles and indexes, not the decoded RAM tile cache.
+        mark_sd_unavailable();
+        return;
+    }
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-WARM] elapsed=%lums loose-zooms=%u archives=%u first-pmt=%u archive-open=%luus prepare=%luus meta-read=%luus/%u\n",
                   (unsigned long)(millis()-started),loose_zooms,
                   (unsigned)archive_count,archive_warm?1U:0U,
@@ -837,16 +844,17 @@ MapRenderResult map_tiles_render(uint8_t* framebuffer,int x,int y,int width,
             if(!draw_tile(zoom,tx,ty,
                           x+tx*256-left,y+ty*256-top,result))
                 ++result.missing;
-    const bool failed=map_io_failed||pmtiles_had_io_error();
+    const bool failed=map_io_failed||pmtiles_had_io_error()||
+                      pmtiles_had_media_io_error();
     result.io_failed=failed;
     const PmtilesPerfStats pmt_perf=pmtiles_perf_stats();
     pmtiles_end_frame();
     if(failed) {
-        // A corrupt PNG is not necessarily card removal. Probe the filesystem
-        // before unmounting; cached pixels already rendered remain visible.
-        const bool storage_responds=media_ready(true);
-        Serial.printf("[T5-MAP] map tile read failed; SD witness=%s (cached tiles kept)\n",
-                      storage_responds?"OK":"UNAVAILABLE");
+        // A real SD file seek/read/open failed. Do not depend on a root-directory
+        // probe that can still be cached by FAT after physical removal. Close
+        // the bad mount once, keep RAM pixels, remount on the NEXT user I/O.
+        Serial.println("[T5-MAP] SD I/O failed; release mount and keep cached tiles");
+        mark_sd_unavailable();
     }
     result.sd_ready=sd_mounted;
     T5_DEBUGF(T5_LOG_MAP,"[T5-MAP-PERF] z=%u total=%lums lookup=%luus archive-open=%luus prepare=%luus meta-seek=%luus meta-read=%luus/%u meta-bytes=%lu inflate=%luus index=%luus leaf-loads=%u preload-seek=%luus preload-read=%luus/%u preload-bytes=%lu range-seek=%luus/%u range-read=%luus/%u range-bytes=%lu pmt-decode=%luus loose-decode=%luus compose=%luus sd-checks=%u\n",
