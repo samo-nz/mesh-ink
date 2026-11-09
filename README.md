@@ -1,4 +1,4 @@
-# MeshInk 3.1.2
+# MeshInk 3.1.3
 
 <p align="center">
   <img src="docs/file_00000000248c820a81311144dc2df47d.png" alt="MeshInk — Stay Connected, Further" width="720">
@@ -68,6 +68,12 @@ Send private or channel messages, explore offline maps, discover nodes and share
 - **Battery-friendly standby** — Low-power standby and unread-message indications.
 - **Customisable settings** — Radio, GPS, display and power preferences.
 - **SD card support** — Offline maps and device backup/restore.
+
+### What's new in 3.1.3
+
+- **Reliable low-battery shutdown screen** — Clear the physical e-paper panel and render the warning using a CPU-boosted black-and-white refresh, validated at the actual battery cutoff on H752-01 hardware.
+- **Cleaner power monitoring** — Remove temporary low-SOC capacity/current and routine voltage-sample diagnostics; retain the existing 3.30 V cutoff and three-sample confirmation.
+- **No other user-facing behaviour changed** — MeshCore, Meshtastic, Bluetooth companion mode, maps, storage and standby remain as in 3.1.2.
 
 ### What's new in 3.1.2
 

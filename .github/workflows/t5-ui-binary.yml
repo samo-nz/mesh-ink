@@ -219,21 +219,19 @@ jobs:
 
           SHA-256 checksums are in **SHA256SUMS.txt**.
 
-          MeshInk 3.1.2 is a **stability and usability update** for the
-          standalone MeshCore/Meshtastic e-paper communicator.
+          MeshInk 3.1.3 is a **low-battery shutdown reliability update** for
+          the standalone MeshCore/Meshtastic e-paper communicator.
 
-          What's new in 3.1.2:
-          - fixes the startup crash with no microSD card fitted and improves SD hot-swap safety
-          - retains decoded map tiles in RAM when the card goes offline, and retries on demand
-          - shows the actual Bluetooth companion pairing PIN on the e-paper screen in both protocols
-          - uses a displayed session PIN for Meshtastic random/no-PIN companion configurations
-          - restores the status bar in Meshtastic normal standby
-          - improves low-battery shutdown screen clearing and adds serial battery diagnostics
+          What's new in 3.1.3:
+          - fixes the retained low-battery warning display using a physical
+            e-paper clear, 240 MHz rendering and a direct black/white refresh
+          - removes temporary low-battery calibration and power-sample diagnostics
+          - retains the existing 3.30 V cutoff and three-sample safety check
+          - preserves the 3.1.2 Bluetooth companion PIN display, standby,
+            offline maps and SD-card stability improvements
 
-          The PIN display is useful for pairing and recovery, but does not
-          conclusively resolve every Meshtastic Bluetooth-after-backup issue.
-          The low-battery screen changes have not yet been validated by a
-          physical critical-battery shutdown.
+          The corrected low-battery display was tested on H752-01 hardware
+          at the actual automatic shutdown cutoff.
 
           Also included from 3.1.0: accented-character long-press input,
           a 34-emoji picker with shortcuts, Unicode-aware editing and
