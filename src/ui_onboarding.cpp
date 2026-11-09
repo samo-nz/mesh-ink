@@ -4987,9 +4987,11 @@ static void paint_low_battery_shutdown(
                       source?source:"unknown");
         return;
     }
-    // Exactly as in paint_cold_boot_frame(): first erase the retained panel,
-    // then invalidate EPDiy's previous-frame comparator and commit GC16.
-    // Both steps are synchronous; ship mode is requested only afterwards.
+    // At shutdown the UI may be cruising at 80 MHz. EPDiy's panel line
+    // buffers need the normal 240 MHz render clock to avoid underruns.
+    // Physically clear the retained image, then draw the monochrome notice
+    // with the fast DU waveform. Both operations finish before ship mode.
+    MeshInkCpuBoostScope epd_cpu_boost(true,"low-battery-display");
     meshink_display_poweron();
     meshink_display_clear();
     meshink_display_poweroff();
@@ -4998,10 +5000,10 @@ static void paint_low_battery_shutdown(
     meshink_display_invalidate_previous(&display);
     meshink_display_poweron();
     const MeshInkDisplayResult result=meshink_display_update_screen(
-        &display,MeshInkRefreshMode::Gray16,
+        &display,MeshInkRefreshMode::Direct,
         (int)meshink_display_ambient_temperature());
     meshink_display_poweroff();
-    Serial.printf("[T5-SHUTDOWN] low-battery EPD source=%s clear-before-draw=1 mode=GC16 result=%d\n",
+    Serial.printf("[T5-SHUTDOWN] low-battery EPD source=%s clear-before-draw=1 mode=DU result=%d\n",
                   source?source:"unknown",(int)result);
 }
 

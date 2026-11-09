@@ -447,7 +447,8 @@ assert "if(!reuse_display){" in minimal_low_battery_body and "display=meshink_di
 assert "paint_low_battery_shutdown(critical,source);" in minimal_low_battery_body, "headless low-battery and runtime share the reliable physical-clear path"
 shutdown_painter=source.split("static void paint_low_battery_shutdown(",1)[1].split("[[noreturn]] void ui_minimal_low_battery_shutdown",1)[0]
 assert shutdown_painter.index("meshink_display_clear();") < shutdown_painter.index("draw_low_battery_notice(critical);") < shutdown_painter.index("meshink_display_invalidate_previous(&display);") < shutdown_painter.index("meshink_display_update_screen("), "physical e-paper is cleared and previous-frame invalidated before final low battery notice"
-assert "MeshInkRefreshMode::Gray16" in shutdown_painter and "clear-before-draw=1" in shutdown_painter, "terminal low-battery notice uses full GC16, not fragile GL16"
+assert "MeshInkRefreshMode::Direct" in shutdown_painter and "mode=DU" in shutdown_painter and "clear-before-draw=1" in shutdown_painter, "terminal low-battery notice uses DU after physical clear"
+assert 'MeshInkCpuBoostScope epd_cpu_boost(true,"low-battery-display");' in shutdown_painter, "shutdown display must use the normal 240 MHz render CPU"
 runtime_low_battery=source.split("static void critical_battery_shutdown(",1)[1].split("static void service_critical_battery()",1)[0]
 assert 'set_ui_orientation(MeshInkOrientation::Portrait);' in runtime_low_battery, "landscape keyboard can't rotate the terminal low-battery message"
 assert "paint_low_battery_shutdown(critical,source);" in runtime_low_battery, "runtime low-battery uses same physical-clear path"
