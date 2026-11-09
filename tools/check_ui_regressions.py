@@ -255,7 +255,7 @@ ui_version = re.search(r"-DT5_UI_VERSION='\"([^\"]+)\"'", platformio_source)
 firmware_version = re.search(r"-DT5_FIRMWARE_VERSION='\"([^\"]+)\"'", platformio_source)
 assert ui_version and firmware_version, "testing UI and firmware versions are explicit in PlatformIO configuration"
 assert ui_version.group(1) == firmware_version.group(1), "testing UI and firmware version identifiers must match"
-assert firmware_version.group(1) == "3.1.2", "3.1.2 uses the stable version string, not an RC tag"
+# The main release is 3.1.2; testing may advance using numbered test versions.
 assert "valid stable or numbered test/RC version" in testing_workflow_source, "testing CI accepts explicitly requested stable firmware versions"
 assert re.fullmatch(r"\d+\.\d+\.\d+(?:-test\.\d+|-rc\.\d+|deepsleep\d+)?", firmware_version.group(1)), "firmware version must be stable, a numbered test/RC build, or a numbered deepsleep experiment"
 
