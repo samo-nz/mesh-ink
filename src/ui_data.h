@@ -102,6 +102,8 @@ public:
     virtual bool remove_active_contact() = 0;
     virtual bool request_active_node_info(UiNodeInfoRequest request) = 0;
     virtual bool login_active_node(const char* password, bool save_password) = 0;
+    // Only providers with a reusable remote authentication session opt in.
+    virtual bool resume_active_node_session() { return false; }
     virtual bool active_node_saved_password(char* out, size_t len) const = 0;
     virtual const char* active_title() const = 0;
     virtual bool active_is_channel() const = 0;

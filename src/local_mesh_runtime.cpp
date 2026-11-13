@@ -405,7 +405,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         }
         ++active_revision_;
     }
-    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
+    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_access_,"NOT LOGGED IN");strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
 public:
     MeshCoreUiProvider(){
         for(auto& i:contacts_)bind(i);
@@ -794,10 +794,17 @@ public:
     bool remove_active_contact()override{if(!detail_valid_||!detail_saved_)return false;uint8_t command[1+PUB_KEY_SIZE]{15};memcpy(command+1,detail_contact_.id.pub_key,PUB_KEY_SIZE);if(!local_mesh_enqueue_command(command,sizeof(command)))return false;detail_saved_=false;return true;}
     bool request_active_node_info(UiNodeInfoRequest request)override;
     bool login_active_node(const char* password,bool save_password)override;
+    bool resume_active_node_session()override;
     bool active_node_saved_password(char* out,size_t len)const override{return detail_valid_&&load_saved_password(detail_contact_.id.pub_key,out,len);}
     const uint8_t* detail_key()const{return detail_contact_.id.pub_key;}
     void request_state(bool active,UiNodeInfoRequest request=UiNodeInfoRequest::None){detail_request_active_=active;detail_request_type_=active?request:UiNodeInfoRequest::None;ui_request_data_refresh("node-info");}
-    void request_timeout(UiNodeInfoRequest request){
+    void request_timeout(UiNodeInfoRequest request,bool resuming=false){
+        if(resuming){
+            detail_authenticated_=false;
+            strcpy(detail_access_,"NOT LOGGED IN");
+            strcpy(detail_status_,"RESUME NOT CONFIRMED");
+            return;
+        }
         char* out=request==UiNodeInfoRequest::Status?detail_status_:
                   request==UiNodeInfoRequest::Telemetry?detail_telemetry_:
                   request==UiNodeInfoRequest::Trace?detail_trace_:detail_path_;
@@ -818,6 +825,12 @@ public:
             }else strcpy(detail_access_,"LEGACY LOGIN");
         }else{strcpy(detail_access_,"NOT LOGGED IN");strcpy(detail_status_,"LOGIN FAILED");}
         ui_request_data_refresh("node-login");
+    }
+    void resume_result(){
+        detail_authenticated_=true;
+        // A status response confirms the resumed session, not its ACL level.
+        strcpy(detail_access_,"RESUMED SESSION");
+        ui_request_data_refresh("node-resumed");
     }
     void status_response(const uint8_t* data,size_t len){
         note_info_reply();
@@ -946,7 +959,7 @@ public:
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
 struct PendingDirect{bool active=false;bool waiting_response=false;bool finalizing_failure=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,deadline=0;uint32_t acks[DIRECT_RETRY_LIMIT+1]{};bool route_flood[DIRECT_RETRY_LIMIT+1]{};uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
-struct PendingInfo{bool active=false;bool waiting_sent=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
+struct PendingInfo{bool active=false;bool waiting_sent=false;bool resume=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
 struct RecentChannelSend{
     bool active=false;
@@ -1136,6 +1149,23 @@ bool MeshCoreUiProvider::request_active_node_info(UiNodeInfoRequest request){
     return true;
 }
 
+bool MeshCoreUiProvider::resume_active_node_session(){
+    if(active_channel_||pending_login.active||pending_info.active||pending_direct.active||detail_authenticated_)return false;
+    ContactInfo contact{};
+    if(!active_contact(contact)||contact.type!=ADV_TYPE_REPEATER)return false;
+    pending_info={};pending_info.active=true;pending_info.resume=true;pending_info.request=UiNodeInfoRequest::Status;
+    memcpy(pending_info.key,contact.id.pub_key,PUB_KEY_SIZE);
+    strcpy(detail_status_,"RESUMING SESSION");
+    request_state(true,UiNodeInfoRequest::Status);
+    // MeshCore CMD_SEND_STATUS_REQ, not CMD_SEND_LOGIN: no password handling.
+    if(!enqueue_info_request()){
+        finish_info();
+        strcpy(detail_status_,"RESUME REQUEST FAILED");
+        return false;
+    }
+    return true;
+}
+
 bool MeshCoreUiProvider::login_active_node(const char* password,bool save_password){
     if(active_channel_||pending_login.active||pending_info.active||pending_direct.active||!password)return false;
     ContactInfo contact{};if(!active_contact(contact)||(contact.type!=ADV_TYPE_REPEATER&&contact.type!=ADV_TYPE_ROOM))return false;
@@ -1179,7 +1209,21 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
                   (unsigned)(permissions&3),role_known,status_requested?1U:0U);
     }
     else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x86){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] server login failed");}
-    else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){provider.status_response(frame+8,len-8);finish_info();}
+    else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){
+        ContactInfo selected{};
+        // Navigating to another contact cannot grant it the prior session.
+        if(pending_info.resume&&(!provider.active_contact(selected)||
+            memcmp(selected.id.pub_key,pending_info.key,PUB_KEY_SIZE)!=0)){
+            finish_info();return;
+        }
+        if(pending_info.resume&&len<8+56)
+            provider.request_timeout(UiNodeInfoRequest::Status,true);
+        else{
+            if(pending_info.resume)provider.resume_result();
+            provider.status_response(frame+8,len-8);
+        }
+        finish_info();
+    }
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Telemetry&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8B){provider.telemetry_response(frame+8,len-8);finish_info();}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Path&&len>=9&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x8D){provider.path_response(frame+8,len-8);finish_info();}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Trace&&frame[0]==0x89&&len>=13){
@@ -1188,7 +1232,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
     else if(frame[0]==6&&len>=10&&pending_login.active&&pending_login.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_login.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_login.waiting_sent=false;}
     else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
-    else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request);finish_info();}
+    else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request,pending_info.resume);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_direct.active){
         uint32_t ack=0,timeout=0;memcpy(&ack,frame+2,4);memcpy(&timeout,frame+6,4);
         const uint8_t attempt=min(pending_direct.retry,DIRECT_RETRY_LIMIT);
@@ -1302,7 +1346,7 @@ void local_mesh_loop(){
 #endif
     meshink_rtc_tick();
     if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
-    if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request);finish_info();}
+    if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request,pending_info.resume);finish_info();}
     if(pending_stats.active&&(int32_t)(millis()-pending_stats.deadline)>=0)finish_stats(true);
     if(pending_direct.active&&pending_direct.finalizing_failure&&
        pending_direct.deadline&&(int32_t)(millis()-pending_direct.deadline)>=0){

@@ -409,7 +409,7 @@ static uint8_t retained_wake_tab=0;
 static bool retained_wake_tab_valid=false;
 static Screen preset_return_screen = Screen::Welcome;
 static uint8_t preset_page = 3;
-static bool details_from_discovery=false;
+static Screen details_origin=Screen::ContactChat;
 static uint8_t details_page=0;
 
 // Deep-sleep wake restores only the four real bottom-navigation tabs. Nested
@@ -421,7 +421,7 @@ static uint8_t retained_tab_for_screen(Screen value){
         case Screen::ContactChat:
             return 1;
         case Screen::ContactDetails:
-            return details_from_discovery?4:1;
+            return details_origin==Screen::Discovery?4:details_origin==Screen::Maps?3:1;
         case Screen::Channels:
         case Screen::ChannelChat:
         case Screen::ChannelManage:
@@ -3275,6 +3275,7 @@ static void draw_contact_details() {
     if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.capabilities);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.capabilities,details_page);
+    const bool meshcore_repeater=!meshtastic_node_ui&&node.role==UiNodeRole::Relay;
     ui_centred_fit(node.name,ui_y(126),portrait_layout().section_width,4,0,true);
     ui_centred((node.role_label&&node.role_label[0])?node.role_label:node_role_label(node.role),ui_y(174),2,0,true);
     auto action_button=[](const char* label,const MeshInkUiRect& rect,bool selected=false) {
@@ -3331,7 +3332,7 @@ static void draw_contact_details() {
         ui_text_fit(node.identity,layout.detail_value_x,overview_identity_y,
                     overview_position_width,2,0,false);
         if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
-        if(node.saved_contact){action_button("CHAT",left_action);
+        if(node.saved_contact){action_button(meshcore_repeater?"STATUS":"CHAT",left_action);
             action_button("DELETE",right_action);}
         else action_button(meshtastic_node_ui?"SAVE NODE":"ADD CONTACT",full_action,true);
     } else if(page==NodeInfoPage::Status){
@@ -3360,7 +3361,11 @@ static void draw_contact_details() {
                 ui_draw_wrapped("This protocol requires authentication before status can be requested.",
                                 layout.section_margin,ui_y(282),layout.section_width,2,0,false,5);
                 if(!strcmp(node.status,"LOGIN FAILED"))ui_text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
-                action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
+                if(!strcmp(node.status,"RESUME NOT CONFIRMED"))ui_text("NO REPLY - RETRY OR LOGIN",layout.section_margin,ui_y(410),2,0,true);
+                if(meshcore_repeater){
+                    action_button(node.request_active?"RESUMING...":"RESUME",left_action,true);
+                    action_button("LOGIN",right_action);
+                }else action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
             }else{
                 int status_y=ui_y(258);
                 if(login_required){
@@ -3379,7 +3384,10 @@ static void draw_contact_details() {
         if(login_required&&!node.authenticated){
             ui_draw_wrapped("This protocol requires authentication before telemetry can be requested.",
                             layout.section_margin,ui_y(282),layout.section_width,2,0,false,4);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
+            if(meshcore_repeater){
+                action_button(node.request_active?"RESUMING...":"RESUME",left_action,true);
+                action_button("LOGIN",right_action);
+            }else action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
         }else{
             const int telemetry_scale=
                 ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2;
@@ -4785,7 +4793,7 @@ static void draw_screen() {
     }
     const bool settings_page=screen==Screen::Settings||screen==Screen::BackupOptions||
         screen==Screen::BackupFiles||screen==Screen::BackupConfirm||screen==Screen::BackupProgress||screen==Screen::BackupResult||screen==Screen::ProtocolSelect||screen==Screen::ProtocolSettings||screen==Screen::GpsSettings||screen==Screen::GpsTuning||screen==Screen::LocationSharing||screen==Screen::DateTime||screen==Screen::ManualTime||screen==Screen::Timezone||screen==Screen::CustomTimezone||screen==Screen::DisplaySettings||screen==Screen::NightSchedule||screen==Screen::Help||screen==Screen::About;
-    if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_from_discovery?3:0);
+    if(screen==Screen::ContactDetails&&!(keyboard_visible&&keyboard_password_mode))draw_bottom_nav(details_origin==Screen::Discovery?3:details_origin==Screen::Maps?2:0);
     else if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
             !keyboard_visible&&chat_page==0)
         draw_bottom_nav(screen==Screen::ContactChat?0:1);
@@ -5986,7 +5994,7 @@ static bool handle_channel_form_keyboard(int16_t x,int16_t y){
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;reset_chat_paging();open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
-    if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
+    if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_origin=Screen::ContactChat;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
     if(screen==Screen::ProtocolSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
@@ -6007,7 +6015,15 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     const size_t index=first+row;
                     if(hit_outer_row(x,y,portrait_layout().list_top+
                         row*portrait_layout().list_row_stride,
-                        portrait_layout().list_row_height)){selected_contact=index;if(ui_data->open_contact(index)){reset_chat_paging();open_screen(Screen::ContactChat);}return true;}
+                        portrait_layout().list_row_height)){selected_contact=index;
+                            const bool meshcore_repeater=mesh_protocol_descriptor().id==1&&
+                                ui_data->contact(index).role==UiNodeRole::Relay;
+                            if(ui_data->open_contact(index)){
+                                reset_chat_paging();
+                                if(meshcore_repeater){details_origin=Screen::Contacts;details_page=0;open_screen(Screen::ContactDetails);}
+                                else open_screen(Screen::ContactChat);
+                            }
+                            return true;}
                 }
             }
             break;
@@ -6110,20 +6126,45 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
             }}break;
         case Screen::ContactDetails:
-            if(hit_header_back(x,y)){open_screen(details_from_discovery?Screen::Discovery:Screen::ContactChat);return true;}
+            if(hit_header_back(x,y)){
+                if(details_origin==Screen::Maps)open_screen(Screen::Maps,true);
+                else open_screen(details_origin);
+                return true;
+            }
             {UiNodeDetails node{};if(ui_data&&ui_data->active_node_details(node)){
                 const NodeInfoPage page=node_info_page(node.capabilities,details_page);
                 const bool login_required=node_has_capability(node.capabilities,UI_NODE_CAP_LOGIN);
-                if(node.saved_contact&&page==NodeInfoPage::Status&&hit(x,y,meshink_node_action_rect(portrait_layout()))){
-                    if(login_required&&!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;}
+                const bool meshcore_repeater=mesh_protocol_descriptor().id==1&&node.role==UiNodeRole::Relay;
+                const MeshInkUiRect left_action=meshink_node_left_action_rect(portrait_layout());
+                const MeshInkUiRect right_action=meshink_node_right_action_rect(portrait_layout());
+                const MeshInkUiRect full_action=meshink_node_action_rect(portrait_layout());
+                if(node.saved_contact&&page==NodeInfoPage::Status&&
+                   (login_required&&!node.authenticated&&meshcore_repeater
+                     ?(hit(x,y,left_action)||hit(x,y,right_action)):hit(x,y,full_action))){
+                    if(login_required&&!node.authenticated){
+                        if(meshcore_repeater&&hit(x,y,left_action)){
+                            if(!node.login_active&&!node.request_active)
+                                show_toast(ui_data->resume_active_node_session()?"RESUMING SESSION":"REQUEST BUSY");
+                            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                        }
+                        if(!node.login_active&&!node.request_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;
+                    }
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
                 if(node.saved_contact&&page==NodeInfoPage::Telemetry&&
                    (mesh_protocol_descriptor().id==2?
                       (hit(x,y,meshink_node_left_action_rect(portrait_layout()))||
                        hit(x,y,meshink_node_right_action_rect(portrait_layout()))):
-                      hit(x,y,meshink_node_action_rect(portrait_layout())))){
-                    if(login_required&&!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;}
+                      (login_required&&!node.authenticated&&meshcore_repeater
+                        ?(hit(x,y,left_action)||hit(x,y,right_action)):hit(x,y,full_action)))){
+                    if(login_required&&!node.authenticated){
+                        if(meshcore_repeater&&hit(x,y,left_action)){
+                            if(!node.login_active&&!node.request_active)
+                                show_toast(ui_data->resume_active_node_session()?"RESUMING SESSION":"REQUEST BUSY");
+                            draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                        }
+                        if(!node.login_active&&!node.request_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;
+                    }
                     const bool requesting_position=mesh_protocol_descriptor().id==2&&hit(x,y,meshink_node_right_action_rect(portrait_layout()));
                     show_toast(ui_data->request_active_node_info(requesting_position?UiNodeInfoRequest::Path:UiNodeInfoRequest::Telemetry)?(requesting_position?"REQUESTING POSITION":"REQUESTING TELEMETRY"):"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
@@ -6137,7 +6178,11 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 }
                 if(page==NodeInfoPage::Overview&&(node.latitude||node.longitude)&&hit(x,y,meshink_node_map_rect(portrait_layout()))){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
                 if(page==NodeInfoPage::Telemetry&&(node.latitude||node.longitude)&&hit(x,y,meshink_node_map_rect(portrait_layout()))){map_latitude=node.latitude/1000000.0;map_longitude=node.longitude/1000000.0;open_screen(Screen::Maps,true);return true;}
-                if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,meshink_node_left_action_rect(portrait_layout()))){open_screen(Screen::ContactChat);return true;}
+                if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,left_action)){
+                    if(meshcore_repeater){details_page=1;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}
+                    else open_screen(Screen::ContactChat);
+                    return true;
+                }
                 if(page==NodeInfoPage::Overview&&node.saved_contact&&hit(x,y,meshink_node_right_action_rect(portrait_layout()))){
                     if(mesh_protocol_descriptor().id==2)open_screen(Screen::NodeDelete);
                     else{
@@ -6185,7 +6230,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                 const int hit_radius=marker.role==UiNodeRole::Relay?14:10;
                 if(abs(x-marker.x)<=hit_radius&&abs(y-marker.y)<=hit_radius&&
                    ui_data&&ui_data->open_map_node(marker.index)) {
-                    details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;
+                    details_origin=Screen::Maps;details_page=0;open_screen(Screen::ContactDetails);return true;
                 }
             }
             break;
@@ -6201,7 +6246,7 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                             row*portrait_layout().list_row_stride,
                             portrait_layout().list_row_height)){
                         if(ui_data->open_advert(index)){
-                            details_from_discovery=true;details_page=0;
+                            details_origin=Screen::Discovery;details_page=0;
                             open_screen(Screen::ContactDetails);
                         }
                         return true;
@@ -7391,7 +7436,7 @@ void ui_loop() {
                 keyboard_landscape=false;
                 set_ui_orientation(MeshInkOrientation::Portrait);
             }
-            details_page=0;details_from_discovery=false;reset_chat_paging();
+            details_page=0;details_origin=Screen::ContactChat;reset_chat_paging();
             open_screen(setup_complete?Screen::Contacts:(setup_any_done?Screen::SetupName:Screen::Welcome));
             continue;
         }
