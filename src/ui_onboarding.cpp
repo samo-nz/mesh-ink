@@ -334,6 +334,11 @@ static uint16_t night_start_minutes=20*60;
 static uint16_t night_end_minutes=7*60;
 static bool frontlight_lit=false;
 static uint32_t frontlight_deadline=0;
+// A BOOT hold illuminates the screen immediately. The confirmation light
+// survives the standby redraw and goes out one second after it completes.
+static bool standby_button_light_active=false;
+static uint32_t standby_button_light_off_at=0;
+static constexpr uint32_t STANDBY_BUTTON_LIGHT_CONFIRM_MS=1000;
 static uint8_t night_edit_field=0;
 static QueueHandle_t touch_queue=nullptr;
 static TaskHandle_t touch_task_handle=nullptr;
@@ -730,7 +735,33 @@ static void frontlight_preview(uint8_t level){
     frontlight_deadline=timeout?millis()+timeout:0;
 }
 static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false);frontlight_deadline=0;return;}frontlight_drive(true);const uint32_t timeout=FRONTLIGHT_TIMEOUTS[min((uint8_t)4,frontlight_timeout_index)];frontlight_deadline=timeout?millis()+timeout:0;}
-static void frontlight_service(){if(message_alert_active||quick_slider_dragging||display_slider_dragging)return;if(frontlight_mode==FrontlightMode::Off||(frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){if(frontlight_lit)frontlight_drive(false);return;}if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){frontlight_deadline=0;frontlight_drive(false);T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");}}
+static void frontlight_service(){
+    if(message_alert_active||quick_slider_dragging||display_slider_dragging)return;
+    if(standby_button_light_active){
+        // A zero deadline means the hold is still in progress, before standby
+        // has been rendered. Keep the frontlight on independently of settings.
+        if(standby_button_light_off_at&&
+           (int32_t)(millis()-standby_button_light_off_at)>=0){
+            standby_button_light_active=false;
+            standby_button_light_off_at=0;
+            frontlight_deadline=0;
+            frontlight_lit=false;
+            meshink_power_frontlight_set(0);
+            T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] standby confirmation complete");
+        }
+        return;
+    }
+    if(frontlight_mode==FrontlightMode::Off||
+       (frontlight_mode==FrontlightMode::NightTimer&&!night_window_active())){
+        if(frontlight_lit)frontlight_drive(false);
+        return;
+    }
+    if(frontlight_lit&&frontlight_deadline&&(int32_t)(millis()-frontlight_deadline)>=0){
+        frontlight_deadline=0;
+        frontlight_drive(false);
+        T5_DEBUGLN(T5_LOG_UI,"[T5-LIGHT] timeout; frontlight off");
+    }
+}
 static void save_frontlight_settings(){Preferences light;if(light.begin("t5-ui",false)){light.putUChar("light_mode",(uint8_t)frontlight_mode);light.putUChar("light_timeout",frontlight_timeout_index);light.putUChar("light_level",frontlight_brightness);light.putUChar("standby_timeout",standby_timeout_index);light.putBool("deep_standby",deep_sleep_standby);light.putUShort("night_start",night_start_minutes);light.putUShort("night_end",night_end_minutes);light.end();}}
 
 // Keep the original five-field single-touch event compatible with all UI
@@ -6648,11 +6679,22 @@ static void enter_standby(const char* reason){
         keyboard_landscape=false;
         set_ui_orientation(MeshInkOrientation::Portrait);
     }
-    standby_active=true;text_refresh_pending=false;toast_visible=false;frontlight_deadline=0;frontlight_drive(false);
+    standby_active=true;text_refresh_pending=false;toast_visible=false;
+    frontlight_deadline=0;
+    // Automatic timeout standby remains dark. Only a deliberate BOOT hold
+    // keeps the confirmation light on; settings are not modified.
+    if(!standby_button_light_active)frontlight_drive(false);
     // Enter standby with an exact clock/battery sample. Periodic status updates
     // remain anchored to wall-clock :00/:05/:10... boundaries.
     update_status_hardware();
-    draw_screen();fast_full_redraw("ENTER_STANDBY",false);set_touch_power(false);if(touch_queue)xQueueReset(touch_queue);set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
+    draw_screen();
+    fast_full_redraw("ENTER_STANDBY",false);
+    // Start AFTER the blocking e-paper redraw, once standby is actually visible.
+    if(standby_button_light_active)
+        standby_button_light_off_at=millis()+STANDBY_BUTTON_LIGHT_CONFIRM_MS;
+    set_touch_power(false);
+    if(touch_queue)xQueueReset(touch_queue);
+    set_cpu_target(UI_IDLE_CPU_MHZ,"standby");
     // Some protocols cannot use retained RX wake. Honour the saved choice
     // on supported backends, but fall back to normal standby without retries.
     deep_sleep_pending=deep_sleep_standby&&mesh_protocol_supports_deep_sleep_standby();
@@ -6668,6 +6710,8 @@ static void enter_standby(const char* reason){
 static void leave_standby(){
     if(!standby_active)return;
     deep_sleep_pending=false;
+    standby_button_light_active=false;
+    standby_button_light_off_at=0;
     set_touch_power(true);
     standby_active=false;
     last_user_activity=millis();
@@ -6736,7 +6780,19 @@ static void service_primary_button(){
         return; // Short and long BOOT presses are both inert during onboarding.
     }
     const bool pressed=meshink_primary_button_pressed();
-    if(pressed&&!pressed_at)pressed_at=millis();
+    if(pressed&&!pressed_at){
+        pressed_at=millis();
+        if(!standby_active){
+            // Immediate, temporary feedback even when the regular frontlight
+            // mode or brightness is OFF; do not change saved preferences.
+            standby_button_light_active=true;
+            standby_button_light_off_at=0;
+            frontlight_deadline=0;
+            frontlight_lit=true;
+            meshink_power_frontlight_set(max((uint8_t)30,frontlight_brightness));
+            last_user_activity=pressed_at; // don't auto-standby during BOOT hold
+        }
+    }
     if(pressed&&!handled&&pressed_at&&millis()-pressed_at>=2000){
         handled=true;
         if(standby_active)leave_standby();
@@ -6763,7 +6819,13 @@ static void service_primary_button(){
                 draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);
             }
         }
-    }pressed_at=0;handled=false;}
+    }
+    if(!handled&&standby_button_light_active){
+        standby_button_light_active=false;
+        standby_button_light_off_at=0;
+        frontlight_event(); // short press restores normal light policy
+    }
+    pressed_at=0;handled=false;}
 }
 
 static void ui_close_headless_display_session() {
@@ -7392,6 +7454,7 @@ void ui_loop() {
     service_primary_button();
     if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&
        mesh_protocol_supports_deep_sleep_standby()&&!message_alert_active&&
+       !standby_button_light_active&&
        !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
         deep_sleep_retry_at=millis()+250;
         if(mesh_protocol_enter_deep_sleep_standby())return;

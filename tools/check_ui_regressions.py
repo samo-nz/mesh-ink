@@ -160,6 +160,19 @@ contains('if(frontlight_brightness>100)frontlight_brightness=30', "brightness fa
 assert 'frontlight_brightness<1||frontlight_brightness>100' not in source, "saved OFF brightness must survive reboot"
 contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&quick_panel_restore_landscape);', "standby preserves keyboard under quick settings")
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
+# Deliberate BOOT standby holds the light until a full second after the
+# e-paper standby frame is committed; deep sleep must wait for switch-off.
+assert "standby_button_light_active=true;" in source and "meshink_power_frontlight_set(max((uint8_t)30,frontlight_brightness));" in source, "BOOT press lights frontlight immediately even if normally OFF"
+assert "last_user_activity=pressed_at;" in source, "BOOT hold prevents automatic timeout race"
+assert "if(!handled&&standby_button_light_active)" in source and "frontlight_event(); // short press restores normal light policy" in source, "short press returns to normal frontlight policy"
+standby_button_entry=source.split("static void enter_standby(const char* reason){",1)[1].split("static void leave_standby(){",1)[0]
+assert "if(!standby_button_light_active)frontlight_drive(false);" in standby_button_entry, "automatic standby stays dark"
+assert standby_button_entry.index('fast_full_redraw("ENTER_STANDBY",false);') < standby_button_entry.index("standby_button_light_off_at=millis()+STANDBY_BUTTON_LIGHT_CONFIRM_MS;"), "confirmation timer starts after standby screen is displayed"
+frontlight_timer=source.split("static void frontlight_service(){",1)[1].split("static void save_frontlight_settings()",1)[0]
+assert "STANDBY_BUTTON_LIGHT_CONFIRM_MS=1000" in source and "if(standby_button_light_off_at&&" in frontlight_timer, "standby confirmation uses a non-blocking one-second delay"
+assert "standby_button_light_active=false;" in frontlight_timer and "meshink_power_frontlight_set(0);" in frontlight_timer, "frontlight turns off at confirmation timeout"
+deep_sleep_gate=source.split("    service_primary_button();",1)[1].split("    if(map_taps.count",1)[0]
+assert "!standby_button_light_active&&" in deep_sleep_gate, "deep sleep cannot begin until confirmation light is off"
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "primary-button refresh also wakes frontlight")
 contains('last_user_activity=millis();\n            if(screen==Screen::Maps){', "primary-button short press counts as user activity")
 contains('draw_screen();fast_full_redraw("SHORT_BUTTON_REFRESH",true);', "non-map primary-button refresh keeps the established fast redraw path")
