@@ -1125,7 +1125,7 @@ public:
 };
 
 MeshCoreUiProvider provider;char radio_summary[44]{};char setting_value[20]{};
-struct PendingDirect{bool active=false;bool waiting_response=false;bool finalizing_failure=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,deadline=0;uint32_t acks[DIRECT_RETRY_LIMIT+1]{};bool route_flood[DIRECT_RETRY_LIMIT+1]{};uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
+struct PendingDirect{bool active=false;bool waiting_response=false;bool finalizing_failure=false;bool room=false;uint8_t retry=0;uint32_t sequence=0,timestamp=0,deadline=0;uint32_t acks[DIRECT_RETRY_LIMIT+1]{};bool route_flood[DIRECT_RETRY_LIMIT+1]{};uint8_t key[6]{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};} pending_direct;
 struct PendingInfo{bool active=false;bool waiting_sent=false;bool resume=false;UiNodeInfoRequest request=UiNodeInfoRequest::None;uint32_t deadline=0,tag=0;uint8_t key[PUB_KEY_SIZE]{};} pending_info;
 struct PendingLogin{bool active=false;bool waiting_sent=false;bool save_password=false;uint32_t deadline=0;uint8_t key[PUB_KEY_SIZE]{};char password[16]{};} pending_login;
 struct RecentChannelSend{
@@ -1179,7 +1179,7 @@ static void fail_pending_direct(const char* reason){
     if(!pending_direct.active)return;
     pending_direct.finalizing_failure=true;
     pending_direct.waiting_response=false;
-    if(!provider.update_message(pending_direct.sequence,UiMessageState::Failed)){
+    if(!provider.update_message(pending_direct.sequence,UiMessageState::Failed,pending_direct.room)){
         pending_direct.deadline=millis()+250;
         T5_DEBUGF(T5_LOG_MESH,
                   "[T5-MESH] WARN failed-state journal write sequence=%lu; retrying finalization\n",
@@ -1432,7 +1432,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
             provider.heard(pending_direct.key,6);
             provider.confirm_direct_send(
                 pending_direct.sequence,ack,pending_direct.route_flood[attempt],
-                UiMessageState::Delivered);
+                UiMessageState::Delivered,pending_direct.room);
             T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct delivered attempt=%u ack=%08lx\n",
                       attempt,(unsigned long)ack);
             pending_direct={};
@@ -1446,13 +1446,23 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         const size_t start=txt_type==2?17:13;
         if(len<=start)return;
         memcpy(message,frame+start,min(sizeof(message)-1,len-start));
-        provider.received_direct(key,timestamp,message,false,0,path_len);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct legacy message received bytes=%u\n",(unsigned)(len-start));
+        ContactInfo* sender=meshink_meshcore().lookupContactByPubKey(key,6);
+        if(txt_type==2&&sender&&sender->type==ADV_TYPE_ROOM&&len>=17)
+            provider.received_room(key,timestamp,frame+13,message,false,0,path_len);
+        else if(!(sender&&sender->type==ADV_TYPE_ROOM&&txt_type==1))
+            provider.received_direct(key,timestamp,message,false,0,path_len);
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct legacy message received bytes=%u\n",(unsigned)(len-start));
     }
     else if(frame[0]==16&&len>=16){
         const int8_t snr_q4=(int8_t)frame[1];const uint8_t* key=frame+4;const uint8_t path_len=frame[10],txt_type=frame[11];uint32_t timestamp=0;memcpy(&timestamp,frame+12,4);
         const size_t start=txt_type==2?20:16;if(len<=start)return;
         memcpy(message,frame+start,min(sizeof(message)-1,len-start));
-        provider.received_direct(key,timestamp,message,true,snr_q4,path_len);T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct v3 message snr=%.1f path=0x%02x\n",snr_q4/4.0f,path_len);
+        ContactInfo* sender=meshink_meshcore().lookupContactByPubKey(key,6);
+        if(txt_type==2&&sender&&sender->type==ADV_TYPE_ROOM&&len>=20)
+            provider.received_room(key,timestamp,frame+16,message,true,snr_q4,path_len);
+        else if(!(sender&&sender->type==ADV_TYPE_ROOM&&txt_type==1))
+            provider.received_direct(key,timestamp,message,true,snr_q4,path_len);
+        T5_DEBUGF(T5_LOG_MESH,"[T5-MESH] direct v3 message snr=%.1f path=0x%02x\n",snr_q4/4.0f,path_len);
     }
     else if(frame[0]==8&&len>=8){
         const uint8_t channel=frame[1],path_len=frame[2];uint32_t timestamp=0;memcpy(&timestamp,frame+4,4);
@@ -1595,10 +1605,12 @@ bool local_mesh_send_active(const char* text){
     }
     ContactInfo contact{};if(!provider.active_contact(contact)||pending_direct.active)return false;
     if(strlen(text)>MESHINK_MESSAGE_TEXT_MAX)return false;
-    pending_direct={};pending_direct.active=true;pending_direct.timestamp=now;
+    if(provider.active_is_room()&&(!provider.active_room_can_post()||strlen(text)>ROOM_POST_TEXT_MAX))return false;
+    pending_direct={};pending_direct.active=true;pending_direct.room=provider.active_is_room();pending_direct.timestamp=now;
     memcpy(pending_direct.key,contact.id.pub_key,6);
     strncpy(pending_direct.text,text,sizeof(pending_direct.text)-1);
     pending_direct.sequence=provider.queue_direct(text,now);
+    if(pending_direct.room&&!pending_direct.sequence){pending_direct={};return false;}
     // MeshCore chooses direct vs flood from the contact's current path. Show
     // that route immediately; RESP_CODE_SENT will confirm the actual choice.
     provider.transient_direct_status(
