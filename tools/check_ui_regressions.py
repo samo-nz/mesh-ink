@@ -162,7 +162,10 @@ contains('const bool restore_landscape=keyboard_landscape||(quick_panel_active&&
 contains('standby_restore_landscape=restore_landscape;', "standby stores resolved landscape restore state")
 # Deliberate BOOT standby holds the light until a full second after the
 # e-paper standby frame is committed; deep sleep must wait for switch-off.
-assert "standby_button_light_active=true;" in source and "meshink_power_frontlight_set(max((uint8_t)30,frontlight_brightness));" in source, "BOOT press lights frontlight immediately even if normally OFF"
+button_hold=source.split("static void service_primary_button(){",1)[1].split("static void ui_close_headless_display_session()",1)[0]
+assert "if(frontlight_allowed()&&frontlight_brightness>0){" in button_hold, "BOOT only illuminates an enabled frontlight with nonzero brightness"
+assert "frontlight_drive(true);" in button_hold and "standby_button_light_active=true;" in button_hold, "BOOT keeps an already-lit frontlight on at the saved brightness"
+assert "meshink_power_frontlight_set(max((uint8_t)30,frontlight_brightness));" not in button_hold and "frontlight_lit=true;" not in button_hold, "BOOT must not force a brightness override or bypass the frontlight mode"
 assert "last_user_activity=pressed_at;" in source, "BOOT hold prevents automatic timeout race"
 assert "if(!handled&&standby_button_light_active)" in source and "frontlight_event(); // short press restores normal light policy" in source, "short press returns to normal frontlight policy"
 standby_button_entry=source.split("static void enter_standby(const char* reason){",1)[1].split("static void leave_standby(){",1)[0]

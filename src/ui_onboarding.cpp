@@ -334,8 +334,9 @@ static uint16_t night_start_minutes=20*60;
 static uint16_t night_end_minutes=7*60;
 static bool frontlight_lit=false;
 static uint32_t frontlight_deadline=0;
-// A BOOT hold illuminates the screen immediately. The confirmation light
-// survives the standby redraw and goes out one second after it completes.
+// A BOOT hold acknowledges standby only when the configured frontlight is
+// enabled and brightness is nonzero. Preserve its level through the redraw,
+// then switch it off one second after the standby frame is complete.
 static bool standby_button_light_active=false;
 static uint32_t standby_button_light_off_at=0;
 static constexpr uint32_t STANDBY_BUTTON_LIGHT_CONFIRM_MS=1000;
@@ -738,8 +739,9 @@ static void frontlight_event(){if(!frontlight_allowed()){frontlight_drive(false)
 static void frontlight_service(){
     if(message_alert_active||quick_slider_dragging||display_slider_dragging)return;
     if(standby_button_light_active){
-        // A zero deadline means the hold is still in progress, before standby
-        // has been rendered. Keep the frontlight on independently of settings.
+        // A zero deadline means BOOT is still being held before standby
+        // is rendered. This temporary hold respects the configured mode and
+        // brightness; it only suppresses the normal inactivity timeout.
         if(standby_button_light_off_at&&
            (int32_t)(millis()-standby_button_light_off_at)>=0){
             standby_button_light_active=false;
@@ -6783,13 +6785,15 @@ static void service_primary_button(){
     if(pressed&&!pressed_at){
         pressed_at=millis();
         if(!standby_active){
-            // Immediate, temporary feedback even when the regular frontlight
-            // mode or brightness is OFF; do not change saved preferences.
-            standby_button_light_active=true;
-            standby_button_light_off_at=0;
-            frontlight_deadline=0;
-            frontlight_lit=true;
-            meshink_power_frontlight_set(max((uint8_t)30,frontlight_brightness));
+            // BOOT uses the existing brightness without changing preferences.
+            // An already-lit frontlight stays on; an OFF mode, inactive night
+            // schedule, or zero brightness never forces illumination.
+            if(frontlight_allowed()&&frontlight_brightness>0){
+                standby_button_light_active=true;
+                standby_button_light_off_at=0;
+                frontlight_deadline=0;
+                frontlight_drive(true);
+            }
             last_user_activity=pressed_at; // don't auto-standby during BOOT hold
         }
     }
