@@ -580,7 +580,7 @@ assert "login_active_node(const char* password, bool save_password)" in data_sou
 assert "frame[0]=26" in runtime_source, "protected-node login uses MeshCore CMD_SEND_LOGIN"
 assert "frame[0]==0x85" in runtime_source and "frame[0]==0x86" in runtime_source, "protected-node login handles success and failure pushes"
 assert 'details_origin=Screen::Contacts;details_page=0;open_screen(Screen::ContactDetails);' in source, "MeshCore repeater contact bypasses Chat"
-assert 'ui_data->contact(index).role==UiNodeRole::Relay' in source and 'mesh_protocol_descriptor().id==1' in source, "room servers and Meshtastic routers keep existing navigation"
+assert 'ui_data->contact(index).role==UiNodeRole::Relay' in source and 'mesh_protocol_descriptor().id==1' in source, "room servers open chat, repeaters open Info"
 assert 'details_origin==Screen::Maps)open_screen(Screen::Maps,true)' in source, "Info back preserves map centre"
 assert 'action_button(meshcore_repeater?"STATUS":"CHAT",left_action)' in source, "repeater Overview offers Status, not Chat"
 assert 'virtual bool resume_active_node_session() { return false; }' in data_source, "resume is protocol-opt-in"

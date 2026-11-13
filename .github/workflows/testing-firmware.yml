@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - testing
+      - roomserver-testing
       - mesh-agnostic
       - feature/meshtastic-bt-companion
   # Always test pull requests. MeshCore submodule, build-system and integration
