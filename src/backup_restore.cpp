@@ -30,6 +30,8 @@ constexpr char SHARED_NAME[]="@node-name";
 constexpr char SETUP_NVS[]="@setup-state";
 constexpr char DEVICE_NVS[]="@device-settings";
 constexpr char CORE_MESSAGES[]="/meshcore_messages.bin";
+constexpr char ROOM_MESSAGES[]="/room_messages.bin";
+constexpr char ROOM_RECOVERY[]="/room_messages.recovery.bin";
 constexpr char MT_LOCATION_NVS[]="@mt-location";
 constexpr char MT_CORE_REVISION[]="@mt-core-version";
 // This optional metadata is new to test.55: older native v2 backups remain
@@ -55,6 +57,7 @@ static bool offline_operation=false;
 static const char* authoritative_path(const char* path){
     if(!strcmp(path,CORE_MESSAGES)&&SPIFFS.exists(MC_RECOVERY))return MC_RECOVERY;
     if(!strcmp(path,MT_MESSAGES)&&SPIFFS.exists(MT_RECOVERY))return MT_RECOVERY;
+    if(!strcmp(path,ROOM_MESSAGES)&&SPIFFS.exists(ROOM_RECOVERY))return ROOM_RECOVERY;
     return path;
 }
 static bool mt_pref_path(const char* path) {
@@ -259,7 +262,8 @@ static bool is_real_path(const char* path,uint8_t protocol,uint8_t cat){
                (protocol==2&&!strcmp(path,MT_CORE_REVISION));
     if(path[0]!='/')return false;
     if(cat==MESHINK_BACKUP_MESSAGES)
-        return !strcmp(path,protocol==1?CORE_MESSAGES:MT_MESSAGES);
+        return !strcmp(path,protocol==1?CORE_MESSAGES:MT_MESSAGES)||
+               (protocol==1&&!strcmp(path,ROOM_MESSAGES));
     if(cat==MESHINK_BACKUP_NODES){
         if(protocol==2)return !strcmp(path,MT_NATIVE_NODES)||
                                !strcmp(path,MT_NODES_A)||!strcmp(path,MT_NODES_B);
@@ -1050,6 +1054,10 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     const char* journal=authoritative_path(protocol==2?MT_MESSAGES:CORE_MESSAGES);
     if((categories&MESHINK_BACKUP_MESSAGES)&&!valid_message_journal(journal,protocol))
         return fail("Message journal invalid; backup refused to protect history");
+    const bool room_exists=protocol==1&&(SPIFFS.exists(ROOM_MESSAGES)||SPIFFS.exists(ROOM_RECOVERY));
+    if((categories&MESHINK_BACKUP_MESSAGES)&&room_exists&&
+       !valid_message_journal(authoritative_path(ROOM_MESSAGES),1))
+        return fail("Room journal invalid; backup refused to protect history");
     if(protocol==2&&(categories&MESHINK_BACKUP_NODES)){
         const bool a=SPIFFS.exists(MT_NODES_A),b=SPIFFS.exists(MT_NODES_B);
         const bool valid_a=a&&valid_mt_node_snapshot(MT_NODES_A);
@@ -1066,6 +1074,10 @@ bool meshink_backup_create(uint8_t protocol,uint8_t categories,char* saved_path,
     if((categories&MESHINK_BACKUP_MESSAGES)&&
        !add_plan(parts,protocol,1,protocol==1?CORE_MESSAGES:MT_MESSAGES))
         return fail("Message backup preparation failed");
+    // Older MeshCore installations have no room journal; include it when present.
+    if((categories&MESHINK_BACKUP_MESSAGES)&&room_exists&&
+       !add_plan(parts,protocol,MESHINK_BACKUP_MESSAGES,ROOM_MESSAGES))
+        return fail("Room backup preparation failed");
     if(categories&MESHINK_BACKUP_NODES){
         if(protocol==1){
             if(!add_plan(parts,protocol,2,"/contacts3")||
@@ -1333,6 +1345,14 @@ bool meshink_backup_restore(uint8_t protocol,const char* filename,uint8_t catego
         const char* recovery=protocol==1?MC_RECOVERY:MT_RECOVERY;
         if(!stage_delete(recovery,MESHINK_BACKUP_MESSAGES))
             return fail("Too many files for journal recovery cleanup");
+        // Older archives contain only the ordinary journal; leave existing
+        // room history untouched unless the archive explicitly replaces it.
+        bool replacing_room=false;
+        for(size_t i=0;i<count;++i)
+            if(!strcmp(stages[i].path,ROOM_MESSAGES))replacing_room=true;
+        if(protocol==1&&replacing_room&&
+           !stage_delete(ROOM_RECOVERY,MESHINK_BACKUP_MESSAGES))
+            return fail("Too many files for room recovery cleanup");
     }
     if(protocol==2){
         if(categories&MESHINK_BACKUP_NODES){

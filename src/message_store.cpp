@@ -15,6 +15,9 @@ constexpr char LEGACY_STORE_PATH[]="/ui_messages.bin";
 constexpr char CORE_STORE_PATH[]="/meshcore_messages.bin";
 constexpr char CORE_INVALID_PATH[]="/meshcore_messages.invalid.bak";
 constexpr char MESHTASTIC_STORE_PATH[]="/meshtastic_messages.bin";
+constexpr char ROOM_STORE_PATH[]="/room_messages.bin";
+constexpr char ROOM_INVALID_PATH[]="/room_messages.bad";
+constexpr char ROOM_RECOVERY_PATH[]="/room_messages.recovery.bin";
 // SPIFFS_OBJ_NAME_LEN is 32 bytes INCLUDING NUL. The former
 // "/meshtastic_messages.invalid.bak" is 32 visible bytes and cannot be
 // created, leaving a first-use partial journal stuck in recovery forever.
@@ -29,6 +32,7 @@ static_assert(sizeof(MESHTASTIC_INVALID_PATH)<=SPIFFS_PATH_CAPACITY,
               "Meshtastic recovery filename exceeds SPIFFS name limit");
 static_assert(sizeof(CORE_RECOVERY_PATH)<=SPIFFS_PATH_CAPACITY,"MeshCore recovery filename too long");
 static_assert(sizeof(MESHTASTIC_RECOVERY_PATH)<=SPIFFS_PATH_CAPACITY,"Meshtastic recovery filename too long");
+static_assert(sizeof(ROOM_RECOVERY_PATH)<=SPIFFS_PATH_CAPACITY,"Room recovery filename too long");
 
 static_assert(sizeof(MeshInkMessageStoreHeader)==16,
               "journal header layout changed; bump store version explicitly");
@@ -83,6 +87,7 @@ struct StoreCpuBoostScope {
 
 MeshInkMessageStore meshcore_journal(CORE_STORE_PATH,CORE_INVALID_PATH);
 MeshInkMessageStore meshtastic_journal(MESHTASTIC_STORE_PATH,MESHTASTIC_INVALID_PATH,true);
+MeshInkMessageStore room_journal(ROOM_STORE_PATH,ROOM_INVALID_PATH,false,ROOM_RECOVERY_PATH);
 // Old single-protocol installations wrote only the MeshCore journal here.
 static bool copy_legacy_meshcore_journal(){
     const char* source_path=SPIFFS.exists(LEGACY_CORE_RECOVERY_PATH)
@@ -167,7 +172,8 @@ static bool write_record_to(File& f,uint16_t physical,const MeshInkStoredMessage
 }
 
 const char* MeshInkMessageStore::recovery_path() const {
-    return expanded_records_?MESHTASTIC_RECOVERY_PATH:CORE_RECOVERY_PATH;
+    return custom_recovery_path_?custom_recovery_path_:
+        (expanded_records_?MESHTASTIC_RECOVERY_PATH:CORE_RECOVERY_PATH);
 }
 size_t MeshInkMessageStore::disk_record_size() const {
     return expanded_records_?sizeof(MeshInkStoredMessage):sizeof(MeshInkStoredMessageV3);
@@ -175,6 +181,8 @@ size_t MeshInkMessageStore::disk_record_size() const {
 uint16_t MeshInkMessageStore::disk_version() const {
     return expanded_records_?MESHTASTIC_STORE_VERSION:CORE_STORE_VERSION;
 }
+
+MeshInkMessageStore& meshink_room_message_store(){return room_journal;}
 
 MeshInkMessageStore& meshink_message_store(){
     // The selected protocol is fixed for the entire boot session. MeshCore BLE

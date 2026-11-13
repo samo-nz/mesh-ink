@@ -33,7 +33,7 @@ enum MeshInkMessageFlags:uint8_t {
 struct MeshInkStoredMessage {
     uint32_t sequence=0;
     uint32_t timestamp=0;
-    uint32_t ack=0;
+    uint32_t ack=0; // Received room post: original author's four-byte key prefix, not an ACK.
     uint8_t kind=0;
     uint8_t state=0;
     uint8_t key[7]{};
@@ -75,6 +75,7 @@ class MeshInkMessageStore {
     const char* path_;
     const char* invalid_path_;
     bool expanded_records_=false;
+    const char* custom_recovery_path_=nullptr;
     const char* active_path_; // may point at a durable per-protocol recovery journal
     const char* recovery_path() const;
     size_t disk_record_size() const;
@@ -88,9 +89,10 @@ class MeshInkMessageStore {
     bool find_physical(uint32_t sequence,uint16_t& physical) const;
 
 public:
-    MeshInkMessageStore(const char* path,const char* invalid_path,bool expanded_records=false)
+    MeshInkMessageStore(const char* path,const char* invalid_path,bool expanded_records=false,
+                        const char* recovery_path=nullptr)
         : path_(path),invalid_path_(invalid_path),expanded_records_(expanded_records),
-          active_path_(path) {}
+          custom_recovery_path_(recovery_path),active_path_(path) {}
     bool begin();
     const char* active_path() const { return active_path_; }
     void prepare_for_restore();
@@ -125,3 +127,5 @@ public:
 };
 
 MeshInkMessageStore& meshink_message_store();
+// Independent 250-post ring shared by all MeshCore room servers.
+MeshInkMessageStore& meshink_room_message_store();
