@@ -26,6 +26,7 @@ constexpr size_t MAX_UI_CHANNELS=8;
 constexpr size_t MAX_UI_ADVERTS=16;
 constexpr size_t MAX_STORED_MESSAGES=MESHINK_MESSAGE_CAPACITY;
 constexpr uint8_t DIRECT_RETRY_LIMIT=3;
+constexpr size_t ROOM_POST_TEXT_MAX=151; // MeshCore room server MAX_POST_TEXT_LEN (160-9)
 static_assert(MESHINK_MESSAGE_TEXT_MAX==MAX_TEXT_LEN,
               "MeshInk message limit must track MeshCore MAX_TEXT_LEN");
 static_assert(13+MESHINK_MESSAGE_TEXT_MAX<=MAX_FRAME_SIZE,
@@ -102,7 +103,7 @@ static void reset_gps_duty_cycle(){
 using MessageKind=MeshInkMessageKind;
 using StoredMessage=MeshInkStoredMessage;
 struct ListStorage{UiListEntry entry{};char title[34]{};char subtitle[72]{};char time[10]{};uint8_t key[7]{};uint8_t channel_index=0;};
-struct MessageView{UiMessage entry{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};char time[10]{};char network[52]{};};
+struct MessageView{UiMessage entry{};char text[MESHINK_MESSAGE_TEXT_BYTES]{};char time[10]{};char network[52]{};char sender[40]{};};
 struct UnreadPeer{uint8_t key[6]{};uint8_t count=0;bool used=false;};
 constexpr size_t DISCOVERED_CONTACT_CACHE_BYTES=192;
 struct DiscoveredContact{uint8_t prefix[7]{};uint8_t frame[DISCOVERED_CONTACT_CACHE_BYTES]{};uint8_t len=0;};
@@ -166,8 +167,12 @@ class MeshCoreUiProvider final:public UiDataProvider{
     UiMessageState transient_direct_state_=UiMessageState::Sending;
     bool transient_direct_route_known_=false;
     bool transient_direct_route_flood_=false;
-    bool active_channel_=false;uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
+    bool active_channel_=false,active_room_=false;
+    struct RoomSession{uint8_t key[PUB_KEY_SIZE]{};bool used=false,authenticated=false;uint8_t permissions=0;};
+    RoomSession room_sessions_[MAX_UI_CONTACTS]{};
+    uint8_t active_key_[7]{};char active_title_[34]="MESSAGES";uint32_t refreshed_at_=0;
     uint32_t conversation_store_revision_=0xFFFFFFFFUL;
+    uint32_t conversation_room_revision_=0xFFFFFFFFUL;
     uint32_t conversation_contacts_signature_=0;
     // Unread cache is tiny (one entry per configured MeshCore contact) and
     // contains only peers that are currently unread. Historical read-neutral
@@ -196,6 +201,40 @@ class MeshCoreUiProvider final:public UiDataProvider{
     // Never resolve the selected protocol in a global constructor: Arduino
     // initializes NVS only after C++ static construction.
     MeshInkMessageStore& store() const {return meshink_message_store();}
+    MeshInkMessageStore& room_store() const {return meshink_room_message_store();}
+    MeshInkMessageStore& active_store() const {return active_room_?room_store():store();}
+    RoomSession* room_session(const uint8_t* key,bool create){
+        if(!key)return nullptr;
+        for(auto& item:room_sessions_)if(item.used&&!memcmp(item.key,key,PUB_KEY_SIZE))return &item;
+        if(create)for(auto& item:room_sessions_)if(!item.used){
+            item=RoomSession{};item.used=true;memcpy(item.key,key,PUB_KEY_SIZE);return &item;
+        }
+        return nullptr;
+    }
+    const RoomSession* room_session(const uint8_t* key)const{
+        if(!key)return nullptr;
+        for(const auto& item:room_sessions_)if(item.used&&!memcmp(item.key,key,PUB_KEY_SIZE))return &item;
+        return nullptr;
+    }
+    uint8_t room_unread_count(const uint8_t* key)const{
+        uint8_t count=0;StoredMessage item{};
+        for(size_t i=room_store().count();i>0;--i){
+            if(!room_store().read(i-1,item)||!item.sequence||memcmp(item.key,key,6))continue;
+            if(item.flags&MESHINK_MESSAGE_READ_THROUGH)break;
+            if((item.flags&MESHINK_MESSAGE_UNREAD)&&count<255)++count;
+        }
+        return count;
+    }
+    uint32_t room_checkpoint(const uint8_t* key)const{
+        uint32_t latest=0;StoredMessage item{};
+        for(size_t i=0;i<room_store().count();++i){
+            if(!room_store().read(i,item)||!item.sequence||
+               item.state!=(uint8_t)UiMessageState::Received||
+               memcmp(item.key,key,6))continue;
+            if(item.timestamp>latest)latest=item.timestamp;
+        }
+        return latest;
+    }
     static void bind(ListStorage& item){item.entry.title=item.title;item.entry.subtitle=item.subtitle;item.entry.time=item.time;}
     static void format_short_age(uint32_t seconds,char* out,size_t len){
         if(seconds<60)snprintf(out,len,"JUST NOW");
@@ -203,7 +242,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         else if(seconds<86400)snprintf(out,len,"%luH AGO",(unsigned long)(seconds/3600));
         else snprintf(out,len,"%luD AGO",(unsigned long)(seconds/86400));
     }
-    static void bind(MessageView& item){item.entry.text=item.text;item.entry.time=item.time;item.entry.network=item.network;}
+    static void bind(MessageView& item){item.entry.text=item.text;item.entry.time=item.time;item.entry.network=item.network;item.entry.sender=item.sender;}
     void format_message_network(const StoredMessage& stored,char* out,size_t len)const{
         if(!out||!len)return;
         out[0]=0;

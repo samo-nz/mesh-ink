@@ -32,6 +32,7 @@ struct UiMessage {
     bool outgoing;
     UiMessageState state;
     const char* network; // persisted RF/route metadata when available
+    const char* sender=nullptr; // room post author, separate from message text
 };
 
 struct UiNodeDetails {
@@ -107,6 +108,10 @@ public:
     virtual bool active_node_saved_password(char* out, size_t len) const = 0;
     virtual const char* active_title() const = 0;
     virtual bool active_is_channel() const = 0;
+    virtual bool active_is_room() const {return false;}
+    virtual bool active_room_can_post() const {return false;}
+    virtual const char* active_room_status() const {return "";}
+    virtual bool sync_active_room() {return false;}
     virtual size_t active_message_count() const = 0;
     virtual const UiMessage& active_message(size_t index) const = 0;
     // Unread totals are a shared MeshInk concept. Protocol providers supply
