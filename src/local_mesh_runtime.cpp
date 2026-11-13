@@ -463,7 +463,31 @@ class MeshCoreUiProvider final:public UiDataProvider{
         }
         ++active_revision_;
     }
-    bool activate(const ListStorage& item,bool channel){active_channel_=channel;detail_valid_=false;detail_frame_len_=0;detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;strcpy(detail_access_,"NOT LOGGED IN");strcpy(detail_status_,"NOT REQUESTED");strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");strcpy(detail_trace_,"NOT REQUESTED");memcpy(active_key_,item.key,sizeof(active_key_));strncpy(active_title_,item.title,sizeof(active_title_)-1);rebuild_active();return true;}
+    bool activate(const ListStorage& item,bool channel){
+        active_channel_=channel;active_room_=false;detail_valid_=false;detail_frame_len_=0;
+        detail_request_active_=false;detail_login_active_=false;detail_authenticated_=false;
+        detail_request_type_=UiNodeInfoRequest::None;request_gps_received_=false;
+        strcpy(detail_access_,"NOT LOGGED IN");strcpy(detail_status_,"NOT REQUESTED");
+        strcpy(detail_telemetry_,"NOT REQUESTED");strcpy(detail_path_,"NOT REQUESTED");
+        strcpy(detail_trace_,"NOT REQUESTED");
+        memcpy(active_key_,item.key,sizeof(active_key_));
+        strncpy(active_title_,item.title,sizeof(active_title_)-1);
+        ContactInfo contact{};
+        if(!channel&&active_contact(contact)&&contact.type==ADV_TYPE_ROOM){
+            active_room_=true;
+            if(const RoomSession* session=room_session(contact.id.pub_key)){
+                if(session->authenticated)login_result(true,session->permissions,true);
+            }
+        }
+        rebuild_active();
+        if(active_room_&&!detail_authenticated_){
+            char password[16]{};
+            if(load_saved_password(contact.id.pub_key,password,sizeof(password)))
+                login_active_node(password,true);
+            memset(password,0,sizeof(password));
+        }
+        return true;
+    }
 public:
     MeshCoreUiProvider(){
         for(auto& i:contacts_)bind(i);
@@ -689,8 +713,24 @@ public:
         memcpy(item.key,map_nodes_[index].key,sizeof(item.key));return activate(item,false);
     }
     size_t conversation_count()const override{return conversation_count_;}const UiListEntry& conversation(size_t i)const override{return conversations_[i].entry;}
-    bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;mark_read(MessageKind::Direct,conversations_[i].key,6);return activate(conversations_[i],false);}
-    size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;mark_read(MessageKind::Direct,contacts_[i].key,6);return activate(contacts_[i],false);}
+    bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;
+        if(conversations_[i].entry.role==UiNodeRole::Service)
+            room_store().mark_read_through(MessageKind::Direct,conversations_[i].key,6);
+        else mark_read(MessageKind::Direct,conversations_[i].key,6);
+        const bool ok=activate(conversations_[i],false);
+        if(ok)sync_unread_status();
+        return ok;
+    }
+    size_t contact_count()const override{return contact_count_;}
+    const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}
+    bool open_contact(size_t i)override{if(i>=contact_count_)return false;
+        if(contacts_[i].entry.role==UiNodeRole::Service)
+            room_store().mark_read_through(MessageKind::Direct,contacts_[i].key,6);
+        else mark_read(MessageKind::Direct,contacts_[i].key,6);
+        const bool ok=activate(contacts_[i],false);
+        if(ok)sync_unread_status();
+        return ok;
+    }
     size_t channel_count()const override{return channel_count_;}
     const UiListEntry& channel(size_t i)const override{
         static UiListEntry empty{};
