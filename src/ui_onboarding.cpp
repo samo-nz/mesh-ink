@@ -3041,12 +3041,14 @@ static MessageBubbleGeometry message_bubble_geometry(const UiMessage& message) {
     const int max_width=ui_w(456);
     const int min_width=ui_w(240);
     const int body_natural=min(max_width-2*pad,ui_text_max_line_width(message.text,3));
+    const bool show_sender=message.sender&&message.sender[0];
+    const int sender_natural=show_sender?ui_text_width(message.sender,2):0;
     const int footer_natural=ui_text_width(footer,2);
     const int width=min(max_width,max(min_width,
-        max(body_natural+2*pad,footer_natural+2*pad)));
+        max(max(body_natural,sender_natural)+2*pad,footer_natural+2*pad)));
     const int text_width=max(ui_w(80),width-2*pad);
     const int lines=min(16,ui_wrapped_line_count(message.text,text_width,3));
-    const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58));
+    const int height=max(ui_h(96),lines*ui_text_line_step(3)+ui_h(58)+(show_sender?ui_h(28):0));
     const int margin=ui_x(12);
     const int x=message.outgoing?screen_width-margin-width:margin;
     const MessageBubbleGeometry geometry={
@@ -3083,7 +3085,10 @@ static void draw_message_bubble(const UiMessage& message,int y,
     const int radius=max(ui_w(14),ui_h(14));
     rounded_box(geometry.x,y,geometry.width,geometry.height,radius,message.outgoing);
     const uint8_t color=message.outgoing?0xFF:0;
-    ui_draw_wrapped(message.text,geometry.x+ui_w(18),y+ui_h(14),
+    const bool show_sender=message.sender&&message.sender[0];
+    if(show_sender)ui_text_fit(message.sender,geometry.x+ui_w(18),y+ui_h(11),
+                               geometry.text_width,2,color,true);
+    ui_draw_wrapped(message.text,geometry.x+ui_w(18),y+ui_h(show_sender?42:14),
                     geometry.text_width,3,color,false,16);
 
     char footer[72]{};message_footer_text(message,footer);
@@ -3171,11 +3176,14 @@ static int chat_history_bottom_paged(){
     // footer band for PAGE N/arrows and give the rest back to message history.
     return portrait_layout().height-ui_h(62);
 }
+static int chat_history_top(){
+    return ui_data&&ui_data->active_is_room()?ui_h(190):ui_h(126);
+}
 static int chat_history_available_current(){
-    return chat_history_bottom_current()-ui_h(126);
+    return chat_history_bottom_current()-chat_history_top();
 }
 static int chat_history_available_paged(){
-    return chat_history_bottom_paged()-ui_h(126);
+    return chat_history_bottom_paged()-chat_history_top();
 }
 static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
     rounded_box(metrics.entry.x,metrics.entry.y,metrics.entry.width,metrics.entry.height,
@@ -3193,8 +3201,22 @@ static void draw_compose_entry(const meshink_keyboard::Metrics& metrics){
                 metrics.entry.y+(metrics.entry.height-ui_text_height(3))/2,3,0,false);
 }
 
+static bool room_requires_login(){
+    if(!ui_data||!ui_data->active_is_room())return false;
+    const char* status=ui_data->active_room_status();
+    return !status||!strcmp(status,"NOT LOGGED IN")||!strcmp(status,"LOGIN FAILED");
+}
+static MeshInkUiRect room_sync_button(){return ui_rect(375,128,132,56);}
 static void draw_chat(bool channel) {
     draw_app_header(ui_data?ui_data->active_title():(channel?"CHANNEL":"CONTACT"),true,channel?nullptr:"INFO");
+    const bool room=!channel&&ui_data&&ui_data->active_is_room();
+    if(room){
+        const char* status=ui_data->active_room_status();
+        char label[48]{};
+        snprintf(label,sizeof(label),"ROOM  %s",status?status:"");
+        ui_text_fit(label,ui_x(27),ui_y(147),ui_w(336),2,0,true);
+        ui_action_button(room_requires_login()?"LOGIN":"SYNC",room_sync_button(),true);
+    }
     const size_t count=ui_data?ui_data->active_message_count():0;
     chat_message_count_last_drawn=count;
     chat_geometry_sync(count);
@@ -3203,7 +3225,7 @@ static void draw_chat(bool channel) {
     size_t first=count,end=count;bool has_older=false;
     if(count){
         if(keyboard)
-            first=chat_fill_backwards(count,keyboard_layout.history_bottom-ui_h(126));
+            first=chat_fill_backwards(count,keyboard_layout.history_bottom-chat_history_top());
         else
             chat_page_bounds_lazy(count,chat_history_available_current(),
                                   chat_history_available_paged(),
@@ -3211,7 +3233,7 @@ static void draw_chat(bool channel) {
     }
     if(!count)ui_centred("NO MESSAGES YET",ui_y(300),3,0,true);
     else{
-        int y=ui_y(126);
+        int y=chat_history_top();
         for(size_t i=first;i<end;++i){
             const UiMessage& message=ui_data->active_message(i);
             const MessageBubbleGeometry geometry=chat_message_geometry(i);
@@ -3233,7 +3255,8 @@ static void draw_chat(bool channel) {
             draw_chat_page_indicator(chat_page,has_older,compose_y-ui_h(48));
             rounded_box(layout.outer_margin,compose_y,layout.outer_width,keyboard_layout.key_height,
                         max(ui_w(12),ui_h(12)));
-            const char* prompt=compose_text[0]?compose_text:"Write a message...";
+            const char* prompt=room&&!ui_data->active_room_can_post()?
+                "LOGIN TO POST / READ ONLY":(compose_text[0]?compose_text:"Write a message...");
             ui_text_fit(prompt,layout.content_text_x,compose_y+ui_h(17),
                         layout.outer_width-2*layout.text_inset,3,0,compose_text[0]);
         }
@@ -5361,7 +5384,7 @@ static void append(char c) {
     if(keyboard_password_mode){size_t n=strlen(remote_password);if(n<15){remote_password[n]=c;remote_password[n+1]=0;}return;}
     if(keyboard_message_mode){
         const size_t n=strlen(compose_text);
-        if(n<MESHINK_MESSAGE_TEXT_MAX){
+        if(n<((screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room())?151:MESHINK_MESSAGE_TEXT_MAX)){
             compose_text[n]=c;compose_text[n+1]=0;
             // Fresh messages start with sentence-style uppercase. Once the
             // first alphabetic character is entered, fall back to lowercase
@@ -5509,7 +5532,7 @@ static bool handle_landscape_keyboard(int16_t x,int16_t y){
     }
     char character=0;
     if(keyboard_character_at(x,y,true,character)){
-        if(keyboard_message_mode&&keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
+        if(keyboard_message_mode&&keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),(screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room()?151:MESHINK_MESSAGE_TEXT_MAX),MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
         append(character);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
@@ -5583,7 +5606,7 @@ static bool handle_message_keyboard(int16_t x,int16_t y) {
     }
     char character=0;
     if(keyboard_character_at(x,y,false,character)){
-        if(keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
+        if(keyboard_symbols&&y>=metrics.number_top&&y<metrics.number_top+metrics.key_height){const int index=meshink_keyboard::key_index_edge_extended(meshink_keyboard::numbers(metrics),x,metrics.width);if(index>=0){meshink_append_utf8(compose_text,sizeof(compose_text),(screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room()?151:MESHINK_MESSAGE_TEXT_MAX),MESHINK_KEYBOARD_FREQUENT_EMOJI[index]);queue_text_refresh();return true;}}
         append(character);queue_text_refresh();return true;
     }
     if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
@@ -6118,8 +6141,23 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             break;
         case Screen::ContactChat:
         case Screen::ChannelChat:
+            if(screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room()&&
+               hit(x,y,room_sync_button())){
+                if(room_requires_login()){
+                    details_origin=Screen::ContactChat;details_page=1;open_screen(Screen::ContactDetails);
+                }else{
+                    show_toast(ui_data->sync_active_room()?"SYNC REQUESTED":"REQUEST BUSY");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);
+                }
+                return true;
+            }
             {const auto metrics=keyboard_metrics(false);const MeshInkUiLayout& layout=portrait_layout();const int compose_y=chat_compose_top();
             if(chat_page==0&&hit(x,y,layout.outer_margin,compose_y,layout.outer_width,metrics.key_height)){
+                if(screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room()&&
+                   !ui_data->active_room_can_post()){
+                    show_toast("ROOM LOGIN OR READ ONLY");
+                    draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                }
                 keyboard_message_mode=true;keyboard_visible=true;reset_chat_paging();
                 if(!compose_text[0]){keyboard_symbols=false;keyboard_upper=true;message_keyboard_case_dirty=false;}
                 text_refresh_pending=false;
@@ -7600,7 +7638,7 @@ void ui_loop() {
                         if(index>=0){choice=index;selected=MESHINK_KEYBOARD_FREQUENT_EMOJI[index];}
                     }
                     if(choice>=0){
-                        if(meshink_append_utf8(compose_text,sizeof(compose_text),MESHINK_MESSAGE_TEXT_MAX,selected))
+                        if(meshink_append_utf8(compose_text,sizeof(compose_text),(screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room()?151:MESHINK_MESSAGE_TEXT_MAX),selected))
                             queue_text_refresh();
                         keyboard_picker_clear_pixels();
                         picker_open=false;picker_pending_key=0;
