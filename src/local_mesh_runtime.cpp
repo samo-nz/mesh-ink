@@ -317,7 +317,7 @@ class MeshCoreUiProvider final:public UiDataProvider{
         return hash;
     }
     void rebuild_conversations(uint32_t contact_signature){
-        int16_t latest[MAX_UI_CONTACTS];
+        int16_t latest[MAX_UI_CONTACTS];bool from_room[MAX_UI_CONTACTS]{};
         for(auto& index:latest)index=-1;
         StoredMessage item{};
 
@@ -328,32 +328,45 @@ class MeshCoreUiProvider final:public UiDataProvider{
                meshink_message_protocol(item)!=0||
                item.kind!=(uint8_t)MessageKind::Direct||item.sequence==0)continue;
             for(size_t contact=0;contact<contact_count_;++contact){
-                if(!memcmp(item.key,contacts_[contact].key,6)){
+                if(contacts_[contact].entry.role!=UiNodeRole::Service&&
+                   !memcmp(item.key,contacts_[contact].key,6)){
                     latest[contact]=(int16_t)logical;
                     break;
                 }
             }
         }
 
+        // Room posts have their own independent flash ring.
+        for(size_t logical=0;logical<room_store().count();++logical){
+            if(!room_store().read(logical,item)||!item.sequence)continue;
+            for(size_t contact=0;contact<contact_count_;++contact){
+                if(contacts_[contact].entry.role==UiNodeRole::Service&&
+                   !memcmp(item.key,contacts_[contact].key,6)){
+                    latest[contact]=(int16_t)logical;from_room[contact]=true;break;
+                }
+            }
+        }
         conversation_count_=0;
         for(size_t contact=0;contact<contact_count_&&
                 conversation_count_<MAX_UI_CONTACTS+MAX_UI_CHANNELS;++contact){
-            if(latest[contact]<0||!store().read((size_t)latest[contact],item))continue;
+            if(latest[contact]<0||!(from_room[contact]?room_store():store()).read((size_t)latest[contact],item))continue;
             auto& summary=conversations_[conversation_count_++];
             summary=ListStorage{};bind(summary);
             strncpy(summary.title,contacts_[contact].title,sizeof(summary.title)-1);
             strncpy(summary.subtitle,item.text,sizeof(summary.subtitle)-1);
             format_time(item.timestamp,summary.time);
             memcpy(summary.key,contacts_[contact].key,sizeof(summary.key));
-            summary.entry.unread=direct_unread_count(summary.key);
+            summary.entry.unread=from_room[contact]?room_unread_count(summary.key):direct_unread_count(summary.key);
             summary.entry.role=contacts_[contact].entry.role;
         }
         conversation_store_revision_=store().revision();
+        conversation_room_revision_=room_store().revision();
         conversation_contacts_signature_=contact_signature;
     }
     void refresh_conversation_labels(){
         for(size_t i=0;i<conversation_count_;++i){
-            conversations_[i].entry.unread=direct_unread_count(conversations_[i].key);
+            conversations_[i].entry.unread=conversations_[i].entry.role==UiNodeRole::Service?
+                room_unread_count(conversations_[i].key):direct_unread_count(conversations_[i].key);
             for(size_t contact=0;contact<contact_count_;++contact){
                 if(memcmp(conversations_[i].key,contacts_[contact].key,6))continue;
                 strncpy(conversations_[i].title,contacts_[contact].title,
@@ -387,6 +400,9 @@ class MeshCoreUiProvider final:public UiDataProvider{
         uint16_t direct_total=0,channel_total=0;
         for(const auto& item:direct_unread_)direct_total+=item.count;
         for(const auto count:channel_unread_)channel_total+=count;
+        for(size_t i=0;i<contact_count_;++i)
+            if(contacts_[i].entry.role==UiNodeRole::Service)
+                direct_total+=room_unread_count(contacts_[i].key);
         ui_status_set_unread(direct_total);
         ui_status_set_channel_unread(channel_total);
     }
@@ -415,9 +431,11 @@ class MeshCoreUiProvider final:public UiDataProvider{
             }
         }
         for(size_t i=0;i<contact_count_;++i)
-            contacts_[i].entry.unread=direct_unread_count(contacts_[i].key);
+            contacts_[i].entry.unread=contacts_[i].entry.role==UiNodeRole::Service?
+                room_unread_count(contacts_[i].key):direct_unread_count(contacts_[i].key);
         for(size_t i=0;i<conversation_count_;++i)
-            conversations_[i].entry.unread=direct_unread_count(conversations_[i].key);
+            conversations_[i].entry.unread=conversations_[i].entry.role==UiNodeRole::Service?
+                room_unread_count(conversations_[i].key):direct_unread_count(conversations_[i].key);
         for(size_t i=0;i<channel_count_;++i){
             const uint8_t channel=channels_[i].channel_index;
             channels_[i].entry.unread=channel<MAX_UI_CHANNELS?channel_unread_[channel]:0;
@@ -438,8 +456,9 @@ class MeshCoreUiProvider final:public UiDataProvider{
     void rebuild_active(){
         active_count_=0;
         StoredMessage item{};
-        for(size_t i=0;i<store().count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
-            if(!store().read(i,item)||item.sequence==0||!matches(item))continue;
+        MeshInkMessageStore& journal=active_store();
+        for(size_t i=0;i<journal.count()&&active_count_<MESHINK_MESSAGE_CAPACITY;++i){
+            if(!journal.read(i,item)||item.sequence==0||!matches(item))continue;
             active_indices_[active_count_++]=(uint16_t)i;
         }
         ++active_revision_;
@@ -454,7 +473,7 @@ public:
         bind(active_message_view_);
     }
     void begin(){
-        if(!store().begin())return;
+        if(!store().begin()||!room_store().begin())return;
         rebuild_unread_from_journal();
         Serial.printf("[T5-STORE] unread restored direct=%u channel=%u\n",
                       (unsigned)direct_unread_total(),
@@ -480,12 +499,13 @@ public:
             if(contact.lastmod)format_time(contact.lastmod,item.time);
             else strcpy(item.time,"--:--");
             memcpy(item.key,contact.id.pub_key,7);
-            item.entry.unread=direct_unread_count(item.key);
+            item.entry.unread=contact.type==ADV_TYPE_ROOM?room_unread_count(item.key):direct_unread_count(item.key);
             item.entry.role=meshcore_ui_role(contact.type);
 
         }
         const uint32_t contact_signature=contacts_signature();
         if(conversation_store_revision_!=store().revision()||
+           conversation_room_revision_!=room_store().revision()||
            conversation_contacts_signature_!=contact_signature)
             rebuild_conversations(contact_signature);
         else refresh_conversation_labels();
