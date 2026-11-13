@@ -140,3 +140,12 @@ assert 'clear("mc_name")' in code
 assert 'struct NameCacheUndo' in code
 assert 'snapshot_previous_nvs(stage,protocol)' in code
 assert 'p.putString("name",new_name)' not in code
+
+# A MeshCore room journal must be protected by the same maintenance backup
+# and recovery transaction as the existing message history.
+assert 'ROOM_MESSAGES[]="/room_messages.bin"' in code
+assert 'ROOM_RECOVERY[]="/room_messages.recovery.bin"' in code
+assert 'protocol==1&&!strcmp(path,ROOM_MESSAGES)' in code
+assert 'room_exists&&' in code and '!valid_message_journal(authoritative_path(ROOM_MESSAGES),1)' in code
+assert '!add_plan(parts,protocol,MESHINK_BACKUP_MESSAGES,ROOM_MESSAGES)' in code
+assert 'if(protocol==1&&replacing_room&&' in code

@@ -696,7 +696,7 @@ contains("MESHINK_KEYBOARD_PORTRAIT_X_OFFSET", "board profile exposes portrait k
 contains("MESHINK_KEYBOARD_LANDSCAPE_X_OFFSET", "board profile exposes landscape keyboard tuning")
 contains("draw_compose_entry(keyboard_layout);", "chat compose box follows keyboard entry geometry")
 assert "static char compose_text[MESHINK_MESSAGE_TEXT_BYTES]" in source, "compose buffer accepts the full 160-byte message"
-assert "if(n<MESHINK_MESSAGE_TEXT_MAX)" in source, "portrait and landscape typing share the full message limit"
+assert "if(n<((screen==Screen::ContactChat&&ui_data&&ui_data->active_is_room())?151:MESHINK_MESSAGE_TEXT_MAX))" in source, "room posts enforce the 151-byte limit; other chats retain 160 bytes"
 assert "static void ui_draw_wrapped_tail(" in source, "bounded tail rendering remains available for non-message keyboard entry"
 assert "static void ui_draw_compose_tail(" in source, "message composer has a dedicated clipped tail renderer"
 assert source.count("ui_draw_compose_tail(")>=3, "portrait and landscape message entry both use the clipped compose tail renderer"
@@ -2194,3 +2194,24 @@ assert 'mark_sd_unavailable();' in map_source.split('const bool failed=map_io_fa
 assert "if(result.sd_ready&&result.tiles&&!result.io_failed)" in source
 assert "SD OFFLINE - CACHED TILES" in source, "show a nonobstructive offline label over cached tiles"
 assert "if(!init_png_decoder_psram())" in map_source and "abort();" not in map_source, "low PSRAM never crashes map startup"
+
+# Room server integration: no upstream source changes, independent history.
+room_store_source=(root / "src" / "message_store.cpp").read_text(encoding="utf-8")
+backup_source=(root / "src" / "backup_restore.cpp").read_text(encoding="utf-8")
+assert 'MeshInkMessageStore room_journal(ROOM_STORE_PATH,ROOM_INVALID_PATH,false,ROOM_RECOVERY_PATH)' in room_store_source
+assert 'MeshInkMessageStore& meshink_room_message_store()' in room_store_source
+assert 'if(!store().begin()||!room_store().begin())return;' in runtime_source
+assert 'active_room_?room_store():store()' in runtime_source
+assert 'void received_room(' in runtime_source and 'previous.ack' not in runtime_source
+assert 'old.ack==author_code' in runtime_source, "room sync replay must deduplicate author and post timestamp"
+assert 'room->sync_since=room_checkpoint(key)' in runtime_source, "failed write cannot advance durable catch-up checkpoint"
+assert 'if(txt_type==2&&sender&&sender->type==ADV_TYPE_ROOM' in runtime_source
+assert 'session->permissions&3)>=2' in runtime_source, "read-only room members cannot post"
+assert 'bool MeshCoreUiProvider::sync_active_room()' in runtime_source
+assert 'if(room.out_path_len==OUT_PATH_UNKNOWN)return login_active_node("",false)' in runtime_source
+assert 'room_sync_button()' in source and 'active_room_status()' in source
+assert 'message.sender&&message.sender[0]' in source, "room author is outside post content"
+assert 'ROOM_MESSAGES[]="/room_messages.bin"' in backup_source
+assert 'ROOM_RECOVERY[]="/room_messages.recovery.bin"' in backup_source
+assert '!valid_message_journal(authoritative_path(ROOM_MESSAGES),1)' in backup_source
+assert '!add_plan(parts,protocol,MESHINK_BACKUP_MESSAGES,ROOM_MESSAGES)' in backup_source
