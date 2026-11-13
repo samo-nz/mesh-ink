@@ -1333,6 +1333,27 @@ bool MeshCoreUiProvider::resume_active_node_session(){
     return true;
 }
 
+bool MeshCoreUiProvider::sync_active_room(){
+    if(!active_room_||pending_login.active||pending_info.active||pending_direct.active)return false;
+    ContactInfo room{};if(!active_contact(room)||room.type!=ADV_TYPE_ROOM)return false;
+    char password[16]{};
+    const bool saved=load_saved_password(room.id.pub_key,password,sizeof(password));
+    // A password login always restarts room catch-up. No extra sync packet.
+    if(!detail_authenticated_||(saved&&password[0])){
+        const bool ok=login_active_node(password,saved);
+        memset(password,0,sizeof(password));return ok;
+    }
+    memset(password,0,sizeof(password));
+    // Existing ACL + blank login does not reset server push failures. A direct
+    // KEEP_ALIVE does and includes the room's current sync_since checkpoint.
+    if(room.out_path_len==OUT_PATH_UNKNOWN)return login_active_node("",false);
+    uint8_t frame[1+PUB_KEY_SIZE+5]{};
+    frame[0]=50;memcpy(frame+1,room.id.pub_key,PUB_KEY_SIZE);
+    frame[1+PUB_KEY_SIZE]=2; // REQ_TYPE_KEEP_ALIVE
+    memcpy(frame+1+PUB_KEY_SIZE+1,&room.sync_since,4);
+    return local_mesh_enqueue_command(frame,sizeof(frame));
+}
+
 bool MeshCoreUiProvider::login_active_node(const char* password,bool save_password){
     if(active_channel_||pending_login.active||pending_info.active||pending_direct.active||!password)return false;
     ContactInfo contact{};if(!active_contact(contact)||(contact.type!=ADV_TYPE_REPEATER&&contact.type!=ADV_TYPE_ROOM))return false;
@@ -1369,13 +1390,18 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         PendingLogin completed=pending_login;pending_login={};
         const bool role_known=len>=13;const uint8_t permissions=role_known?frame[12]:(frame[1]?3:0);
         if(completed.save_password)save_password_for(completed.key,completed.password);else clear_saved_password(completed.key);
-        memset(completed.password,0,sizeof(completed.password));provider.login_result(true,permissions,role_known);
-        const bool status_requested=provider.request_active_node_info(UiNodeInfoRequest::Status);
+        memset(completed.password,0,sizeof(completed.password));
+        provider.login_result(true,permissions,role_known,completed.key);
+        ContactInfo selected{};
+        const bool same=provider.active_contact(selected)&&
+            !memcmp(selected.id.pub_key,completed.key,PUB_KEY_SIZE);
+        const bool status_requested=same&&selected.type!=ADV_TYPE_ROOM&&
+            provider.request_active_node_info(UiNodeInfoRequest::Status);
         T5_DEBUGF(T5_LOG_MESH,
                   "[T5-MESH] server login succeeded role=%u known=%d auto-status=%u\n",
                   (unsigned)(permissions&3),role_known,status_requested?1U:0U);
     }
-    else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x86){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] server login failed");}
+    else if(pending_login.active&&len>=8&&!memcmp(frame+2,pending_login.key,6)&&frame[0]==0x86){uint8_t key[PUB_KEY_SIZE]{};memcpy(key,pending_login.key,PUB_KEY_SIZE);memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false,0,false,key);T5_DEBUGLN(T5_LOG_MESH,"[T5-MESH] server login failed");}
     else if(pending_info.active&&pending_info.request==UiNodeInfoRequest::Status&&len>=8&&!memcmp(frame+2,pending_info.key,6)&&frame[0]==0x87){
         ContactInfo selected{};
         // Navigating to another contact cannot grant it the prior session.
@@ -1397,7 +1423,7 @@ void local_mesh_on_frame(const uint8_t* frame,size_t len){
         uint32_t tag=0;memcpy(&tag,frame+4,4);if(tag==pending_info.tag){provider.trace_response(frame,len);finish_info();}
     }
     else if(frame[0]==6&&len>=10&&pending_login.active&&pending_login.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_login.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_login.waiting_sent=false;}
-    else if(frame[0]==1&&pending_login.active){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
+    else if(frame[0]==1&&pending_login.active){uint8_t key[PUB_KEY_SIZE]{};memcpy(key,pending_login.key,PUB_KEY_SIZE);memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false,0,false,key);}
     else if(frame[0]==6&&len>=10&&pending_info.active&&pending_info.waiting_sent){uint32_t timeout=0;memcpy(&timeout,frame+6,4);pending_info.deadline=millis()+max((uint32_t)3000,timeout+2000);pending_info.waiting_sent=false;}
     else if(frame[0]==1&&pending_info.active){provider.request_timeout(pending_info.request,pending_info.resume);finish_info();}
     else if(frame[0]==6&&len>=10&&pending_direct.active){
@@ -1522,7 +1548,7 @@ void local_mesh_loop(){
     meshink_gps_background_tick(); // executes even when MeshCore has stopped the GPS provider
 #endif
     meshink_rtc_tick();
-    if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false);}
+    if(pending_login.active&&(int32_t)(millis()-pending_login.deadline)>=0){uint8_t key[PUB_KEY_SIZE]{};memcpy(key,pending_login.key,PUB_KEY_SIZE);memset(pending_login.password,0,sizeof(pending_login.password));pending_login={};provider.login_result(false,0,false,key);}
     if(pending_info.active&&(int32_t)(millis()-pending_info.deadline)>=0){provider.request_timeout(pending_info.request,pending_info.resume);finish_info();}
     if(pending_stats.active&&(int32_t)(millis()-pending_stats.deadline)>=0)finish_stats(true);
     if(pending_direct.active&&pending_direct.finalizing_failure&&
