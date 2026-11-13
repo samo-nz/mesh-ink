@@ -614,6 +614,39 @@ public:
         }
         refresh(true);ui_notify_message_received(false);
     }
+    // Upstream passes the original author's 4-byte public-key prefix with
+    // TXT_TYPE_SIGNED_PLAIN. Persist it in the room journal's ACK slot, which
+    // is not used for incoming-message acknowledgements.
+    void received_room(const uint8_t* key,uint32_t timestamp,const uint8_t* author,
+                       const char* text,bool has_rf,int8_t snr_q4,uint8_t path_len){
+        if(!key||!author||!text)return;
+        note_heard(key,6);
+        uint32_t author_code=0;memcpy(&author_code,author,4);
+        StoredMessage old{};
+        for(size_t i=room_store().count();i>0;--i){
+            if(room_store().read(i-1,old)&&old.sequence&&
+               old.state==(uint8_t)UiMessageState::Received&&
+               !memcmp(old.key,key,6)&&old.timestamp==timestamp&&
+               old.ack==author_code&&!strcmp(old.text,text))return;
+        }
+        const bool visible=ui_chat_is_visible(false)&&active_room_&&!memcmp(active_key_,key,6);
+        const uint32_t seq=room_store().append(MessageKind::Direct,key,6,text,timestamp,
+            UiMessageState::Received,author_code,MeshInkMessageOrigin::LocalUi,
+            has_rf,snr_q4,path_len,!visible);
+        if(!seq){
+            // The upstream client advances sync_since before delivering the
+            // frame to the UI. Roll back to durable history for next login.
+            if(ContactInfo* room=meshink_meshcore().lookupContactByPubKey(key,6)){
+                room->sync_since=room_checkpoint(key);
+                local_mesh_schedule_contacts_save();
+            }
+            Serial.println("[ROOM] durable journal write failed; sync checkpoint rolled back");
+            return;
+        }
+        if(visible)rebuild_active();
+        refresh(true);
+        ui_notify_message_received(false);
+    }
     void received_channel(uint8_t channel,uint32_t timestamp,const char* text,bool has_rf=false,int8_t snr_q4=0,uint8_t path_len=OUT_PATH_UNKNOWN){
         const bool already_seen=ui_chat_is_visible(true)&&active_channel_&&active_key_[0]==channel;
         const bool unread=!already_seen;
@@ -645,8 +678,8 @@ public:
         return sequence;
     }
     uint32_t queue_direct(const char* text,uint32_t timestamp){
-        const bool journal_full=store().count()>=MESHINK_MESSAGE_CAPACITY;
-        const uint32_t sequence=store().append(
+        const bool journal_full=active_store().count()>=MESHINK_MESSAGE_CAPACITY;
+        const uint32_t sequence=active_store().append(
             MessageKind::Direct,active_key_,6,text,timestamp,UiMessageState::Sending);
         if(sequence&&journal_full)rebuild_unread_from_journal();
         transient_direct_sequence_=sequence;
@@ -675,16 +708,16 @@ public:
         transient_direct_route_known_=false;
         transient_direct_route_flood_=false;
     }
-    bool update_message(uint32_t sequence,UiMessageState state){
-        if(!sequence||!store().update_state(sequence,state))return false;
+    bool update_message(uint32_t sequence,UiMessageState state,bool room=false){
+        if(!sequence||!(room?room_store():store()).update_state(sequence,state))return false;
         clear_transient_direct(sequence);
         ++active_revision_;
         ui_request_data_refresh("message-state");
         return true;
     }
-    void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state){
+    void confirm_direct_send(uint32_t sequence,uint32_t ack,bool flood,UiMessageState state,bool room=false){
         if(sequence){
-            store().update_outgoing(sequence,state,ack,flood);
+            (room?room_store():store()).update_outgoing(sequence,state,ack,flood);
             clear_transient_direct(sequence);
             ++active_revision_;
         }
@@ -893,6 +926,15 @@ public:
     bool remove_active_contact()override{if(!detail_valid_||!detail_saved_)return false;uint8_t command[1+PUB_KEY_SIZE]{15};memcpy(command+1,detail_contact_.id.pub_key,PUB_KEY_SIZE);if(!local_mesh_enqueue_command(command,sizeof(command)))return false;detail_saved_=false;return true;}
     bool request_active_node_info(UiNodeInfoRequest request)override;
     bool login_active_node(const char* password,bool save_password)override;
+    bool sync_active_room()override;
+    bool active_is_room()const override{return active_room_;}
+    bool active_room_can_post()const override{
+        if(!active_room_)return false;
+        ContactInfo contact{};if(!active_contact(contact))return false;
+        const RoomSession* session=room_session(contact.id.pub_key);
+        return session&&session->authenticated&&(session->permissions&3)>=2;
+    }
+    const char* active_room_status()const override{return active_room_?detail_access_:"";}
     bool resume_active_node_session()override;
     bool active_node_saved_password(char* out,size_t len)const override{return detail_valid_&&load_saved_password(detail_contact_.id.pub_key,out,len);}
     const uint8_t* detail_key()const{return detail_contact_.id.pub_key;}
@@ -911,8 +953,17 @@ public:
         if(request==UiNodeInfoRequest::Telemetry)ui_notify_node_position_unavailable();
     }
     void login_state(bool active){detail_login_active_=active;ui_request_data_refresh("node-login");}
-    void login_result(bool success,uint8_t permissions=0,bool role_known=false){
+    void login_result(bool success,uint8_t permissions=0,bool role_known=false,
+                      const uint8_t* response_key=nullptr){
+        ContactInfo selected{};
+        if(!active_contact(selected))return;
+        if(response_key&&memcmp(selected.id.pub_key,response_key,PUB_KEY_SIZE))return;
         detail_login_active_=false;detail_authenticated_=success;
+        if(selected.type==ADV_TYPE_ROOM){
+            if(RoomSession* session=room_session(selected.id.pub_key,true)){
+                session->authenticated=success;session->permissions=role_known?permissions:0;
+            }
+        }
         if(success){
             if(role_known){
                 switch(permissions&0x03){
@@ -1028,7 +1079,7 @@ public:
         active_message_view_=MessageView{};bind(active_message_view_);
         if(i>=active_count_)return active_message_view_.entry;
         StoredMessage item{};
-        if(!store().read(active_indices_[i],item))return active_message_view_.entry;
+        if(!active_store().read(active_indices_[i],item))return active_message_view_.entry;
         if(item.sequence==transient_direct_sequence_&&
            item.kind==(uint8_t)MessageKind::Direct) {
             item.state=(uint8_t)transient_direct_state_;
@@ -1046,6 +1097,23 @@ public:
         active_message_view_.entry.outgoing=item.state!=(uint8_t)UiMessageState::Received;
         active_message_view_.entry.state=(UiMessageState)item.state;
         format_message_network(item,active_message_view_.network,sizeof(active_message_view_.network));
+        if(active_room_){
+            if(item.state!=(uint8_t)UiMessageState::Received){
+                strcpy(active_message_view_.sender,"YOU");
+            }else{
+                uint8_t prefix[4]{};memcpy(prefix,&item.ack,4);
+                ContactInfo contact{};auto iterator=meshink_meshcore().startContactsIterator();
+                while(iterator.hasNext(&meshink_meshcore(),contact)){
+                    if(!memcmp(contact.id.pub_key,prefix,4)){
+                        strncpy(active_message_view_.sender,contact.name,sizeof(active_message_view_.sender)-1);
+                        break;
+                    }
+                }
+                if(!active_message_view_.sender[0])
+                    snprintf(active_message_view_.sender,sizeof(active_message_view_.sender),
+                        "%02X%02X%02X%02X",prefix[0],prefix[1],prefix[2],prefix[3]);
+            }
+        }
         return active_message_view_.entry;
     }
     uint32_t active_message_revision()const override{return active_revision_;}
