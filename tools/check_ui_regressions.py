@@ -1637,7 +1637,7 @@ assert "contact.out_path_len==OUT_PATH_UNKNOWN" in send_active and "provider.tra
 assert "transient_direct_sequence_" in runtime_source and "item.sequence==transient_direct_sequence_" in runtime_source, "active message rendering overlays transient direct state by sequence"
 assert "clear_transient_direct(sequence);" in runtime_source, "final persistent delivery/failure clears the RAM-only overlay"
 assert "pending_direct.active&&pending_direct.finalizing_failure" in runtime_source, "failed-state journal persistence is retried before normal send retries"
-assert "if(!sequence||!store().update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
+assert "if(!sequence||!(room?room_store():store()).update_state(sequence,state))return false;" in runtime_source, "RAM overlay is not cleared unless the durable final state write succeeds"
 assert "return write_record(p,item);" in message_store_source, "message-store state updates return the actual record-write result"
 formatter=runtime_source[runtime_source.index("void format_message_network"):runtime_source.index("bool matches(",runtime_source.index("void format_message_network"))]
 assert '"RETRYING %s %u/2"' in formatter, "retry footer reports both actual route and retry number"
