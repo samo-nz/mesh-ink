@@ -1402,7 +1402,7 @@ fail_direct = runtime_source[
     runtime_source.index("static void fail_pending_direct("):
     runtime_source.index("static bool enqueue_info_request(")
 ]
-assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed)" in fail_direct, "direct failure persists one final state update"
+assert "provider.update_message(pending_direct.sequence,UiMessageState::Failed,pending_direct.room)" in fail_direct, "direct failure persists one final state update"
 assert "pending_direct.finalizing_failure=true;" in fail_direct, "terminal failure enters durable finalization before runtime state is cleared"
 assert "pending_direct.deadline=millis()+250;" in fail_direct and "retrying finalization" in fail_direct, "failed-state persistence is retried instead of being forgotten"
 assert "journal=FAILED" in fail_direct, "terminal failure is only completed after durable journal confirmation"
