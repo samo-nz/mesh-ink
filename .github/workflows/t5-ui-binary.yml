@@ -196,6 +196,7 @@ jobs:
             meshink-*-full-wipe.bin
             SHA256SUMS.txt
             INTER_LICENSE.txt
+          retention-days: 2
 
       # An explicit release commit can publish directly after a successful main
       # build. gh release create makes the matching tag at GITHUB_SHA; a tag
